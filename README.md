@@ -104,49 +104,82 @@ table carries a denormalized `org_id` and is under `FORCE ROW LEVEL SECURITY`; t
 connects as a **non-BYPASSRLS `shipped_app`** role and sets `app.current_org_id` per
 transaction.
 
-## Dev quickstart
+## Run everything locally with Docker
 
-### 1. Data plane (Postgres + object store + migrations)
+One command builds and starts the **whole stack** — the Go API, the Next.js
+dashboard, a bundled Postgres, a bundled MinIO (R2/S3 stand-in), and the schema
+migrations:
 
 ```sh
 cp deploy/.env.example deploy/.env        # safe local-dev defaults
-docker compose -f deploy/docker-compose.yml up
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
-This boots Postgres 16, MinIO (an R2/S3-compatible store), and runs the goose app
-migrations — including the non-BYPASSRLS `shipped_app` runtime role. Full walkthrough:
-[`deploy/README.md`](deploy/README.md).
+| Service | URL | Notes |
+|---|---|---|
+| **dashboard** (Next.js + Better Auth) | http://localhost:3000 | built from `apps/dashboard/Dockerfile` |
+| **api** (Go control-plane) | http://localhost:8080 | OSS build (unlimited); `GET /healthz` |
+| **postgres** *(bundled, optional)* | `localhost:5432` | profile `local-db` |
+| **minio** *(bundled, optional)* | console http://localhost:9001 | profile `local-storage` |
+| **migrate** | one-shot | applies `db/migrations/app` + the `shipped_app` role |
 
-To run migrations by hand:
+**One-time, after the first `up`** — Better Auth owns the `auth` schema, so create
+its identity tables:
 
 ```sh
-go install github.com/pressly/goose/v3/cmd/goose@latest
-goose -dir db/migrations/app postgres \
-  "postgres://postgres:postgres@localhost:5432/shipped?sslmode=disable" up
+docker compose -f deploy/docker-compose.yml exec dashboard \
+  pnpm exec @better-auth/cli migrate --yes
 ```
 
-### 2. Go API + CLI
+Then open **http://localhost:3000**, sign up, create an org, and deploy with the CLI.
+
+### Bring your own backends (Supabase / R2)
+
+The bundled Postgres and MinIO are **optional Compose profiles** (`local-db`,
+`local-storage`), default-on via `COMPOSE_PROFILES` in `deploy/.env`. The **hosted
+Shipped SaaS runs on Supabase (managed Postgres) + Cloudflare R2** — for self-host
+you can do the same:
+
+- **Use Supabase / an external Postgres:** remove `local-db` from `COMPOSE_PROFILES`
+  and point `DATABASE_URL` + `DATABASE_OWNER_URL` at it. `api`/`dashboard` depend on
+  the bundled DB with `required: false`, so they run against the external one.
+- **Use Cloudflare R2 / external S3:** remove `local-storage` and set the `S3_*` vars.
 
 ```sh
-go build ./...                 # build the core
-go test ./...                  # run tests
+# example: external Postgres + external object store, no bundled services
+COMPOSE_PROFILES= DATABASE_URL=postgres://… S3_ENDPOINT=https://… \
+  docker compose -f deploy/docker-compose.yml up --build api dashboard migrate
+```
+
+The **serving Worker** (`edge/serving-worker`) is a Cloudflare workerd runtime, not a
+container — run it alongside with `pnpm --filter @shipped/serving-worker dev` (Wrangler).
+
+## Dev without Docker
+
+```sh
+# Data plane only (bundled Postgres + MinIO + migrations)
+cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up
+
+# Go API + CLI
+go build ./...                 # build the core        ·  go test ./...   (tests)
 go run ./services/api/cmd/api  # start the API (reads DATABASE_URL etc. from env)
 go run ./cli/cmd/shipped       # the deploy CLI
-```
 
-### 3. Dashboard + TS workspace
-
-```sh
-corepack enable
-pnpm install
+# Dashboard + TS workspace
+corepack enable && pnpm install
 pnpm -r typecheck              # type-check all workspace packages
 pnpm dev                       # run the dashboard (apps/dashboard)
 ```
 
+Run migrations by hand with `goose -dir db/migrations/app postgres "<DATABASE_OWNER_URL>" up`.
+Full data-plane walkthrough: [`deploy/README.md`](deploy/README.md).
+
 ### Build flavors
 
-- **OSS / self-host (default):** `go build ./...` — unlimited, no Stripe, no caps.
-- **Cloud (internal):** `go build -tags cloud ./...` — wires in `cloud/quota` + `cloud/billing`.
+- **OSS / self-host (default):** `go build ./...` — unlimited, no Stripe, no caps. The
+  api image defaults to this; the dashboard + bundled data plane are all you need.
+- **Cloud (internal):** `go build -tags cloud ./...` (or `--build-arg SHIPPED_BUILD_TAGS=cloud`
+  for the api image) — wires in `cloud/quota` + `cloud/billing` (needs the Stripe env).
 
 ## Contributing
 

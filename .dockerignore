@@ -1,0 +1,24 @@
+# Keep Docker build contexts lean + reproducible. Applies to all builds (the
+# context is the repo root for both the Go API and the dashboard images).
+**/node_modules
+**/.next
+**/dist
+**/build
+**/out
+**/.turbo
+**/*.tsbuildinfo
+**/coverage
+bin/
+.git
+.github
+.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+# Docs / local infra state — not needed inside images.
+docs/
+*.md
+**/.idea
+**/.vscode
+minio-data/
+.data/

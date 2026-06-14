@@ -2,28 +2,143 @@
 #
 # Shipped — one-command self-host stack (ARCHITECTURE.md §13 row 13, §14.4).
 #
-# This boots the OSS core's data plane locally/offline:
-#   * postgres  — the single source of truth (app + auth schemas; FORCE RLS)
-#   * minio     — an R2/S3-compatible object store stand-in for blobs/manifests
-#   * migrate   — a one-shot goose runner that applies db/migrations/app
+# `docker compose -f deploy/docker-compose.yml up --build` builds and starts the
+# WHOLE local stack:
+#   * api        — the Go control-plane API (built from services/api/Dockerfile)
+#   * dashboard  — the Next.js dashboard      (built from apps/dashboard/Dockerfile)
+#   * postgres   — bundled Postgres 16        [profile: local-db]      (OPTIONAL)
+#   * minio      — bundled R2/S3-compatible    [profile: local-storage] (OPTIONAL)
+#   * migrate    — one-shot goose runner for the `app` schema + shipped_app role
 #
-# It deliberately does NOT include Stripe, the quota/billing module, or any cap:
-# SHIPPED_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ self-host is unlimited.
-# The Go API (services/api) and the dashboard (apps/dashboard) are built by other
-# agents; once present, add them here behind the same env contract in .env.example.
+# OSS / self-host: SHIPPED_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ no
+# Stripe, no caps, no cloud/ee. The api image defaults to the OSS build.
 #
-# Quickstart:  cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up
-# See deploy/README.md for the full walkthrough.
+# OPTIONAL bundled data services (the open-core promise: bring your own backends):
+#   * The hosted Shipped SaaS runs on Supabase (managed Postgres) + Cloudflare R2.
+#   * Self-host DEFAULTS to the bundled postgres + minio (the `local-db` /
+#     `local-storage` profiles, enabled via COMPOSE_PROFILES in deploy/.env).
+#   * To use Supabase / an external Postgres instead: drop `local-db` from
+#     COMPOSE_PROFILES and point DATABASE_URL + DATABASE_OWNER_URL at it.
+#   * To use Cloudflare R2 / external S3 instead: drop `local-storage` and set the
+#     S3_* vars. `api`/`dashboard` depend on the bundled services with
+#     `required: false`, so they run with or without them.
+#
+# Quickstart:  cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up --build
+# See deploy/README.md for the full walkthrough (incl. the one-time Better Auth migration).
 
 name: shipped
 
 services:
+  # ===========================================================================
+  # APPLICATION — built from this repo.
+  # ===========================================================================
+
   # ---------------------------------------------------------------------------
-  # Postgres — system of record. The migrate service provisions the runtime role
-  # and applies the app schema; this container runs as the privileged owner.
+  # api — the Go control-plane (system of record + authz boundary). OSS build
+  # (unlimited). Connects to Postgres as the non-BYPASSRLS shipped_app role and to
+  # the object store for blobs/manifests. Waits for migrations to finish.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      # For the hosted-cloud (Stripe) build: args: { SHIPPED_BUILD_TAGS: cloud }
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # In-memory edge projection in the container (no shared file with a Worker
+      # here); avoids a writable-volume requirement on the distroless image.
+      PROJECTION_FILE: ""
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+      createbucket:
+        condition: service_completed_successfully
+        required: false
+
+  # ---------------------------------------------------------------------------
+  # dashboard — the Next.js app (Better Auth + the /authz exchange). Talks to the
+  # Go API for business data and to Postgres for Better Auth's identity tables.
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ..
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+
+  # ===========================================================================
+  # MIGRATIONS — always runs (against the bundled OR an external Postgres).
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # migrate — one-shot goose runner. Applies the Go-owned `app` schema migrations
+  # as the privileged OWNER role (DATABASE_OWNER_URL), then sets the runtime
+  # `shipped_app` role's password (the role is created NOSUPERUSER / NOBYPASSRLS by
+  # migration 0001), then exits. It does NOT apply the cloud-only
+  # db/migrations/billing — that schema only exists in the hosted deployment.
+  #
+  # NOTE — Better Auth schema: the `auth` schema is owned + migrated by Better Auth
+  # (the dashboard), NOT by goose. Run it ONCE after first boot:
+  #   docker compose -f deploy/docker-compose.yml exec dashboard \
+  #     pnpm exec @better-auth/cli migrate --yes
+  # (See deploy/README.md.) The app migrations create an EMPTY `auth` schema as a
+  # namespace; app rows attach via app.org_meta (PK = Better Auth organization.id).
+  #
+  # `required: false` on postgres so this also works against an external/Supabase
+  # DATABASE_OWNER_URL with the bundled postgres profile disabled.
+  # ---------------------------------------------------------------------------
+  migrate:
+    image: golang:1.25
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: ${DATABASE_OWNER_URL:-postgres://postgres:postgres@postgres:5432/shipped?sslmode=disable}
+      SHIPPED_APP_DB_PASSWORD: ${SHIPPED_APP_DB_PASSWORD:-shipped-app-dev-secret}
+    working_dir: /repo
+    volumes:
+      - ../db:/repo/db:ro
+    entrypoint: >
+      /bin/sh -c "
+      set -e &&
+      go install github.com/pressly/goose/v3/cmd/goose@latest &&
+      /go/bin/goose -dir /repo/db/migrations/app postgres \"$$GOOSE_DBSTRING\" up &&
+      apt-get update >/dev/null && apt-get install -y --no-install-recommends postgresql-client >/dev/null &&
+      psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE shipped_app WITH PASSWORD '$$SHIPPED_APP_DB_PASSWORD';\" &&
+      echo 'app migrations applied + shipped_app password set'
+      "
+    restart: "no"
+
+  # ===========================================================================
+  # OPTIONAL bundled data services (profiles). Default-on via COMPOSE_PROFILES in
+  # deploy/.env. Disable to use Supabase (Postgres) / Cloudflare R2 (object store).
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # postgres — bundled system of record. [profile: local-db]
+  # Hosted Shipped uses Supabase instead; disable this profile + set DATABASE_URL.
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16
+    profiles: ["local-db"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -40,13 +155,13 @@ services:
       retries: 20
 
   # ---------------------------------------------------------------------------
-  # MinIO — R2/S3-compatible object store. Holds per-org blobs/<org>/<sha256>
-  # and immutable deploy manifests. Console on :9001, S3 API on :9000.
-  # NOTE: in our hosted cloud this is Cloudflare R2; MinIO is the self-host
-  # stand-in only (ARCHITECTURE.md §11/§14.4).
+  # minio — bundled R2/S3-compatible object store. [profile: local-storage]
+  # Holds per-org blobs/<org>/<sha256> + immutable deploy manifests. Console :9001.
+  # Hosted Shipped uses Cloudflare R2 instead; disable + set the S3_* vars.
   # ---------------------------------------------------------------------------
   minio:
     image: minio/minio:latest
+    profiles: ["local-storage"]
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -68,6 +183,7 @@ services:
   # ---------------------------------------------------------------------------
   createbucket:
     image: minio/mc:latest
+    profiles: ["local-storage"]
     depends_on:
       minio:
         condition: service_healthy
@@ -76,48 +192,6 @@ services:
       mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-shipped} ${MINIO_ROOT_PASSWORD:-shipped-dev-secret} &&
       mc mb --ignore-existing local/${MINIO_BUCKET:-shipped-blobs} &&
       echo 'bucket ${MINIO_BUCKET:-shipped-blobs} ready'
-      "
-    restart: "no"
-
-  # ---------------------------------------------------------------------------
-  # migrate — one-shot goose runner. Applies the Go-owned `app` schema migrations
-  # as the privileged OWNER role (DATABASE_OWNER_URL), then sets the runtime
-  # `shipped_app` role's password (the role is created NOSUPERUSER / NOBYPASSRLS
-  # by migration 0001), then exits. It does NOT apply the cloud-only
-  # db/migrations/billing — that schema only exists in our hosted deployment
-  # (ARCHITECTURE.md §5/§9).
-  #
-  # Schema ownership / ordering (ARCHITECTURE.md §8): the `auth` schema is owned
-  # and migrated by Better Auth (it runs its own migrations when the dashboard
-  # boots). The `app` migrations here create an EMPTY `auth` schema only as a
-  # namespace and do NOT hard-FK auth.organization — app rows attach via
-  # `app.org_meta` (PK = Better Auth organization.id), which the API populates
-  # when an org is provisioned. So goose and Better Auth can apply in either order
-  # without breaking; just don't expect org_meta rows before an org is created.
-  #
-  # psql is installed from apt here only to set the runtime role's password; for
-  # local dev the default below is fine. See deploy/README.md.
-  # ---------------------------------------------------------------------------
-  migrate:
-    image: golang:1.25
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      GOOSE_DRIVER: postgres
-      GOOSE_DBSTRING: ${DATABASE_OWNER_URL:-postgres://postgres:postgres@postgres:5432/shipped?sslmode=disable}
-      SHIPPED_APP_DB_PASSWORD: ${SHIPPED_APP_DB_PASSWORD:-shipped-app-dev-secret}
-    working_dir: /repo
-    volumes:
-      - ../db:/repo/db:ro
-    entrypoint: >
-      /bin/sh -c "
-      set -e &&
-      go install github.com/pressly/goose/v3/cmd/goose@latest &&
-      /go/bin/goose -dir /repo/db/migrations/app postgres \"$$GOOSE_DBSTRING\" up &&
-      apt-get update >/dev/null && apt-get install -y --no-install-recommends postgresql-client >/dev/null &&
-      psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE shipped_app WITH PASSWORD '$$SHIPPED_APP_DB_PASSWORD';\" &&
-      echo 'app migrations applied + shipped_app password set'
       "
     restart: "no"
 
