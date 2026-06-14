@@ -75,15 +75,9 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Synchronous hard-cap check at the cost-creating action (§9). OSS: Unlimited
-	// → nil. Cloud: real per-user site cap → may 402 with the upgrade payload.
-	if err := a.Quota.CheckAndReserve(
-		r.Context(), t.OrgID, t.UserID, quota.ResourceSitePerUser,
-	); err != nil {
-		httpx.WriteError(w, err)
-		return
-	}
-
+	// The hard-cap check (§9) happens INSIDE store.CreateSite's tx (advisory lock
+	// + COUNT → quota.Provider.Allow → INSERT), so it's race-safe. OSS = Unlimited;
+	// cloud returns a *quota.ExceededError that writeStoreError renders as 402.
 	site, err := a.Store.CreateSite(r.Context(), t, req.Slug, projection.AccessPublic)
 	if err != nil {
 		writeStoreError(w, err)
@@ -147,6 +141,12 @@ func decodeJSON(r *http.Request, v any) error {
 
 // writeStoreError maps store sentinels to the right HTTP status via httpx.
 func writeStoreError(w http.ResponseWriter, err error) {
+	// A quota cap (cloud build) surfaces from the store as *quota.ExceededError →
+	// HTTP 402 with the rich upgrade body (httpx renders ExceededError natively).
+	if _, ok := quota.AsExceeded(err); ok {
+		httpx.WriteError(w, err)
+		return
+	}
 	switch {
 	case errors.Is(err, store.ErrReservedSlug):
 		httpx.WriteError(w, fmt.Errorf("%w: slug is reserved", httpx.ErrBadRequest))

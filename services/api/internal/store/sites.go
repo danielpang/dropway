@@ -10,8 +10,42 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/danielpang/shipped/internal/projection"
+	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/services/api/internal/store/db"
 )
+
+// PreflightMembers is the best-effort server-side check for the members_per_org
+// cap on OUR code path (Better Auth actually inserts the member row, so this can't
+// be perfectly race-safe — it's a preflight the dashboard calls before inviting).
+// It reads the org's live plan tier under the RLS tenant context and counts the
+// current members from the Better Auth table, then applies the pure quota policy.
+// Returns a *quota.ExceededError (→ 402) when the org is at/over its member cap.
+func (s *Store) PreflightMembers(ctx context.Context, t Tenant) error {
+	var planTier string
+	if err := s.withTx(ctx, t, func(q *db.Queries) error {
+		pt, err := q.GetPlanTier(ctx, t.OrgID)
+		if err != nil {
+			return err
+		}
+		planTier = pt
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// auth.member is Better-Auth-owned and outside app RLS; scope explicitly by org.
+	var current int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM auth.member WHERE "organizationId" = $1`, t.OrgID,
+	).Scan(&current); err != nil {
+		if !isUndefinedTable(err) {
+			return err
+		}
+		current = 0 // Better Auth not migrated yet (self-host) → treat as empty.
+	}
+
+	return s.quota.Allow(planTier, quota.ResourceMemberPerOrg, current)
+}
 
 // reservedSlugs are subdomain labels that may not be used as a site slug — they
 // collide with platform hosts or are confusingly authoritative-looking
@@ -112,6 +146,25 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 
 	var out Site
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		// Race-safe per-user site cap (§9): take a per-(org,user) advisory lock for
+		// the rest of the tx, then COUNT → policy → INSERT as one critical section,
+		// so two concurrent same-user creates can't both read current=N and both
+		// insert. OSS = Unlimited (always nil); cloud = the hard-cap bands.
+		if err := q.LockUserSiteQuota(ctx, db.LockUserSiteQuotaParams{Column1: t.OrgID, Column2: t.UserID}); err != nil {
+			return err
+		}
+		planTier, err := q.GetPlanTier(ctx, t.OrgID)
+		if err != nil {
+			return err
+		}
+		current, err := q.CountSitesForUser(ctx, db.CountSitesForUserParams{OrgID: t.OrgID, OwnerUserID: t.UserID})
+		if err != nil {
+			return err
+		}
+		if err := s.quota.Allow(planTier, quota.ResourceSitePerUser, current); err != nil {
+			return err // *quota.ExceededError → handler renders HTTP 402
+		}
+
 		row, err := q.CreateSite(ctx, db.CreateSiteParams{
 			OrgID:       t.OrgID,
 			Slug:        slug,

@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/danielpang/shipped/internal/projection"
+	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/internal/storage"
 	"github.com/danielpang/shipped/services/api/internal/store"
 )
@@ -66,7 +67,7 @@ func TestIntegration_Phase1(t *testing.T) {
 		t.Fatalf("connect as shipped_app: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	st := store.New(pool)
+	st := store.New(pool, quota.Unlimited{})
 
 	obj := newMinioStore(t, ctx)
 	// Create the bucket via the S3 API (works through Docker Desktop's published

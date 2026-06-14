@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/danielpang/shipped/internal/middleware"
+	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/services/api/internal/store/db"
 )
 
@@ -35,14 +36,20 @@ type Tenant struct {
 
 // Store is the tx-per-call data layer.
 type Store struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	quota quota.Provider
 }
 
-// New wraps a pgx pool. The pool MUST connect as the non-BYPASSRLS shipped_app
-// role (the runtime DATABASE_URL), never a superuser/bypass connection on a
-// request path (§8 CI lint).
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+// New wraps a pgx pool with the open-core quota policy. The pool MUST connect as
+// the non-BYPASSRLS shipped_app role (the runtime DATABASE_URL), never a
+// superuser/bypass connection on a request path (§8 CI lint). quota is the pure
+// policy (Unlimited in OSS, the cloud hard-caps under -tags cloud); the Store
+// owns the race-safe mechanics (advisory lock + COUNT inside the create tx).
+func New(pool *pgxpool.Pool, q quota.Provider) *Store {
+	if q == nil {
+		q = quota.Unlimited{}
+	}
+	return &Store{pool: pool, quota: q}
 }
 
 // Pool exposes the underlying pool for lifecycle management (Close) and the

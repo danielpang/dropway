@@ -34,6 +34,7 @@ import (
 	"github.com/danielpang/shipped/internal/edgetoken"
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/pwhash"
+	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/services/api/internal/store"
 )
 
@@ -51,7 +52,7 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 		t.Fatalf("connect as shipped_app: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	st := store.New(pool)
+	st := store.New(pool, quota.Unlimited{})
 
 	obj := newMinioStore(t, ctx)
 	if err := obj.EnsureBucket(ctx); err != nil {

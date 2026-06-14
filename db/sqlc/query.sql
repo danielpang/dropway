@@ -47,6 +47,40 @@ SET sites_count = sites_count + 1,
 WHERE org_id = $1
 RETURNING sites_count;
 
+-- name: GetPlanTier :one
+-- The org's live entitlement tier (the authoritative cap-check input). In the
+-- hosted build org_meta.plan_tier is synced from billing.subscriptions by the
+-- Stripe webhook; in self-host it stays 'free' but the Unlimited provider ignores
+-- it. Returns 'free' when the org row is somehow absent (fail-soft default).
+SELECT COALESCE(
+    (SELECT plan_tier FROM app.org_meta WHERE id = $1),
+    'free'
+)::text AS plan_tier;
+
+-- name: LockUserSiteQuota :exec
+-- Serialize concurrent site creates for the SAME (org, user): take a transaction-
+-- scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
+-- create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
+-- critical section, so two racing creates can't both read current=N and both
+-- insert (the TOCTOU the cap must not allow). Advisory locks are independent of
+-- RLS and of row locks, so this needs no rows to exist yet (§9 race safety).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text || ':sites'));
+
+-- name: CountSitesForUser :one
+-- The number of sites the user already owns in the active org. Read under the
+-- advisory lock above; RLS scopes it to the active org, and we additionally filter
+-- by org_id + owner_user_id so the per-USER cap is exact.
+SELECT count(*)::bigint AS n
+FROM app.sites
+WHERE org_id = $1 AND owner_user_id = $2;
+
+-- name: LockOrgMemberQuota :exec
+-- Serialize the members-cap preflight for an org: a transaction-scoped advisory
+-- lock keyed by hashtext(org||':members'). Best-effort server-side enforcement on
+-- OUR code path (Better Auth actually inserts the member row), so the lock just
+-- makes our COUNT → policy check coherent under concurrent preflights.
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':members'));
+
 -- ===========================================================================
 -- sites
 -- ===========================================================================

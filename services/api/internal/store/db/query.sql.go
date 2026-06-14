@@ -32,6 +32,27 @@ func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEnt
 	return err
 }
 
+const countSitesForUser = `-- name: CountSitesForUser :one
+SELECT count(*)::bigint AS n
+FROM app.sites
+WHERE org_id = $1 AND owner_user_id = $2
+`
+
+type CountSitesForUserParams struct {
+	OrgID       string
+	OwnerUserID string
+}
+
+// The number of sites the user already owns in the active org. Read under the
+// advisory lock above; RLS scopes it to the active org, and we additionally filter
+// by org_id + owner_user_id so the per-USER cap is exact.
+func (q *Queries) CountSitesForUser(ctx context.Context, arg CountSitesForUserParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSitesForUser, arg.OrgID, arg.OwnerUserID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
 const createSite = `-- name: CreateSite :one
 
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
@@ -301,6 +322,24 @@ func (q *Queries) GetOrgUsage(ctx context.Context, orgID string) (AppOrgUsage, e
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getPlanTier = `-- name: GetPlanTier :one
+SELECT COALESCE(
+    (SELECT plan_tier FROM app.org_meta WHERE id = $1),
+    'free'
+)::text AS plan_tier
+`
+
+// The org's live entitlement tier (the authoritative cap-check input). In the
+// hosted build org_meta.plan_tier is synced from billing.subscriptions by the
+// Stripe webhook; in self-host it stays 'free' but the Unlimited provider ignores
+// it. Returns 'free' when the org row is somehow absent (fail-soft default).
+func (q *Queries) GetPlanTier(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getPlanTier, id)
+	var plan_tier string
+	err := row.Scan(&plan_tier)
+	return plan_tier, err
 }
 
 const getSite = `-- name: GetSite :one
@@ -757,6 +796,39 @@ func (q *Queries) ListSites(ctx context.Context) ([]AppSite, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockOrgMemberQuota = `-- name: LockOrgMemberQuota :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':members'))
+`
+
+// Serialize the members-cap preflight for an org: a transaction-scoped advisory
+// lock keyed by hashtext(org||':members'). Best-effort server-side enforcement on
+// OUR code path (Better Auth actually inserts the member row), so the lock just
+// makes our COUNT → policy check coherent under concurrent preflights.
+func (q *Queries) LockOrgMemberQuota(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockOrgMemberQuota, dollar_1)
+	return err
+}
+
+const lockUserSiteQuota = `-- name: LockUserSiteQuota :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text || ':sites'))
+`
+
+type LockUserSiteQuotaParams struct {
+	Column1 string
+	Column2 string
+}
+
+// Serialize concurrent site creates for the SAME (org, user): take a transaction-
+// scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
+// create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
+// critical section, so two racing creates can't both read current=N and both
+// insert (the TOCTOU the cap must not allow). Advisory locks are independent of
+// RLS and of row locks, so this needs no rows to exist yet (§9 race safety).
+func (q *Queries) LockUserSiteQuota(ctx context.Context, arg LockUserSiteQuotaParams) error {
+	_, err := q.db.Exec(ctx, lockUserSiteQuota, arg.Column1, arg.Column2)
+	return err
 }
 
 const nextVersionNo = `-- name: NextVersionNo :one

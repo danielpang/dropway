@@ -14,6 +14,10 @@ type Querier interface {
 	// no-op; we only set claim fields when still unclaimed so the original claimant
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
+	// The number of sites the user already owns in the active org. Read under the
+	// advisory lock above; RLS scopes it to the active org, and we additionally filter
+	// by org_id + owner_user_id so the per-USER cap is exact.
+	CountSitesForUser(ctx context.Context, arg CountSitesForUserParams) (int64, error)
 	// ===========================================================================
 	// sites
 	// ===========================================================================
@@ -54,6 +58,11 @@ type Querier interface {
 	GetHostRoute(ctx context.Context, host string) (AppHostRoute, error)
 	GetOrgMeta(ctx context.Context, id string) (AppOrgMetum, error)
 	GetOrgUsage(ctx context.Context, orgID string) (AppOrgUsage, error)
+	// The org's live entitlement tier (the authoritative cap-check input). In the
+	// hosted build org_meta.plan_tier is synced from billing.subscriptions by the
+	// Stripe webhook; in self-host it stays 'free' but the Unlimited provider ignores
+	// it. Returns 'free' when the org row is somehow absent (fail-soft default).
+	GetPlanTier(ctx context.Context, id string) (string, error)
 	GetSite(ctx context.Context, id string) (AppSite, error)
 	GetSiteAccessPolicy(ctx context.Context, siteID string) (AppSiteAccessPolicy, error)
 	GetSiteVersion(ctx context.Context, id string) (AppSiteVersion, error)
@@ -100,6 +109,18 @@ type Querier interface {
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
 	ListSiteVersions(ctx context.Context, siteID string) ([]AppSiteVersion, error)
 	ListSites(ctx context.Context) ([]AppSite, error)
+	// Serialize the members-cap preflight for an org: a transaction-scoped advisory
+	// lock keyed by hashtext(org||':members'). Best-effort server-side enforcement on
+	// OUR code path (Better Auth actually inserts the member row), so the lock just
+	// makes our COUNT → policy check coherent under concurrent preflights.
+	LockOrgMemberQuota(ctx context.Context, dollar_1 string) error
+	// Serialize concurrent site creates for the SAME (org, user): take a transaction-
+	// scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
+	// create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
+	// critical section, so two racing creates can't both read current=N and both
+	// insert (the TOCTOU the cap must not allow). Advisory locks are independent of
+	// RLS and of row locks, so this needs no rows to exist yet (§9 race safety).
+	LockUserSiteQuota(ctx context.Context, arg LockUserSiteQuotaParams) error
 	// ===========================================================================
 	// site_versions
 	// ===========================================================================

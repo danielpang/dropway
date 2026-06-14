@@ -198,14 +198,11 @@ func TestCreateSite_ReservedSlug_400(t *testing.T) {
 	}
 }
 
-// quotaStub returns a configured ExceededError to exercise the 402 path.
-type quotaStub struct{ err error }
-
-func (q quotaStub) CheckAndReserve(context.Context, string, string, quota.Resource) error {
-	return q.err
-}
-
 func TestCreateSite_QuotaExceeded_402(t *testing.T) {
+	// The hard cap is now enforced INSIDE store.CreateSite (advisory lock + COUNT →
+	// quota.Provider.Allow → INSERT). The handler's job is to render the store's
+	// *quota.ExceededError as a 402 with the upgrade body — drive that via the fake
+	// store returning the error the cloud provider would produce.
 	ex := &quota.ExceededError{
 		Limit:      quota.ResourceSitePerUser,
 		Current:    10,
@@ -215,7 +212,8 @@ func TestCreateSite_QuotaExceeded_402(t *testing.T) {
 		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
 	}
 	fs := newFakeStore()
-	a := NewFull(quotaStub{err: ex}, fs, nil, nil)
+	fs.createErr = ex
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
 
 	req := jsonReq(http.MethodPost, "/v1/sites", `{"slug":"ok-slug"}`)

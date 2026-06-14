@@ -16,13 +16,13 @@ import (
 // cloudBuild reports the build flavor for startup logging.
 const cloudBuild = true
 
-// newQuotaProvider builds the cloud hard-cap provider. The Counts source here is
-// the DB-free StaticCounts so the wiring compiles and runs without a database;
-// the production deployment swaps in a pgx-backed Counts that reads
-// app.org_usage + billing.subscriptions inside the request transaction.
+// newQuotaProvider builds the cloud hard-cap provider. It is a PURE policy
+// (Allow(planTier, res, current)); the live counts + per-(org,user) advisory lock
+// that make the check race-safe live in the Store, inside the request tx
+// (internal/store). The dashboard fills the active org from the session, so the
+// CTA URLs need no org id.
 func newQuotaProvider(cfg config.Config) quota.Provider {
-	urls := cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"}
-	return cloudquota.NewProvider(cloudquota.StaticCounts{}, nil, urls)
+	return cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"})
 }
 
 // quotaProviderName labels the wired provider for startup logging.

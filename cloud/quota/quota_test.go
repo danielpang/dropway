@@ -3,33 +3,18 @@
 package quota
 
 import (
-	"context"
 	"testing"
 
 	corequota "github.com/danielpang/shipped/internal/quota"
 )
 
-// fakeCounts is an in-memory Counts for tests (no DB).
-type fakeCounts struct {
-	tier    PlanTier
-	members int64
-	sites   int64
-}
-
-func (f fakeCounts) PlanTier(context.Context, string) (PlanTier, error)  { return f.tier, nil }
-func (f fakeCounts) MembersInOrg(context.Context, string) (int64, error) { return f.members, nil }
-func (f fakeCounts) SitesForUser(context.Context, string, string) (int64, error) {
-	return f.sites, nil
-}
-
-func newProvider(c Counts) *Provider {
-	return NewProvider(c, nil, DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"})
+func newProvider() *Provider {
+	return NewProvider(DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"})
 }
 
 func TestFreeTier_SiteCap(t *testing.T) {
 	// 10 sites already → 11th rejected.
-	p := newProvider(fakeCounts{tier: TierFree, sites: 10})
-	err := p.CheckAndReserve(context.Background(), "org1", "user1", corequota.ResourceSitePerUser)
+	err := newProvider().Allow("free", corequota.ResourceSitePerUser, 10)
 	ex, ok := corequota.AsExceeded(err)
 	if !ok {
 		t.Fatalf("want ExceededError, got %v", err)
@@ -49,15 +34,21 @@ func TestFreeTier_SiteCap(t *testing.T) {
 }
 
 func TestFreeTier_UnderSiteCap(t *testing.T) {
-	p := newProvider(fakeCounts{tier: TierFree, sites: 9})
-	if err := p.CheckAndReserve(context.Background(), "o", "u", corequota.ResourceSitePerUser); err != nil {
+	if err := newProvider().Allow("free", corequota.ResourceSitePerUser, 9); err != nil {
 		t.Fatalf("9 sites should be allowed: %v", err)
 	}
 }
 
+func TestEmptyTier_DefaultsToFree(t *testing.T) {
+	// An empty/unknown plan tier must be treated as Free (fail-closed to the
+	// tightest paid-relevant cap, not unlimited).
+	if err := newProvider().Allow("", corequota.ResourceSitePerUser, 10); err == nil {
+		t.Fatal("empty tier should default to free and cap at 10 sites")
+	}
+}
+
 func TestFreeTier_MemberCap(t *testing.T) {
-	p := newProvider(fakeCounts{tier: TierFree, members: 5})
-	err := p.CheckAndReserve(context.Background(), "o", "u", corequota.ResourceMemberPerOrg)
+	err := newProvider().Allow("free", corequota.ResourceMemberPerOrg, 5)
 	ex, ok := corequota.AsExceeded(err)
 	if !ok {
 		t.Fatalf("want ExceededError, got %v", err)
@@ -69,8 +60,7 @@ func TestFreeTier_MemberCap(t *testing.T) {
 
 func TestBusinessTier_MemberCap(t *testing.T) {
 	// 99 members on Business → 100th rejected, upgrade to enterprise.
-	p := newProvider(fakeCounts{tier: TierBusiness, members: 99})
-	err := p.CheckAndReserve(context.Background(), "o", "u", corequota.ResourceMemberPerOrg)
+	err := newProvider().Allow("business", corequota.ResourceMemberPerOrg, 99)
 	ex, ok := corequota.AsExceeded(err)
 	if !ok {
 		t.Fatalf("want ExceededError, got %v", err)
@@ -80,10 +70,15 @@ func TestBusinessTier_MemberCap(t *testing.T) {
 	}
 }
 
+func TestBusinessTier_UnderMemberCap(t *testing.T) {
+	if err := newProvider().Allow("business", corequota.ResourceMemberPerOrg, 98); err != nil {
+		t.Fatalf("98 members on business should be allowed: %v", err)
+	}
+}
+
 func TestEnterpriseTier_MemberCap_ContactSales(t *testing.T) {
 	// 1000 members on Enterprise → 1001st rejected, contact sales (no checkout).
-	p := newProvider(fakeCounts{tier: TierEnterprise, members: 1000})
-	err := p.CheckAndReserve(context.Background(), "o", "u", corequota.ResourceMemberPerOrg)
+	err := newProvider().Allow("enterprise", corequota.ResourceMemberPerOrg, 1000)
 	ex, ok := corequota.AsExceeded(err)
 	if !ok {
 		t.Fatalf("want ExceededError, got %v", err)
@@ -97,38 +92,4 @@ func TestEnterpriseTier_MemberCap_ContactSales(t *testing.T) {
 	if ex.UpgradeURL != "" {
 		t.Error("contact_sales boundary must NOT carry an upgrade_url (no self-serve)")
 	}
-}
-
-func TestReserverInvokedOnSuccess(t *testing.T) {
-	called := false
-	r := reserverFunc(func(context.Context, string, string, corequota.Resource) error {
-		called = true
-		return nil
-	})
-	p := NewProvider(fakeCounts{tier: TierFree, sites: 0}, r, DashboardURLBuilder{})
-	if err := p.CheckAndReserve(context.Background(), "o", "u", corequota.ResourceSitePerUser); err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	if !called {
-		t.Error("Reserver.Reserve should be called when within cap")
-	}
-}
-
-func TestReserverSkippedWhenOverCap(t *testing.T) {
-	called := false
-	r := reserverFunc(func(context.Context, string, string, corequota.Resource) error {
-		called = true
-		return nil
-	})
-	p := NewProvider(fakeCounts{tier: TierFree, sites: 10}, r, DashboardURLBuilder{})
-	_ = p.CheckAndReserve(context.Background(), "o", "u", corequota.ResourceSitePerUser)
-	if called {
-		t.Error("Reserver must NOT run when the cap is already crossed")
-	}
-}
-
-type reserverFunc func(ctx context.Context, orgID, userID string, res corequota.Resource) error
-
-func (f reserverFunc) Reserve(ctx context.Context, orgID, userID string, res corequota.Resource) error {
-	return f(ctx, orgID, userID, res)
 }

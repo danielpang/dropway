@@ -54,6 +54,11 @@ func run(baseLogger *slog.Logger) error {
 		slog.Warn("JWKS_URL not set — authenticated routes will reject all tokens")
 	}
 
+	// Build-tag-selected quota provider: Unlimited (OSS) or the cloud hard-cap
+	// pure policy (cloud build). The Store owns the race-safe mechanics.
+	qp := newQuotaProvider(cfg)
+	slog.Info("quota provider wired", "cloud_build", cloudBuild, "provider", quotaProviderName())
+
 	// ---- Data layer: pgx pool (non-BYPASSRLS shipped_app role) → Store. ----
 	var st *store.Store
 	if cfg.DatabaseURL != "" {
@@ -62,7 +67,7 @@ func run(baseLogger *slog.Logger) error {
 			return err
 		}
 		defer pool.Close()
-		st = store.New(pool)
+		st = store.New(pool, qp)
 		slog.Info("store wired (RLS tenant context per request)")
 	} else {
 		slog.Warn("DATABASE_URL not set — DB-backed routes will return 503")
@@ -116,11 +121,6 @@ func run(baseLogger *slog.Logger) error {
 		slog.Warn("priming JWKS failed; will refresh lazily", "err", err)
 	}
 	cancelPrime()
-
-	// Build-tag-selected quota provider: Unlimited (OSS) or the cloud hard-cap
-	// provider (cloud build). See wire_oss.go / wire_cloud.go.
-	qp := newQuotaProvider(cfg)
-	slog.Info("quota provider wired", "cloud_build", cloudBuild, "provider", quotaProviderName())
 
 	// nil-safe: NewFull stores nil deps and the DB-backed routes return 503.
 	var siteStore handlers.SiteStore

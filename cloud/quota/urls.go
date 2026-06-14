@@ -10,15 +10,15 @@ type DashboardURLBuilder struct {
 	DashboardBaseURL string
 }
 
-// UpgradeURL points at the subscription modal pre-selected to `target`.
-func (b DashboardURLBuilder) UpgradeURL(orgID string, target PlanTier) string {
-	q := url.Values{"org": {orgID}, "tier": {string(target)}}
+// UpgradeURL points at the subscription modal pre-selected to `target`. The
+// active org comes from the dashboard session, so no org id is embedded.
+func (b DashboardURLBuilder) UpgradeURL(target PlanTier) string {
+	q := url.Values{"tier": {string(target)}}
 	return b.DashboardBaseURL + "/billing/upgrade?" + q.Encode()
 }
 
 // SalesURL points at the contact-sales CTA (no self-serve checkout above the
 // Enterprise band).
-func (b DashboardURLBuilder) SalesURL(orgID string) string {
-	q := url.Values{"org": {orgID}}
-	return b.DashboardBaseURL + "/contact-sales?" + q.Encode()
+func (b DashboardURLBuilder) SalesURL() string {
+	return b.DashboardBaseURL + "/contact-sales"
 }
