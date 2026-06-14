@@ -134,8 +134,28 @@ func TestDeployFlow_PrepareFinalizePublish(t *testing.T) {
 	}
 
 	// The manifest object was written under manifests/<org>/<site>/<ver>.json.
-	if _, err := obj.GetManifest(context.Background(), "org_1", siteID, fin.VersionID); err != nil {
+	manifestBytes, err := obj.GetManifest(context.Background(), "org_1", siteID, fin.VersionID)
+	if err != nil {
 		t.Fatalf("manifest not written: %v", err)
+	}
+	// C1: the manifest MUST be stamped with the MANIFEST schema version (the value
+	// the serving Worker pins, manifest.SchemaVersion), NOT projection.SchemaVersion
+	// (the KV route contract). Sourcing it from the route contract made every deploy
+	// 404 once the route schema bumped to v2. Pin it here so the two can never be
+	// conflated again, and assert it equals 1 (the Worker's SUPPORTED_MANIFEST_SCHEMA_VERSION).
+	var writtenManifest struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(manifestBytes, &writtenManifest); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	if writtenManifest.SchemaVersion != manifest.SchemaVersion {
+		t.Errorf("manifest schema_version = %d, want manifest.SchemaVersion (%d)",
+			writtenManifest.SchemaVersion, manifest.SchemaVersion)
+	}
+	if manifest.SchemaVersion != 1 {
+		t.Errorf("manifest.SchemaVersion = %d, but the serving Worker pins SUPPORTED_MANIFEST_SCHEMA_VERSION=1; "+
+			"bump both in lock-step or new deploys will 404", manifest.SchemaVersion)
 	}
 
 	// 5. Publish: flips the pointer and writes the KV projection.

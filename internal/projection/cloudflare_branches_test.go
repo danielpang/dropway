@@ -2,8 +2,10 @@ package projection
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -29,6 +31,30 @@ type kvCall struct {
 func newKVServer() (*kvServer, *httptest.Server) {
 	k := &kvServer{store: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// KV list endpoint (.../keys?prefix=) — used by RebuildFromDB to find stale
+		// keys to prune. Returns the stored key names under the requested prefix.
+		if strings.HasSuffix(r.URL.Path, "/keys") {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			if k.fail != 0 {
+				w.WriteHeader(k.fail)
+				_, _ = w.Write([]byte(`{"success":false}`))
+				return
+			}
+			pfx := r.URL.Query().Get("prefix")
+			result := []map[string]string{}
+			for name := range k.store {
+				if strings.HasPrefix(name, pfx) {
+					result = append(result, map[string]string{"name": name})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success":     true,
+				"result":      result,
+				"result_info": map[string]string{"cursor": ""},
+			})
+			return
+		}
 		const prefix = "/accounts/a/storage/kv/namespaces/n/values/"
 		key := r.URL.Path[len(prefix):]
 		k.mu.Lock()
@@ -165,11 +191,17 @@ func TestCloudflareKV_SetOrgStatus_BlockAndClear(t *testing.T) {
 }
 
 // TestCloudflareKV_RebuildFromDB asserts the reconciler re-PUTs every supplied
-// route (last-writer-wins) — the rebuildable-from-Postgres invariant.
+// route AND prunes a stale route:<host> key that the authoritative set no longer
+// contains (the full-replace, rebuildable-from-Postgres invariant — H5). A
+// revoked:/org_status: key in the same namespace must be left untouched.
 func TestCloudflareKV_RebuildFromDB(t *testing.T) {
 	k, srv := newKVServer()
 	defer srv.Close()
 	c := newKV(srv.URL)
+
+	// Seed a stale route (a deleted/reassigned host) and an unrelated denylist key.
+	k.store["route:stale.shippedusercontent.com"] = `{"org_id":"old"}`
+	k.store["revoked:user:u1"] = `{"min_iat":1}`
 
 	routes := map[string]RouteValue{
 		"a.shippedusercontent.com": {OrgID: "o", SiteID: "s", VersionID: "va", AccessMode: AccessPublic, SchemaVersion: SchemaVersion},
@@ -185,6 +217,12 @@ func TestCloudflareKV_RebuildFromDB(t *testing.T) {
 	}
 	if _, ok := k.store["route:b.shippedusercontent.com"]; !ok {
 		t.Error("rebuild did not write route b")
+	}
+	if _, ok := k.store["route:stale.shippedusercontent.com"]; ok {
+		t.Error("rebuild did not prune the stale route key")
+	}
+	if _, ok := k.store["revoked:user:u1"]; !ok {
+		t.Error("rebuild must not touch non-route keys (revoked:)")
 	}
 }
 

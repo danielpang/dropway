@@ -209,6 +209,18 @@ func TestIntegration_Phase4(t *testing.T) {
 	must(t, err)
 	must(t, proj.PutRoute(ctx, resPub.Host, resPub.Route))
 
+	// H4: register a verified CUSTOM domain on siteA so the DR rebuild must restore
+	// it too — not just the canonical slug host. Before the fix, the rebuild emitted
+	// only HostForSlug(slug), so every custom domain stayed dark after a KV wipe.
+	customHost := "dr.phase4.example"
+	drDom, err := st.CreateDomain(ctx, tA, store.CreateDomainParams{
+		SiteID: siteA.ID, Hostname: customHost, CFHostnameID: "cf-fake-dr", DCVRecord: "_cf TXT dr",
+	})
+	must(t, err)
+	drDomRes, err := st.UpdateDomainStatus(ctx, tA, drDom.ID, store.DomainVerified, store.TLSIssued)
+	must(t, err)
+	must(t, proj.PutRoute(ctx, drDomRes.Host, drDomRes.Route))
+
 	hostA := projection.HostForSlug("phase4a")
 	hostGC := projection.HostForSlug("phase4gc")
 
@@ -216,6 +228,9 @@ func TestIntegration_Phase4(t *testing.T) {
 	must(t, proj.RebuildFromDB(ctx, map[string]projection.RouteValue{}))
 	if _, ok := proj.Get(hostA); ok {
 		t.Fatal("projection not wiped")
+	}
+	if _, ok := proj.Get(customHost); ok {
+		t.Fatal("projection not wiped (custom host)")
 	}
 
 	// DR drill: rebuild from Postgres across ALL orgs (enumerated via all_org_ids()).
@@ -231,6 +246,9 @@ func TestIntegration_Phase4(t *testing.T) {
 	}
 	if _, ok := proj.Get(hostGC); !ok {
 		t.Errorf("DR rebuild did not restore route for %s", hostGC)
+	}
+	if _, ok := proj.Get(customHost); !ok {
+		t.Errorf("H4: DR rebuild did not restore the CUSTOM-domain route %s", customHost)
 	}
 
 	t.Log("PASS: audit write/read + cross-tenant isolation, revocation deny-list write (idempotent), R2 GC orphan-delete, DR rebuild-from-Postgres")

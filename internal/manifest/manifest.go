@@ -19,6 +19,19 @@ import (
 	"sort"
 )
 
+// SchemaVersion is the contract version of the stored per-deploy manifest JSON
+// (manifests/<org>/<site>/<version>.json) the serving Worker reads and pins. It
+// MUST equal SUPPORTED_MANIFEST_SCHEMA_VERSION in edge/serving-worker/src/
+// manifest.ts.
+//
+// This is a SEPARATE contract from internal/projection.SchemaVersion (the KV
+// route value). The two evolve on independent cadences, so they must NEVER be
+// sourced from the same constant: bumping the route contract (e.g. v1→v2 to add
+// expires_at) must not flip the manifest version the Worker accepts, or every new
+// deploy's manifest is rejected and the site 404s. A handler round-trip test pins
+// this value to what the Worker accepts.
+const SchemaVersion = 1
+
 // File is the minimal (path, sha256) pair the digest is computed over. Both the
 // CLI Entry and the server's ManifestFile project onto this shape.
 type File struct {

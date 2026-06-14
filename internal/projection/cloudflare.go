@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/danielpang/shipped/internal/edgerevoke"
@@ -91,19 +92,101 @@ func (c *CloudflareKV) DeleteRoute(ctx context.Context, host string) error {
 	return c.do(req, "delete route "+host)
 }
 
-// RebuildFromDB re-pushes every supplied route. KV has no transactional bulk
-// replace via this single-key path, so the reconciler semantics are: write every
-// authoritative route (last-writer-wins). Stale keys for deleted sites are
-// handled by DeleteRoute on delete; a full GC pass is a Phase-4 concern. This
-// keeps the "rebuildable from Postgres" invariant: after a wipe, replaying these
-// writes restores serving.
+// RebuildFromDB REPLACES the route keyspace with the supplied authoritative set,
+// honoring the Writer contract ("clears the projection and re-writes it") so the
+// CloudflareKV and Local writers behave identically. It lists the existing
+// route:<host> keys, DELETEs any not in the authoritative set (a host deleted or
+// reassigned before a wipe-and-restore must not survive as a stale — or, worse,
+// wrong-tenant — route), then writes every supplied route. Only the "route:"
+// prefix is touched: the revoked:/org_status: keys in the same namespace are left
+// intact. This keeps the "rebuildable from Postgres" invariant exact.
 func (c *CloudflareKV) RebuildFromDB(ctx context.Context, routes map[string]RouteValue) error {
+	// Validate the whole input BEFORE any destructive prune, so a malformed route
+	// can never leave the projection half-cleared.
+	desired := make(map[string]struct{}, len(routes))
+	for host, val := range routes {
+		if err := val.Validate(); err != nil {
+			return fmt.Errorf("rebuild: route %s: %w", host, err)
+		}
+		desired[RouteKey(host)] = struct{}{}
+	}
+
+	existing, err := c.listKeys(ctx, "route:")
+	if err != nil {
+		return fmt.Errorf("rebuild: list keys: %w", err)
+	}
+	for _, key := range existing {
+		if _, keep := desired[key]; keep {
+			continue
+		}
+		if err := c.deleteKey(ctx, key); err != nil {
+			return fmt.Errorf("rebuild: prune %s: %w", key, err)
+		}
+	}
+
 	for host, val := range routes {
 		if err := c.PutRoute(ctx, host, val); err != nil {
 			return fmt.Errorf("rebuild: %w", err)
 		}
 	}
 	return nil
+}
+
+// listKeys returns every KV key under prefix, following the list API's pagination
+// cursor. Used by RebuildFromDB to find stale keys to prune.
+func (c *CloudflareKV) listKeys(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	cursor := ""
+	for {
+		u := fmt.Sprintf("%s/accounts/%s/storage/kv/namespaces/%s/keys?prefix=%s&limit=1000",
+			c.baseURL(), c.AccountID, c.NamespaceID, url.QueryEscape(prefix))
+		if cursor != "" {
+			u += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.auth(req)
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("cloudflare returned %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+		}
+		var parsed struct {
+			Result []struct {
+				Name string `json:"name"`
+			} `json:"result"`
+			ResultInfo struct {
+				Cursor string `json:"cursor"`
+			} `json:"result_info"`
+		}
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return nil, err
+		}
+		for _, r := range parsed.Result {
+			keys = append(keys, r.Name)
+		}
+		if parsed.ResultInfo.Cursor == "" {
+			break
+		}
+		cursor = parsed.ResultInfo.Cursor
+	}
+	return keys, nil
+}
+
+// deleteKey DELETEs a single KV key by its full name (e.g. "route:<host>").
+func (c *CloudflareKV) deleteKey(ctx context.Context, key string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.kvValueURL(key), nil)
+	if err != nil {
+		return err
+	}
+	c.auth(req)
+	return c.do(req, "prune "+key)
 }
 
 // Revoke writes (or tightens) the hard-revocation denylist entry for (kind, id) in

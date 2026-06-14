@@ -249,8 +249,13 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write the immutable per-deploy manifest at manifests/<org>/<site>/<ver>.json.
-	manifest := storedManifest{SchemaVersion: projection.SchemaVersion, Files: files}
-	body, err := json.Marshal(manifest)
+	// The manifest's schema_version is the MANIFEST contract (manifest.SchemaVersion,
+	// pinned to the Worker's SUPPORTED_MANIFEST_SCHEMA_VERSION) — NOT the KV route
+	// contract (projection.SchemaVersion), which versions independently. Sourcing it
+	// from projection.SchemaVersion previously made every deploy's manifest unreadable
+	// after the route contract bumped to v2 (the Worker rejects it → 404).
+	mani := storedManifest{SchemaVersion: manifest.SchemaVersion, Files: files}
+	body, err := json.Marshal(mani)
 	if err != nil {
 		httpx.WriteError(w, err)
 		return
@@ -349,13 +354,23 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Project the route to the edge AFTER the authoritative pointer flip committed.
-	if err := a.Projection.PutRoute(r.Context(), res.Host, res.Route); err != nil {
-		// The DB is already authoritative; surface the projection failure so the
-		// caller can retry, but log it loudly — the reconciler/rebuild backstops it.
-		logger(r).Error("projection write failed after publish",
-			"host", res.Host, "site_id", siteID, "version_id", req.VersionID, "err", err)
-		httpx.WriteError(w, err)
-		return
+	// Rewrite EVERY host of the site (canonical + verified custom domains) so a
+	// custom domain never keeps serving the OLD version after a publish/rollback
+	// (H3). res.Routes always includes the canonical host; fall back to the single
+	// Host/Route pair only if a caller didn't populate Routes.
+	routeUpdates := res.Routes
+	if len(routeUpdates) == 0 {
+		routeUpdates = []store.RouteUpdate{{Host: res.Host, Route: res.Route}}
+	}
+	for _, ru := range routeUpdates {
+		if err := a.Projection.PutRoute(r.Context(), ru.Host, ru.Route); err != nil {
+			// The DB is already authoritative; surface the projection failure so the
+			// caller can retry, but log it loudly — the reconciler/rebuild backstops it.
+			logger(r).Error("projection write failed after publish",
+				"host", ru.Host, "site_id", siteID, "version_id", req.VersionID, "err", err)
+			httpx.WriteError(w, err)
+			return
+		}
 	}
 
 	logger(r).Info("published",

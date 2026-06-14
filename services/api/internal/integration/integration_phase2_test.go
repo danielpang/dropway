@@ -368,6 +368,30 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 		t.Fatalf("dual custom not public before change: %+v ok=%v", rv, ok)
 	}
 
+	// H3: a re-publish (deploy a new version) must rewrite EVERY host's route to the
+	// new version_id — a custom domain left pointing at the OLD version keeps serving
+	// the stale build after a publish/rollback. Publish now returns Routes for all
+	// hosts (canonical + custom), not just the canonical pair.
+	dualVer2 := deployVersion(t, ctx, st, obj, tA, dualSite.ID, map[string][]byte{"index.html": []byte("<h1>dual v2</h1>")})
+	repub, err := st.Publish(ctx, tA, dualSite.ID, dualVer2)
+	if err != nil {
+		t.Fatalf("re-publish dual: %v", err)
+	}
+	republishedHosts := map[string]bool{}
+	for _, ru := range repub.Routes {
+		must(t, proj.PutRoute(ctx, ru.Host, ru.Route))
+		republishedHosts[ru.Host] = true
+	}
+	if !republishedHosts[dualCanonical] || !republishedHosts[dualCustom] {
+		t.Fatalf("H3: Publish did not return BOTH hosts: %+v", repub.Routes)
+	}
+	if rv, _ := proj.Get(dualCustom); rv.VersionID != dualVer2 {
+		t.Fatalf("H3: CUSTOM host still points at old version after re-publish: %+v (want %s)", rv, dualVer2)
+	}
+	if rv, _ := proj.Get(dualCanonical); rv.VersionID != dualVer2 {
+		t.Fatalf("H3: canonical host not updated after re-publish: %+v (want %s)", rv, dualVer2)
+	}
+
 	// (a) SetSiteAccess public→org_only rewrites EVERY host's route.
 	accRes, err := st.SetSiteAccess(ctx, tA, store.SetAccessParams{SiteID: dualSite.ID, Mode: projection.AccessOrgOnly})
 	if err != nil {

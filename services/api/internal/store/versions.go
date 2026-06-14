@@ -208,13 +208,43 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 
 		res.Site = siteFromDB(site)
 		res.Site.CurrentVersionID = &vid
+
+		// Public/unlisted links enforce expiry at the edge from the RouteValue;
+		// identity-gated modes enforce it at mint time (routeExpiry returns "" for
+		// them). A public site may have no policy row → treat as "no expiry".
+		var expiresAt string
+		if pol, err := q.GetSiteAccessPolicy(ctx, siteID); err == nil {
+			expiresAt = routeExpiry(site.AccessMode, accessPolicyFromDB(pol))
+		} else if !isNoRows(err) {
+			return err
+		}
+
+		newRoute := func() projection.RouteValue {
+			return projection.RouteValue{
+				OrgID:         t.OrgID,
+				SiteID:        siteID,
+				VersionID:     versionID,
+				AccessMode:    site.AccessMode,
+				SchemaVersion: projection.SchemaVersion,
+				ExpiresAt:     expiresAt,
+			}
+		}
+
+		// Keep the canonical Host/Route populated for back-compat (the single-route
+		// shape); the handler iterates Routes when present.
 		res.Host = host
-		res.Route = projection.RouteValue{
-			OrgID:         t.OrgID,
-			SiteID:        siteID,
-			VersionID:     versionID,
-			AccessMode:    site.AccessMode,
-			SchemaVersion: projection.SchemaVersion,
+		res.Route = newRoute()
+
+		// Rewrite EVERY host of the site (canonical + verified custom domains) to the
+		// new version — each custom host has its own route:<host> KV entry, and a host
+		// left pointing at the OLD version_id keeps serving the stale build after a
+		// publish/rollback (parity with SetSiteAccess / the reconcile path; FIX 1).
+		hostRoutes, err := q.ListHostRoutesForSite(ctx, siteID)
+		if err != nil {
+			return err
+		}
+		for _, hr := range hostRoutes {
+			res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: newRoute()})
 		}
 		return nil
 	})

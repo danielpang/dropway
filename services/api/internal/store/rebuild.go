@@ -31,29 +31,27 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			if r.VersionID == nil {
 				continue
 			}
-			host := projection.HostForSlug(r.Slug)
-			// Defense in depth: only project a host this org/site actually OWNS in
-			// the global registry. Under RLS, GetHostRoute returns a row only for a
-			// host the active org owns; a missing or other-owned row means we must
-			// NOT project route:<host> (it would clobber the rightful owner). This
-			// keeps the rebuild faithful to the global host registry, not just the
-			// per-org slug.
-			hr, err := q.GetHostRoute(ctx, host)
+			// Project EVERY host registered for the site — the canonical
+			// <slug>.shippedusercontent.com host AND every verified custom-domain host
+			// — not just HostForSlug(slug). Omitting custom domains leaves them absent
+			// from the rebuilt projection, so they stop serving after a KV wipe and the
+			// reconciler can never repair a stale custom-domain route (H4).
+			//
+			// ListHostRoutesForSite runs under this org's RLS tenant context and
+			// returns only rows the site owns, so each host is owned by this org/site
+			// (the same global-registry defense-in-depth the old GetHostRoute gave us).
+			hostRoutes, err := q.ListHostRoutesForSite(ctx, r.SiteID)
 			if err != nil {
-				if isNoRows(err) {
-					continue
-				}
 				return err
 			}
-			if hr.SiteID != r.SiteID || hr.OrgID != r.OrgID {
-				continue
-			}
-			routes[host] = projection.RouteValue{
-				OrgID:         r.OrgID,
-				SiteID:        r.SiteID,
-				VersionID:     *r.VersionID,
-				AccessMode:    r.AccessMode,
-				SchemaVersion: projection.SchemaVersion,
+			for _, hr := range hostRoutes {
+				routes[hr.Host] = projection.RouteValue{
+					OrgID:         r.OrgID,
+					SiteID:        r.SiteID,
+					VersionID:     *r.VersionID,
+					AccessMode:    r.AccessMode,
+					SchemaVersion: projection.SchemaVersion,
+				}
 			}
 		}
 		return nil
