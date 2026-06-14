@@ -130,6 +130,25 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	t.Log("PASS: Free org capped at 10 sites/user (11th → 402)")
 
 	// -----------------------------------------------------------------------
+	// 1b. H8: the members_per_org cap is enforced by the race-safe preflight. A Free
+	// org (cap 5) passes with 0 members, then 402s once it has 5.
+	// -----------------------------------------------------------------------
+	if err := st.PreflightMembers(ctx, tenant); err != nil {
+		t.Fatalf("members preflight with 0 members should pass: %v", err)
+	}
+	for i := 1; i <= 5; i++ {
+		cbExecOwner(t, fmt.Sprintf(
+			`INSERT INTO auth.member ("organizationId","userId","role") VALUES ('%s','c0000000-0000-0000-0000-00000000000%d','member');`,
+			orgID, i))
+	}
+	if err := st.PreflightMembers(ctx, tenant); err == nil {
+		t.Fatal("H8: members preflight with 5 members on Free must 402")
+	} else if ex, ok := quota.AsExceeded(err); !ok || ex.PlanTier != "free" || ex.Max != 5 {
+		t.Fatalf("H8: member-cap 402 payload wrong: ok=%v err=%v", ok, err)
+	}
+	t.Log("PASS: H8 — Free org member cap enforced (5 members → preflight 402)")
+
+	// -----------------------------------------------------------------------
 	// 2. SIGNED checkout.session.completed → plan_tier=business in BOTH tables.
 	// -----------------------------------------------------------------------
 	checkoutPayload := []byte(`{

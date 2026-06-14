@@ -342,6 +342,32 @@ type memberResponse struct {
 	Role   string `json:"role"`
 }
 
+// MembersPreflight is the members_per_org cap gate the dashboard invite path calls
+// BEFORE adding a member (H8). It returns 200 {allowed:true} when the org has room,
+// or 402 quota_exceeded (the upgrade body) when it is at/over its member cap — so a
+// Free org can't grow past its cap on the normal invite flow. Enforcement is
+// server-side and open-core: OSS = Unlimited (always 200); cloud = the hard-cap
+// bands. The check is race-safe (per-org advisory lock + members+pending count in
+// one tx). A direct Better-Auth call bypasses this UX gate but is bounded by the
+// org plugin's membershipLimit and reconciled by the billing webhook (over_limit).
+func (a *API) MembersPreflight(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	if err := a.Store.PreflightMembers(r.Context(), t); err != nil {
+		// *quota.ExceededError → 402 with the upgrade body; anything else maps via
+		// writeStoreError (e.g. a transient DB error → 500).
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"allowed": true})
+}
+
 // ListMembers lists the caller org's members (read from the Better Auth member
 // table). Any member may list; the read is org-scoped. If the Better Auth table is
 // unavailable, returns an empty list with a note (self-host pre-Better-Auth).

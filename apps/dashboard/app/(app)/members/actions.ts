@@ -61,6 +61,48 @@ export async function revokeAccessAction(input: {
   }
 }
 
+export type MembersPreflightResult =
+  | { ok: true }
+  | { ok: false; atCap: boolean; message: string; upgradeUrl?: string };
+
+/**
+ * Members-cap preflight for the invite flow (H8). Asks the Go API whether the org
+ * may add another member (members + pending invitations vs the plan cap); the cap
+ * decision lives in the Go API so the cloud caps never ship in this build. A 402
+ * resolves to atCap=true with an upgrade message + URL so the form can block the
+ * invite and prompt an upgrade, instead of a generic Better Auth error after the
+ * fact.
+ */
+export async function preflightMembersAction(): Promise<MembersPreflightResult> {
+  try {
+    await api.preflightMembers();
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 402) {
+        const body = err.body as {
+          next_tier?: string;
+          upgrade_url?: string;
+          sales_url?: string;
+          max?: number;
+        } | null;
+        const upgradeUrl = body?.upgrade_url ?? body?.sales_url;
+        const max = body?.max ? ` (${body.max})` : "";
+        const message =
+          body?.next_tier === "contact_sales"
+            ? `Your organization is at its member limit${max}. Contact sales to add more members.`
+            : `Your organization is at its member limit${max}. Upgrade${
+                body?.next_tier ? ` to ${body.next_tier}` : ""
+              } to invite more members.`;
+        return { ok: false, atCap: true, message, upgradeUrl };
+      }
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      return { ok: false, atCap: false, message: apiMsg ?? "Could not check member limits. Try again." };
+    }
+    return { ok: false, atCap: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 /**
  * Hard-finalize a member removal (C2 / ARCHITECTURE.md §10). After the org plugin
  * deletes the member row, removal MUST also:

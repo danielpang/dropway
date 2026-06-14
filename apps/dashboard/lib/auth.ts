@@ -66,6 +66,12 @@ export const auth = betterAuth({
       // Authorization detail (admin-only policy/role changes) is enforced in the
       // Go API + DB CHECK/trigger; this plugin provides the membership tables.
       allowUserToCreateOrganization: true,
+      // The AUTHORITATIVE members_per_org cap is the Go API preflight the invite
+      // path calls (open-core: OSS unlimited, cloud per-tier — H8). This only LIFTS
+      // Better Auth's restrictive default membershipLimit (100), which would
+      // otherwise break an Enterprise org (cap 1000) and cap an unlimited self-host.
+      // Keep it well above any tier cap so it never spuriously blocks.
+      membershipLimit: 100_000,
     }),
 
     // Passwordless magic-link sign-in as a secondary method on the auth screens.

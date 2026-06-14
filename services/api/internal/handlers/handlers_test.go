@@ -261,6 +261,46 @@ func TestCreateSite_NoClaims_401(t *testing.T) {
 	_ = httpx.ErrUnauthorized // keep import meaningful/documented
 }
 
+// H8: the members preflight gate renders the store's *quota.ExceededError as 402
+// (the upgrade body) when the org is at/over its member cap, and 200 otherwise.
+func TestMembersPreflight_AtCap_402(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().preflightErr = &quota.ExceededError{
+		Limit: quota.ResourceMemberPerOrg, Current: 5, Max: 5,
+		PlanTier: "free", NextTier: "business",
+		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
+	}
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := authed(a.MembersPreflight, claims("u", "org_1", "admin"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/members/preflight", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402 (at member cap): %s", rr.Code, rr.Body.String())
+	}
+	var body quota.ExceededError
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.NextTier != "business" {
+		t.Errorf("402 body next_tier = %q, want business", body.NextTier)
+	}
+}
+
+func TestMembersPreflight_UnderCap_200(t *testing.T) {
+	fs := newFakeStore() // preflightErr nil → allowed
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := authed(a.MembersPreflight, claims("u", "org_1", "admin"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/members/preflight", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (under cap): %s", rr.Code, rr.Body.String())
+	}
+}
+
 // jsonReq builds a request with a JSON body and the auth header set.
 func jsonReq(method, target, body string) *http.Request {
 	req := httptest.NewRequest(method, target, stringReader(body))

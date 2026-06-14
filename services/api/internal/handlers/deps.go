@@ -39,6 +39,9 @@ type SiteStore interface {
 
 	MemberRole(ctx context.Context, orgID, userID string) (string, error)
 	ListMembers(ctx context.Context, orgID string) ([]store.Member, error)
+	// PreflightMembers is the members_per_org cap gate (H8); returns a
+	// *quota.ExceededError when the org is at/over its member cap.
+	PreflightMembers(ctx context.Context, t store.Tenant) error
 
 	// Authz exchange (the /authz mint + password endpoints).
 	AuthorizeMint(ctx context.Context, v store.MintViewer, host string) (store.MintDecision, error)

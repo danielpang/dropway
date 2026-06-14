@@ -60,6 +60,10 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 		r.Get("/me", api.Me)
 		r.Get("/members", api.ListMembers)
+		// Members cap gate (H8): the dashboard invite path calls this before adding a
+		// member; 402 when the org is at/over its members_per_org cap (cloud bands;
+		// OSS unlimited). Any member may call it (read-only check of its own org).
+		r.Get("/members/preflight", api.MembersPreflight)
 
 		// Hard revocation (Phase 4): admin/owner writes the edge denylist so a
 		// removed/banned member's edge tokens are rejected immediately, not just at

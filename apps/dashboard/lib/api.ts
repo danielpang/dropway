@@ -477,4 +477,16 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+
+  /**
+   * Members-cap preflight (H8): the invite flow calls this BEFORE inviting. The Go
+   * API answers per its (OSS-unlimited or cloud-per-tier) policy — resolving with
+   * `{allowed:true}` when the org has room, or throwing an ApiError with status 402
+   * (the quota-exceeded upgrade body) when it is at/over its member cap. Keeping the
+   * cap decision in the Go API preserves the open-core boundary (the cloud caps
+   * never ship in the dashboard build).
+   */
+  preflightMembers(): Promise<{ allowed: boolean }> {
+    return apiFetch<{ allowed: boolean }>("/v1/members/preflight");
+  },
 };

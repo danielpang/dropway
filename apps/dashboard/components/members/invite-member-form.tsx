@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { preflightMembersAction } from "@/app/(app)/members/actions";
 import type { Role } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 
@@ -52,6 +53,18 @@ export function InviteMemberForm({
 
     setPending(true);
     try {
+      // H8: ask the Go API whether the org may add another member BEFORE inviting,
+      // so a Free org at its cap gets a clear upgrade prompt rather than a generic
+      // failure after Better Auth creates the invitation.
+      const preflight = await preflightMembersAction();
+      if (!preflight.ok) {
+        setError(
+          preflight.upgradeUrl
+            ? `${preflight.message} ${preflight.upgradeUrl}`
+            : preflight.message,
+        );
+        return;
+      }
       const { error: err } = await authClient.organization.inviteMember({
         email,
         role,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/danielpang/shipped/internal/projection"
@@ -14,37 +15,75 @@ import (
 	"github.com/danielpang/shipped/services/api/internal/store/db"
 )
 
-// PreflightMembers is the best-effort server-side check for the members_per_org
-// cap on OUR code path (Better Auth actually inserts the member row, so this can't
-// be perfectly race-safe — it's a preflight the dashboard calls before inviting).
-// It reads the org's live plan tier under the RLS tenant context and counts the
-// current members from the Better Auth table, then applies the pure quota policy.
-// Returns a *quota.ExceededError (→ 402) when the org is at/over its member cap.
+// PreflightMembers is the server-side members_per_org cap check the dashboard's
+// invite path calls BEFORE adding a member (Better Auth inserts the member row in
+// its own tx, so this is a preflight, not the insert itself). It returns a
+// *quota.ExceededError (→ 402) when the org is at/over its member cap; OSS =
+// Unlimited (always nil), cloud = the hard-cap bands.
+//
+// Race-safe WITHIN our path: everything runs in ONE tx that takes the per-org
+// advisory lock (LockOrgMemberQuota) first, so two concurrent preflights for the
+// same org serialize (mirrors CreateSite's per-user lock) instead of both reading a
+// stale count. The "current" usage counts live members PLUS pending invitations
+// (reserved seats), so a burst of invites before any are accepted can't overshoot
+// the cap. Both Better-Auth-owned tables are outside app RLS, so they're scoped
+// explicitly by org and tolerate being absent (self-host pre-Better-Auth → 0).
 func (s *Store) PreflightMembers(ctx context.Context, t Tenant) error {
-	var planTier string
-	if err := s.withTx(ctx, t, func(q *db.Queries) error {
-		pt, err := q.GetPlanTier(ctx, t.OrgID)
-		if err != nil {
-			return err
-		}
-		planTier = pt
-		return nil
-	}); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := setTenant(ctx, tx, t.UserID, t.OrgID); err != nil {
+		return err
+	}
+	q := db.New(tx)
+
+	// Serialize concurrent preflights for this org for the rest of the tx (wires the
+	// previously-dead LockOrgMemberQuota advisory-lock query).
+	if err := q.LockOrgMemberQuota(ctx, t.OrgID); err != nil {
+		return err
+	}
+	planTier, err := q.GetPlanTier(ctx, t.OrgID)
+	if err != nil {
 		return err
 	}
 
-	// auth.member is Better-Auth-owned and outside app RLS; scope explicitly by org.
-	var current int64
-	if err := s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM auth.member WHERE "organizationId" = $1`, t.OrgID,
-	).Scan(&current); err != nil {
-		if !isUndefinedTable(err) {
-			return err
-		}
-		current = 0 // Better Auth not migrated yet (self-host) → treat as empty.
+	current, err := countMembersAndPending(ctx, tx, t.OrgID)
+	if err != nil {
+		return err
 	}
+	if err := s.quota.Allow(planTier, quota.ResourceMemberPerOrg, current); err != nil {
+		return err // *quota.ExceededError → handler renders HTTP 402
+	}
+	return tx.Commit(ctx)
+}
 
-	return s.quota.Allow(planTier, quota.ResourceMemberPerOrg, current)
+// countMembersAndPending returns live members + pending invitations for an org
+// (the "reserved seats" usage the member cap is measured against). Each Better-Auth
+// table is counted on the supplied tx and tolerates a missing schema (self-host that
+// hasn't migrated Better Auth → that count is 0).
+func countMembersAndPending(ctx context.Context, tx pgx.Tx, orgID string) (int64, error) {
+	count := func(query string) (int64, error) {
+		var n int64
+		if err := tx.QueryRow(ctx, query, orgID).Scan(&n); err != nil {
+			if isUndefinedTable(err) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		return n, nil
+	}
+	members, err := count(`SELECT count(*) FROM auth.member WHERE "organizationId" = $1`)
+	if err != nil {
+		return 0, err
+	}
+	pending, err := count(`SELECT count(*) FROM auth.invitation WHERE "organizationId" = $1 AND status = 'pending'`)
+	if err != nil {
+		return 0, err
+	}
+	return members + pending, nil
 }
 
 // reservedSlugs are subdomain labels that may not be used as a site slug — they

@@ -25,8 +25,9 @@ import (
 type p2State struct {
 	policies   map[string]store.AccessPolicy
 	allowlist  map[string][]store.AllowlistEntry // siteID → entries
-	members    map[string]string                 // userID → role
-	memberErr  error
+	members      map[string]string // userID → role
+	memberErr    error
+	preflightErr error // injected by MembersPreflight (e.g. a *quota.ExceededError)
 	orgPolicy  bool                         // allow_external_sharing
 	domains    map[string]store.Domain      // domainID → domain
 	hostRoutes map[string][]store.HostRoute // siteID → registered hosts (canonical + custom)
@@ -184,6 +185,10 @@ func (f *fakeStore) ListMembers(_ context.Context, orgID string) ([]store.Member
 		out = append(out, store.Member{UserID: uid, OrgID: orgID, Role: role})
 	}
 	return out, nil
+}
+
+func (f *fakeStore) PreflightMembers(_ context.Context, _ store.Tenant) error {
+	return f.p2().preflightErr
 }
 
 func (f *fakeStore) AuthorizeMint(_ context.Context, v store.MintViewer, host string) (store.MintDecision, error) {
