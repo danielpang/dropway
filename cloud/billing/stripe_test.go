@@ -140,6 +140,34 @@ func TestRealVerifier_SubscriptionUpdated_DerivesTierFromPrice(t *testing.T) {
 	}
 }
 
+// H6: a subscription line item whose price matches NEITHER configured tier price
+// must set UnknownPrice (so applyEvent refuses to change entitlement) rather than
+// silently resolving to Free — which would downgrade a paying org.
+func TestRealVerifier_SubscriptionUpdated_UnknownPrice_Flagged(t *testing.T) {
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	payload := []byte(`{
+		"id":"evt_sub_unknown",
+		"object":"event",
+		"type":"customer.subscription.updated",
+		"data":{"object":{
+			"object":"subscription",
+			"id":"sub_u",
+			"customer":{"id":"cus_u","object":"customer"},
+			"status":"active",
+			"metadata":{"org_id":"org_u"},
+			"items":{"data":[{"quantity":3,"price":{"id":"price_new_unmapped"}}]}
+		}}
+	}`)
+	header := signHeader(t, whSecret, payload, time.Now())
+	ev, err := v.Verify(payload, header)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !ev.Data.UnknownPrice {
+		t.Error("UnknownPrice should be true for an unmapped non-empty price (H6)")
+	}
+}
+
 func TestRealVerifier_ForgedSignature_Rejected(t *testing.T) {
 	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
 	payload := []byte(`{"id":"evt_forged","type":"checkout.session.completed","data":{"object":{}}}`)

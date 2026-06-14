@@ -17,6 +17,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -52,6 +53,26 @@ type EventData struct {
 	Status               string // active | past_due | canceled | ...
 	CurrentPeriodEnd     int64  // unix seconds
 	CancelAtPeriodEnd    bool
+	// UnknownPrice is set when a subscription line item carried a non-empty price id
+	// that matched NEITHER configured tier price (H6). applyEvent then refuses to
+	// change entitlement (retryable) rather than silently downgrading to Free.
+	UnknownPrice bool
+}
+
+// isEntitledStatus reports whether a Stripe subscription status grants the paid
+// tier. `active`/`trialing` are entitled; `past_due` stays entitled through the
+// dunning grace (§9: it restricts NEW actions + shows a banner, but doesn't cut a
+// paying customer's live sites). Every other status — `unpaid`, `incomplete`,
+// `incomplete_expired`, `paused`, `canceled`, or anything unrecognized — is NOT
+// entitled, so applyEvent downgrades to Free instead of granting the price's tier
+// (M6: a non-paying subscription must never be recorded as active+paid).
+func isEntitledStatus(status string) bool {
+	switch status {
+	case "active", "trialing", "past_due":
+		return true
+	default:
+		return false
+	}
 }
 
 // SignatureVerifier verifies the raw request body against the Stripe-Signature
@@ -177,6 +198,13 @@ var errUnhandledEvent = errors.New("billing: unhandled event type")
 // (FIX 3 / §9). It is NOT used for transient DB errors, which must 500 and retry.
 var errUnfulfillableEvent = errors.New("billing: event cannot be applied (permanent)")
 
+// errUnknownPrice is returned when a subscription event's price maps to no
+// configured tier (H6). It is RETRYABLE (the handler 500s, Stripe retries): the
+// entitlement is left UNCHANGED — never downgraded to Free — so an ops
+// misconfiguration (an unmapped STRIPE_PRICE_*) can be fixed and the retry applies
+// correctly, instead of silently dropping a paying org to Free.
+var errUnknownPrice = errors.New("billing: subscription price is not mapped to a tier (configure STRIPE_PRICE_BUSINESS/ENTERPRISE)")
+
 // applyEvent dispatches a verified, deduped event to the persistence layer. It is
 // called by the store INSIDE the dedupe+apply transaction (so dispatch + the
 // entitlement write + the ledger row commit or roll back together).
@@ -197,6 +225,18 @@ func applyEvent(ctx context.Context, subs SubscriptionStore, log *slog.Logger, e
 	case "checkout.session.completed",
 		"customer.subscription.created",
 		"customer.subscription.updated":
+		// H6: an unrecognized price must not silently downgrade — refuse to change
+		// entitlement (retryable) so the price can be mapped and the retry applies.
+		if ev.Data.UnknownPrice {
+			return fmt.Errorf("%w: org %s", errUnknownPrice, ev.Data.OrgID)
+		}
+		// M6: entitlement follows the live PAYING status. A non-entitled status
+		// (unpaid / incomplete_expired / paused / canceled-via-update / …) must NOT
+		// grant the paid tier — downgrade to Free (read-only over-limit), exactly as
+		// a subscription.deleted does (§9), never leave it active+paid.
+		if !isEntitledStatus(ev.Data.Status) {
+			return subs.SetCanceled(ctx, ev.Data.OrgID)
+		}
 		return subs.UpsertSubscription(ctx, ev.Data)
 
 	case "customer.subscription.deleted":

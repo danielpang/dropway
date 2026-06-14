@@ -101,9 +101,21 @@ func TestTxSubsStore_CapturesStatusFromApply(t *testing.T) {
 			wantStatus: "active",
 		},
 		{
+			// fromCheckoutSession always stamps Status="active" (an entitled status),
+			// so the event upserts (and projects "active"); mirror that here.
 			name:       "active checkout → active",
-			ev:         Event{Type: "checkout.session.completed", Data: EventData{OrgID: "org_pay", PlanTier: TierBusiness}},
+			ev:         Event{Type: "checkout.session.completed", Data: EventData{OrgID: "org_pay", PlanTier: TierBusiness, Status: "active"}},
 			wantOrg:    "org_pay",
+			wantStatus: "active",
+		},
+		{
+			// M6: a subscription.updated that has gone non-paying (e.g. unpaid) must
+			// NOT keep the paid tier — it routes to the Free downgrade, projecting the
+			// computed org_status (here: under caps → active), never staying active+paid.
+			name:       "non-paying subscription.updated → downgrade",
+			ev:         Event{Type: "customer.subscription.updated", Data: EventData{OrgID: "org_unpaid", PlanTier: TierBusiness, Status: "unpaid"}},
+			applied:    "active",
+			wantOrg:    "org_unpaid",
 			wantStatus: "active",
 		},
 		{
@@ -124,6 +136,23 @@ func TestTxSubsStore_CapturesStatusFromApply(t *testing.T) {
 					rec.org, rec.status, tc.wantOrg, tc.wantStatus)
 			}
 		})
+	}
+}
+
+// H6: applyEvent must REFUSE (a retryable error) an event whose price didn't map
+// to a tier — never silently downgrade. Neither UpsertSubscription nor SetCanceled
+// is called, so the existing entitlement is untouched.
+func TestApplyEvent_UnknownPrice_RefusesWithoutTouchingEntitlement(t *testing.T) {
+	rec := &statusRecorder{}
+	err := applyEvent(context.Background(), rec, slog.Default(), Event{
+		Type: "customer.subscription.updated",
+		Data: EventData{OrgID: "org_x", PlanTier: TierBusiness, Status: "active", UnknownPrice: true},
+	})
+	if err == nil {
+		t.Fatal("applyEvent should error on an unknown price (H6)")
+	}
+	if rec.org != "" || rec.status != "" {
+		t.Errorf("nothing should be applied; captured org=%q status=%q", rec.org, rec.status)
 	}
 }
 

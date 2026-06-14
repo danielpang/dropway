@@ -41,15 +41,31 @@ func NewPriceMap(businessPrice, enterprisePrice string) PriceMap {
 	return PriceMap{business: businessPrice, enterprise: enterprisePrice}
 }
 
-// TierFor maps a Stripe price id to a PlanTier; unknown/empty → Free.
+// TierFor maps a Stripe price id to a PlanTier; unknown/empty → Free. Kept for
+// callers/tests that want the lenient mapping; the ENTITLEMENT path uses
+// TierForChecked so an unrecognized price can't silently downgrade a paying org.
 func (m PriceMap) TierFor(priceID string) PlanTier {
+	tier, _ := m.TierForChecked(priceID)
+	return tier
+}
+
+// TierForChecked maps a Stripe price id to a PlanTier AND reports whether the price
+// was RECOGNIZED. An empty price id maps to (Free, true) — a subscription with no
+// priced item is legitimately Free. A NON-EMPTY price that matches neither the
+// configured business nor enterprise price returns (Free, false): the caller must
+// NOT write that Free tier, or an ops misconfiguration (a new/unset STRIPE_PRICE_*)
+// would silently downgrade a paying org (H6). The entitlement path treats !ok as a
+// retryable error instead of a downgrade.
+func (m PriceMap) TierForChecked(priceID string) (PlanTier, bool) {
 	switch {
-	case priceID != "" && priceID == m.enterprise:
-		return TierEnterprise
-	case priceID != "" && priceID == m.business:
-		return TierBusiness
+	case priceID == "":
+		return TierFree, true
+	case priceID == m.enterprise && m.enterprise != "":
+		return TierEnterprise, true
+	case priceID == m.business && m.business != "":
+		return TierBusiness, true
 	default:
-		return TierFree
+		return TierFree, false
 	}
 }
 
@@ -229,7 +245,12 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 	if len(sub.Items.Data) > 0 {
 		item := sub.Items.Data[0]
 		d.Seats = item.Quantity
-		d.PlanTier = v.prices.TierFor(item.Price.ID)
+		// H6: an UNRECOGNIZED non-empty price must NOT resolve to Free (that would
+		// silently downgrade a paying org). Flag it so applyEvent refuses to change
+		// entitlement (retryable) until the price is mapped, rather than downgrading.
+		tier, ok := v.prices.TierForChecked(item.Price.ID)
+		d.PlanTier = tier
+		d.UnknownPrice = !ok
 		if d.CurrentPeriodEnd == 0 {
 			d.CurrentPeriodEnd = item.CurrentPeriodEnd
 		}

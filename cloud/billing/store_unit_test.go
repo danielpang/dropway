@@ -30,11 +30,16 @@ func TestNormalizeStatus(t *testing.T) {
 		{"past_due", "past_due"},
 		{"canceled", "canceled"},
 		{"incomplete", "incomplete"},
-		// Empty and anything outside the CHECK collapse to 'active' (a blank status
-		// on a verified event must not violate the subscriptions.status CHECK).
+		// An empty status (a blank on a verified event) collapses to 'active'; any
+		// other UNRECOGNIZED status maps to 'past_due' (NOT 'active') so a non-paying
+		// status is never recorded as healthy (M6). The authoritative entitlement
+		// gate is applyEvent/isEntitledStatus (a non-entitled status never reaches
+		// this UPSERT with a paid tier).
 		{"", "active"},
-		{"unpaid", "active"},
-		{"weird_future_status", "active"},
+		{"unpaid", "past_due"},
+		{"incomplete_expired", "past_due"},
+		{"paused", "past_due"},
+		{"weird_future_status", "past_due"},
 	}
 	for _, tc := range cases {
 		if got := normalizeStatus(tc.in); got != tc.want {

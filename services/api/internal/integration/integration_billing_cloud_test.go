@@ -168,6 +168,50 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	t.Log("PASS: signed webhook set plan_tier=business in billing.subscriptions AND app.org_meta; edge org_status cleared (active)")
 
 	// -----------------------------------------------------------------------
+	// 2b. H7: customer.subscription.created carries the seat quantity; a later
+	// out-of-order/retried checkout.session.completed carries seats=0 and must NOT
+	// zero the billed seat count.
+	// -----------------------------------------------------------------------
+	subSeatsPayload := []byte(`{
+		"id":"evt_sub_seats_5",
+		"object":"event",
+		"type":"customer.subscription.created",
+		"data":{"object":{
+			"object":"subscription",
+			"id":"sub_business_1",
+			"customer":"cus_business_1",
+			"status":"active",
+			"metadata":{"org_id":"` + orgID + `"},
+			"items":{"data":[{"quantity":5,"price":{"id":"` + cbPriceBiz + `"}}]}
+		}}
+	}`)
+	if rr := cbPostWebhook(t, webhookHandler, subSeatsPayload, cbSign(subSeatsPayload, cbWhSecret)); rr.Code != http.StatusOK {
+		t.Fatalf("subscription.created seats webhook status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if n := cbScanInt(t, pool, "SELECT seats FROM billing.subscriptions WHERE org_id=$1", orgID); n != 5 {
+		t.Fatalf("seats=%d after subscription.created, want 5", n)
+	}
+	checkoutSeats0 := []byte(`{
+		"id":"evt_checkout_seats0",
+		"object":"event",
+		"type":"checkout.session.completed",
+		"data":{"object":{
+			"object":"checkout.session",
+			"client_reference_id":"` + orgID + `",
+			"customer":"cus_business_1",
+			"subscription":"sub_business_1",
+			"metadata":{"org_id":"` + orgID + `","target_tier":"business"}
+		}}
+	}`)
+	if rr := cbPostWebhook(t, webhookHandler, checkoutSeats0, cbSign(checkoutSeats0, cbWhSecret)); rr.Code != http.StatusOK {
+		t.Fatalf("seats=0 checkout webhook status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if n := cbScanInt(t, pool, "SELECT seats FROM billing.subscriptions WHERE org_id=$1", orgID); n != 5 {
+		t.Fatalf("H7: seats=%d after a seats=0 checkout event, want 5 (must not be zeroed)", n)
+	}
+	t.Log("PASS: H7 — a seats=0 checkout event did not zero the billed seat count")
+
+	// -----------------------------------------------------------------------
 	// 3. PAYING RAISED THE CAP: the SAME user can now create the 11th..100th site.
 	// -----------------------------------------------------------------------
 	for i := 11; i <= 100; i++ {

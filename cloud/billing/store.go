@@ -288,7 +288,11 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 		    stripe_customer_id     = COALESCE(NULLIF(EXCLUDED.stripe_customer_id, ''), billing.subscriptions.stripe_customer_id),
 		    stripe_subscription_id = COALESCE(EXCLUDED.stripe_subscription_id, billing.subscriptions.stripe_subscription_id),
 		    plan_tier              = EXCLUDED.plan_tier,
-		    seats                  = EXCLUDED.seats,
+		    -- H7: only customer.subscription.* events carry a seat quantity;
+		    -- checkout.session.completed carries seats=0. Keep the existing seat
+		    -- count when the incoming event has none (0) so an out-of-order/retried
+		    -- checkout event can't zero a real, billed seat count.
+		    seats                  = COALESCE(NULLIF(EXCLUDED.seats, 0), billing.subscriptions.seats),
 		    status                 = EXCLUDED.status,
 		    cancel_at_period_end   = EXCLUDED.cancel_at_period_end,
 		    current_period_end     = EXCLUDED.current_period_end,
@@ -536,15 +540,22 @@ func isUndefinedTable(err error) bool {
 	return errors.As(err, &pe) && pe.SQLState() == "42P01"
 }
 
-// normalizeStatus maps an empty status to 'active' and constrains it to the values
-// allowed by the billing.subscriptions.status CHECK; anything unexpected becomes
-// 'active' (the webhook already verified the event, so this only guards blanks).
+// normalizeStatus constrains a Stripe status to the values allowed by the
+// billing.subscriptions.status CHECK. A KNOWN status passes through; an EMPTY
+// status (a blank on a verified event) becomes 'active'; any OTHER unrecognized
+// value (e.g. 'unpaid', 'incomplete_expired', 'paused') maps to 'past_due', NOT
+// 'active' — collapsing a non-paying status to 'active' would record a non-paying
+// subscription as healthy (M6). This is defense in depth: the authoritative
+// entitlement gate is applyEvent (isEntitledStatus), which routes a non-entitled
+// status to the Free downgrade so it never reaches this UPSERT with a paid tier.
 func normalizeStatus(status string) string {
 	switch status {
 	case "active", "trialing", "past_due", "canceled", "incomplete":
 		return status
-	default:
+	case "":
 		return "active"
+	default:
+		return "past_due"
 	}
 }
 
