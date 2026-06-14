@@ -23,14 +23,20 @@ import { Switch } from "@/components/ui/switch";
  * through a confirmation dialog first, then reports how many sites were
  * downgraded (the count the Go API returns from the reconcile).
  *
- * The control plane doesn't expose a GET for the current value, so the switch
- * starts at the architecture default (OFF / fully internal) and re-syncs to the
- * authoritative value the PUT returns after each change.
+ * The switch renders the org's LIVE allow_external_sharing value (fetched
+ * server-side by the settings page via GET /v1/orgs/policy and passed in as
+ * `initialEnabled`), then re-syncs to the authoritative value each PUT returns. It
+ * no longer hardcodes OFF, which previously misrepresented an org that already had
+ * external sharing ON (H10).
  */
-export function ExternalSharingToggle() {
+export function ExternalSharingToggle({
+  initialEnabled,
+}: {
+  initialEnabled: boolean;
+}) {
   const router = useRouter();
 
-  const [enabled, setEnabled] = React.useState(false);
+  const [enabled, setEnabled] = React.useState(initialEnabled);
   const [pending, setPending] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);

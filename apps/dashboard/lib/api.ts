@@ -359,6 +359,15 @@ export const api = {
   },
 
   /**
+   * Read the org's sharing policy (the live allow_external_sharing value) so the UI
+   * can render the toggle in its true state instead of a hardcoded default (H10).
+   * Any member may read it.
+   */
+  getOrgPolicy(): Promise<{ allow_external_sharing: boolean }> {
+    return apiFetch<{ allow_external_sharing: boolean }>("/v1/orgs/policy");
+  },
+
+  /**
    * Toggle the org allow_external_sharing policy (owner/admin only → 403). When
    * disabling, the API reconciles (downgrades public sites + revokes external
    * grants) and returns the count of downgraded sites.

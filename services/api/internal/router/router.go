@@ -74,7 +74,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// newest first, paginated (RLS-scoped).
 		r.Get("/audit", api.ListAudit)
 
-		// Org-level policy (admin/owner only, re-checked in the handler).
+		// Org-level policy: read the current value (any member, for the live toggle
+		// state — H10); writing it is admin/owner only (re-checked in the handler).
+		r.Get("/orgs/policy", api.GetOrgPolicy)
 		r.Put("/orgs/allow-external-sharing", api.SetAllowExternalSharing)
 
 		// Generic hard-revoke (admin/owner only): {kind:user|site|org, id} → bump the

@@ -259,6 +259,33 @@ func (a *API) ListAllowlist(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /v1/orgs/policy
+// ---------------------------------------------------------------------------
+
+// GetOrgPolicy returns the active org's sharing policy (currently just
+// allow_external_sharing) so the dashboard can render the toggle in its LIVE state
+// instead of a hardcoded default (H10). Any member may read it (it gates their own
+// org's sharing UI); writing it stays admin-only (SetAllowExternalSharing).
+func (a *API) GetOrgPolicy(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	pol, err := a.Store.GetOrgPolicy(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"allow_external_sharing": pol.AllowExternalSharing,
+	})
+}
+
+// ---------------------------------------------------------------------------
 // PUT /v1/orgs/allow-external-sharing  {enabled}
 // ---------------------------------------------------------------------------
 

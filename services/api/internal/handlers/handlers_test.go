@@ -301,6 +301,31 @@ func TestMembersPreflight_UnderCap_200(t *testing.T) {
 	}
 }
 
+// H10: GET /v1/orgs/policy returns the org's LIVE allow_external_sharing value so
+// the dashboard can render the toggle truthfully instead of a hardcoded default.
+func TestGetOrgPolicy_ReturnsLiveValue(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().orgPolicy = true // org already has external sharing ON
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := authed(a.GetOrgPolicy, claims("u", "org_1", "member"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/policy", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		AllowExternalSharing bool `json:"allow_external_sharing"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.AllowExternalSharing {
+		t.Error("allow_external_sharing = false, want true (the live org value)")
+	}
+}
+
 // jsonReq builds a request with a JSON body and the auth header set.
 func jsonReq(method, target, body string) *http.Request {
 	req := httptest.NewRequest(method, target, stringReader(body))

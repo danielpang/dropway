@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { api } from "@/lib/api";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Organization settings" };
@@ -37,6 +38,14 @@ export default async function OrgSettingsPage() {
   }
 
   const manage = canManage(org.myRole);
+
+  // Render the toggle in its LIVE state (H10), not a hardcoded OFF. On a transient
+  // API error fall back to false (fully-internal default) — the steady-state value
+  // is shown on the next load.
+  const allowExternalSharing = await api
+    .getOrgPolicy()
+    .then((p) => p.allow_external_sharing)
+    .catch(() => false);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -68,7 +77,7 @@ export default async function OrgSettingsPage() {
         </CardHeader>
         <CardContent>
           {manage ? (
-            <ExternalSharingToggle />
+            <ExternalSharingToggle initialEnabled={allowExternalSharing} />
           ) : (
             <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-3 text-sm">
               <ShieldAlert
