@@ -1,128 +1,134 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
-import { headers } from "next/headers";
+import Link from "next/link";
+import { ArrowRight, Globe, Rocket } from "lucide-react";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { auth } from "@/lib/auth";
+import { AccessModeBadge } from "@/components/sites/access-mode-badge";
+import { NewSiteDialog } from "@/components/sites/new-site-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { api, ApiError, type Site } from "@/lib/api";
 
-export const metadata: Metadata = { title: "Dashboard" };
+export const metadata: Metadata = { title: "Sites" };
+
+// Always render against live API data; sites are per-tenant and mutate often.
+export const dynamic = "force-dynamic";
 
 /**
- * Minimal authenticated landing (server component). Shows the signed-in user
- * and their active organization. Business data (sites, deploys) comes from the
- * Go API via lib/api.ts — wired once the API ships; this page proves the auth +
- * org plumbing end-to-end (Phase 1: login → org → site → deploy).
+ * The org's sites (server component). Lists every site visible under the
+ * caller's tenant via GET /v1/sites, with a "New site" dialog that POSTs to the
+ * API. The (app) layout already guarantees an authenticated session + an active
+ * organization before this renders.
  */
 export default async function DashboardPage() {
-  const requestHeaders = await headers();
+  let sites: Site[] | null = null;
+  let loadError: string | null = null;
 
-  const session = await auth.api.getSession({ headers: requestHeaders });
-  if (!session) redirect("/sign-in");
-
-  const { user } = session;
-
-  // The active organization for the session (from the Better Auth org plugin).
-  // Solo users get a default single-member org, so this is generally present.
-  const org = await auth.api
-    .getFullOrganization({ headers: requestHeaders })
-    .catch(() => null);
+  try {
+    sites = await api.listSites();
+  } catch (err) {
+    // The Go API may be unreachable in local dev; degrade to an inline notice
+    // rather than crashing the shell.
+    loadError =
+      err instanceof ApiError
+        ? `The API returned ${err.status}.`
+        : "Couldn't reach the control-plane API.";
+  }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Welcome{user.name ? `, ${user.name.split(" ")[0]}` : ""}
-        </h1>
-        <p className="text-muted-foreground">
-          Your Shipped control plane. Deploy a folder, get a live URL.
-        </p>
+    <div className="mx-auto max-w-5xl space-y-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
+          <p className="text-muted-foreground">
+            Deploy a folder, get a live, access-controlled URL.
+          </p>
+        </div>
+        <NewSiteDialog />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Account</CardTitle>
-            <CardDescription>The signed-in user.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <Row label="Name" value={user.name || "—"} />
-            <Row label="Email" value={user.email} />
-            <Row
-              label="Email verified"
-              value={user.emailVerified ? "Yes" : "No"}
-            />
-            <Row label="User ID" value={user.id} mono />
-          </CardContent>
+      {loadError ? (
+        <Card className="border-dashed p-10 text-center text-sm text-muted-foreground">
+          {loadError} Start the API (api.shipped.app) and reload.
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Organization</CardTitle>
-            <CardDescription>Your active tenant.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {org ? (
-              <>
-                <Row label="Name" value={org.name} />
-                <Row label="Slug" value={org.slug ?? "—"} mono />
-                <Row label="Org ID" value={org.id} mono />
-                <Row
-                  label="Members"
-                  value={String(org.members?.length ?? 0)}
-                />
-              </>
-            ) : (
-              <p className="text-muted-foreground">
-                No active organization yet.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Sites</CardTitle>
-          <CardDescription>
-            Deployed sites will appear here once the control-plane API is wired
-            up (lib/api.ts → api.shipped.app).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-md border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-            No sites yet. Use{" "}
-            <code className="font-mono text-foreground">shipped deploy ./dist</code>{" "}
-            or drag a folder here to create your first one.
-          </div>
-        </CardContent>
-      </Card>
+      ) : sites && sites.length > 0 ? (
+        <ul className="grid gap-3 sm:grid-cols-2">
+          {sites.map((site) => (
+            <li key={site.id}>
+              <SiteRow site={site} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <EmptyState />
+      )}
     </div>
   );
 }
 
-function Row({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+/** A single site as a clickable card linking to its detail page. */
+function SiteRow({ site }: { site: Site }) {
+  const isLive = Boolean(site.current_version_id);
   return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-muted-foreground">{label}</span>
-      <span
-        className={`truncate text-right text-foreground${mono ? " font-mono text-xs" : ""}`}
-      >
-        {value}
+    <Link
+      href={`/sites/${site.id}`}
+      className="group block rounded-lg border border-border bg-card p-5 shadow-sm transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
+              <Globe className="size-4" aria-hidden />
+            </span>
+            <span className="truncate font-medium text-foreground">
+              {site.slug}
+            </span>
+          </div>
+          <p className="truncate font-mono text-xs text-muted-foreground">
+            {site.live_url ?? `${site.slug}.shippedusercontent.com`}
+          </p>
+        </div>
+        <ArrowRight
+          className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+          aria-hidden
+        />
+      </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        {isLive ? (
+          <Badge variant="success">
+            <span
+              className="size-1.5 rounded-full bg-emerald-500"
+              aria-hidden
+            />
+            Live
+          </Badge>
+        ) : (
+          <Badge variant="muted">Not deployed</Badge>
+        )}
+        <AccessModeBadge mode={site.access_mode} />
+      </div>
+    </Link>
+  );
+}
+
+/** Shown when the org has no sites yet. */
+function EmptyState() {
+  return (
+    <Card className="flex flex-col items-center gap-4 border-dashed p-12 text-center">
+      <span className="grid size-12 place-items-center rounded-xl bg-secondary text-secondary-foreground">
+        <Rocket className="size-6" aria-hidden />
       </span>
-    </div>
+      <div className="space-y-1">
+        <p className="font-medium text-foreground">No sites yet</p>
+        <p className="text-sm text-muted-foreground">
+          Create a site, then run{" "}
+          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">
+            shipped deploy ./dist
+          </code>{" "}
+          to push your first deploy.
+        </p>
+      </div>
+      <NewSiteDialog />
+    </Card>
   );
 }

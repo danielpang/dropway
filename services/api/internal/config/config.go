@@ -29,6 +29,27 @@ type Config struct {
 	// linked in under the `cloud` build tag — but it's surfaced here so the
 	// cloud build can read it and the OSS build can warn if it's set.
 	Cloud bool
+
+	// S3 / R2 object storage for blobs + manifests. Optional in Phase 1 (the
+	// publish/serve loop is unavailable without it). Works against MinIO locally
+	// (path-style endpoint) and Cloudflare R2 in production.
+	S3Endpoint        string // S3_ENDPOINT (empty → real AWS S3)
+	S3Region          string // S3_REGION (R2: "auto")
+	S3AccessKeyID     string // S3_ACCESS_KEY_ID
+	S3SecretAccessKey string // S3_SECRET_ACCESS_KEY
+	S3Bucket          string // S3_BUCKET
+	S3ForcePathStyle  bool   // S3_FORCE_PATH_STYLE (true for MinIO)
+
+	// Cloudflare KV projection (the edge routing projection writer). Optional in
+	// Phase 1: when unset, a local/in-memory projection writer is used so the
+	// publish path still works offline (the self-host serving path reads it).
+	CFAccountID     string // CF_ACCOUNT_ID
+	CFKVNamespaceID string // CF_KV_NAMESPACE_ID
+	CFAPIToken      string // CF_API_TOKEN
+
+	// ProjectionFilePath, when set (PROJECTION_FILE), mirrors the local projection
+	// writer to a JSON file (the offline/self-host serving shim reads it).
+	ProjectionFilePath string
 }
 
 // Load reads the environment and returns a validated Config. It returns an error
@@ -42,6 +63,19 @@ func Load() (Config, error) {
 		JWTIssuer:   os.Getenv("JWT_ISSUER"),
 		JWTAudience: os.Getenv("JWT_AUDIENCE"),
 		Cloud:       parseBool(os.Getenv("SHIPPED_CLOUD")),
+
+		S3Endpoint:        os.Getenv("S3_ENDPOINT"),
+		S3Region:          os.Getenv("S3_REGION"),
+		S3AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
+		S3SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+		S3Bucket:          os.Getenv("S3_BUCKET"),
+		S3ForcePathStyle:  parseBool(os.Getenv("S3_FORCE_PATH_STYLE")),
+
+		CFAccountID:     os.Getenv("CF_ACCOUNT_ID"),
+		CFKVNamespaceID: os.Getenv("CF_KV_NAMESPACE_ID"),
+		CFAPIToken:      os.Getenv("CF_API_TOKEN"),
+
+		ProjectionFilePath: os.Getenv("PROJECTION_FILE"),
 	}
 
 	if p := os.Getenv("PORT"); p != "" {

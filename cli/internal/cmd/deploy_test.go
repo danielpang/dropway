@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,19 +13,49 @@ import (
 	"github.com/danielpang/shipped/cli/internal/api"
 )
 
-// fakeClient records the request it received and returns a canned response.
+// fakeClient records the calls it received and returns canned responses,
+// simulating the full prepare→upload→finalize→publish server flow in-memory.
 type fakeClient struct {
-	gotReq api.PrepareRequest
-	resp   *api.PrepareResponse
-	err    error
+	createdSlug string
+	prepared    api.PrepareRequest
+	uploaded    map[string]int // presigned URL → bytes uploaded
+	finalized   api.FinalizeRequest
+	published   api.PublishRequest
+
+	missing []string // shas to report missing on prepare
 }
 
-func (f *fakeClient) PrepareDeployment(_ context.Context, req api.PrepareRequest) (*api.PrepareResponse, error) {
-	f.gotReq = req
-	if f.err != nil {
-		return nil, f.err
+func newFakeClient(missing []string) *fakeClient {
+	return &fakeClient{uploaded: map[string]int{}, missing: missing}
+}
+
+func (f *fakeClient) CreateSite(_ context.Context, req api.CreateSiteRequest) (*api.Site, error) {
+	f.createdSlug = req.Slug
+	return &api.Site{ID: "site_" + req.Slug, Slug: req.Slug, LiveURL: "https://" + req.Slug + ".shippedusercontent.com"}, nil
+}
+
+func (f *fakeClient) PrepareDeployment(_ context.Context, siteID string, req api.PrepareRequest) (*api.PrepareResponse, error) {
+	f.prepared = req
+	uploads := map[string]string{}
+	for _, sha := range f.missing {
+		uploads[sha] = "https://fake-presign.local/blobs/org/" + sha
 	}
-	return f.resp, nil
+	return &api.PrepareResponse{Missing: f.missing, Uploads: uploads}, nil
+}
+
+func (f *fakeClient) UploadBlob(_ context.Context, url string, data []byte) error {
+	f.uploaded[url] = len(data)
+	return nil
+}
+
+func (f *fakeClient) FinalizeDeployment(_ context.Context, siteID string, req api.FinalizeRequest) (*api.FinalizeResponse, error) {
+	f.finalized = req
+	return &api.FinalizeResponse{VersionID: "ver_1", VersionNo: 1, PreviewURL: "https://preview"}, nil
+}
+
+func (f *fakeClient) Publish(_ context.Context, siteID string, req api.PublishRequest) (*api.PublishResponse, error) {
+	f.published = req
+	return &api.PublishResponse{LiveURL: "https://" + strings.TrimPrefix(siteID, "site_") + ".shippedusercontent.com", VersionID: req.VersionID}, nil
 }
 
 func tempSite(t *testing.T) string {
@@ -46,12 +78,12 @@ func runDeploy(t *testing.T, factory func(string, string) api.Client, args ...st
 	return out.String(), err
 }
 
-func TestDeploy_DryRun_PrintsManifestJSON_NoNetwork(t *testing.T) {
+func TestDeploy_DryRun_PrintsManifest_NoNetwork(t *testing.T) {
 	dir := tempSite(t)
 	called := false
 	factory := func(string, string) api.Client {
 		called = true
-		return &fakeClient{}
+		return newFakeClient(nil)
 	}
 
 	out, err := runDeploy(t, factory, dir)
@@ -61,38 +93,74 @@ func TestDeploy_DryRun_PrintsManifestJSON_NoNetwork(t *testing.T) {
 	if called {
 		t.Error("dry run must NOT construct/use a network client")
 	}
-	if !strings.Contains(out, "/v1/deployments/prepare") {
-		t.Error("output should show the prepare endpoint")
-	}
-	if !strings.Contains(out, "\"index.html\"") {
-		t.Error("output should include the manifest JSON with index.html")
+	if !strings.Contains(out, "index.html") {
+		t.Error("output should include the manifest with index.html")
 	}
 	if !strings.Contains(out, "dry run") {
 		t.Error("dry run hint should be printed")
 	}
 }
 
-func TestDeploy_Send_CallsClient(t *testing.T) {
+// TestDeploy_FullFlow_NewSite drives the entire create→prepare→upload→finalize→
+// publish flow against the fake client and asserts each step ran with the right
+// data and the live URL is printed.
+func TestDeploy_FullFlow_NewSite(t *testing.T) {
 	dir := tempSite(t)
 	t.Setenv("SHIPPED_TOKEN", "shpd_test")
 
-	fc := &fakeClient{resp: &api.PrepareResponse{DeploymentID: "dpl_1", MissingSHA: []string{"abc"}}}
+	// The single file's sha is reported missing so the upload step runs.
+	idxSHA := sha256Hex(t, filepath.Join(dir, "index.html"))
+	fc := newFakeClient([]string{idxSHA})
 	factory := func(baseURL, token string) api.Client {
 		if token != "shpd_test" {
-			t.Errorf("token = %q, want shpd_test", token)
+			t.Errorf("token = %q", token)
 		}
 		return fc
 	}
 
-	out, err := runDeploy(t, factory, dir, "--send")
+	out, err := runDeploy(t, factory, dir, "--send", "--new", "--site", "mysite")
 	if err != nil {
-		t.Fatalf("deploy --send: %v", err)
+		t.Fatalf("deploy --send: %v\n%s", err, out)
 	}
-	if fc.gotReq.Digest == "" || len(fc.gotReq.Files) != 1 {
-		t.Errorf("client received bad request: %+v", fc.gotReq)
+
+	if fc.createdSlug != "mysite" {
+		t.Errorf("created slug = %q", fc.createdSlug)
 	}
-	if !strings.Contains(out, "dpl_1") || !strings.Contains(out, "1/1 blob") {
-		t.Errorf("output missing prepared-deployment summary: %s", out)
+	if len(fc.prepared.Manifest) != 1 || fc.prepared.Manifest[0].Path != "index.html" {
+		t.Errorf("prepared manifest = %+v", fc.prepared.Manifest)
+	}
+	// The missing blob was uploaded with the file's bytes.
+	if got := fc.uploaded["https://fake-presign.local/blobs/org/"+idxSHA]; got != len("<h1>hi</h1>") {
+		t.Errorf("uploaded bytes = %d", got)
+	}
+	if fc.finalized.Digest == "" {
+		t.Error("finalize missing digest")
+	}
+	if fc.published.VersionID != "ver_1" {
+		t.Errorf("published version = %q", fc.published.VersionID)
+	}
+	if !strings.Contains(out, "Live at https://mysite.shippedusercontent.com") {
+		t.Errorf("missing live URL in output:\n%s", out)
+	}
+}
+
+// TestDeploy_SkipsAlreadyUploadedBlobs proves only-missing blobs are uploaded.
+func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
+	dir := tempSite(t)
+	t.Setenv("SHIPPED_TOKEN", "shpd_test")
+
+	fc := newFakeClient(nil) // nothing missing → no uploads
+	factory := func(string, string) api.Client { return fc }
+
+	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "site_existing")
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if len(fc.uploaded) != 0 {
+		t.Errorf("expected no uploads when nothing missing, got %v", fc.uploaded)
+	}
+	if fc.published.VersionID != "ver_1" {
+		t.Error("publish should still run")
 	}
 }
 
@@ -100,16 +168,26 @@ func TestDeploy_Send_RequiresToken(t *testing.T) {
 	dir := tempSite(t)
 	os.Unsetenv("SHIPPED_TOKEN")
 
-	factory := func(string, string) api.Client { return &fakeClient{} }
-	_, err := runDeploy(t, factory, dir, "--send")
+	factory := func(string, string) api.Client { return newFakeClient(nil) }
+	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "x")
 	if err == nil || !strings.Contains(err.Error(), "SHIPPED_TOKEN") {
 		t.Fatalf("err = %v, want a SHIPPED_TOKEN requirement error", err)
 	}
 }
 
+func TestDeploy_Send_RequiresTarget(t *testing.T) {
+	dir := tempSite(t)
+	t.Setenv("SHIPPED_TOKEN", "shpd_test")
+	factory := func(string, string) api.Client { return newFakeClient(nil) }
+	_, err := runDeploy(t, factory, dir, "--send")
+	if err == nil || !strings.Contains(err.Error(), "site-id") {
+		t.Fatalf("err = %v, want a target-site requirement error", err)
+	}
+}
+
 func TestDeploy_EmptyDir_Errors(t *testing.T) {
-	dir := t.TempDir() // no files
-	factory := func(string, string) api.Client { return &fakeClient{} }
+	dir := t.TempDir()
+	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	_, err := runDeploy(t, factory, dir)
 	if err == nil || !strings.Contains(err.Error(), "no files") {
 		t.Fatalf("err = %v, want 'no files' error", err)
@@ -117,9 +195,20 @@ func TestDeploy_EmptyDir_Errors(t *testing.T) {
 }
 
 func TestDeploy_MissingDir_Errors(t *testing.T) {
-	factory := func(string, string) api.Client { return &fakeClient{} }
+	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	_, err := runDeploy(t, factory, filepath.Join(t.TempDir(), "does-not-exist"))
 	if err == nil {
 		t.Fatal("missing directory should error")
 	}
+}
+
+// sha256Hex computes the lowercase-hex SHA-256 of a file (mirrors manifest.Build).
+func sha256Hex(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

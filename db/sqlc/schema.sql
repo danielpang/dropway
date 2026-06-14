@@ -1,0 +1,136 @@
+-- SPDX-License-Identifier: FSL-1.1-Apache-2.0
+--
+-- db/sqlc/schema.sql
+--
+-- The Up-only DDL that sqlc compiles its type information against. This MIRRORS
+-- the Go-owned `app` schema produced by db/migrations/app/*.sql (goose), but is
+-- stripped of:
+--   * goose annotations (-- +goose Up/Down/StatementBegin/StatementEnd)
+--   * every Down / DROP (sqlc must only ever see the final, applied shape)
+--   * the role/GRANT/RLS plumbing (irrelevant to query type inference)
+--
+-- It is NOT applied to any database — goose owns migrations. Keep it in lock-step
+-- with db/migrations/app whenever a table/column the queries touch changes.
+-- (ARCHITECTURE.md §8: sqlc → Go types from the Go-owned app schema.)
+
+CREATE SCHEMA IF NOT EXISTS app;
+
+-- org_meta: the app-side anchor for an org. PK == Better Auth organization.id.
+CREATE TABLE app.org_meta (
+    id                     uuid PRIMARY KEY,
+    plan_tier              text NOT NULL DEFAULT 'free',
+    allow_external_sharing boolean NOT NULL DEFAULT false,
+    default_visibility     text NOT NULL DEFAULT 'public',
+    created_at             timestamptz NOT NULL DEFAULT now()
+);
+
+-- org_usage: per-org counter rows backing the hard-cap quota gate.
+CREATE TABLE app.org_usage (
+    org_id        uuid PRIMARY KEY REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    members_count int NOT NULL DEFAULT 0,
+    sites_count   int NOT NULL DEFAULT 0,
+    updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- sites: a shareable static site owned by a user inside an org.
+CREATE TABLE app.sites (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    slug               text NOT NULL,
+    owner_user_id      uuid NOT NULL,
+    access_mode        text NOT NULL DEFAULT 'public',
+    current_version_id uuid,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT sites_org_slug_key UNIQUE (org_id, slug)
+);
+
+-- site_versions: immutable, content-addressed deploys.
+CREATE TABLE app.site_versions (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id      uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    version_no   int NOT NULL,
+    status       text NOT NULL DEFAULT 'pending',
+    r2_prefix    text NOT NULL,
+    content_hash text NOT NULL,
+    size_bytes   bigint NOT NULL DEFAULT 0,
+    created_by   uuid NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT site_versions_site_version_no_key UNIQUE (site_id, version_no),
+    CONSTRAINT site_versions_site_content_hash_key UNIQUE (site_id, content_hash)
+);
+
+-- Deferrable FK closing the sites <-> site_versions cycle.
+ALTER TABLE app.sites
+    ADD CONSTRAINT sites_current_version_id_fkey
+        FOREIGN KEY (current_version_id)
+        REFERENCES app.site_versions (id)
+        DEFERRABLE INITIALLY DEFERRED;
+
+-- domains: custom hostnames mapped to a site. hostname is GLOBALLY unique.
+CREATE TABLE app.domains (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id       uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    hostname      text NOT NULL UNIQUE,
+    verify_status text NOT NULL DEFAULT 'pending',
+    tls_status    text NOT NULL DEFAULT 'pending',
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- site_access_policy: per-site gating config (Phase 2 for non-public modes).
+CREATE TABLE app.site_access_policy (
+    site_id       uuid PRIMARY KEY REFERENCES app.sites (id) ON DELETE CASCADE,
+    org_id        uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    mode          text NOT NULL DEFAULT 'public',
+    password_hash text,
+    expires_at    timestamptz,
+    updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- allowlist_entries: pre-registration email grants for allowlist sites.
+CREATE TABLE app.allowlist_entries (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id     uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    email       text NOT NULL,
+    is_external boolean NOT NULL DEFAULT false,
+    claimed_at  timestamptz,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT allowlist_entries_site_email_key UNIQUE (site_id, email)
+);
+
+-- deploy_tokens: hashed bearer tokens for the CLI / CI deploy path.
+CREATE TABLE app.deploy_tokens (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    token_hash text NOT NULL UNIQUE,
+    scopes     text[] NOT NULL DEFAULT ARRAY['deploy']::text[],
+    site_id    uuid REFERENCES app.sites (id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    revoked_at timestamptz
+);
+
+-- audit_log: append-only record of sensitive actions.
+CREATE TABLE app.audit_log (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    actor_user uuid,
+    action     text NOT NULL,
+    target     text,
+    metadata   jsonb NOT NULL DEFAULT '{}'::jsonb,
+    ip         inet,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- host_routes: GLOBAL host -> owning (org, site) registry. host is the PRIMARY
+-- KEY so a conflicting insert from any org raises 23505 (surfaced as
+-- ErrHostTaken), enforcing global host uniqueness above the per-(org,slug) site
+-- constraint. (Mirror of migration 0005; RLS/GRANT plumbing omitted per this
+-- file's convention.)
+CREATE TABLE app.host_routes (
+    host       text PRIMARY KEY,
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now()
+);

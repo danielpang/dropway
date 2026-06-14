@@ -1,6 +1,6 @@
-// Package api is the CLI's thin client for the Shipped control plane
-// (api.shipped.app). The network call is behind the Client interface so the CLI
-// builds and the deploy command's plan/dry-run path runs without a live server
+// Package api is the CLI's client for the Shipped control plane (api.shipped.app).
+// The network calls are behind the Client interface so the deploy command's
+// plan/dry-run path runs without a live server and tests inject a fake
 // (docs/ARCHITECTURE.md §7.1).
 package api
 
@@ -15,84 +15,182 @@ import (
 	"github.com/danielpang/shipped/cli/internal/manifest"
 )
 
-// PrepareRequest is the body POSTed to /v1/deployments/prepare. The server
-// authorizes the Bearer token, scopes dedup to the caller's org, and replies
-// with the subset of blobs it doesn't already have (plus presigned PUT targets).
-type PrepareRequest struct {
-	// SiteSlug is the target site (optional on first deploy; server may mint one).
-	SiteSlug string `json:"site_slug,omitempty"`
-	// Digest is the whole-deploy content address (manifest.Manifest.Digest).
-	Digest string `json:"digest"`
-	// Files is the path→hash manifest. The server never trusts request-body
-	// identifiers for the R2 key — it derives keys from the token org + each
-	// server-validated sha256 — but it needs the manifest to compute "missing".
-	Files []manifest.Entry `json:"files"`
-	// TotalSize is the sum of file sizes (lets the server pre-check quota).
-	TotalSize int64 `json:"total_size"`
+// ManifestFile is one file in a deploy: request-path → content hash (+ size +
+// content-type). Mirrors the server's handlers.ManifestFile. The server derives
+// the R2 blob key from the authenticated org + sha256 — never the client path.
+type ManifestFile struct {
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
 }
 
-// PrepareResponse is the server's reply: which blobs are missing and need upload.
+// PrepareRequest is the body POSTed to /v1/sites/{id}/deployments/prepare.
+type PrepareRequest struct {
+	Manifest []ManifestFile `json:"manifest"`
+}
+
+// PrepareResponse lists which blobs are missing and their presigned PUT URLs.
 type PrepareResponse struct {
-	DeploymentID string   `json:"deployment_id"`
-	MissingSHA   []string `json:"missing_sha256"`
+	Missing []string          `json:"missing"`
+	Uploads map[string]string `json:"uploads"`
+}
+
+// FinalizeRequest is the body POSTed to /v1/sites/{id}/deployments.
+type FinalizeRequest struct {
+	Manifest []ManifestFile `json:"manifest"`
+	Digest   string         `json:"digest"`
+}
+
+// FinalizeResponse carries the created immutable version.
+type FinalizeResponse struct {
+	VersionID  string `json:"version_id"`
+	VersionNo  int32  `json:"version_no"`
+	PreviewURL string `json:"preview_url"`
+}
+
+// PublishRequest is the body POSTed to /v1/sites/{id}/publish.
+type PublishRequest struct {
+	VersionID string `json:"version_id"`
+}
+
+// PublishResponse carries the live URL after the pointer flip.
+type PublishResponse struct {
+	LiveURL   string `json:"live_url"`
+	VersionID string `json:"version_id"`
+}
+
+// Site is the API's site representation (subset the CLI needs).
+type Site struct {
+	ID      string `json:"id"`
+	Slug    string `json:"slug"`
+	LiveURL string `json:"live_url"`
+}
+
+// CreateSiteRequest creates a site by slug.
+type CreateSiteRequest struct {
+	Slug string `json:"slug"`
 }
 
 // Client is the control-plane surface the deploy command needs. Keeping it an
-// interface lets the command "print what it would POST" without any network, and
-// lets tests inject a fake.
+// interface lets the command run a dry run with no network and lets tests inject
+// a fake server.
 type Client interface {
-	PrepareDeployment(ctx context.Context, req PrepareRequest) (*PrepareResponse, error)
+	CreateSite(ctx context.Context, req CreateSiteRequest) (*Site, error)
+	PrepareDeployment(ctx context.Context, siteID string, req PrepareRequest) (*PrepareResponse, error)
+	UploadBlob(ctx context.Context, presignedURL string, data []byte) error
+	FinalizeDeployment(ctx context.Context, siteID string, req FinalizeRequest) (*FinalizeResponse, error)
+	Publish(ctx context.Context, siteID string, req PublishRequest) (*PublishResponse, error)
 }
 
-// HTTPClient is the real Client. Token is the SHIPPED_TOKEN Bearer credential.
+// HTTPClient is the real Client. Token is the Bearer credential (SHIPPED_TOKEN).
 type HTTPClient struct {
-	BaseURL string       // e.g. https://api.shipped.app
-	Token   string       // Bearer deploy token (SHIPPED_TOKEN)
+	BaseURL string
+	Token   string
 	HTTP    *http.Client // nil → http.DefaultClient
 }
 
-// PrepareDeployment POSTs the manifest to /v1/deployments/prepare.
-func (c *HTTPClient) PrepareDeployment(ctx context.Context, req PrepareRequest) (*PrepareResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
+func (c *HTTPClient) http() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/v1/deployments/prepare", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.Token)
+	return http.DefaultClient
+}
 
-	hc := c.HTTP
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	resp, err := hc.Do(httpReq)
+// postJSON POSTs body as JSON to the API path with the Bearer token and decodes
+// the JSON response into out (out may be nil to ignore the body).
+func (c *HTTPClient) postJSON(ctx context.Context, path string, body, out any) error {
+	b, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return nil, fmt.Errorf("prepare: server returned %d: %s", resp.StatusCode, bytes.TrimSpace(b))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("POST %s: server returned %d: %s", path, resp.StatusCode, bytes.TrimSpace(rb))
 	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
 
-	var out PrepareResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+// CreateSite creates a site.
+func (c *HTTPClient) CreateSite(ctx context.Context, req CreateSiteRequest) (*Site, error) {
+	var out Site
+	if err := c.postJSON(ctx, "/v1/sites", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// MarshalRequest renders a PrepareRequest as indented JSON for the CLI's
-// dry-run/plan output (the "JSON it would POST").
-func MarshalRequest(req PrepareRequest) (string, error) {
-	b, err := json.MarshalIndent(req, "", "  ")
-	if err != nil {
-		return "", err
+// PrepareDeployment computes missing blobs + presigned upload URLs.
+func (c *HTTPClient) PrepareDeployment(ctx context.Context, siteID string, req PrepareRequest) (*PrepareResponse, error) {
+	var out PrepareResponse
+	if err := c.postJSON(ctx, "/v1/sites/"+siteID+"/deployments/prepare", req, &out); err != nil {
+		return nil, err
 	}
-	return string(b), nil
+	return &out, nil
+}
+
+// UploadBlob PUTs the blob's bytes directly to the presigned URL (R2/MinIO).
+func (c *HTTPClient) UploadBlob(ctx context.Context, presignedURL string, data []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, presignedURL, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.ContentLength = int64(len(data))
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return fmt.Errorf("upload blob: store returned %d: %s", resp.StatusCode, bytes.TrimSpace(rb))
+	}
+	return nil
+}
+
+// FinalizeDeployment server-verifies blobs, writes the manifest, inserts version.
+func (c *HTTPClient) FinalizeDeployment(ctx context.Context, siteID string, req FinalizeRequest) (*FinalizeResponse, error) {
+	var out FinalizeResponse
+	if err := c.postJSON(ctx, "/v1/sites/"+siteID+"/deployments", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Publish flips the live-version pointer and projects the route to the edge.
+func (c *HTTPClient) Publish(ctx context.Context, siteID string, req PublishRequest) (*PublishResponse, error) {
+	var out PublishResponse
+	if err := c.postJSON(ctx, "/v1/sites/"+siteID+"/publish", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ManifestFromBuild converts a manifest.Manifest into the API wire shape.
+func ManifestFromBuild(m *manifest.Manifest) []ManifestFile {
+	out := make([]ManifestFile, len(m.Files))
+	for i, e := range m.Files {
+		out[i] = ManifestFile{
+			Path:        e.Path,
+			SHA256:      e.SHA256,
+			Size:        e.Size,
+			ContentType: contentTypeFor(e.Path),
+		}
+	}
+	return out
 }

@@ -1,0 +1,91 @@
+package projection
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
+
+func validRoute(ver string) RouteValue {
+	return RouteValue{
+		OrgID: "11111111-1111-1111-1111-111111111111", SiteID: "s", VersionID: ver,
+		AccessMode: AccessPublic, SchemaVersion: SchemaVersion,
+	}
+}
+
+func TestLocal_PutGetDelete(t *testing.T) {
+	ctx := context.Background()
+	l := NewLocal()
+	host := "site.shippedusercontent.com"
+
+	if err := l.PutRoute(ctx, host, validRoute("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if rv, ok := l.Get(host); !ok || rv.VersionID != "v1" {
+		t.Fatalf("get = %+v %v", rv, ok)
+	}
+	// PutRoute upsert (publish/rollback pointer flip).
+	if err := l.PutRoute(ctx, host, validRoute("v2")); err != nil {
+		t.Fatal(err)
+	}
+	if rv, _ := l.Get(host); rv.VersionID != "v2" {
+		t.Errorf("after flip = %+v", rv)
+	}
+	if err := l.DeleteRoute(ctx, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Get(host); ok {
+		t.Error("route should be gone after delete")
+	}
+}
+
+func TestLocal_RejectsInvalid(t *testing.T) {
+	if err := NewLocal().PutRoute(context.Background(), "h", RouteValue{}); err == nil {
+		t.Error("invalid route should be rejected")
+	}
+}
+
+func TestLocal_RebuildReplacesAll(t *testing.T) {
+	ctx := context.Background()
+	l := NewLocal()
+	_ = l.PutRoute(ctx, "old.host", validRoute("v0"))
+
+	routes := map[string]RouteValue{
+		"a.shippedusercontent.com": validRoute("va"),
+		"b.shippedusercontent.com": validRoute("vb"),
+	}
+	if err := l.RebuildFromDB(ctx, routes); err != nil {
+		t.Fatal(err)
+	}
+	snap := l.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("rebuild should replace projection, got %d entries", len(snap))
+	}
+	if _, ok := snap["old.host"]; ok {
+		t.Error("stale route survived a rebuild")
+	}
+}
+
+// TestLocal_FileMirror proves the file-backed writer persists + reloads, which is
+// what the offline self-host serving shim reads.
+func TestLocal_FileMirror(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "projection.json")
+
+	l, err := NewLocalFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.PutRoute(ctx, "x.shippedusercontent.com", validRoute("v9")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh writer over the same file reloads the route.
+	l2, err := NewLocalFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rv, ok := l2.Get("x.shippedusercontent.com"); !ok || rv.VersionID != "v9" {
+		t.Fatalf("reload = %+v %v", rv, ok)
+	}
+}

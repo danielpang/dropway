@@ -1,14 +1,15 @@
 // Package cmd assembles the `shipped` CLI (cobra). Phase 1 ships `deploy`, which
-// builds the content-addressed manifest and prints the request it would POST to
-// /v1/deployments/prepare (docs/ARCHITECTURE.md §7.1). The actual upload/publish
-// is gated behind --send so the command is useful (and testable) without a
-// running server.
+// implements the full folder → live URL flow against the API
+// (docs/ARCHITECTURE.md §7.1): walk + hash → (create site) → prepare → upload
+// only-missing blobs to presigned URLs → finalize → publish. The dry run (no
+// --send) prints the plan without any network so it stays useful offline.
 package cmd
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -24,17 +25,20 @@ const tokenEnv = "SHIPPED_TOKEN"
 // HTTP client from flags + env.
 func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.Command {
 	var (
-		site    string
-		baseURL string
-		send    bool
+		site      string
+		siteID    string
+		createNew bool
+		baseURL   string
+		send      bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "deploy <dir>",
-		Short: "Build a content-addressed manifest for a directory and prepare a deployment",
-		Long: "Walk <dir>, compute a SHA-256 per file, build a path→hash manifest, and " +
-			"print the deploy summary plus the JSON it would POST to /v1/deployments/prepare. " +
-			"Pass --send to actually call the API (requires " + tokenEnv + ").",
+		Short: "Deploy a folder of static files to a live, access-controlled URL",
+		Long: "Walk <dir>, compute a SHA-256 per file, and (with --send) run the full deploy:\n" +
+			"  prepare → upload only-changed blobs → finalize → publish → print the live URL.\n" +
+			"Without --send it prints the plan (the manifest it would upload) with no network.\n" +
+			"Requires " + tokenEnv + " for --send. Target a site with --site-id, or --new --site <slug>.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := args[0]
@@ -48,48 +52,119 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 			if len(m.Files) == 0 {
 				return fmt.Errorf("deploy: %q contains no files to deploy", dir)
 			}
+			files := api.ManifestFromBuild(m)
 
-			req := api.PrepareRequest{
-				SiteSlug:  site,
-				Digest:    m.Digest,
-				Files:     m.Files,
-				TotalSize: m.TotalSize,
-			}
-
-			// 2. Summary + the JSON body (always printed — this is the plan).
 			fmt.Fprintf(out, "Deploying %q\n  %s\n\n", dir, m.Summary())
-			body, err := api.MarshalRequest(req)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "POST %s/v1/deployments/prepare\n%s\n", baseURL, body)
 
-			// 3. Without --send, stop here (a dry run by design).
+			// 2. Without --send, print the plan and stop (a dry run by design).
 			if !send {
+				printPlan(out, files)
 				fmt.Fprintln(out, "\n(dry run — pass --send to upload; set "+tokenEnv+" for auth)")
 				return nil
 			}
 
-			// 4. --send: require the token, call the API.
+			// 3. --send: require the token + a target site.
 			token := os.Getenv(tokenEnv)
 			if token == "" {
 				return fmt.Errorf("deploy: --send requires %s to be set", tokenEnv)
 			}
+			if siteID == "" && !createNew {
+				return fmt.Errorf("deploy: --send requires --site-id <id>, or --new --site <slug> to create one")
+			}
 			client := clientFactory(baseURL, token)
-			resp, err := client.PrepareDeployment(context.Background(), req)
+			ctx := context.Background()
+
+			// 3a. Create the site first if requested.
+			if createNew {
+				if site == "" {
+					return fmt.Errorf("deploy: --new requires --site <slug>")
+				}
+				s, err := client.CreateSite(ctx, api.CreateSiteRequest{Slug: site})
+				if err != nil {
+					return fmt.Errorf("create site: %w", err)
+				}
+				siteID = s.ID
+				fmt.Fprintf(out, "Created site %s (%s)\n", s.Slug, s.ID)
+			}
+
+			// 4. Prepare: learn which blobs need upload.
+			prep, err := client.PrepareDeployment(ctx, siteID, api.PrepareRequest{Manifest: files})
 			if err != nil {
+				return fmt.Errorf("prepare: %w", err)
+			}
+			fmt.Fprintf(out, "Prepared: %d/%d blob(s) need upload\n", len(prep.Missing), len(files))
+
+			// 5. Upload only the missing blobs to their presigned URLs.
+			if err := uploadMissing(ctx, client, dir, m, prep); err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "\nPrepared deployment %s: %d/%d blob(s) need upload\n",
-				resp.DeploymentID, len(resp.MissingSHA), len(m.Files))
+
+			// 6. Finalize: server verifies blobs, writes the manifest + version.
+			fin, err := client.FinalizeDeployment(ctx, siteID, api.FinalizeRequest{
+				Manifest: files,
+				Digest:   m.Digest,
+			})
+			if err != nil {
+				return fmt.Errorf("finalize: %w", err)
+			}
+			fmt.Fprintf(out, "Finalized version %s (v%d)\n", fin.VersionID, fin.VersionNo)
+
+			// 7. Publish: flip the pointer + project the route to the edge.
+			pub, err := client.Publish(ctx, siteID, api.PublishRequest{VersionID: fin.VersionID})
+			if err != nil {
+				return fmt.Errorf("publish: %w", err)
+			}
+			fmt.Fprintf(out, "\nLive at %s\n", pub.LiveURL)
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&site, "site", "", "target site slug (optional on first deploy)")
+	cmd.Flags().StringVar(&site, "site", "", "site slug (with --new) to create")
+	cmd.Flags().StringVar(&siteID, "site-id", "", "existing site id to deploy to")
+	cmd.Flags().BoolVar(&createNew, "new", false, "create a new site (requires --site <slug>)")
 	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Shipped API base URL")
-	cmd.Flags().BoolVar(&send, "send", false, "actually call the API (requires "+tokenEnv+")")
+	cmd.Flags().BoolVar(&send, "send", false, "actually run the deploy (requires "+tokenEnv+")")
 	return cmd
+}
+
+// uploadMissing reads each missing blob's bytes from disk and PUTs them to the
+// presigned URL the server returned. Only blobs the server doesn't already have
+// are uploaded (only-changed-blob upload, §7.1). A blob may back multiple paths;
+// we find the first file with the matching hash.
+func uploadMissing(ctx context.Context, client api.Client, dir string, m *manifest.Manifest, prep *api.PrepareResponse) error {
+	// Index manifest entries by sha so we can locate a file path per missing sha.
+	pathBySHA := make(map[string]string, len(m.Files))
+	for _, e := range m.Files {
+		if _, ok := pathBySHA[e.SHA256]; !ok {
+			pathBySHA[e.SHA256] = e.Path
+		}
+	}
+	for _, sha := range prep.Missing {
+		url, ok := prep.Uploads[sha]
+		if !ok {
+			return fmt.Errorf("upload: server listed %s missing but gave no upload URL", sha)
+		}
+		relPath, ok := pathBySHA[sha]
+		if !ok {
+			return fmt.Errorf("upload: no local file matches blob %s", sha)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(relPath)))
+		if err != nil {
+			return fmt.Errorf("upload: read %s: %w", relPath, err)
+		}
+		if err := client.UploadBlob(ctx, url, data); err != nil {
+			return fmt.Errorf("upload %s: %w", relPath, err)
+		}
+	}
+	return nil
+}
+
+// printPlan writes the manifest the deploy would upload (the dry-run output).
+func printPlan(out interface{ Write([]byte) (int, error) }, files []api.ManifestFile) {
+	fmt.Fprintf(out, "Manifest (%d files):\n", len(files))
+	for _, f := range files {
+		fmt.Fprintf(out, "  %s  %s  (%d bytes, %s)\n", f.SHA256[:12], f.Path, f.Size, f.ContentType)
+	}
 }
 
 // defaultAPIBase resolves the API base from SHIPPED_API or the production default.

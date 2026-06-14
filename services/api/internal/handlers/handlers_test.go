@@ -11,12 +11,11 @@ import (
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/internal/middleware"
 	"github.com/danielpang/shipped/internal/quota"
+	"github.com/danielpang/shipped/services/api/internal/store"
 )
 
-// withClaims returns a request whose context carries the given claims, the same
-// way the Auth middleware would. We can't set the unexported key directly, so we
-// run a real Auth middleware with a fake verifier in front of the handler in the
-// tests that need it; here we use the exported test seam via middleware.Auth.
+// authed wraps a handler with the real Auth middleware in front (a fake verifier
+// injects the claims), so the handler reads claims the production way.
 func authed(handler http.HandlerFunc, c *auth.Claims) http.Handler {
 	v := fakeVerifier{claims: c}
 	return middleware.Auth(v)(handler)
@@ -32,6 +31,95 @@ func claims(user, org, role string) *auth.Claims {
 	c := &auth.Claims{OrgID: org, Role: role}
 	c.Subject = user
 	return c
+}
+
+// fakeStore is an in-memory SiteStore for handler unit tests (no live DB). It
+// records the tenant it was called with so tests can assert RLS scoping inputs.
+type fakeStore struct {
+	sites     map[string]store.Site
+	versions  map[string]store.SiteVersion
+	createErr error
+
+	lastTenant  store.Tenant
+	provisioned bool
+}
+
+func newFakeStore() *fakeStore {
+	return &fakeStore{sites: map[string]store.Site{}, versions: map[string]store.SiteVersion{}}
+}
+
+func (f *fakeStore) EnsureOrgProvisioned(_ context.Context, t store.Tenant) error {
+	f.lastTenant, f.provisioned = t, true
+	return nil
+}
+
+func (f *fakeStore) CreateSite(_ context.Context, t store.Tenant, slug, mode string) (store.Site, error) {
+	f.lastTenant = t
+	if f.createErr != nil {
+		return store.Site{}, f.createErr
+	}
+	if store.IsReservedSlug(slug) {
+		return store.Site{}, store.ErrReservedSlug
+	}
+	s := store.Site{ID: "site_" + slug, OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, AccessMode: mode}
+	f.sites[s.ID] = s
+	return s, nil
+}
+
+func (f *fakeStore) ListSites(_ context.Context, t store.Tenant) ([]store.Site, error) {
+	f.lastTenant = t
+	out := make([]store.Site, 0, len(f.sites))
+	for _, s := range f.sites {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetSite(_ context.Context, t store.Tenant, id string) (store.Site, error) {
+	f.lastTenant = t
+	s, ok := f.sites[id]
+	if !ok {
+		return store.Site{}, store.ErrNotFound
+	}
+	return s, nil
+}
+
+func (f *fakeStore) CreateSiteVersion(_ context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error) {
+	f.lastTenant = t
+	v := store.SiteVersion{
+		ID: "ver_" + p.ContentHash[:8], OrgID: t.OrgID, SiteID: p.SiteID,
+		VersionNo: int32(len(f.versions) + 1), Status: p.Status, ContentHash: p.ContentHash, SizeBytes: p.SizeBytes,
+	}
+	f.versions[v.ID] = v
+	return v, nil
+}
+
+func (f *fakeStore) GetSiteVersion(_ context.Context, t store.Tenant, id string) (store.SiteVersion, error) {
+	v, ok := f.versions[id]
+	if !ok {
+		return store.SiteVersion{}, store.ErrNotFound
+	}
+	return v, nil
+}
+
+func (f *fakeStore) Publish(_ context.Context, t store.Tenant, siteID, versionID string) (store.PublishResult, error) {
+	f.lastTenant = t
+	s, ok := f.sites[siteID]
+	if !ok {
+		return store.PublishResult{}, store.ErrNotFound
+	}
+	v, ok := f.versions[versionID]
+	if !ok || v.SiteID != siteID {
+		return store.PublishResult{}, store.ErrVersionMismatch
+	}
+	s.CurrentVersionID = &versionID
+	f.sites[siteID] = s
+	host := s.Slug + ".shippedusercontent.com"
+	return store.PublishResult{
+		Host:  host,
+		Site:  s,
+		Route: routeValueFor(t.OrgID, siteID, versionID, s.AccessMode),
+	}, nil
 }
 
 func TestHealthz(t *testing.T) {
@@ -70,23 +158,43 @@ func TestMe_EchoesClaims(t *testing.T) {
 }
 
 func TestCreateSite_Unlimited_201(t *testing.T) {
-	a := New(quota.Unlimited{})
+	fs := newFakeStore()
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/sites", nil)
-	req.Header.Set("Authorization", "Bearer x")
+	req := jsonReq(http.MethodPost, "/v1/sites", `{"slug":"my-site"}`)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", rr.Code)
+		t.Fatalf("status = %d, want 201: %s", rr.Code, rr.Body.String())
 	}
 	var body siteResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.OrgID != "org_1" || body.OwnerID != "user_1" {
+	if body.OrgID != "org_1" || body.OwnerID != "user_1" || body.Slug != "my-site" {
 		t.Errorf("site = %+v", body)
+	}
+	if body.LiveURL != "https://my-site.shippedusercontent.com" {
+		t.Errorf("live_url = %q", body.LiveURL)
+	}
+	// RLS tenant was derived from the verified claims.
+	if fs.lastTenant.OrgID != "org_1" || fs.lastTenant.UserID != "user_1" {
+		t.Errorf("tenant = %+v", fs.lastTenant)
+	}
+}
+
+func TestCreateSite_ReservedSlug_400(t *testing.T) {
+	fs := newFakeStore()
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
+
+	req := jsonReq(http.MethodPost, "/v1/sites", `{"slug":"admin"}`)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for reserved slug", rr.Code)
 	}
 }
 
@@ -106,11 +214,11 @@ func TestCreateSite_QuotaExceeded_402(t *testing.T) {
 		NextTier:   "business",
 		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
 	}
-	a := New(quotaStub{err: ex})
+	fs := newFakeStore()
+	a := NewFull(quotaStub{err: ex}, fs, nil, nil)
 	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/sites", nil)
-	req.Header.Set("Authorization", "Bearer x")
+	req := jsonReq(http.MethodPost, "/v1/sites", `{"slug":"ok-slug"}`)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -126,15 +234,34 @@ func TestCreateSite_QuotaExceeded_402(t *testing.T) {
 	}
 }
 
+// The DB-backed path returns 503 when no Store is configured (clean degradation).
+func TestCreateSite_NoStore_503(t *testing.T) {
+	a := New(quota.Unlimited{})
+	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
+	req := jsonReq(http.MethodPost, "/v1/sites", `{"slug":"x"}`)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rr.Code)
+	}
+}
+
 // Ensure the package's unauthorized helper maps via httpx (defensive branch).
 func TestCreateSite_NoClaims_401(t *testing.T) {
 	a := New(quota.Unlimited{})
-	// Call the handler directly with a bare context (no Auth middleware).
-	req := httptest.NewRequest(http.MethodPost, "/v1/sites", nil)
+	req := jsonReq(http.MethodPost, "/v1/sites", `{"slug":"x"}`)
 	rr := httptest.NewRecorder()
 	a.CreateSite(rr, req)
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
 	}
 	_ = httpx.ErrUnauthorized // keep import meaningful/documented
+}
+
+// jsonReq builds a request with a JSON body and the auth header set.
+func jsonReq(method, target, body string) *http.Request {
+	req := httptest.NewRequest(method, target, stringReader(body))
+	req.Header.Set("Authorization", "Bearer x")
+	req.Header.Set("Content-Type", "application/json")
+	return req
 }

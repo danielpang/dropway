@@ -9,7 +9,13 @@
     "noEmit": true,
     // Vitest globals (describe/it/expect) are imported explicitly in tests,
     // so no test types are needed on the type-check pass.
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
+    // Resolve the workspace contract to its source for type-checking (Wrangler
+    // bundles it at deploy; vitest aliases it the same way). Keeps `tsc --noEmit`
+    // working without a build step or a node_modules link.
+    "paths": {
+      "@shipped/contracts": ["../../contracts/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

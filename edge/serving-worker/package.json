@@ -5,6 +5,9 @@
   "license": "FSL-1.1-Apache-2.0",
   "type": "module",
   "main": "src/index.ts",
+  "dependencies": {
+    "@shipped/contracts": "workspace:*"
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

@@ -19,13 +19,16 @@ GET https://<host>/<path>
   → KV ROUTES.get("route:<host>") → { org_id, site_id, version_id,
                                       access_mode, schema_version }
   → access_mode === "public":
-        resolve <path> to an R2 key under the version's manifest prefix
-          sites/<org_id>/<site_id>/<version_id>/<path>
-        stream from R2 BUCKET with:
-          - correct Content-Type (by extension)
+        fetch the deploy manifest from R2 at
+          manifests/<org_id>/<site_id>/<version_id>.json   (path → {sha256,content_type})
+        resolve <path> (index.html + directory + .html fallback) to an entry
+        stream the content-addressed blob from R2 at
+          blobs/<org_id>/<sha256>
+        with:
+          - Content-Type from the MANIFEST (authoritative; bytes are not re-sniffed)
           - Cache-Control: immutable for hashed assets, short TTL for HTML
-          - index.html fallback for directory / pretty paths
           - custom 404.html (or a default) when nothing matches
+          - successful responses written to the Cache API (per-version keyed)
   → access_mode === "password" | "allowlist" | "org_only":
         501 Phase-2 STUB ("/authz exchange") — NOT implemented here.
 ```
@@ -70,18 +73,21 @@ interface RouteValue {
 ```
 
 It is owned by the repo-root `contracts/` package (JSON Schema → Go struct + TS
-type + CI round-trip test). Until the infra agent publishes
-`@shipped/contracts`, this Worker keeps a local mirror in **`src/types.ts`**;
-`src/route.ts` imports the type and is annotated with a `TODO(contracts)` so the
-switch is a one-line change. Untrusted KV values are validated by
-`parseRouteValue()` (rejecting bad shapes and unknown `schema_version`).
+type + CI round-trip test) and published as **`@shipped/contracts`**.
+`src/route.ts` imports `KVRouteValue` / `SCHEMA_VERSION` / `safeParseKVRouteValue`
+from it and re-exports them under the Worker's local `RouteValue` /
+`SUPPORTED_SCHEMA_VERSION` names. Untrusted KV values are validated by
+`parseRouteValue()` (rejecting bad shapes, non-UUID ids, and unknown
+`schema_version`). The package is a workspace dependency; Wrangler bundles it at
+deploy, and `tsconfig.json` / `vitest.config.ts` alias it to its source so
+type-check and tests resolve it without a build step.
 
 ## Bindings (`wrangler.toml`)
 
-| Binding  | Type | Purpose                                                        |
-| -------- | ---- | ------------------------------------------------------------- |
-| `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only). |
-| `BUCKET` | R2   | Single private bucket: `sites/<org>/<site>/<version>/<path>`. |
+| Binding  | Type | Purpose                                                                       |
+| -------- | ---- | ---------------------------------------------------------------------------- |
+| `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only).                |
+| `BUCKET` | R2   | Single private bucket: `manifests/<org>/<site>/<version>.json` + `blobs/<org>/<sha256>`. |
 
 The namespace/bucket IDs in `wrangler.toml` are **placeholders** — the infra
 agent fills them in per environment (or via `wrangler kv namespace create` /
@@ -93,15 +99,16 @@ commented out until `shippedusercontent.com` is live on Cloudflare.
 ```
 edge/serving-worker/
 ├── src/
-│   ├── index.ts     # fetch handler + serve(): KV lookup, dispatch, R2 stream, 404, Phase-2 stub
-│   ├── route.ts     # PURE routing + path resolution (host normalize, parse, key resolution)
+│   ├── index.ts     # fetch handler + serve(): KV lookup, dispatch, manifest fetch, blob stream, Cache API, 404, Phase-2 stub
+│   ├── route.ts     # PURE host normalize + route parse (via @shipped/contracts) + path sanitize
+│   ├── manifest.ts  # PURE manifest model + parse + path→entry resolution; manifest/blob R2 keys
 │   ├── http.ts      # PURE Content-Type + Cache-Control + security headers
-│   └── types.ts     # local mirror of the RouteValue contract (TODO → @shipped/contracts)
+│   └── (RouteValue now comes from @shipped/contracts — no local mirror)
 ├── test/
-│   └── serve.test.ts  # vitest: routing/path-resolution with mocked KV + R2 (no live edge)
+│   └── serve.test.ts  # vitest: routing, manifest resolution, blob fetch, Cache API (mocked KV + R2)
 ├── wrangler.toml
-├── vitest.config.ts   # @cloudflare/vitest-pool-workers (runs in workerd)
-├── tsconfig.json      # extends ../../tsconfig.base.json + workers types
+├── vitest.config.ts   # node pool; aliases @shipped/contracts → source
+├── tsconfig.json      # extends ../../tsconfig.base.json + workers types; @shipped/contracts path
 ├── package.json       # @shipped/serving-worker
 └── README.md
 ```
@@ -122,15 +129,28 @@ pnpm --filter @shipped/serving-worker dev         # wrangler dev (needs binding 
 pnpm --filter @shipped/serving-worker deploy      # wrangler deploy
 ```
 
-For `wrangler dev`, point the bindings at preview resources and seed a route +
-some objects:
+For `wrangler dev`, point the bindings at preview resources and seed a route, a
+deploy manifest, and the blob(s) it references (ids must be real UUIDs — the
+contract validator fails closed otherwise):
 
 ```sh
+ORG=11111111-1111-1111-1111-111111111111
+SITE=22222222-2222-2222-2222-222222222222
+VER=33333333-3333-3333-3333-333333333333
+SHA=$(shasum -a 256 index.html | cut -d' ' -f1)
+
 wrangler kv key put --binding=ROUTES --preview \
-  'route:acme.localhost' \
-  '{"org_id":"org_1","site_id":"site_1","version_id":"v1","access_mode":"public","schema_version":1}'
+  "route:acme.localhost" \
+  "{\"org_id\":\"$ORG\",\"site_id\":\"$SITE\",\"version_id\":\"$VER\",\"access_mode\":\"public\",\"schema_version\":1}"
+
+# Manifest: request path → { sha256, content_type }
+echo "{\"schema_version\":1,\"files\":{\"index.html\":{\"sha256\":\"$SHA\",\"content_type\":\"text/html; charset=utf-8\"}}}" \
+  | wrangler r2 object put --preview \
+      "shipped-content-preview/manifests/$ORG/$SITE/$VER.json" --pipe
+
+# Content-addressed blob
 wrangler r2 object put --preview \
-  shipped-content-preview/sites/org_1/site_1/v1/index.html --file=./index.html
+  "shipped-content-preview/blobs/$ORG/$SHA" --file=./index.html
 ```
 
 ## Phase boundaries

@@ -82,12 +82,17 @@ export function isHashedAsset(key: string): boolean {
 export const SHORT_TTL_SECONDS = 60;
 
 /**
- * Cache-Control for a public asset:
+ * Cache-Control for a public asset, keyed off the SERVED request path (the
+ * manifest key, e.g. "assets/app.4f3a9c2b.js" or "index.html"):
  *  - hashed/immutable asset → 1 year, immutable.
  *  - HTML / non-hashed asset → short TTL, revalidatable.
+ *
+ * Keying off the served path (not the content-addressed blob key) is what lets
+ * a pointer flip (publish/rollback) become visible quickly for HTML while
+ * fingerprinted assets stay cacheable forever.
  */
-export function cacheControlFor(key: string): string {
-  if (isHashedAsset(key)) {
+export function cacheControlFor(servedPath: string): string {
+  if (isHashedAsset(servedPath)) {
     return "public, max-age=31536000, immutable";
   }
   return `public, max-age=${SHORT_TTL_SECONDS}, must-revalidate`;
@@ -111,15 +116,25 @@ export function securityHeaders(): Record<string, string> {
 
 /**
  * Build the full header set for a successful public object response.
- * `extraEtag`/`lastModified` come from the R2 object when available.
+ *
+ *  - `servedPath` is the manifest key (request path) — it drives Cache-Control.
+ *  - `contentType` is the authoritative type the Go API recorded in the
+ *    manifest at publish; we serve it verbatim and do NOT re-sniff untrusted
+ *    tenant bytes. (If absent we fall back to extension-derived typing.)
+ *  - `etag`/`lastModified`/`contentLength` come from the R2 blob when available.
  */
 export function publicResponseHeaders(
-  key: string,
-  opts: { etag?: string; lastModified?: Date; contentLength?: number } = {},
+  servedPath: string,
+  opts: {
+    contentType?: string;
+    etag?: string;
+    lastModified?: Date;
+    contentLength?: number;
+  } = {},
 ): Headers {
   const h = new Headers();
-  h.set("Content-Type", contentTypeFor(key));
-  h.set("Cache-Control", cacheControlFor(key));
+  h.set("Content-Type", opts.contentType ?? contentTypeFor(servedPath));
+  h.set("Cache-Control", cacheControlFor(servedPath));
   for (const [k, v] of Object.entries(securityHeaders())) {
     if (v !== "") h.set(k, v);
   }

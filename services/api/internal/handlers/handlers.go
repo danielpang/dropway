@@ -1,32 +1,55 @@
 // Package handlers implements the Go API's HTTP endpoints (the system of record,
-// docs/ARCHITECTURE.md §3). Phase 1 ships the health check, an identity echo,
-// and a stub site-create that exercises the quota seam end to end.
+// docs/ARCHITECTURE.md §3). Phase 1 ships the core publish/serve loop, DB-backed:
+// create/list/get sites, the deployments prepare→finalize→publish flow, and the
+// identity echo + health check. Every authenticated handler runs under the RLS
+// tenant context (via the store's tx-per-call SET LOCAL) and quota is checked at
+// the cost-creating action (the open-core seam).
 package handlers
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/danielpang/shipped/internal/httpx"
+	"github.com/danielpang/shipped/internal/logx"
 	"github.com/danielpang/shipped/internal/middleware"
 	"github.com/danielpang/shipped/internal/quota"
+	"github.com/danielpang/shipped/services/api/internal/store"
 )
 
-// API holds the handler dependencies wired in main.go. The quota.Provider is the
-// open-core seam: OSS gets quota.Unlimited{}, the cloud build injects the real
-// hard-cap provider.
+// presignTTL bounds how long a direct-to-store upload URL is valid.
+const presignTTL = 15 * time.Minute
+
+// API holds the handler dependencies wired in main.go. Quota is the open-core
+// seam (Unlimited in OSS, the cloud hard-cap provider under -tags cloud). Store,
+// Objects, and Projection are the Phase-1 publish/serve loop; they may be nil in
+// a DB-less deployment, in which case the DB-backed routes return 503.
 type API struct {
-	Quota quota.Provider
+	Quota      quota.Provider
+	Store      SiteStore
+	Objects    ObjectStore
+	Projection ProjectionWriter
 }
 
-// New constructs an API with its dependencies. A nil provider defaults to
-// Unlimited so a misconfigured wiring fails open to the OSS behavior rather than
-// panicking.
+// New constructs an API with only the quota seam (back-compat for the unit tests
+// that don't need the DB). A nil provider defaults to Unlimited so a misconfigured
+// wiring fails open to OSS behavior rather than panicking.
 func New(q quota.Provider) *API {
 	if q == nil {
 		q = quota.Unlimited{}
 	}
 	return &API{Quota: q}
+}
+
+// NewFull constructs an API with the full Phase-1 dependency set.
+func NewFull(q quota.Provider, s SiteStore, obj ObjectStore, proj ProjectionWriter) *API {
+	a := New(q)
+	a.Store = s
+	a.Objects = obj
+	a.Projection = proj
+	return a
 }
 
 // Healthz is the unauthenticated liveness probe. It never touches the DB so it
@@ -43,8 +66,7 @@ type meResponse struct {
 	Role   string `json:"role"`
 }
 
-// Me returns the caller's verified identity. Auth middleware guarantees claims
-// are present; the defensive check keeps this safe if it's ever mounted bare.
+// Me returns the caller's verified identity.
 func (a *API) Me(w http.ResponseWriter, r *http.Request) {
 	claims, ok := middleware.ClaimsFromContext(r.Context())
 	if !ok {
@@ -58,43 +80,26 @@ func (a *API) Me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// siteResponse is the Phase-1 stub site. The real create path writes an immutable
-// site row under RLS (§5) and returns the live URL; here we just prove the quota
-// gate + 201 envelope.
-type siteResponse struct {
-	ID        string    `json:"id"`
-	OrgID     string    `json:"org_id"`
-	OwnerID   string    `json:"owner_id"`
-	CreatedAt time.Time `json:"created_at"`
+// tenant derives the RLS tenant from verified claims. Callers that reach here are
+// behind the Auth middleware, so claims are present; the bool guards the rare
+// "mounted bare" path.
+func tenant(ctx context.Context) (store.Tenant, bool) {
+	c, ok := middleware.ClaimsFromContext(ctx)
+	if !ok {
+		return store.Tenant{}, false
+	}
+	return store.Tenant{OrgID: c.OrgID, UserID: c.UserID()}, true
 }
 
-// CreateSite reserves quota for one more site for the caller and returns a stub
-// site. On a quota cap it surfaces quota.ExceededError, which httpx renders as
-// 402 with the upgrade payload (§9).
-func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
-	claims, ok := middleware.ClaimsFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, wrapUnauthorized())
-		return
+// requireStore returns the store or writes a 503 and reports false. Used by the
+// DB-backed routes so a DB-less deployment degrades cleanly.
+func (a *API) requireStore(w http.ResponseWriter) bool {
+	if a.Store == nil {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable,
+			httpx.ErrorBody{Error: "unavailable", Message: "database not configured"})
+		return false
 	}
-
-	// Synchronous hard-cap check at the cost-creating action (§9). OSS:
-	// Unlimited → always nil. Cloud: real per-user site cap → may 402.
-	if err := a.Quota.CheckAndReserve(
-		r.Context(), claims.OrgID, claims.UserID(), quota.ResourceSitePerUser,
-	); err != nil {
-		httpx.WriteError(w, err)
-		return
-	}
-
-	// Phase-1 stub: a real implementation inserts under SET LOCAL tenant context
-	// and returns the resolved live URL.
-	httpx.WriteJSON(w, http.StatusCreated, siteResponse{
-		ID:        "site_stub",
-		OrgID:     claims.OrgID,
-		OwnerID:   claims.UserID(),
-		CreatedAt: time.Now().UTC(),
-	})
+	return true
 }
 
 // wrapUnauthorized yields an error httpx maps to 401, used for the defensive
@@ -107,3 +112,6 @@ func (errUnauthorized) Error() string { return "unauthorized" }
 
 // Is bridges to httpx.ErrUnauthorized for the status mapping.
 func (errUnauthorized) Is(target error) bool { return target == httpx.ErrUnauthorized }
+
+// logger is a small helper to fetch the request-scoped (request_id-tagged) logger.
+func logger(r *http.Request) *slog.Logger { return logx.FromContext(r.Context()) }

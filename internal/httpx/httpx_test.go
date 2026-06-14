@@ -62,6 +62,7 @@ func TestWriteError_SentinelMappings(t *testing.T) {
 		{"unauthorized", fmt.Errorf("missing token: %w", ErrUnauthorized), http.StatusUnauthorized, "unauthorized"},
 		{"forbidden", fmt.Errorf("not admin: %w", ErrForbidden), http.StatusForbidden, "forbidden"},
 		{"not_found", fmt.Errorf("no such site: %w", ErrNotFound), http.StatusNotFound, "not_found"},
+		{"conflict", fmt.Errorf("host taken: %w", ErrConflict), http.StatusConflict, "conflict"},
 		{"bad_request", fmt.Errorf("bad json: %w", ErrBadRequest), http.StatusBadRequest, "bad_request"},
 		{"unknown_500", fmt.Errorf("boom"), http.StatusInternalServerError, "internal_error"},
 	}

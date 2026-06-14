@@ -31,8 +31,9 @@ binding = "ROUTES"
 id = "REPLACE_WITH_ROUTES_KV_NAMESPACE_ID"
 preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
 
-# R2: the single private bucket holding all tenant content, per-org prefixed:
-#   sites/<org_id>/<site_id>/<version_id>/<path>
+# R2: the single private bucket holding all tenant content, content-addressed:
+#   manifests/<org_id>/<site_id>/<version_id>.json  (per-deploy path → sha256 map)
+#   blobs/<org_id>/<sha256>                          (deduped content-addressed)
 # Replace `bucket_name` with the real bucket; `preview_bucket_name` is used by
 # `wrangler dev` so local runs don't touch the production bucket.
 [[r2_buckets]]

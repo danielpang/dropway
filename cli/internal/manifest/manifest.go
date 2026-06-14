@@ -2,6 +2,10 @@
 // walk the tree, compute SHA-256 per file, and record path→hash plus size. This
 // is the client side of the deploy contract (docs/ARCHITECTURE.md §7.1): the CLI
 // computes hashes locally so only missing blobs ever upload.
+//
+// The whole-deploy digest is computed by the SHARED root-level package
+// internal/manifest (Digest), which the server also uses to recompute and verify
+// the digest — so the CLI and server can never drift on the digest format.
 package manifest
 
 import (
@@ -14,6 +18,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	sharedmanifest "github.com/danielpang/shipped/internal/manifest"
 )
 
 // Entry is one file in the manifest.
@@ -83,22 +89,30 @@ func Build(root string) (*Manifest, error) {
 		return nil, fmt.Errorf("manifest: walk %q: %w", root, walkErr)
 	}
 
-	// Deterministic order → deterministic digest.
+	// Deterministic order → deterministic digest + stable output.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 
 	var total int64
-	digestHasher := sha256.New()
 	for _, e := range entries {
 		total += e.Size
-		// One line per file: "<sha256>  <path>\n" (git-like, stable).
-		fmt.Fprintf(digestHasher, "%s  %s\n", e.SHA256, e.Path)
 	}
 
 	return &Manifest{
 		Files:     entries,
-		Digest:    hex.EncodeToString(digestHasher.Sum(nil)),
+		Digest:    Digest(entries),
 		TotalSize: total,
 	}, nil
+}
+
+// Digest returns the whole-deploy content address over entries, delegating to
+// the shared internal/manifest.Digest so the CLI and the server agree byte-for-
+// byte on the format (the sorted "<sha256>  <path>\n" lines).
+func Digest(entries []Entry) string {
+	files := make([]sharedmanifest.File, len(entries))
+	for i, e := range entries {
+		files[i] = sharedmanifest.File{Path: e.Path, SHA256: e.SHA256}
+	}
+	return sharedmanifest.Digest(files)
 }
 
 // hashFile streams a file through SHA-256, returning the hex digest and size.

@@ -45,6 +45,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 //	ErrUnauthorized          → 401 Unauthorized
 //	ErrForbidden             → 403 Forbidden
 //	ErrNotFound              → 404 Not Found
+//	ErrConflict              → 409 Conflict
 //	ErrBadRequest            → 400 Bad Request
 //	anything else            → 500 Internal Server Error (detail withheld)
 //
@@ -70,6 +71,8 @@ func WriteError(w http.ResponseWriter, err error) {
 		WriteJSON(w, http.StatusForbidden, ErrorBody{Error: "forbidden", Message: err.Error()})
 	case errors.Is(err, ErrNotFound):
 		WriteJSON(w, http.StatusNotFound, ErrorBody{Error: "not_found", Message: err.Error()})
+	case errors.Is(err, ErrConflict):
+		WriteJSON(w, http.StatusConflict, ErrorBody{Error: "conflict", Message: err.Error()})
 	case errors.Is(err, ErrBadRequest):
 		WriteJSON(w, http.StatusBadRequest, ErrorBody{Error: "bad_request", Message: err.Error()})
 	default:
@@ -85,5 +88,6 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrForbidden    = errors.New("forbidden")
 	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
 	ErrBadRequest   = errors.New("bad request")
 )

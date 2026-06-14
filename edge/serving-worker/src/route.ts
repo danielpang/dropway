@@ -1,22 +1,34 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// Route resolution + R2 path resolution — the pure logic of the serving Worker.
-// Everything here is side-effect-light and unit-testable without a live edge
-// (see test/serve.test.ts): KV/R2 are passed in as minimal interfaces.
+// Host → route resolution + request-path sanitization — the pure logic of the
+// serving Worker. Everything here is side-effect-light and unit-testable
+// without a live edge (see test/serve.test.ts): KV/R2 are injected as minimal
+// interfaces in index.ts.
+//
+// Path → object-key resolution now lives in ./manifest: under the
+// content-addressed layout the Worker resolves a request path to a sha256 via
+// the deploy manifest (manifests/<org>/<site>/<version>.json), then streams the
+// blob (blobs/<org>/<sha256>). This module only normalizes the host and the
+// request path; the manifest does the rest.
 
-// The KV route value is the one cross-language contract. Prefer the shared
-// `@shipped/contracts` package; until the infra agent publishes it, fall back
-// to the local mirror in ./types. The shapes are identical by construction
-// (the contract round-trip test in CI enforces it).
-// TODO(contracts): switch this import to "@shipped/contracts" once resolvable
-// and delete ./types. The rest of this module is unaffected.
+// The KV route value is the one cross-language data contract. It is owned by the
+// shared `@shipped/contracts` package (JSON Schema → Go struct + TS type with a
+// CI round-trip test) and is the ONLY writer→reader contract between the Go API
+// (the sole KV writer) and this Worker (a read-only consumer). We re-export it
+// under the Worker's local vocabulary (`RouteValue`/`SUPPORTED_SCHEMA_VERSION`)
+// so the rest of the Worker and its tests read naturally.
 import {
   type AccessMode,
-  type RouteValue,
-  SUPPORTED_SCHEMA_VERSION,
-} from "./types";
+  type KVRouteValue,
+  SCHEMA_VERSION,
+  safeParseKVRouteValue,
+} from "@shipped/contracts";
 
-export { type AccessMode, type RouteValue, SUPPORTED_SCHEMA_VERSION };
+/** The KV route value, named locally for the Worker. */
+export type RouteValue = KVRouteValue;
+/** The route-value schema version this Worker understands. */
+export const SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION;
+export { type AccessMode };
 
 /**
  * The KV key under which the Go API publishes a host's route value.
@@ -45,94 +57,20 @@ export function normalizeHost(rawHost: string): string {
 /**
  * Validate an untrusted KV value into a typed RouteValue. Returns null on any
  * shape/version mismatch so callers fail closed (404) rather than serving from
- * a malformed projection. The Worker pins `schema_version`.
+ * a malformed projection. Delegates to the shared contract validator, which
+ * also pins `schema_version` and rejects non-UUID identifiers / unknown fields.
  */
 export function parseRouteValue(raw: unknown): RouteValue | null {
-  if (raw === null || typeof raw !== "object") return null;
-  const v = raw as Record<string, unknown>;
-
-  if (typeof v.org_id !== "string" || v.org_id.length === 0) return null;
-  if (typeof v.site_id !== "string" || v.site_id.length === 0) return null;
-  if (typeof v.version_id !== "string" || v.version_id.length === 0) return null;
-  if (!isAccessMode(v.access_mode)) return null;
-  if (v.schema_version !== SUPPORTED_SCHEMA_VERSION) return null;
-
-  return {
-    org_id: v.org_id,
-    site_id: v.site_id,
-    version_id: v.version_id,
-    access_mode: v.access_mode,
-    schema_version: v.schema_version,
-  };
-}
-
-function isAccessMode(x: unknown): x is AccessMode {
-  return (
-    x === "public" ||
-    x === "password" ||
-    x === "allowlist" ||
-    x === "org_only"
-  );
+  return safeParseKVRouteValue(raw);
 }
 
 /**
- * The immutable manifest prefix for a published version. All of a version's
- * assets live under this prefix in the single private R2 bucket, namespaced by
- * org → site → version (so a version is one immutable origin; see §3/§10).
- *
- *   sites/${org_id}/${site_id}/${version_id}/
- */
-export function versionPrefix(route: RouteValue): string {
-  return `sites/${route.org_id}/${route.site_id}/${route.version_id}/`;
-}
-
-/**
- * Resolve a request URL path to the R2 object key under a version's prefix.
- *
- * Rules (static-site semantics, mirroring Quick's no-build ethos):
- *  - Normalize the path: decode, collapse to a POSIX-clean relative path,
- *    and reject traversal (`..`) so a request can never escape the version
- *    prefix into another org/site/version. On any unsafe path, return null
- *    → the caller serves the 404 page.
- *  - A directory-style path (empty, or ending in `/`) maps to its
- *    `index.html` (directory index fallback).
- *  - An extension-less path also gets an `index.html` directory fallback
- *    candidate AND a `.html` candidate, so `/about` resolves to either
- *    `about/index.html` or `about.html` — the caller tries them in order.
- *
- * Returns the ordered list of candidate keys to attempt against R2; the first
- * that exists wins. Empty array means "unsafe path → 404".
- */
-export function resolveObjectKeys(route: RouteValue, rawPath: string): string[] {
-  const prefix = versionPrefix(route);
-  const clean = cleanPath(rawPath);
-  if (clean === null) return [];
-
-  // Directory request (root or trailing slash) → index.html only.
-  if (clean === "" || clean.endsWith("/")) {
-    return [`${prefix}${clean}index.html`];
-  }
-
-  const candidates: string[] = [`${prefix}${clean}`];
-
-  // Extension-less "pretty" path → also try directory index and `.html`.
-  if (!hasExtension(clean)) {
-    candidates.push(`${prefix}${clean}/index.html`);
-    candidates.push(`${prefix}${clean}.html`);
-  }
-
-  return candidates;
-}
-
-/** The R2 key for a version's custom 404 page, if the site ships one. */
-export function notFoundKey(route: RouteValue): string {
-  return `${versionPrefix(route)}404.html`;
-}
-
-/**
- * Decode + sanitize a URL path into a clean, prefix-relative key segment.
- * Returns null if the path is unsafe (traversal, bad encoding, or absolute
- * escape). The leading slash is stripped; the result never starts with `/`.
+ * Decode + sanitize a URL path into a clean, prefix-relative key segment that
+ * is also a manifest-lookup key. Returns null if the path is unsafe (traversal,
+ * bad encoding, or absolute escape). The leading slash is stripped; the result
+ * never starts with `/`. Even though manifest resolution can only match keys
+ * the Go API published (so traversal cannot escape an org/site), we still reject
+ * unsafe paths so a malformed request can never produce a surprising key.
  */
 export function cleanPath(rawPath: string): string | null {
   let path = rawPath;
@@ -170,11 +108,4 @@ export function cleanPath(rawPath: string): string | null {
   rel = out.join("/");
   if (endedWithSlash && rel !== "") rel += "/";
   return rel;
-}
-
-/** True if the final path segment carries a file extension (e.g. `.css`). */
-function hasExtension(cleanRelPath: string): boolean {
-  const last = cleanRelPath.split("/").pop() ?? "";
-  const dot = last.lastIndexOf(".");
-  return dot > 0 && dot < last.length - 1;
 }

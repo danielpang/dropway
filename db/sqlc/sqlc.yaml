@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# sqlc configuration for the Go-owned `app` schema (ARCHITECTURE.md §8).
+#
+# `schema.sql` is the Up-only DDL mirror of db/migrations/app (no goose
+# annotations, no DROPs); `query.sql` holds the typed queries. Generated Go lands
+# in services/api/internal/store/db, where internal/store wraps it in a
+# tx-per-call Store that first runs the SET LOCAL RLS tenant context.
+#
+# Regenerate with (version pinned via go run; no global install needed):
+#   go run github.com/sqlc-dev/sqlc/cmd/sqlc generate -f db/sqlc/sqlc.yaml
+
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "schema.sql"
+    queries: "query.sql"
+    gen:
+      go:
+        package: "db"
+        out: "../../services/api/internal/store/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: false
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+        emit_empty_slices: true
+        overrides:
+          # Map Postgres uuid -> Go string (the API speaks string ids end to end:
+          # JWT subjects/org ids are strings, the OpenAPI client returns strings).
+          - db_type: "uuid"
+            go_type: "string"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "timestamptz"
+            go_type: "time.Time"

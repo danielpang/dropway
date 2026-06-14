@@ -4,39 +4,45 @@ import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
 import { API_URL } from "@/lib/env";
+import type { components, operations } from "@/lib/api-generated/schema";
 
 /**
- * Typed client stub for the Go control-plane API (api.shipped.app).
+ * Typed client for the Go control-plane API (api.shipped.app).
  *
  * The dashboard's contract is the API, NEVER the database (architecture §8): it
  * calls the Go API for ALL business data, carrying a short-lived Better Auth
  * EdDSA JWT in the Authorization header. The Go API verifies that JWT and is the
  * authz boundary + system of record.
  *
- * This is a hand-written placeholder. Once the Go service publishes its OpenAPI
- * spec, this file is REPLACED by a generated, fully-typed client (the shapes
- * below mirror the planned resources so call sites compile against them today).
+ * The request/response SHAPES below are derived from the generated OpenAPI types
+ * (`lib/api-generated/schema.ts`, regenerate with `pnpm gen:api`). The thin
+ * wrapper here adds the JWT, JSON handling, and the 402 quota narrowing the
+ * dashboard's upgrade modal depends on.
  */
+
+// ---- Resource shapes (re-exported from the generated schema) --------------
+
+export type Me = components["schemas"]["Me"];
+export type Site = components["schemas"]["Site"];
+export type Version = components["schemas"]["Version"];
+export type ManifestFile = components["schemas"]["ManifestFile"];
+export type AccessMode = NonNullable<Site["access_mode"]>;
+
+/** Successful body of `POST /v1/sites/{id}/publish` (the live URL + version). */
+export type PublishResult =
+  operations["publish"]["responses"]["200"]["content"]["application/json"];
 
 // ---- Shared error envelope ------------------------------------------------
 
 /**
  * The 402 body the API returns when a hard cap is hit (architecture §9). This
- * MUST mirror Go's `quota.ExceededError` (internal/quota/quota.go) exactly —
- * `limit` is the resource STRING and there is no top-level `error` discriminator;
- * a 402 status is itself the signal.
+ * mirrors Go's `quota.ExceededError` (internal/quota/quota.go) exactly — `limit`
+ * is the resource STRING and there is no top-level `error` discriminator; the
+ * 402 status is itself the signal. Sourced from the generated schema so it stays
+ * in lockstep with the spec.
  */
-export type QuotaResource = "sites_per_user" | "members_per_org";
-
-export interface QuotaExceeded {
-  limit: QuotaResource;
-  current: number;
-  max: number;
-  plan_tier: "free" | "business" | "enterprise";
-  next_tier?: "business" | "enterprise" | "contact_sales";
-  upgrade_url?: string;
-  sales_url?: string;
-}
+export type QuotaExceeded = components["schemas"]["QuotaExceeded"];
+export type QuotaResource = NonNullable<QuotaExceeded["limit"]>;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -50,7 +56,8 @@ export class ApiError extends Error {
 
   /**
    * Narrow to a 402 quota payload. The Go API signals a cap hit purely by the
-   * 402 status (no `error` discriminator); the body is `quota.ExceededError`.
+   * 402 status (no `error` discriminator); the body is `quota.ExceededError`,
+   * recognized by its string `limit`.
    */
   asQuotaExceeded(): QuotaExceeded | null {
     if (
@@ -63,29 +70,6 @@ export class ApiError extends Error {
     }
     return null;
   }
-}
-
-// ---- Resource shapes (placeholders until OpenAPI codegen) -----------------
-
-export type AccessMode = "public" | "password" | "allowlist" | "org_only";
-
-export interface Site {
-  id: string;
-  org_id: string;
-  slug: string;
-  access_mode: AccessMode;
-  current_version_id: string | null;
-  created_at: string;
-}
-
-export interface SiteVersion {
-  id: string;
-  site_id: string;
-  version_no: number;
-  status: "pending" | "ready" | "failed";
-  content_hash: string;
-  size: number;
-  created_at: string;
 }
 
 // ---- Auth: fetch a fresh EdDSA JWT for the active session -----------------
@@ -134,12 +118,23 @@ async function apiFetch<T>(
   return (await res.json()) as T;
 }
 
-// ---- Typed endpoints (subset, expand as the API grows) --------------------
+// ---- Typed endpoints (Phase 1 surface; mirrors openapi.yaml) --------------
 
 export const api = {
-  /** List the caller's sites within the active org. */
-  listSites(): Promise<Site[]> {
-    return apiFetch<Site[]>("/v1/sites");
+  /** Echo the caller's verified identity (user_id / org_id / role). */
+  me(): Promise<Me> {
+    return apiFetch<Me>("/v1/me");
+  },
+
+  /** List the caller org's sites. */
+  async listSites(): Promise<Site[]> {
+    const body = await apiFetch<{ sites?: Site[] }>("/v1/sites");
+    return body.sites ?? [];
+  },
+
+  /** Get one site by id (404 → ApiError with status 404). */
+  getSite(id: string): Promise<Site> {
+    return apiFetch<Site>(`/v1/sites/${id}`);
   },
 
   /** Create a new site (subject to the cloud quota gate → may 402). */
@@ -150,8 +145,14 @@ export const api = {
     });
   },
 
-  /** List the versions (deploys) of a site, newest first. */
-  listVersions(siteId: string): Promise<SiteVersion[]> {
-    return apiFetch<SiteVersion[]>(`/v1/sites/${siteId}/versions`);
+  /**
+   * Publish (or roll back to) a version: flips the site's live-version pointer.
+   * Rollback is just publishing an older version_id.
+   */
+  publish(siteId: string, input: { version_id: string }): Promise<PublishResult> {
+    return apiFetch<PublishResult>(`/v1/sites/${siteId}/publish`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 };

@@ -1,0 +1,336 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Shipped control-plane API (api.shipped.app) — the system of record and authz
+# boundary (docs/ARCHITECTURE.md §3). The dashboard generates its typed TS client
+# from THIS spec; the frontend's contract is the API, never the DB (§8). Keep this
+# accurate: every path/shape here is implemented in services/api/internal/handlers.
+#
+# Phase 1 surface: identity echo, sites CRUD (create/list/get), and the deploy
+# loop (prepare → finalize → publish). Access modes other than `public`, billing,
+# and the gated /authz exchange are later phases.
+
+openapi: 3.1.0
+
+info:
+  title: Shipped API
+  version: "1.0.0-phase1"
+  description: >
+    The Shipped control plane. All /v1 routes require a Bearer EdDSA JWT
+    (issued by Better Auth) which the Go API verifies itself (the authz boundary).
+    Every request runs under a Postgres RLS tenant context derived from the
+    verified org_id/user_id claims.
+  license:
+    name: FSL-1.1-Apache-2.0
+
+servers:
+  - url: https://api.shipped.app
+    description: Production
+  - url: http://localhost:8080
+    description: Local / self-host
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe (unauthenticated)
+      security: []
+      operationId: healthz
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /v1/me:
+    get:
+      summary: Echo the caller's verified identity
+      operationId: getMe
+      responses:
+        "200":
+          description: The verified claims
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/sites:
+    post:
+      summary: Create a site
+      description: >
+        Reserved slugs are rejected (400). A slug whose content host
+        (`<slug>.shippedusercontent.com`) is already taken by another org/site
+        returns 409 Conflict — the host registry is global even though site slugs
+        are unique only per org. On the cloud build, exceeding the per-user site
+        cap returns 402 with the quota body so the dashboard can open the upgrade
+        modal.
+      operationId: createSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug:
+                  type: string
+                  description: Subdomain label under shippedusercontent.com (unique per org).
+                  example: my-docs
+      responses:
+        "201":
+          description: Site created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      summary: List the caller org's sites
+      operationId: listSites
+      responses:
+        "200":
+          description: The org's sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: "#/components/schemas/Site" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/sites/{id}:
+    get:
+      summary: Get one site
+      operationId: getSite
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/deployments/prepare:
+    post:
+      summary: Prepare a deployment — discover missing blobs + presigned uploads
+      description: >
+        Given the deploy manifest, returns the subset of referenced blobs not
+        already present for the org (only-changed-blob upload) and a presigned PUT
+        URL for each. Blob keys are derived server-side from the org + sha256.
+      operationId: prepareDeployment
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest]
+              properties:
+                manifest:
+                  type: array
+                  items: { $ref: "#/components/schemas/ManifestFile" }
+      responses:
+        "200":
+          description: Missing blobs + presigned upload URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  missing:
+                    type: array
+                    items: { type: string, description: sha256 (lowercase hex) }
+                  uploads:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      format: uri
+                    description: sha256 → presigned PUT URL
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/deployments:
+    post:
+      summary: Finalize a deployment — verify blobs, write the immutable version
+      description: >
+        Server-verifies that every referenced blob is present AND its stored bytes
+        hash equals the claimed sha256, writes the immutable per-deploy manifest to
+        object storage, and inserts an immutable site_version (status=ready, next
+        version_no). Idempotent on the per-site content digest.
+      operationId: finalizeDeployment
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest, digest]
+              properties:
+                manifest:
+                  type: array
+                  items: { $ref: "#/components/schemas/ManifestFile" }
+                digest:
+                  type: string
+                  description: Whole-deploy content address (sha256, lowercase hex). The version's content_hash + idempotency key.
+      responses:
+        "201":
+          description: Immutable version created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/publish:
+    post:
+      summary: Publish (or roll back to) a version
+      description: >
+        Flips the site's live-version pointer to version_id and writes the edge
+        routing projection (KV route:<host>). Rollback is just publishing an older
+        version_id. The pointer flip is Postgres-authoritative; the projection is a
+        rebuildable cache.
+      operationId: publish
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version_id]
+              properties:
+                version_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Published; the site is live
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  live_url: { type: string, format: uri }
+                  version_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived EdDSA JWT (Better Auth) or a deploy token.
+
+  parameters:
+    SiteID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: app.sites.id
+
+  schemas:
+    Me:
+      type: object
+      properties:
+        user_id: { type: string }
+        org_id: { type: string }
+        role: { type: string, enum: [owner, admin, member] }
+
+    Site:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        slug: { type: string }
+        owner_id: { type: string, format: uuid }
+        access_mode: { type: string, enum: [public, password, allowlist, org_only] }
+        current_version_id: { type: string, format: uuid, nullable: true }
+        live_url: { type: string, format: uri }
+        created_at: { type: string, format: date-time }
+
+    Version:
+      type: object
+      properties:
+        version_id: { type: string, format: uuid }
+        version_no: { type: integer }
+        preview_url: { type: string, format: uri }
+
+    ManifestFile:
+      type: object
+      required: [path, sha256, size]
+      properties:
+        path:
+          type: string
+          description: Request path served from the site (e.g. index.html, assets/app.js).
+        sha256:
+          type: string
+          description: Content hash (lowercase hex). The server derives the R2 key from org + this.
+        size: { type: integer, format: int64 }
+        content_type: { type: string }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: Stable machine-readable code }
+        message: { type: string }
+
+    QuotaExceeded:
+      type: object
+      description: 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal.
+      properties:
+        limit: { type: string, enum: [sites_per_user, members_per_org] }
+        current: { type: integer, format: int64 }
+        max: { type: integer, format: int64 }
+        plan_tier: { type: string }
+        next_tier: { type: string }
+        upgrade_url: { type: string, format: uri }
+        sales_url: { type: string, format: uri }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Malformed request / reserved slug / verification failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource absent (or invisible under the caller's tenant)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Slug/host already in use by another org/site (global host registry)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    QuotaExceeded:
+      description: A hard cap was crossed (cloud build only)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaExceeded" }

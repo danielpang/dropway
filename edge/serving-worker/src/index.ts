@@ -4,25 +4,30 @@
 // syntax). Phase 1 implements the PUBLIC serve path only: the 95% case that is
 // JWT-free and cacheable (docs/ARCHITECTURE.md §3/§6).
 //
-// Request lifecycle (public):
+// Request lifecycle (public), content-addressed layout:
 //   browser → PoP → resolve `route:<host>` from KV (ROUTES) →
-//   if access_mode === "public": resolve the path to an R2 object key under the
-//   version's manifest prefix, stream it from R2 (BUCKET) with the right
-//   Content-Type + Cache-Control, with index.html directory fallback and a
-//   404 page.
+//   if access_mode === "public":
+//     fetch the deploy manifest from R2 at
+//       manifests/<org_id>/<site_id>/<version_id>.json
+//     resolve the request path (index.html + directory fallback) to its
+//       { sha256, content_type }, then stream the blob from R2 at
+//       blobs/<org_id>/<sha256> with the right Content-Type + Cache-Control
+//       (immutable for hashed assets, short for HTML); 404 page otherwise.
 //
 // The public path NEVER reads a JWT. Identity-gated modes
 // (password|allowlist|org_only) are Phase-2 stubs that return a clearly-marked
 // 501 (see `gatedStub`) and DO NOT exchange identity here — that is the
 // host-scoped `/authz` exchange on app.shipped.app, built in Phase 2.
 
+import { type RouteValue, cleanPath, parseRouteValue, routeKey } from "./route";
 import {
-  type RouteValue,
-  notFoundKey,
-  parseRouteValue,
-  resolveObjectKeys,
-  routeKey,
-} from "./route";
+  type Manifest,
+  NOT_FOUND_PATH,
+  blobKey,
+  manifestKey,
+  parseManifest,
+  resolveManifestEntry,
+} from "./manifest";
 import { publicResponseHeaders, securityHeaders } from "./http";
 
 // --- Binding interfaces -----------------------------------------------------
@@ -35,6 +40,8 @@ export interface R2ObjectLike {
   httpEtag?: string;
   uploaded?: Date;
   size?: number;
+  /** Present on R2ObjectBody; lets us read the manifest JSON in one call. */
+  json?: () => Promise<unknown>;
 }
 
 /** Minimal R2 bucket binding: a content-addressed get by key. */
@@ -55,19 +62,48 @@ export interface Env {
   BUCKET: BucketLike;
 }
 
+/**
+ * Minimal Cache API surface. The public path caches successful blob responses
+ * so a warm PoP serves without an R2 Class-B op. Injected/overridable so tests
+ * run on the node pool without the global `caches`.
+ */
+export interface CacheLike {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+}
+
+/** The default (per-PoP) cache, when the runtime exposes one. */
+function defaultCache(): CacheLike | null {
+  const c = (globalThis as { caches?: { default?: CacheLike } }).caches;
+  return c?.default ?? null;
+}
+
 // --- Worker entry -----------------------------------------------------------
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return serve(request, env);
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return serve(request, env, { waitUntil: (p) => ctx.waitUntil(p) });
   },
 };
 
+/** Side-channels the Worker uses but tests can stub (cache + background work). */
+export interface ServeOptions {
+  /** Cache API instance; defaults to `caches.default` when available. */
+  cache?: CacheLike | null;
+  /** Schedules background work (cache writes) past the response. */
+  waitUntil?: (p: Promise<unknown>) => void;
+}
+
 /**
  * Core request handler, exported for tests. Pure with respect to the injected
- * `env` bindings; performs no global side effects.
+ * `env` bindings; performs no global side effects beyond an optional best-effort
+ * cache write (scheduled via `waitUntil`).
  */
-export async function serve(request: Request, env: Env): Promise<Response> {
+export async function serve(
+  request: Request,
+  env: Env,
+  opts: ServeOptions = {},
+): Promise<Response> {
   // Only GET/HEAD are meaningful for static content.
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response("Method Not Allowed", {
@@ -79,7 +115,9 @@ export async function serve(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
   // 1. Resolve the host → route value from KV. The Host header is the tenant
-  //    identity on the content domain; there is no JWT to consult.
+  //    identity on the content domain; there is no JWT to consult. The shared
+  //    contract validator also pins `schema_version` and fails closed on an
+  //    unsupported (or malformed) projection value.
   const raw = await env.ROUTES.get(routeKey(url.host), "json");
   const route = parseRouteValue(raw);
   if (route === null) {
@@ -90,7 +128,7 @@ export async function serve(request: Request, env: Env): Promise<Response> {
   // 2. Dispatch by access mode. Phase 1 = public only.
   switch (route.access_mode) {
     case "public":
-      return servePublic(request, env, route, url);
+      return servePublic(request, env, route, url, opts);
     case "password":
     case "allowlist":
     case "org_only":
@@ -102,56 +140,163 @@ export async function serve(request: Request, env: Env): Promise<Response> {
 }
 
 /**
- * PUBLIC serve path — no JWT, cacheable. Resolves the request path to an R2
- * object key under the version prefix, streams it, falling back to a directory
- * index and then a 404 page.
+ * PUBLIC serve path — no JWT, cacheable. Fetches the deploy manifest, resolves
+ * the request path (with index.html + directory fallback) to a content-addressed
+ * blob, then streams it from R2 with the manifest's Content-Type and the policy
+ * Cache-Control. Successful responses are written to the Cache API so a warm PoP
+ * serves without an R2 op.
  */
 async function servePublic(
   request: Request,
   env: Env,
   route: RouteValue,
   url: URL,
+  opts: ServeOptions,
 ): Promise<Response> {
-  const candidates = resolveObjectKeys(route, url.pathname);
-  if (candidates.length === 0) {
+  const cache = opts.cache !== undefined ? opts.cache : defaultCache();
+
+  // Cache hit? Serve straight from the PoP (HEAD reuses the GET-keyed entry,
+  // stripping the body below). The cache key is content-version-scoped because
+  // the manifest is per version and the blob key is the sha256 (see cacheKey).
+  if (cache) {
+    const key = cacheKey(route, url);
+    const hit = await cache.match(key);
+    if (hit) return bodyFor(request, hit);
+  }
+
+  // Sanitize the request path before resolving it against the manifest.
+  const clean = cleanPath(url.pathname);
+  if (clean === null) {
     // Unsafe path (traversal etc.) → 404, never an error that leaks structure.
-    return notFound(route, env);
+    return notFound(route);
   }
 
-  for (const key of candidates) {
-    const object = await env.BUCKET.get(key);
-    if (object === null) continue;
-
-    const headers = publicResponseHeaders(key, {
-      etag: object.httpEtag,
-      lastModified: object.uploaded,
-      contentLength: object.size,
-    });
-    // HEAD must not carry a body; GET streams the object.
-    const body = request.method === "HEAD" ? null : object.body;
-    return new Response(body, { status: 200, headers });
+  // Fetch + cache (within this request) the deploy manifest.
+  const manifest = await loadManifest(env, route);
+  if (manifest === null) {
+    // Missing/corrupt manifest → fail closed with the default 404 (we have no
+    // manifest, so no custom 404 page to look up).
+    return notFound(route);
   }
 
-  // No candidate existed → serve the version's 404 page (or a default).
-  return notFound(route, env);
+  const match = resolveManifestEntry(manifest, clean);
+  if (match === null) {
+    // No served path matched → the version's custom 404 page, else the default.
+    return notFound(route, env, manifest);
+  }
+
+  const object = await env.BUCKET.get(blobKey(route.org_id, match.entry.sha256));
+  if (object === null) {
+    // Manifest referenced a blob that is not in R2 — projection drift. Fail
+    // closed rather than serving the wrong/empty bytes.
+    return notFound(route, env, manifest);
+  }
+
+  const headers = publicResponseHeaders(match.path, {
+    contentType: match.entry.content_type,
+    etag: object.httpEtag,
+    lastModified: object.uploaded,
+    contentLength: object.size ?? match.entry.size,
+  });
+
+  const response = new Response(object.body, { status: 200, headers });
+
+  // Best-effort: populate the PoP cache for subsequent requests. We cache a
+  // clone so the streamed body is still available to the caller.
+  if (cache) {
+    const key = cacheKey(route, url);
+    const write = cache.put(key, response.clone());
+    if (opts.waitUntil) opts.waitUntil(write);
+    else await write.catch(() => {});
+  }
+
+  return bodyFor(request, response);
 }
 
 /**
- * 404 response. If a route is known and a bucket is available, prefer the
- * version's own `404.html`; otherwise a minimal platform 404. Always carries
- * security headers and short, public cache (a 404 is still safe to cache).
+ * Fetch + parse a version's deploy manifest from R2. The result is cached on the
+ * route object for the lifetime of this request (`_manifest`), so a path that
+ * probes several candidates does not re-fetch. Returns null when the manifest is
+ * missing or fails validation (so the caller fails closed).
  */
-async function notFound(route: RouteValue | null, env?: Env): Promise<Response> {
+async function loadManifest(env: Env, route: RouteValue): Promise<Manifest | null> {
+  const cached = (route as RouteWithManifest)._manifest;
+  if (cached !== undefined) return cached;
+
+  let manifest: Manifest | null = null;
+  const object = await env.BUCKET.get(manifestKey(route));
+  if (object !== null) {
+    // Prefer R2's streaming `.json()` when present; fall back to parsing the body.
+    const raw = object.json ? await object.json() : await readBodyJson(object);
+    manifest = parseManifest(raw);
+  }
+
+  (route as RouteWithManifest)._manifest = manifest;
+  return manifest;
+}
+
+/** Internal: a route carrying its per-request memoized manifest. */
+type RouteWithManifest = RouteValue & { _manifest?: Manifest | null };
+
+/** Read + JSON-parse an R2 object body when `.json()` is unavailable (mocks). */
+async function readBodyJson(object: R2ObjectLike): Promise<unknown> {
+  if (object.body === null) return null;
+  const text = await new Response(object.body).text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Cache API key for a public response. We key on the ORIGIN + version + path
+ * so a pointer flip (new version_id) is a fresh key, and one host's cache can
+ * never satisfy another's. Method is normalized to GET so HEAD reuses the entry.
+ */
+function cacheKey(route: RouteValue, url: URL): Request {
+  const keyUrl = new URL(url.toString());
+  keyUrl.search = ""; // static content does not vary by query string
+  // Fold the version into the key path so a publish/rollback never serves stale.
+  keyUrl.pathname = `/${route.version_id}${keyUrl.pathname}`;
+  return new Request(keyUrl.toString(), { method: "GET" });
+}
+
+/** Return a response suitable for the request method (HEAD carries no body). */
+function bodyFor(request: Request, response: Response): Response {
+  if (request.method !== "HEAD") return response;
+  return new Response(null, {
+    status: response.status,
+    headers: response.headers,
+  });
+}
+
+/**
+ * 404 response. If a route + manifest are known, prefer the version's own
+ * `404.html` (resolved through the manifest → blob); otherwise a minimal
+ * platform 404. Always carries security headers and short, public cache (a 404
+ * is still safe to cache).
+ */
+async function notFound(
+  route: RouteValue | null,
+  env?: Env,
+  manifest?: Manifest,
+): Promise<Response> {
   const headers = new Headers({
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "public, max-age=30",
     ...securityHeaders(),
   });
 
-  if (route && env) {
-    const custom = await env.BUCKET.get(notFoundKey(route));
-    if (custom !== null) {
-      return new Response(custom.body, { status: 404, headers });
+  if (route && env && manifest) {
+    const entry = manifest.files[NOT_FOUND_PATH];
+    if (entry !== undefined) {
+      const object = await env.BUCKET.get(blobKey(route.org_id, entry.sha256));
+      if (object !== null) {
+        // Serve the custom 404 with its manifest Content-Type but the 404 status.
+        headers.set("Content-Type", entry.content_type);
+        return new Response(object.body, { status: 404, headers });
+      }
     }
   }
 

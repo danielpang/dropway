@@ -18,35 +18,76 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/shipped/internal/projection"
+	"github.com/danielpang/shipped/internal/storage"
 	"github.com/danielpang/shipped/services/api/internal/config"
 	"github.com/danielpang/shipped/services/api/internal/handlers"
 	"github.com/danielpang/shipped/services/api/internal/router"
+	"github.com/danielpang/shipped/services/api/internal/store"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	if err := run(); err != nil {
+	if err := run(logger); err != nil {
 		slog.Error("server exited with error", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(baseLogger *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
-	if cfg.DatabaseURL == "" {
-		slog.Warn("DATABASE_URL not set — DB-backed routes will be unavailable (Phase 1 stubs only)")
-	}
+	ctx := context.Background()
+
 	if cfg.JWKSURL == "" {
 		// The authenticated routes can't verify without a JWKS; surface it loudly.
 		slog.Warn("JWKS_URL not set — authenticated routes will reject all tokens")
 	}
+
+	// ---- Data layer: pgx pool (non-BYPASSRLS shipped_app role) → Store. ----
+	var st *store.Store
+	if cfg.DatabaseURL != "" {
+		pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+		st = store.New(pool)
+		slog.Info("store wired (RLS tenant context per request)")
+	} else {
+		slog.Warn("DATABASE_URL not set — DB-backed routes will return 503")
+	}
+
+	// ---- Object storage: S3/R2 (MinIO locally) for blobs + manifests. ----
+	var obj storage.Store
+	if cfg.S3Bucket != "" {
+		s3, err := storage.NewS3Store(ctx, storage.S3Config{
+			Bucket:          cfg.S3Bucket,
+			Region:          cfg.S3Region,
+			Endpoint:        cfg.S3Endpoint,
+			AccessKeyID:     cfg.S3AccessKeyID,
+			SecretAccessKey: cfg.S3SecretAccessKey,
+			UsePathStyle:    cfg.S3ForcePathStyle,
+		})
+		if err != nil {
+			return err
+		}
+		obj = s3
+		slog.Info("object storage wired", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
+	} else {
+		slog.Warn("S3_BUCKET not set — deploy routes will return 503")
+	}
+
+	// ---- Projection writer: Cloudflare KV (prod) or a local writer (dev). ----
+	proj := newProjectionWriter(cfg)
 
 	// The EdDSA JWT verifier is the authz boundary. Prime the JWKS at startup so
 	// the first request doesn't pay the fetch; a failure here is non-fatal (it
@@ -63,10 +104,15 @@ func run() error {
 	qp := newQuotaProvider(cfg)
 	slog.Info("quota provider wired", "cloud_build", cloudBuild, "provider", quotaProviderName())
 
-	api := handlers.New(qp)
+	// nil-safe: NewFull stores nil deps and the DB-backed routes return 503.
+	var siteStore handlers.SiteStore
+	if st != nil {
+		siteStore = st
+	}
+	api := handlers.NewFull(qp, siteStore, obj, proj)
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           router.New(verifier, api),
+		Handler:           router.New(verifier, api, baseLogger),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -101,4 +147,24 @@ func run() error {
 	}
 	slog.Info("server stopped cleanly")
 	return nil
+}
+
+// newProjectionWriter selects the edge-projection writer. With Cloudflare creds
+// it writes to Workers KV (production); otherwise it falls back to a local writer
+// (in-memory, optionally mirrored to PROJECTION_FILE) so the publish path works
+// offline / in self-host without Cloudflare.
+func newProjectionWriter(cfg config.Config) projection.Writer {
+	if cfg.CFAccountID != "" && cfg.CFKVNamespaceID != "" && cfg.CFAPIToken != "" {
+		slog.Info("projection writer: cloudflare KV", "namespace", cfg.CFKVNamespaceID)
+		return projection.NewCloudflareKV(cfg.CFAccountID, cfg.CFKVNamespaceID, cfg.CFAPIToken)
+	}
+	if cfg.ProjectionFilePath != "" {
+		if l, err := projection.NewLocalFile(cfg.ProjectionFilePath); err == nil {
+			slog.Info("projection writer: local file", "path", cfg.ProjectionFilePath)
+			return l
+		}
+		slog.Warn("projection file unreadable; using in-memory projection", "path", cfg.ProjectionFilePath)
+	}
+	slog.Warn("projection writer: in-memory (no CF_* creds) — dev/self-host only")
+	return projection.NewLocal()
 }
