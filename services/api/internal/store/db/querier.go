@@ -9,11 +9,21 @@ import (
 )
 
 type Querier interface {
+	// Claim a pending grant for the first verified account that matches it: set
+	// claimed_at + claimed_by_user_id. Idempotent — re-claiming by the same user is a
+	// no-op; we only set claim fields when still unclaimed so the original claimant
+	// and timestamp are preserved.
+	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
 	// ===========================================================================
 	// sites
 	// ===========================================================================
 	CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite, error)
 	CreateSiteVersion(ctx context.Context, arg CreateSiteVersionParams) (AppSiteVersion, error)
+	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
+	// Remove every external-email allowlist grant in the active org (reconcile on
+	// disabling external sharing — revoke external access).
+	DeleteExternalAllowlistEntriesForOrg(ctx context.Context) error
+	DeleteHostRoute(ctx context.Context, host string) error
 	// SPDX-License-Identifier: FSL-1.1-Apache-2.0
 	//
 	// db/sqlc/query.sql
@@ -34,6 +44,9 @@ type Querier interface {
 	EnsureOrgMeta(ctx context.Context, id string) error
 	// Idempotent upsert of the per-org counter row backing the quota gate.
 	EnsureOrgUsage(ctx context.Context, orgID string) error
+	// Look up a grant by (site, email) for the authz claim path.
+	GetAllowlistEntryByEmail(ctx context.Context, arg GetAllowlistEntryByEmailParams) (AppAllowlistEntry, error)
+	GetDomain(ctx context.Context, id string) (AppDomain, error)
 	// Read the host's owning (org, site). Under the per-tx RLS tenant context this
 	// returns a row ONLY if the active org owns the host; another org's row (or an
 	// absent host) is a no-rows miss. Used by Publish / the projection writers to
@@ -42,6 +55,7 @@ type Querier interface {
 	GetOrgMeta(ctx context.Context, id string) (AppOrgMetum, error)
 	GetOrgUsage(ctx context.Context, orgID string) (AppOrgUsage, error)
 	GetSite(ctx context.Context, id string) (AppSite, error)
+	GetSiteAccessPolicy(ctx context.Context, siteID string) (AppSiteAccessPolicy, error)
 	GetSiteVersion(ctx context.Context, id string) (AppSiteVersion, error)
 	// Used to make a re-deploy of identical content idempotent (the per-site
 	// content_hash unique constraint backs this).
@@ -49,6 +63,13 @@ type Querier interface {
 	// Bump the org's sites_count counter, returning the new value. Run inside the
 	// create-site tx after the row is inserted.
 	IncSiteCount(ctx context.Context, orgID string) (int32, error)
+	// ===========================================================================
+	// domains (Phase 2) — Cloudflare-for-SaaS custom hostnames
+	// ===========================================================================
+	// Reserve a custom hostname for a site. hostname is GLOBALLY UNIQUE, so a
+	// conflicting insert from any org raises 23505 (surfaced as ErrHostTaken). Stores
+	// the Cloudflare custom-hostname id + the DCV record to surface to the user.
+	InsertDomain(ctx context.Context, arg InsertDomainParams) (AppDomain, error)
 	// ===========================================================================
 	// host_routes (global host registry — the cross-tenant hijack guard)
 	// ===========================================================================
@@ -58,6 +79,18 @@ type Querier interface {
 	// the row to the active org for later SELECT/UPDATE/DELETE, but the PK guard is
 	// global regardless of RLS visibility.
 	InsertHostRoute(ctx context.Context, arg InsertHostRouteParams) error
+	ListAllowlistEntries(ctx context.Context, siteID string) ([]AppAllowlistEntry, error)
+	ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error)
+	// Every host registered for a site in the GLOBAL registry — the canonical
+	// <slug>.shippedusercontent.com host AND every verified custom-domain host. RLS
+	// scopes the rows to the active org, so a caller only ever sees its own site's
+	// hosts. An access-mode / policy change must rewrite EVERY one of these routes
+	// (not just the canonical one), or a verified custom host keeps serving at the
+	// OLD access_mode after the policy tightened (ARCHITECTURE.md §6 revocation).
+	ListHostRoutesForSite(ctx context.Context, siteID string) ([]AppHostRoute, error)
+	// Every site in the active org whose access_mode = 'public' (used by the reconcile
+	// on disabling external sharing: these are downgraded to org_only).
+	ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error)
 	// ===========================================================================
 	// projection rebuild (the "KV is rebuildable from Postgres" invariant)
 	// ===========================================================================
@@ -72,9 +105,55 @@ type Querier interface {
 	// ===========================================================================
 	// The next monotonic version number for a site (1 on the first deploy).
 	NextVersionNo(ctx context.Context, siteID string) (int32, error)
+	// ===========================================================================
+	// host resolution (Phase 2) — resolve a content host → owning site (for /authz)
+	// ===========================================================================
+	// Resolve a content host (the *.shippedusercontent.com label OR a verified custom
+	// host) to its owning site via the global host registry, returning the site's
+	// access fields. Runs under RLS so only the active org's hosts resolve — the
+	// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
+	ResolveSiteByHostRoute(ctx context.Context, host string) (ResolveSiteByHostRouteRow, error)
+	// ===========================================================================
+	// org policy (Phase 2) — allow_external_sharing toggle + reconcile
+	// ===========================================================================
+	// Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
+	SetAllowExternalSharing(ctx context.Context, arg SetAllowExternalSharingParams) error
 	// Flip the live-version pointer (publish / rollback). RLS guarantees we can only
 	// touch our own org's site; we also re-check the version belongs to the site.
 	SetCurrentVersion(ctx context.Context, arg SetCurrentVersionParams) error
+	// ===========================================================================
+	// access policy (Phase 2) — per-site gating config
+	// ===========================================================================
+	// Flip a site's access_mode (the source for the edge RouteValue). RLS scopes the
+	// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
+	// under a false org policy.
+	SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error
+	// Advance the custom-domain state machine (pending → verifying → verified/failed)
+	// and the TLS status from a Cloudflare Status() poll.
+	UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error)
+	// ===========================================================================
+	// allowlist (Phase 2)
+	// ===========================================================================
+	// Add (or re-add) an email grant to a site's allowlist. is_external marks an
+	// email whose domain is not an org verified domain; the external-sharing trigger
+	// (0004) rejects is_external=true under a false org policy. Re-adding an email
+	// resets it to a fresh pending (unclaimed) grant.
+	UpsertAllowlistEntry(ctx context.Context, arg UpsertAllowlistEntryParams) (AppAllowlistEntry, error)
+	// ===========================================================================
+	// host_routes (Phase 2) — register/unregister a custom host in the global registry
+	// ===========================================================================
+	// Register a host → (org, site) in the GLOBAL registry. Used when a custom domain
+	// verifies (the content host is the custom hostname). PK on host enforces global
+	// uniqueness; a conflict with another org raises 23505 (ErrHostTaken). ON CONFLICT
+	// updates only when the row is already owned by THIS (org, site) — a different
+	// owner can never be overwritten because RLS makes its row invisible to UPDATE, so
+	// the ON CONFLICT target row isn't visible and the upsert raises instead.
+	UpsertHostRoute(ctx context.Context, arg UpsertHostRouteParams) error
+	// Insert or replace the per-site access policy (one row per site, PK = site_id).
+	// password_hash is non-null only for mode='password'; expires_at / unlisted are
+	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
+	// under a false org policy.
+	UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAccessPolicyParams) (AppSiteAccessPolicy, error)
 }
 
 var _ Querier = (*Queries)(nil)

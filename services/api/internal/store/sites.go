@@ -156,6 +156,41 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 	return out, err
 }
 
+// HostRoute is one row of the GLOBAL host registry (app.host_routes): a content
+// host mapped to its owning (org, site). A site has at least its canonical
+// <slug>.shippedusercontent.com host and, once a custom domain verifies, one row
+// per verified custom hostname.
+type HostRoute struct {
+	Host   string
+	OrgID  string
+	SiteID string
+}
+
+// ListHostRoutesForSite returns EVERY host registered for a site in the global
+// registry — the canonical <slug>.shippedusercontent.com host AND any verified
+// custom-domain host. RLS scopes the read to the active org (a site the tenant
+// doesn't own resolves to an empty list).
+//
+// Access-mode / policy changes MUST rewrite every one of these routes, not just
+// the canonical one: a verified custom host has its own route:<host> KV entry,
+// and leaving it at the old access_mode keeps the Worker serving the custom host
+// under the OLD tier after the policy tightened (FIX 1 / ARCHITECTURE.md §6).
+func (s *Store) ListHostRoutesForSite(ctx context.Context, t Tenant, siteID string) ([]HostRoute, error) {
+	var out []HostRoute
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		rows, err := q.ListHostRoutesForSite(ctx, siteID)
+		if err != nil {
+			return err
+		}
+		out = make([]HostRoute, len(rows))
+		for i, r := range rows {
+			out[i] = HostRoute{Host: r.Host, OrgID: r.OrgID, SiteID: r.SiteID}
+		}
+		return nil
+	})
+	return out, err
+}
+
 // ListSites returns the active tenant's sites (RLS scopes the query to the org).
 func (s *Store) ListSites(ctx context.Context, t Tenant) ([]Site, error) {
 	var out []Site

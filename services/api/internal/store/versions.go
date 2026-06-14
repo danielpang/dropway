@@ -132,10 +132,18 @@ func (s *Store) ListSiteVersions(ctx context.Context, t Tenant, siteID string) (
 }
 
 // PublishResult is returned by Publish: the route value to project and the host.
+//
+// Routes, when populated (SetSiteAccess), carries the route update for EVERY host
+// of the site — the canonical <slug>.shippedusercontent.com host AND every
+// verified custom-domain host, each with its own route:<host> KV entry. Callers
+// that change access (vs. a plain publish) MUST rewrite all of Routes, not just
+// Host/Route, or a custom host keeps serving at the old access_mode (FIX 1). Host/
+// Route stay the canonical pair for back-compat (Publish/deploy still set them).
 type PublishResult struct {
-	Host  string
-	Route projection.RouteValue
-	Site  Site
+	Host   string
+	Route  projection.RouteValue
+	Routes []RouteUpdate
+	Site   Site
 }
 
 // Publish flips a site's current_version_id to versionID (publish OR rollback —

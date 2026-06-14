@@ -27,12 +27,15 @@ const allowedAlg = "EdDSA"
 
 // Claims is the verified token payload. Better Auth's JWT plugin carries the
 // subject (user id); org_id and role are injected via the organization plugin /
-// custom claims. These are a fast hint — sensitive writes re-check live tables
-// (the "confused-deputy guard" in the plan).
+// custom claims. Email/EmailVerified back the allowlist authz path (a grant is
+// honored only for a VERIFIED email — ARCHITECTURE.md §10 [HIGH]). These are a fast
+// hint — sensitive writes re-check live tables (the "confused-deputy guard").
 type Claims struct {
 	jwt.RegisteredClaims
-	OrgID string `json:"org_id,omitempty"`
-	Role  string `json:"role,omitempty"`
+	OrgID         string `json:"org_id,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Email         string `json:"email,omitempty"`
+	EmailVerified bool   `json:"email_verified,omitempty"`
 }
 
 // UserID returns the token subject (Better Auth user id).

@@ -20,15 +20,29 @@
 import {
   type AccessMode,
   type KVRouteValue,
+  MIN_SCHEMA_VERSION,
   SCHEMA_VERSION,
+  isRouteExpired as contractsIsRouteExpired,
   safeParseKVRouteValue,
 } from "@shipped/contracts";
 
 /** The KV route value, named locally for the Worker. */
 export type RouteValue = KVRouteValue;
-/** The route-value schema version this Worker understands. */
+/** The newest route-value schema version this Worker understands. */
 export const SUPPORTED_SCHEMA_VERSION = SCHEMA_VERSION;
+/** The oldest route-value schema version this Worker still accepts (back-compat). */
+export const MIN_SUPPORTED_SCHEMA_VERSION = MIN_SCHEMA_VERSION;
 export { type AccessMode };
+
+/**
+ * True when a parsed route has expired as of `now` (default: current time). A
+ * route with no `expires_at` (v1 values, or non-expiring v2 links) never expires.
+ * Re-exported from the shared contract so the Worker enforces the SAME edge
+ * expiry semantics the Go API serializes (public/unlisted link expiry, §6).
+ */
+export function isRouteExpired(value: RouteValue, now?: Date): boolean {
+  return contractsIsRouteExpired(value, now);
+}
 
 /**
  * The KV key under which the Go API publishes a host's route value.

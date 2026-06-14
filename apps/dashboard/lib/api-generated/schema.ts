@@ -21,6 +21,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/.well-known/edge-jwks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Edge-token JWKS (unauthenticated)
+         * @description The public JWKS (OKP/Ed25519) for the edge-token signer. The serving Worker fetches this and pins alg=EdDSA to verify the host-scoped edge token. This is a SEPARATE keypair from Better Auth's user JWKS.
+         */
+        get: operations["edgeJwks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/authz/mint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a host-scoped edge token for an org_only/allowlist site
+         * @description Authorizes the VERIFIED viewer (Better Auth JWT) for the org_only/allowlist site resolved from {host} and mints a host-scoped EdDSA edge token (sub = viewer). Re-checks live tables: org membership for org_only; the viewer's VERIFIED email on the allowlist for allowlist (claiming a pending entry on first match; external grants require allow_external_sharing). An expired policy refuses the mint (403). A password-mode site → 400 (use /authz/password).
+         */
+        post: operations["authzMint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/authz/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint an anonymous edge token for a password-protected site
+         * @description JWT-FREE. Verifies the submitted password against the site's bcrypt hash (constant-time compare) and, on success, mints an ANONYMOUS host-scoped edge token (sub = "anon:<random>"). Wrong password → 401; an expired policy → 403; a non-password / unknown host → a generic 401 (no existence oracle).
+         */
+        post: operations["authzPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -30,6 +90,66 @@ export interface paths {
         };
         /** Echo the caller's verified identity */
         get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the caller org's members
+         * @description Lists members from the Better Auth `member` table, RLS/org-scoped. The Go API only READS roles (Better Auth owns invite/accept/role mutations). If the Better Auth table is unavailable (self-host pre-Better-Auth), returns an empty list.
+         */
+        get: operations["listMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/allow-external-sharing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Toggle the org allow_external_sharing policy (admin/owner only)
+         * @description Owner/admin only (role re-checked against the member table). When DISABLING, reconciles: public sites are downgraded to org_only and their edge routes rewritten; external-email allowlist grants are revoked. Enabling only widens what is permitted (no reconcile).
+         */
+        put: operations["setAllowExternalSharing"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/domains/{domainID}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Poll a custom domain's verification status
+         * @description Polls Cloudflare for the custom hostname's verification + TLS state, advances the pending→verifying→active state machine, and — on verified+TLS — writes the global host route → site so the custom host serves.
+         */
+        get: operations["getDomainStatus"];
         put?: never;
         post?: never;
         delete?: never;
@@ -50,7 +170,7 @@ export interface paths {
         put?: never;
         /**
          * Create a site
-         * @description Reserved slugs are rejected (400). On the cloud build, exceeding the per-user site cap returns 402 with the quota body so the dashboard can open the upgrade modal.
+         * @description Reserved slugs are rejected (400). A slug whose content host (`<slug>.shippedusercontent.com`) is already taken by another org/site returns 409 Conflict — the host registry is global even though site slugs are unique only per org. On the cloud build, exceeding the per-user site cap returns 402 with the quota body so the dashboard can open the upgrade modal.
          */
         post: operations["createSite"];
         delete?: never;
@@ -136,6 +256,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a site's access mode + policy (admin/owner only)
+         * @description Owner/admin only (role re-checked against the member table). Sets the access_mode (public/password/allowlist/org_only) and the matching policy: a password mode's password is hashed server-side (bcrypt; plaintext is never stored), optional expires_at (RFC3339) sets a link expiry, unlisted marks a public-tier site as unlisted. Rewrites the edge RouteValue (mode + expires_at for the public tier). A public site under allow_external_sharing=false → 403.
+         */
+        put: operations["setSiteAccess"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/allowlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a site's allowlist */
+        get: operations["listAllowlist"];
+        put?: never;
+        /**
+         * Add an email to a site's allowlist (admin/owner only)
+         * @description Owner/admin only. is_external is set automatically when the email's domain is not one of the org's VERIFIED domains; the DB trigger then rejects an external grant under allow_external_sharing=false (403).
+         */
+        post: operations["addAllowlistEntry"];
+        /** Remove an email from a site's allowlist (admin/owner only) */
+        delete: operations["removeAllowlistEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a site's custom domains */
+        get: operations["listDomains"];
+        put?: never;
+        /**
+         * Register a custom domain for a site (admin/owner only)
+         * @description Owner/admin only. Creates a Cloudflare-for-SaaS custom hostname and stores a pending domains row, returning the DNS DCV record the user must create. hostname is GLOBALLY UNIQUE → 409 if taken by another org/site.
+         */
+        post: operations["addDomain"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -145,6 +328,58 @@ export interface components {
             org_id?: string;
             /** @enum {string} */
             role?: "owner" | "admin" | "member";
+        };
+        Member: {
+            /** Format: uuid */
+            user_id?: string;
+            /** @enum {string} */
+            role?: "owner" | "admin" | "member";
+        };
+        /** @description A minted host-scoped EdDSA edge token (the serving Worker verifies it). */
+        EdgeToken: {
+            /** @description Compact EdDSA JWT (aud = the content host). */
+            token?: string;
+            host?: string;
+            /** @enum {string} */
+            mode?: "password" | "allowlist" | "org_only";
+        };
+        AllowlistEntry: {
+            /** Format: email */
+            email?: string;
+            is_external?: boolean;
+            /** Format: date-time */
+            claimed_at?: string | null;
+            /** Format: uuid */
+            claimed_by?: string | null;
+        };
+        Domain: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            site_id?: string;
+            hostname?: string;
+            /** @enum {string} */
+            verify_status?: "pending" | "verifying" | "verified" | "failed";
+            /** @enum {string} */
+            tls_status?: "pending" | "issued" | "failed";
+            /** @description DNS record to create: '<name> <type> <value>'. */
+            dcv_record?: string;
+        };
+        /** @description JSON Web Key Set (OKP/Ed25519) for the edge-token signer. */
+        JWKS: {
+            keys?: {
+                /** @example OKP */
+                kty?: string;
+                /** @example Ed25519 */
+                crv?: string;
+                kid?: string;
+                /** @description base64url(raw public key) */
+                x?: string;
+                /** @example sig */
+                use?: string;
+                /** @example EdDSA */
+                alg?: string;
+            }[];
         };
         Site: {
             /** Format: uuid */
@@ -210,6 +445,24 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Authenticated but not permitted (e.g. not admin/owner, expired link, not on allowlist, external sharing disabled) */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description A required dependency (DB, edge signer, custom-domain provider) is not configured */
+        Unavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description Malformed request / reserved slug / verification failure */
         BadRequest: {
             headers: {
@@ -221,6 +474,15 @@ export interface components {
         };
         /** @description Resource absent (or invisible under the caller's tenant) */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Slug/host already in use by another org/site (global host registry) */
+        Conflict: {
             headers: {
                 [name: string]: unknown;
             };
@@ -271,6 +533,92 @@ export interface operations {
             };
         };
     };
+    edgeJwks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The edge signer's public JWKS */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JWKS"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    authzMint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Content host (e.g. acme.shippedusercontent.com or a verified custom host) */
+                    host: string;
+                    /** @description Path the dashboard redirects back to (NOT used for authz) */
+                    next?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Minted edge token */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    authzPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    host: string;
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Minted anonymous edge token */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -290,6 +638,85 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's members */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        members?: components["schemas"]["Member"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    setAllowExternalSharing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The new policy + the number of downgraded sites */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        allow_external_sharing?: boolean;
+                        downgraded_sites?: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getDomainStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domainID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The updated domain row */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Domain"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
         };
     };
     listSites: {
@@ -346,6 +773,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             402: components["responses"]["QuotaExceeded"];
+            409: components["responses"]["Conflict"];
         };
     };
     getSite: {
@@ -481,6 +909,213 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    mode: "public" | "password" | "allowlist" | "org_only";
+                    /** @description Plaintext; hashed server-side. Required for mode=password. */
+                    password?: string;
+                    /**
+                     * Format: date-time
+                     * @description Optional link expiry (RFC3339).
+                     */
+                    expires_at?: string;
+                    /** @description Public-tier unlisted flag. */
+                    unlisted?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Access updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        mode?: string;
+                        unlisted?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAllowlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's allowlist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        allowlist?: components["schemas"]["AllowlistEntry"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addAllowlistEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Entry added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllowlistEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removeAllowlistEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Entry removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        removed?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listDomains: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's custom domains */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        domains?: components["schemas"]["Domain"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addDomain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example docs.acme.com */
+                    hostname: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Custom domain registered (pending verification) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Domain"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
         };
     };
 }

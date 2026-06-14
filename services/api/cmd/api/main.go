@@ -21,6 +21,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/shipped/internal/customdomains"
+	"github.com/danielpang/shipped/internal/edgetoken"
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/storage"
 	"github.com/danielpang/shipped/services/api/internal/config"
@@ -89,6 +91,22 @@ func run(baseLogger *slog.Logger) error {
 	// ---- Projection writer: Cloudflare KV (prod) or a local writer (dev). ----
 	proj := newProjectionWriter(cfg)
 
+	// ---- Edge signer (Phase 2): mints the host-scoped edge token + serves the
+	// edge JWKS. SEPARATE keypair from Better Auth. Generated-and-logged in dev. ----
+	edgeSigner, seed, generated, err := edgetoken.LoadOrGenerateSigner(cfg.EdgeSigningKey)
+	if err != nil {
+		return err
+	}
+	if generated {
+		slog.Warn("EDGE_SIGNING_KEY not set — generated an EPHEMERAL edge signer; set EDGE_SIGNING_KEY to persist",
+			"kid", edgeSigner.Kid(), "seed_base64url", seed)
+	} else {
+		slog.Info("edge signer wired", "kid", edgeSigner.Kid())
+	}
+
+	// ---- Custom-domain provider (Phase 2): Cloudflare for SaaS, or a Fake. ----
+	domains := newDomainProvider(cfg)
+
 	// The EdDSA JWT verifier is the authz boundary. Prime the JWKS at startup so
 	// the first request doesn't pay the fetch; a failure here is non-fatal (it
 	// lazily refreshes on first use / unknown kid).
@@ -110,6 +128,12 @@ func run(baseLogger *slog.Logger) error {
 		siteStore = st
 	}
 	api := handlers.NewFull(qp, siteStore, obj, proj)
+	api.EdgeSigner = edgeSigner
+	api.Domains = domains
+	api.AllowJWTRoleFallback = cfg.AllowJWTRoleFallback
+	if cfg.AllowJWTRoleFallback {
+		slog.Warn("ALLOW_JWT_ROLE_FALLBACK=true — admin gating will trust the JWT role claim when auth.member is unavailable")
+	}
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           router.New(verifier, api, baseLogger),
@@ -167,4 +191,17 @@ func newProjectionWriter(cfg config.Config) projection.Writer {
 	}
 	slog.Warn("projection writer: in-memory (no CF_* creds) — dev/self-host only")
 	return projection.NewLocal()
+}
+
+// newDomainProvider selects the custom-hostname provider. With a Cloudflare zone +
+// API token it uses Cloudflare for SaaS (production); otherwise it falls back to
+// the in-memory Fake (offline/self-host/dev) so the custom-domain endpoints work
+// without Cloudflare.
+func newDomainProvider(cfg config.Config) customdomains.Provider {
+	if cfg.CFZoneID != "" && cfg.CFAPIToken != "" {
+		slog.Info("custom-domain provider: cloudflare for saas", "zone", cfg.CFZoneID)
+		return customdomains.NewCloudflareProvider(cfg.CFZoneID, cfg.CFAPIToken, projection.ContentDomain)
+	}
+	slog.Warn("custom-domain provider: in-memory fake (no CF_ZONE_ID/CF_API_TOKEN) — dev/self-host only")
+	return customdomains.NewFake()
 }

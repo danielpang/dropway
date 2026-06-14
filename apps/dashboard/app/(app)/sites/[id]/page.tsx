@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, Globe } from "lucide-react";
+import { ArrowLeft, ExternalLink, Globe, Link2, Settings } from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { DeployInstructions } from "@/components/sites/deploy-instructions";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -88,10 +89,24 @@ export default async function SiteDetailPage({
             </div>
           </div>
         </div>
-        <RollbackDialog
-          siteId={site.id ?? id}
-          currentVersionId={site.current_version_id ?? null}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/sites/${id}/settings`}>
+              <Settings aria-hidden />
+              Access
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/sites/${id}/domains`}>
+              <Link2 aria-hidden />
+              Domains
+            </Link>
+          </Button>
+          <RollbackDialog
+            siteId={site.id ?? id}
+            currentVersionId={site.current_version_id ?? null}
+          />
+        </div>
       </div>
 
       {/* Live URL */}

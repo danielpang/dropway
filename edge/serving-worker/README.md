@@ -3,9 +3,10 @@
 # @shipped/serving-worker
 
 Cloudflare Worker that serves tenant static sites on `*.shippedusercontent.com`
-(the PSL-listed content domain — never a subdomain of the app/auth domain).
-This is the **Phase-1 PUBLIC serve path**: the 95% case that is **JWT-free and
-cacheable** (see `docs/ARCHITECTURE.md` §3 and §6).
+(the PSL-listed content domain — never a subdomain of the app/auth domain). It
+serves both the **PUBLIC** path (the 95% case: **JWT-free and cacheable**) and
+the **Phase-2 GATED** path (`password` | `allowlist` | `org_only`) via the
+host-scoped **edge token** + `/authz` exchange (see `docs/ARCHITECTURE.md` §3/§6).
 
 The Worker is a **thin router and a read-only consumer** of its bindings. The
 Go API (`api.shipped.app`) is the real authz boundary and the **sole writer** of
@@ -29,11 +30,44 @@ GET https://<host>/<path>
           - Cache-Control: immutable for hashed assets, short TTL for HTML
           - custom 404.html (or a default) when nothing matches
           - successful responses written to the Cache API (per-version keyed)
-  → access_mode === "password" | "allowlist" | "org_only":
-        501 Phase-2 STUB ("/authz exchange") — NOT implemented here.
+  → access_mode === "password" | "allowlist" | "org_only":   [Phase 2]
+        read the __Host-edge cookie → verify the edge token (jose) against the
+          API's edge JWKS (EDGE_JWKS_URL; alg pinned EdDSA, iss + aud==host +
+          exp + site_id==route.site_id)
+        valid  → serve the SAME manifest→blob bytes, but PRIVATE
+                   (Cache-Control: private, no-store; never the public Cache API)
+        absent/invalid → 302 https://app.shipped.app/authz?host=<host>&next=<path>
+                            (APP_AUTHZ_URL; the dashboard runs the exchange)
+
+  → expires_at (v2 RouteValue) in the past → 410 platform "link expired" page
 ```
 
-The public path **never reads a JWT** — any `Authorization` header is ignored.
+The Worker **never reads the operator Better Auth JWT** — only the host-scoped
+edge token (cookie). The public path is JWT-free; any `Authorization` header is
+ignored.
+
+### The `/authz` exchange (gated tiers, Phase 2)
+
+```
+Worker (no/invalid __Host-edge)  ──302──►  app.shipped.app/authz?host=&next=
+   dashboard: require Better Auth session, then
+     org_only/allowlist → POST api /v1/authz/mint {host,next}      → {token} | 403
+     password           → platform password form → POST /v1/authz/password → {token}
+   dashboard ──302──►  https://<host>/__authz/callback?token=&next=
+Worker GET /__authz/callback:
+   verify token (aud==host, site_id==route) → Set-Cookie __Host-edge
+     (host-only, Secure, HttpOnly, SameSite=Lax) → 302 to a SAFE same-host `next`
+     (off-host / protocol-relative / backslash / CRLF `next` collapses to "/")
+```
+
+**Edge token** (mirrors the Go `internal/edgetoken` signer): a compact **EdDSA**
+JWT, a **separate keypair** from Better Auth's user JWT.
+`iss=https://api.shipped.app/edge`, `aud=<content host>`,
+`sub=<user_id>` (org_only/allowlist) or `anon:<random>` (password),
+`exp=now+15m`, plus `{ site_id, mode }`. The Worker pins `alg=EdDSA` (rejects
+`none`/HS\*), checks `iss`, `aud==request host`, `exp`, and that `site_id`
+matches the route. The JWKS is fetched from `EDGE_JWKS_URL` and cached per
+isolate (5-min TTL; a transient JWKS outage falls back to the last-good keys).
 
 ### Path resolution rules
 
@@ -51,7 +85,8 @@ The public path **never reads a JWT** — any `Authorization` header is ignored.
 | -------------------------------------------- | ---------------------------------------- |
 | Content-hash fingerprinted (`app.4f3a9c2b.js`) | `public, max-age=31536000, immutable`    |
 | HTML / non-hashed assets                     | `public, max-age=60, must-revalidate`    |
-| Gated (Phase-2 stub) responses               | `private, no-store` (never shared-cached) |
+| Gated (password/allowlist/org_only) responses | `private, no-store, max-age=0, must-revalidate` + `Vary: Cookie` (never shared-cached) |
+| Expired link (`410`)                          | `no-store`                               |
 
 Every public response also carries defense-in-depth security headers
 (`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
@@ -68,9 +103,13 @@ interface RouteValue {
   site_id: string;
   version_id: string;
   access_mode: "public" | "password" | "allowlist" | "org_only";
-  schema_version: number; // pinned; the Worker fails closed on a mismatch
+  schema_version: number; // accepts 1 AND 2; fails closed outside that range
+  expires_at?: string; // v2+, RFC3339; past → 410 "link expired" at the edge
 }
 ```
+
+`schema_version` **2** (Phase 2) added the optional `expires_at`; the Worker
+parses both v1 and v2 (a v1 value has no `expires_at` and never expires).
 
 It is owned by the repo-root `contracts/` package (JSON Schema → Go struct + TS
 type + CI round-trip test) and published as **`@shipped/contracts`**.
@@ -89,6 +128,18 @@ type-check and tests resolve it without a build step.
 | `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only).                |
 | `BUCKET` | R2   | Single private bucket: `manifests/<org>/<site>/<version>.json` + `blobs/<org>/<sha256>`. |
 
+### Vars (Phase 2 gated path — `wrangler.toml [vars]`)
+
+| Var             | Purpose                                                                 | Default                                          |
+| --------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
+| `EDGE_JWKS_URL` | Edge signer public JWKS (OKP/Ed25519) — fetched + cached to verify tokens. | `https://api.shipped.app/.well-known/edge-jwks` |
+| `APP_AUTHZ_URL` | Dashboard `/authz` exchange a gated request 302s to.                    | `https://app.shipped.app/authz`                  |
+
+Both have safe production defaults in `src/config.ts`; set them per environment.
+There are **no secrets** here — the Worker only ever verifies with the *public*
+JWKS; the edge signing key lives in the Go API (`EDGE_SIGNING_KEY`, see
+`deploy/.env.example`).
+
 The namespace/bucket IDs in `wrangler.toml` are **placeholders** — the infra
 agent fills them in per environment (or via `wrangler kv namespace create` /
 `wrangler r2 bucket create`). The production `[[routes]]` block is committed but
@@ -99,13 +150,16 @@ commented out until `shippedusercontent.com` is live on Cloudflare.
 ```
 edge/serving-worker/
 ├── src/
-│   ├── index.ts     # fetch handler + serve(): KV lookup, dispatch, manifest fetch, blob stream, Cache API, 404, Phase-2 stub
-│   ├── route.ts     # PURE host normalize + route parse (via @shipped/contracts) + path sanitize
+│   ├── index.ts     # fetch handler + serve(): KV lookup, expiry, dispatch, manifest fetch, blob stream, Cache API, 404, 410
+│   ├── route.ts     # PURE host normalize + route parse (via @shipped/contracts) + path sanitize + isRouteExpired
 │   ├── manifest.ts  # PURE manifest model + parse + path→entry resolution; manifest/blob R2 keys
 │   ├── http.ts      # PURE Content-Type + Cache-Control + security headers
-│   └── (RouteValue now comes from @shipped/contracts — no local mirror)
+│   ├── config.ts    # gated-path config (EDGE_JWKS_URL/APP_AUTHZ_URL), issuer + cookie name
+│   ├── edgetoken.ts # edge-token verification (jose): JWKS fetch+cache, alg/iss/aud/exp/site_id checks
+│   ├── authz.ts     # cookie read, /authz 302, __Host-edge Set-Cookie, /__authz/callback, safe-next redirect
+│   └── gated.ts     # gated dispatch: verify cookie → serve private, or 302; callback handling
 ├── test/
-│   └── serve.test.ts  # vitest: routing, manifest resolution, blob fetch, Cache API (mocked KV + R2)
+│   └── serve.test.ts  # vitest: public path + edge-token accept/reject, /authz 302, callback, expiry (mocked KV/R2/JWKS)
 ├── wrangler.toml
 ├── vitest.config.ts   # node pool; aliases @shipped/contracts → source
 ├── tsconfig.json      # extends ../../tsconfig.base.json + workers types; @shipped/contracts path
@@ -155,12 +209,12 @@ wrangler r2 object put --preview \
 
 ## Phase boundaries
 
-- **Phase 1 (here):** `public` only. JWT-free, cacheable.
-- **Phase 2 (stubbed):** `password` (host-scoped cookie, no identity) and
+- **Phase 1:** `public` only. JWT-free, cacheable.
+- **Phase 2 (here):** `password` (host-scoped cookie, anon identity) and
   `allowlist` / `org_only` (302 → `app.shipped.app/authz` host-scoped token
-  exchange; the Worker verifies *that* token, never the operator JWT). The
-  current `gatedStub` returns a clearly-marked `501` and does **no** identity
-  work — see the `TODO(phase-2)` in `src/index.ts`.
+  exchange; the Worker verifies *that* edge token, never the operator JWT) plus
+  **edge link-expiry** (`expires_at` in the v2 `RouteValue` → `410`). Gated
+  responses are always `private, no-store` and never enter the public Cache API.
 
 ## License
 

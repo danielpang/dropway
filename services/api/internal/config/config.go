@@ -30,6 +30,14 @@ type Config struct {
 	// cloud build can read it and the OSS build can warn if it's set.
 	Cloud bool
 
+	// AllowJWTRoleFallback controls whether admin-gated actions may fall back to
+	// the verified JWT role claim when the Better Auth auth.member table is
+	// unavailable (ALLOW_JWT_ROLE_FALLBACK). Default FALSE (strict): if membership/
+	// role can't be confirmed live, admin-gated actions are DENIED rather than
+	// trusting the claim. A self-host that hasn't migrated Better Auth yet can opt
+	// in by setting this true (ARCHITECTURE.md §10 [LOW]).
+	AllowJWTRoleFallback bool
+
 	// S3 / R2 object storage for blobs + manifests. Optional in Phase 1 (the
 	// publish/serve loop is unavailable without it). Works against MinIO locally
 	// (path-style endpoint) and Cloudflare R2 in production.
@@ -47,6 +55,17 @@ type Config struct {
 	CFKVNamespaceID string // CF_KV_NAMESPACE_ID
 	CFAPIToken      string // CF_API_TOKEN
 
+	// CFZoneID is the Cloudflare zone for the custom-hostname (Cloudflare for SaaS)
+	// API. When set together with CF_API_TOKEN, the real custom-domain provider is
+	// wired; otherwise the in-memory Fake is used (offline/self-host/dev).
+	CFZoneID string // CF_ZONE_ID
+
+	// EdgeSigningKey is the Ed25519 key (32-byte seed or 64-byte key; base64/hex)
+	// for the edge-token signer — a SEPARATE keypair from Better Auth's user JWT
+	// (EDGE_SIGNING_KEY). When empty, the server GENERATES an ephemeral key at
+	// startup and logs the seed (dev convenience; tokens won't survive a restart).
+	EdgeSigningKey string
+
 	// ProjectionFilePath, when set (PROJECTION_FILE), mirrors the local projection
 	// writer to a JSON file (the offline/self-host serving shim reads it).
 	ProjectionFilePath string
@@ -57,12 +76,13 @@ type Config struct {
 // optional values fall back to documented defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		Port:        8080,
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		JWKSURL:     os.Getenv("JWKS_URL"),
-		JWTIssuer:   os.Getenv("JWT_ISSUER"),
-		JWTAudience: os.Getenv("JWT_AUDIENCE"),
-		Cloud:       parseBool(os.Getenv("SHIPPED_CLOUD")),
+		Port:                 8080,
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		JWKSURL:              os.Getenv("JWKS_URL"),
+		JWTIssuer:            os.Getenv("JWT_ISSUER"),
+		JWTAudience:          os.Getenv("JWT_AUDIENCE"),
+		Cloud:                parseBool(os.Getenv("SHIPPED_CLOUD")),
+		AllowJWTRoleFallback: parseBool(os.Getenv("ALLOW_JWT_ROLE_FALLBACK")),
 
 		S3Endpoint:        os.Getenv("S3_ENDPOINT"),
 		S3Region:          os.Getenv("S3_REGION"),
@@ -74,6 +94,9 @@ func Load() (Config, error) {
 		CFAccountID:     os.Getenv("CF_ACCOUNT_ID"),
 		CFKVNamespaceID: os.Getenv("CF_KV_NAMESPACE_ID"),
 		CFAPIToken:      os.Getenv("CF_API_TOKEN"),
+		CFZoneID:        os.Getenv("CF_ZONE_ID"),
+
+		EdgeSigningKey: os.Getenv("EDGE_SIGNING_KEY"),
 
 		ProjectionFilePath: os.Getenv("PROJECTION_FILE"),
 	}

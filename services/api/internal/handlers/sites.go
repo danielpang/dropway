@@ -164,6 +164,28 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrExternalSharingDisabled):
 		// The org's allow_external_sharing policy forbids a public site (§5.4).
 		httpx.WriteError(w, fmt.Errorf("%w: external sharing is disabled for this org; an admin must enable it", httpx.ErrForbidden))
+	case errors.Is(err, store.ErrHostTaken):
+		httpx.WriteError(w, fmt.Errorf("%w: hostname already in use", httpx.ErrConflict))
+	case errors.Is(err, store.ErrInvalidMode):
+		httpx.WriteError(w, fmt.Errorf("%w: invalid access mode", httpx.ErrBadRequest))
+	case errors.Is(err, store.ErrInvalidDomainStatus):
+		httpx.WriteError(w, fmt.Errorf("%w: invalid domain status", httpx.ErrBadRequest))
+	case errors.Is(err, store.ErrBadEmail):
+		httpx.WriteError(w, fmt.Errorf("%w: invalid email", httpx.ErrBadRequest))
+	case errors.Is(err, store.ErrBadHostname):
+		httpx.WriteError(w, fmt.Errorf("%w: invalid hostname", httpx.ErrBadRequest))
+	case errors.Is(err, store.ErrNoPolicy):
+		httpx.WriteError(w, fmt.Errorf("%w: site has no access policy", httpx.ErrNotFound))
+	case errors.Is(err, store.ErrPolicyExpired):
+		// The share link has expired → refuse to mint ("link expired").
+		httpx.WriteError(w, fmt.Errorf("%w: this share link has expired", httpx.ErrForbidden))
+	case errors.Is(err, store.ErrHostNotFound):
+		httpx.WriteError(w, fmt.Errorf("%w: host not found", httpx.ErrNotFound))
+	case errors.Is(err, store.ErrNotOrgMember), errors.Is(err, store.ErrNotAllowlisted):
+		// Authorization failed for the gated site → 403 with a typed reason.
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrForbidden, err.Error()))
+	case errors.Is(err, store.ErrNotGated):
+		httpx.WriteError(w, fmt.Errorf("%w: this site is not gated", httpx.ErrBadRequest))
 	default:
 		httpx.WriteError(w, err) // unknown → opaque 500 (logged by httpx)
 	}

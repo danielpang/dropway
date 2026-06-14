@@ -8,6 +8,8 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -26,11 +28,24 @@ const presignTTL = 15 * time.Minute
 // seam (Unlimited in OSS, the cloud hard-cap provider under -tags cloud). Store,
 // Objects, and Projection are the Phase-1 publish/serve loop; they may be nil in
 // a DB-less deployment, in which case the DB-backed routes return 503.
+//
+// Phase 2 adds EdgeSigner (mints the host-scoped edge token + serves the edge
+// JWKS) and Domains (the Cloudflare-for-SaaS custom-hostname provider). Both are
+// optional: routes that need them return 503 when unset.
 type API struct {
 	Quota      quota.Provider
 	Store      SiteStore
 	Objects    ObjectStore
 	Projection ProjectionWriter
+	EdgeSigner EdgeSigner
+	Domains    DomainProvider
+
+	// AllowJWTRoleFallback gates the requireAdmin fallback to the verified JWT role
+	// claim when the Better Auth auth.member table is unavailable. Default false
+	// (strict): admin-gated actions are DENIED when membership can't be confirmed
+	// live. A self-host pre-Better-Auth can opt in (ALLOW_JWT_ROLE_FALLBACK=true).
+	// See config.Config.AllowJWTRoleFallback / ARCHITECTURE.md §10 [LOW].
+	AllowJWTRoleFallback bool
 }
 
 // New constructs an API with only the quota seam (back-compat for the unit tests
@@ -97,6 +112,77 @@ func (a *API) requireStore(w http.ResponseWriter) bool {
 	if a.Store == nil {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable,
 			httpx.ErrorBody{Error: "unavailable", Message: "database not configured"})
+		return false
+	}
+	return true
+}
+
+// requireSigner returns the edge signer or writes a 503 (the /authz mint/password
+// exchange needs it).
+func (a *API) requireSigner(w http.ResponseWriter) bool {
+	if a.EdgeSigner == nil {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable,
+			httpx.ErrorBody{Error: "unavailable", Message: "edge signer not configured"})
+		return false
+	}
+	return true
+}
+
+// requireDomains returns the custom-domain provider or writes a 503.
+func (a *API) requireDomains(w http.ResponseWriter) bool {
+	if a.Domains == nil {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable,
+			httpx.ErrorBody{Error: "unavailable", Message: "custom domains not configured"})
+		return false
+	}
+	return true
+}
+
+// requireAdmin re-checks that the caller holds owner/admin in the active org by
+// reading the LIVE member table (not just the JWT role claim) — the gate for
+// access-policy / org-policy / role mutations (ARCHITECTURE.md §5.4/§10 [HIGH]).
+// It writes a 403 and returns false on a non-admin, an empty membership, or any
+// re-check error.
+//
+// If the Better Auth auth.member table is unavailable (a self-host that hasn't run
+// Better Auth yet), the behavior is STRICT BY DEFAULT (ARCHITECTURE.md §10 [LOW]):
+// admin-gated actions are DENIED rather than trusting the unverified JWT role
+// claim. A self-host pre-Better-Auth can opt back into the claim fallback by setting
+// AllowJWTRoleFallback (ALLOW_JWT_ROLE_FALLBACK=true), which logs the degradation.
+//
+// On success it returns true; callers proceed with the privileged action.
+func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request, t store.Tenant) bool {
+	role, err := a.Store.MemberRole(r.Context(), t.OrgID, t.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrAuthSchemaUnavailable) {
+			if !a.AllowJWTRoleFallback {
+				// Strict default: can't confirm membership live → deny (don't trust
+				// the JWT role claim). Self-host pre-Better-Auth opts in via config.
+				logger(r).Warn("member table unavailable and JWT role fallback disabled; denying admin action",
+					"org_id", t.OrgID, "user_id", t.UserID)
+				httpx.WriteError(w, fmt.Errorf("%w: admin/owner role required (membership could not be verified)", httpx.ErrForbidden))
+				return false
+			}
+			// Opt-in fallback: Better Auth not migrated here → trust the verified JWT
+			// claim so the gate still functions, logging the degradation.
+			claims, ok := middleware.ClaimsFromContext(r.Context())
+			if ok && store.IsAdminRole(claims.Role) {
+				logger(r).Warn("member table unavailable; authorizing admin from JWT claim (fallback enabled)",
+					"org_id", t.OrgID, "user_id", t.UserID, "role", claims.Role)
+				return true
+			}
+			httpx.WriteError(w, fmt.Errorf("%w: admin/owner role required", httpx.ErrForbidden))
+			return false
+		}
+		if errors.Is(err, store.ErrNoMembership) {
+			httpx.WriteError(w, fmt.Errorf("%w: not a member of this org", httpx.ErrForbidden))
+			return false
+		}
+		writeStoreError(w, err)
+		return false
+	}
+	if !store.IsAdminRole(role) {
+		httpx.WriteError(w, fmt.Errorf("%w: admin/owner role required (you are %q)", httpx.ErrForbidden, role))
 		return false
 	}
 	return true

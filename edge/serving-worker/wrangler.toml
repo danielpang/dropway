@@ -21,6 +21,18 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# --- Vars (Phase 2 gated path) -----------------------------------------------
+# Non-secret configuration for the identity-gated serve path (password|allowlist|
+# org_only). The Worker verifies the host-scoped EDGE TOKEN against the Go API's
+# edge JWKS and bounces unauthenticated viewers to the dashboard /authz exchange.
+# Both have safe production defaults in src/config.ts; set them per environment.
+[vars]
+# Edge signer public keys (OKP/Ed25519). The gated path fetches + caches this to
+# verify the __Host-edge token (alg pinned EdDSA, iss + aud + exp + site_id).
+EDGE_JWKS_URL = "https://api.shipped.app/.well-known/edge-jwks"
+# Dashboard /authz exchange a gated request with no/invalid edge token 302s to.
+APP_AUTHZ_URL = "https://app.shipped.app/authz"
+
 # --- Bindings ----------------------------------------------------------------
 
 # KV: host routing projection. Key `route:<host>` → RouteValue

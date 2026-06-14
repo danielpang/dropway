@@ -12,13 +12,25 @@ package projection
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // SchemaVersion is the version of THIS contract shape. It MUST equal
 // SCHEMA_VERSION in @shipped/contracts (contracts/src/index.ts) and the
 // `schema_version` enforced by kv-route.schema.json. Bump in lock-step on any
 // breaking change. (ARCHITECTURE.md §8, §13 row 11.)
-const SchemaVersion = 1
+//
+// v1 → v2 (Phase 2): adds the optional `expires_at` (RFC3339) field so the
+// Worker can enforce public/unlisted link expiry at the edge from the RouteValue
+// (identity-gated expiry is refused at mint time in the Go API). The parse is
+// kept backward compatible — a v1 value (no expires_at) is still accepted — but
+// the Go API now writes v2.
+const SchemaVersion = 2
+
+// MinSchemaVersion is the oldest contract shape the parser still accepts. v1
+// values (written by a Phase-1 Go API) carry no expires_at and are read as
+// "never expires"; the Worker upgrades them on the next publish.
+const MinSchemaVersion = 1
 
 // Access modes mirror app.sites.access_mode and the enum in
 // kv-route.schema.json. Phase 1 implements `public` only; the rest are Phase 2.
@@ -32,12 +44,19 @@ const (
 // RouteValue is the value stored at KV key `route:<host>`. Field names and JSON
 // tags are kept in EXACT sync with kv-route.schema.json and the TS KVRouteValue
 // interface — the round-trip test (projection_test.go) fails on drift.
+//
+// ExpiresAt (v2, Phase 2) is an OPTIONAL RFC3339 timestamp; when set, the Worker
+// refuses to serve the host after it (public/unlisted link expiry enforced at the
+// edge). Empty → no edge expiry. It is `omitempty` so a non-expiring route
+// serializes byte-for-byte like a value without the field, keeping the contract
+// compact and a v1↔v2 round-trip clean.
 type RouteValue struct {
 	OrgID         string `json:"org_id"`
 	SiteID        string `json:"site_id"`
 	VersionID     string `json:"version_id"`
 	AccessMode    string `json:"access_mode"`
 	SchemaVersion int    `json:"schema_version"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
 }
 
 // Validate checks the value is well-formed before it can be written, mirroring
@@ -58,8 +77,18 @@ func (v RouteValue) Validate() error {
 	default:
 		return fmt.Errorf("projection: invalid access_mode %q", v.AccessMode)
 	}
-	if v.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("projection: schema_version %d != %d", v.SchemaVersion, SchemaVersion)
+	// Accept any supported version on the way in (MinSchemaVersion..SchemaVersion)
+	// so a rebuild that replays a stored v1 value isn't rejected; the Go API only
+	// ever WRITES SchemaVersion (set by the store), so new writes are always v2.
+	if v.SchemaVersion < MinSchemaVersion || v.SchemaVersion > SchemaVersion {
+		return fmt.Errorf("projection: schema_version %d not in [%d,%d]",
+			v.SchemaVersion, MinSchemaVersion, SchemaVersion)
+	}
+	// expires_at, when present, must be a valid RFC3339 timestamp.
+	if v.ExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, v.ExpiresAt); err != nil {
+			return fmt.Errorf("projection: invalid expires_at %q: %w", v.ExpiresAt, err)
+		}
 	}
 	return nil
 }

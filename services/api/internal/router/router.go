@@ -34,13 +34,31 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	// Public, unauthenticated.
 	r.Get("/healthz", api.Healthz)
 
-	// Authenticated control-plane surface. Everything under /v1 requires a
+	// Public edge JWKS: the serving Worker fetches this to verify the host-scoped
+	// edge token (separate keypair from Better Auth's user JWKS). No auth, cacheable.
+	r.Get("/.well-known/edge-jwks", api.EdgeJWKS)
+
+	// The password exchange is JWT-FREE: the dashboard renders a platform-controlled
+	// password form that an UN-signed-in viewer may submit, so it must not require a
+	// Better Auth token. It mints an ANON edge token (no identity). It still lives
+	// under /v1/authz/password to match the API contract.
+	r.Post("/v1/authz/password", api.AuthzPassword)
+
+	// Authenticated control-plane surface. Everything else under /v1 requires a
 	// verified EdDSA JWT (the authz boundary, §3), then ensure-org-provisioned.
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.Auth(verifier))
 		r.Use(api.EnsureOrgProvisioned)
 
 		r.Get("/me", api.Me)
+		r.Get("/members", api.ListMembers)
+
+		// Org-level policy (admin/owner only, re-checked in the handler).
+		r.Put("/orgs/allow-external-sharing", api.SetAllowExternalSharing)
+
+		// The cross-domain /authz viewer exchange (Phase 2). mint takes the viewer's
+		// Better Auth JWT (so it's behind Auth). password is mounted JWT-free above.
+		r.Post("/authz/mint", api.AuthzMint)
 
 		r.Route("/sites", func(r chi.Router) {
 			r.Post("/", api.CreateSite)
@@ -50,7 +68,20 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/{id}/deployments/prepare", api.PrepareDeployment)
 			r.Post("/{id}/deployments", api.FinalizeDeployment)
 			r.Post("/{id}/publish", api.Publish)
+
+			// Phase 2 — access control & domains.
+			r.Put("/{id}/access", api.SetSiteAccess)
+
+			r.Post("/{id}/allowlist", api.AddAllowlistEntry)
+			r.Delete("/{id}/allowlist", api.RemoveAllowlistEntry)
+			r.Get("/{id}/allowlist", api.ListAllowlist)
+
+			r.Post("/{id}/domains", api.AddDomain)
+			r.Get("/{id}/domains", api.ListDomains)
 		})
+
+		// Poll a custom domain's verification status (drives the state machine).
+		r.Get("/domains/{domainID}/status", api.GetDomainStatus)
 	})
 
 	return r

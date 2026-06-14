@@ -68,14 +68,19 @@ ALTER TABLE app.sites
         DEFERRABLE INITIALLY DEFERRED;
 
 -- domains: custom hostnames mapped to a site. hostname is GLOBALLY unique.
+-- cf_hostname_id / dcv_record track the Cloudflare-for-SaaS custom hostname and
+-- the DNS DCV record the user must create (migration 0006). verify_status also
+-- carries the intermediate 'verifying' state.
 CREATE TABLE app.domains (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id        uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    site_id       uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
-    hostname      text NOT NULL UNIQUE,
-    verify_status text NOT NULL DEFAULT 'pending',
-    tls_status    text NOT NULL DEFAULT 'pending',
-    created_at    timestamptz NOT NULL DEFAULT now()
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id        uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    hostname       text NOT NULL UNIQUE,
+    verify_status  text NOT NULL DEFAULT 'pending',
+    tls_status     text NOT NULL DEFAULT 'pending',
+    cf_hostname_id text,
+    dcv_record     text,
+    created_at     timestamptz NOT NULL DEFAULT now()
 );
 
 -- site_access_policy: per-site gating config (Phase 2 for non-public modes).
@@ -85,18 +90,20 @@ CREATE TABLE app.site_access_policy (
     mode          text NOT NULL DEFAULT 'public',
     password_hash text,
     expires_at    timestamptz,
+    unlisted      boolean NOT NULL DEFAULT false,
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
 -- allowlist_entries: pre-registration email grants for allowlist sites.
 CREATE TABLE app.allowlist_entries (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id      uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    site_id     uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
-    email       text NOT NULL,
-    is_external boolean NOT NULL DEFAULT false,
-    claimed_at  timestamptz,
-    created_at  timestamptz NOT NULL DEFAULT now(),
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    email              text NOT NULL,
+    is_external        boolean NOT NULL DEFAULT false,
+    claimed_at         timestamptz,
+    claimed_by_user_id uuid,
+    created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT allowlist_entries_site_email_key UNIQUE (site_id, email)
 );
 
@@ -134,3 +141,24 @@ CREATE TABLE app.host_routes (
     site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- resolve_host: RLS-bypassing host → site resolver for the /authz exchange
+-- (migration 0006). SECURITY DEFINER so a content host shared cross-org still
+-- resolves; returns only routing fields (no secrets). Mirror for sqlc typing.
+CREATE FUNCTION app.resolve_host(p_host text)
+    RETURNS TABLE (
+        host        text,
+        site_id     uuid,
+        org_id      uuid,
+        slug        text,
+        access_mode text,
+        version_id  uuid
+    )
+    LANGUAGE sql
+    STABLE
+AS $$
+    SELECT hr.host, s.id, s.org_id, s.slug, s.access_mode, s.current_version_id
+    FROM app.host_routes hr
+    JOIN app.sites s ON s.id = hr.site_id
+    WHERE hr.host = p_host;
+$$;

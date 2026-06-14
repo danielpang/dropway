@@ -32,8 +32,14 @@
     },
     "schema_version": {
       "type": "integer",
-      "description": "Version of THIS contract shape. Lets the Worker reject/upgrade projections written by an older/newer Go API. Bump on any breaking change to this schema.",
-      "minimum": 1
+      "description": "Version of THIS contract shape. Lets the Worker reject/upgrade projections written by an older/newer Go API. Bump on any breaking change to this schema. v2 (Phase 2) added the optional expires_at field; the parser accepts v1 and v2.",
+      "minimum": 1,
+      "maximum": 2
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "OPTIONAL (v2+). RFC3339 timestamp after which the Worker refuses to serve this host — public/unlisted link expiry enforced at the edge. Absent → no edge expiry. Identity-gated (allowlist/org_only) expiry is refused at mint time in the Go API instead."
     }
   }
 }

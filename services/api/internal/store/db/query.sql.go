@@ -7,7 +7,30 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const claimAllowlistEntry = `-- name: ClaimAllowlistEntry :exec
+UPDATE app.allowlist_entries
+SET claimed_at         = COALESCE(claimed_at, now()),
+    claimed_by_user_id = COALESCE(claimed_by_user_id, $2)
+WHERE id = $1
+`
+
+type ClaimAllowlistEntryParams struct {
+	ID              string
+	ClaimedByUserID *string
+}
+
+// Claim a pending grant for the first verified account that matches it: set
+// claimed_at + claimed_by_user_id. Idempotent — re-claiming by the same user is a
+// no-op; we only set claim fields when still unclaimed so the original claimant
+// and timestamp are preserved.
+func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error {
+	_, err := q.db.Exec(ctx, claimAllowlistEntry, arg.ID, arg.ClaimedByUserID)
+	return err
+}
 
 const createSite = `-- name: CreateSite :one
 
@@ -92,6 +115,42 @@ func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionPa
 	return i, err
 }
 
+const deleteAllowlistEntry = `-- name: DeleteAllowlistEntry :exec
+DELETE FROM app.allowlist_entries
+WHERE site_id = $1 AND email = $2
+`
+
+type DeleteAllowlistEntryParams struct {
+	SiteID string
+	Email  string
+}
+
+func (q *Queries) DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error {
+	_, err := q.db.Exec(ctx, deleteAllowlistEntry, arg.SiteID, arg.Email)
+	return err
+}
+
+const deleteExternalAllowlistEntriesForOrg = `-- name: DeleteExternalAllowlistEntriesForOrg :exec
+DELETE FROM app.allowlist_entries
+WHERE is_external = true
+`
+
+// Remove every external-email allowlist grant in the active org (reconcile on
+// disabling external sharing — revoke external access).
+func (q *Queries) DeleteExternalAllowlistEntriesForOrg(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExternalAllowlistEntriesForOrg)
+	return err
+}
+
+const deleteHostRoute = `-- name: DeleteHostRoute :exec
+DELETE FROM app.host_routes WHERE host = $1
+`
+
+func (q *Queries) DeleteHostRoute(ctx context.Context, host string) error {
+	_, err := q.db.Exec(ctx, deleteHostRoute, host)
+	return err
+}
+
 const ensureOrgMeta = `-- name: EnsureOrgMeta :exec
 
 
@@ -132,6 +191,57 @@ ON CONFLICT (org_id) DO NOTHING
 func (q *Queries) EnsureOrgUsage(ctx context.Context, orgID string) error {
 	_, err := q.db.Exec(ctx, ensureOrgUsage, orgID)
 	return err
+}
+
+const getAllowlistEntryByEmail = `-- name: GetAllowlistEntryByEmail :one
+SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
+FROM app.allowlist_entries
+WHERE site_id = $1 AND email = $2
+`
+
+type GetAllowlistEntryByEmailParams struct {
+	SiteID string
+	Email  string
+}
+
+// Look up a grant by (site, email) for the authz claim path.
+func (q *Queries) GetAllowlistEntryByEmail(ctx context.Context, arg GetAllowlistEntryByEmailParams) (AppAllowlistEntry, error) {
+	row := q.db.QueryRow(ctx, getAllowlistEntryByEmail, arg.SiteID, arg.Email)
+	var i AppAllowlistEntry
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Email,
+		&i.IsExternal,
+		&i.ClaimedAt,
+		&i.ClaimedByUserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDomain = `-- name: GetDomain :one
+SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
+FROM app.domains
+WHERE id = $1
+`
+
+func (q *Queries) GetDomain(ctx context.Context, id string) (AppDomain, error) {
+	row := q.db.QueryRow(ctx, getDomain, id)
+	var i AppDomain
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Hostname,
+		&i.VerifyStatus,
+		&i.TlsStatus,
+		&i.CfHostnameID,
+		&i.DcvRecord,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getHostRoute = `-- name: GetHostRoute :one
@@ -214,6 +324,27 @@ func (q *Queries) GetSite(ctx context.Context, id string) (AppSite, error) {
 	return i, err
 }
 
+const getSiteAccessPolicy = `-- name: GetSiteAccessPolicy :one
+SELECT site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at
+FROM app.site_access_policy
+WHERE site_id = $1
+`
+
+func (q *Queries) GetSiteAccessPolicy(ctx context.Context, siteID string) (AppSiteAccessPolicy, error) {
+	row := q.db.QueryRow(ctx, getSiteAccessPolicy, siteID)
+	var i AppSiteAccessPolicy
+	err := row.Scan(
+		&i.SiteID,
+		&i.OrgID,
+		&i.Mode,
+		&i.PasswordHash,
+		&i.ExpiresAt,
+		&i.Unlisted,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getSiteVersion = `-- name: GetSiteVersion :one
 SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
 FROM app.site_versions
@@ -286,6 +417,50 @@ func (q *Queries) IncSiteCount(ctx context.Context, orgID string) (int32, error)
 	return sites_count, err
 }
 
+const insertDomain = `-- name: InsertDomain :one
+
+INSERT INTO app.domains (org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record)
+VALUES ($1, $2, $3, 'pending', 'pending', $4, $5)
+RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
+`
+
+type InsertDomainParams struct {
+	OrgID        string
+	SiteID       string
+	Hostname     string
+	CfHostnameID pgtype.Text
+	DcvRecord    pgtype.Text
+}
+
+// ===========================================================================
+// domains (Phase 2) — Cloudflare-for-SaaS custom hostnames
+// ===========================================================================
+// Reserve a custom hostname for a site. hostname is GLOBALLY UNIQUE, so a
+// conflicting insert from any org raises 23505 (surfaced as ErrHostTaken). Stores
+// the Cloudflare custom-hostname id + the DCV record to surface to the user.
+func (q *Queries) InsertDomain(ctx context.Context, arg InsertDomainParams) (AppDomain, error) {
+	row := q.db.QueryRow(ctx, insertDomain,
+		arg.OrgID,
+		arg.SiteID,
+		arg.Hostname,
+		arg.CfHostnameID,
+		arg.DcvRecord,
+	)
+	var i AppDomain
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Hostname,
+		&i.VerifyStatus,
+		&i.TlsStatus,
+		&i.CfHostnameID,
+		&i.DcvRecord,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertHostRoute = `-- name: InsertHostRoute :exec
 
 INSERT INTO app.host_routes (host, org_id, site_id)
@@ -309,6 +484,154 @@ type InsertHostRouteParams struct {
 func (q *Queries) InsertHostRoute(ctx context.Context, arg InsertHostRouteParams) error {
 	_, err := q.db.Exec(ctx, insertHostRoute, arg.Host, arg.OrgID, arg.SiteID)
 	return err
+}
+
+const listAllowlistEntries = `-- name: ListAllowlistEntries :many
+SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
+FROM app.allowlist_entries
+WHERE site_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListAllowlistEntries(ctx context.Context, siteID string) ([]AppAllowlistEntry, error) {
+	rows, err := q.db.Query(ctx, listAllowlistEntries, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAllowlistEntry{}
+	for rows.Next() {
+		var i AppAllowlistEntry
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SiteID,
+			&i.Email,
+			&i.IsExternal,
+			&i.ClaimedAt,
+			&i.ClaimedByUserID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDomainsForSite = `-- name: ListDomainsForSite :many
+SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
+FROM app.domains
+WHERE site_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error) {
+	rows, err := q.db.Query(ctx, listDomainsForSite, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppDomain{}
+	for rows.Next() {
+		var i AppDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SiteID,
+			&i.Hostname,
+			&i.VerifyStatus,
+			&i.TlsStatus,
+			&i.CfHostnameID,
+			&i.DcvRecord,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostRoutesForSite = `-- name: ListHostRoutesForSite :many
+SELECT host, org_id, site_id, created_at
+FROM app.host_routes
+WHERE site_id = $1
+ORDER BY host
+`
+
+// Every host registered for a site in the GLOBAL registry — the canonical
+// <slug>.shippedusercontent.com host AND every verified custom-domain host. RLS
+// scopes the rows to the active org, so a caller only ever sees its own site's
+// hosts. An access-mode / policy change must rewrite EVERY one of these routes
+// (not just the canonical one), or a verified custom host keeps serving at the
+// OLD access_mode after the policy tightened (ARCHITECTURE.md §6 revocation).
+func (q *Queries) ListHostRoutesForSite(ctx context.Context, siteID string) ([]AppHostRoute, error) {
+	rows, err := q.db.Query(ctx, listHostRoutesForSite, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppHostRoute{}
+	for rows.Next() {
+		var i AppHostRoute
+		if err := rows.Scan(
+			&i.Host,
+			&i.OrgID,
+			&i.SiteID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+FROM app.sites
+WHERE access_mode = 'public'
+ORDER BY created_at
+`
+
+// Every site in the active org whose access_mode = 'public' (used by the reconcile
+// on disabling external sharing: these are downgraded to org_only).
+func (q *Queries) ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error) {
+	rows, err := q.db.Query(ctx, listPublicSitesForOrg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSite{}
+	for rows.Next() {
+		var i AppSite
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.OwnerUserID,
+			&i.AccessMode,
+			&i.CurrentVersionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listPublishedSitesForRebuild = `-- name: ListPublishedSitesForRebuild :many
@@ -454,6 +777,71 @@ func (q *Queries) NextVersionNo(ctx context.Context, siteID string) (int32, erro
 	return next_version_no, err
 }
 
+const resolveSiteByHostRoute = `-- name: ResolveSiteByHostRoute :one
+
+SELECT
+    hr.host       AS host,
+    s.id          AS site_id,
+    s.org_id      AS org_id,
+    s.slug        AS slug,
+    s.access_mode AS access_mode,
+    s.current_version_id AS version_id
+FROM app.host_routes hr
+JOIN app.sites s ON s.id = hr.site_id
+WHERE hr.host = $1
+`
+
+type ResolveSiteByHostRouteRow struct {
+	Host       string
+	SiteID     string
+	OrgID      string
+	Slug       string
+	AccessMode string
+	VersionID  *string
+}
+
+// ===========================================================================
+// host resolution (Phase 2) — resolve a content host → owning site (for /authz)
+// ===========================================================================
+// Resolve a content host (the *.shippedusercontent.com label OR a verified custom
+// host) to its owning site via the global host registry, returning the site's
+// access fields. Runs under RLS so only the active org's hosts resolve — the
+// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
+func (q *Queries) ResolveSiteByHostRoute(ctx context.Context, host string) (ResolveSiteByHostRouteRow, error) {
+	row := q.db.QueryRow(ctx, resolveSiteByHostRoute, host)
+	var i ResolveSiteByHostRouteRow
+	err := row.Scan(
+		&i.Host,
+		&i.SiteID,
+		&i.OrgID,
+		&i.Slug,
+		&i.AccessMode,
+		&i.VersionID,
+	)
+	return i, err
+}
+
+const setAllowExternalSharing = `-- name: SetAllowExternalSharing :exec
+
+UPDATE app.org_meta
+SET allow_external_sharing = $2
+WHERE id = $1
+`
+
+type SetAllowExternalSharingParams struct {
+	ID                   string
+	AllowExternalSharing bool
+}
+
+// ===========================================================================
+// org policy (Phase 2) — allow_external_sharing toggle + reconcile
+// ===========================================================================
+// Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
+func (q *Queries) SetAllowExternalSharing(ctx context.Context, arg SetAllowExternalSharingParams) error {
+	_, err := q.db.Exec(ctx, setAllowExternalSharing, arg.ID, arg.AllowExternalSharing)
+	return err
+}
+
 const setCurrentVersion = `-- name: SetCurrentVersion :exec
 UPDATE app.sites
 SET current_version_id = $2
@@ -470,4 +858,182 @@ type SetCurrentVersionParams struct {
 func (q *Queries) SetCurrentVersion(ctx context.Context, arg SetCurrentVersionParams) error {
 	_, err := q.db.Exec(ctx, setCurrentVersion, arg.ID, arg.CurrentVersionID)
 	return err
+}
+
+const setSiteAccessMode = `-- name: SetSiteAccessMode :exec
+
+UPDATE app.sites
+SET access_mode = $2
+WHERE id = $1
+`
+
+type SetSiteAccessModeParams struct {
+	ID         string
+	AccessMode string
+}
+
+// ===========================================================================
+// access policy (Phase 2) — per-site gating config
+// ===========================================================================
+// Flip a site's access_mode (the source for the edge RouteValue). RLS scopes the
+// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
+// under a false org policy.
+func (q *Queries) SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error {
+	_, err := q.db.Exec(ctx, setSiteAccessMode, arg.ID, arg.AccessMode)
+	return err
+}
+
+const updateDomainStatus = `-- name: UpdateDomainStatus :one
+UPDATE app.domains
+SET verify_status = $2,
+    tls_status    = $3
+WHERE id = $1
+RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
+`
+
+type UpdateDomainStatusParams struct {
+	ID           string
+	VerifyStatus string
+	TlsStatus    string
+}
+
+// Advance the custom-domain state machine (pending → verifying → verified/failed)
+// and the TLS status from a Cloudflare Status() poll.
+func (q *Queries) UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error) {
+	row := q.db.QueryRow(ctx, updateDomainStatus, arg.ID, arg.VerifyStatus, arg.TlsStatus)
+	var i AppDomain
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Hostname,
+		&i.VerifyStatus,
+		&i.TlsStatus,
+		&i.CfHostnameID,
+		&i.DcvRecord,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertAllowlistEntry = `-- name: UpsertAllowlistEntry :one
+
+INSERT INTO app.allowlist_entries (org_id, site_id, email, is_external)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (site_id, email) DO UPDATE
+SET is_external        = EXCLUDED.is_external,
+    claimed_at         = NULL,
+    claimed_by_user_id = NULL
+RETURNING id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
+`
+
+type UpsertAllowlistEntryParams struct {
+	OrgID      string
+	SiteID     string
+	Email      string
+	IsExternal bool
+}
+
+// ===========================================================================
+// allowlist (Phase 2)
+// ===========================================================================
+// Add (or re-add) an email grant to a site's allowlist. is_external marks an
+// email whose domain is not an org verified domain; the external-sharing trigger
+// (0004) rejects is_external=true under a false org policy. Re-adding an email
+// resets it to a fresh pending (unclaimed) grant.
+func (q *Queries) UpsertAllowlistEntry(ctx context.Context, arg UpsertAllowlistEntryParams) (AppAllowlistEntry, error) {
+	row := q.db.QueryRow(ctx, upsertAllowlistEntry,
+		arg.OrgID,
+		arg.SiteID,
+		arg.Email,
+		arg.IsExternal,
+	)
+	var i AppAllowlistEntry
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Email,
+		&i.IsExternal,
+		&i.ClaimedAt,
+		&i.ClaimedByUserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertHostRoute = `-- name: UpsertHostRoute :exec
+
+INSERT INTO app.host_routes (host, org_id, site_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (host) DO UPDATE
+SET site_id = EXCLUDED.site_id
+WHERE app.host_routes.org_id = EXCLUDED.org_id
+`
+
+type UpsertHostRouteParams struct {
+	Host   string
+	OrgID  string
+	SiteID string
+}
+
+// ===========================================================================
+// host_routes (Phase 2) — register/unregister a custom host in the global registry
+// ===========================================================================
+// Register a host → (org, site) in the GLOBAL registry. Used when a custom domain
+// verifies (the content host is the custom hostname). PK on host enforces global
+// uniqueness; a conflict with another org raises 23505 (ErrHostTaken). ON CONFLICT
+// updates only when the row is already owned by THIS (org, site) — a different
+// owner can never be overwritten because RLS makes its row invisible to UPDATE, so
+// the ON CONFLICT target row isn't visible and the upsert raises instead.
+func (q *Queries) UpsertHostRoute(ctx context.Context, arg UpsertHostRouteParams) error {
+	_, err := q.db.Exec(ctx, upsertHostRoute, arg.Host, arg.OrgID, arg.SiteID)
+	return err
+}
+
+const upsertSiteAccessPolicy = `-- name: UpsertSiteAccessPolicy :one
+INSERT INTO app.site_access_policy (site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
+ON CONFLICT (site_id) DO UPDATE
+SET mode          = EXCLUDED.mode,
+    password_hash = EXCLUDED.password_hash,
+    expires_at    = EXCLUDED.expires_at,
+    unlisted      = EXCLUDED.unlisted,
+    updated_at    = now()
+RETURNING site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at
+`
+
+type UpsertSiteAccessPolicyParams struct {
+	SiteID       string
+	OrgID        string
+	Mode         string
+	PasswordHash pgtype.Text
+	ExpiresAt    pgtype.Timestamptz
+	Unlisted     bool
+}
+
+// Insert or replace the per-site access policy (one row per site, PK = site_id).
+// password_hash is non-null only for mode='password'; expires_at / unlisted are
+// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
+// under a false org policy.
+func (q *Queries) UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAccessPolicyParams) (AppSiteAccessPolicy, error) {
+	row := q.db.QueryRow(ctx, upsertSiteAccessPolicy,
+		arg.SiteID,
+		arg.OrgID,
+		arg.Mode,
+		arg.PasswordHash,
+		arg.ExpiresAt,
+		arg.Unlisted,
+	)
+	var i AppSiteAccessPolicy
+	err := row.Scan(
+		&i.SiteID,
+		&i.OrgID,
+		&i.Mode,
+		&i.PasswordHash,
+		&i.ExpiresAt,
+		&i.Unlisted,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

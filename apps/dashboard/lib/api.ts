@@ -27,10 +27,27 @@ export type Site = components["schemas"]["Site"];
 export type Version = components["schemas"]["Version"];
 export type ManifestFile = components["schemas"]["ManifestFile"];
 export type AccessMode = NonNullable<Site["access_mode"]>;
+export type Role = NonNullable<Me["role"]>;
+export type Member = components["schemas"]["Member"];
+export type AllowlistEntry = components["schemas"]["AllowlistEntry"];
+export type Domain = components["schemas"]["Domain"];
+export type EdgeToken = components["schemas"]["EdgeToken"];
 
 /** Successful body of `POST /v1/sites/{id}/publish` (the live URL + version). */
 export type PublishResult =
   operations["publish"]["responses"]["200"]["content"]["application/json"];
+
+/** Body the dashboard sends to `PUT /v1/sites/{id}/access`. */
+export type SetAccessInput =
+  operations["setSiteAccess"]["requestBody"]["content"]["application/json"];
+
+/** Successful body of `PUT /v1/sites/{id}/access`. */
+export type SetAccessResult =
+  operations["setSiteAccess"]["responses"]["200"]["content"]["application/json"];
+
+/** Successful body of `PUT /v1/orgs/allow-external-sharing` (policy + reconcile count). */
+export type AllowExternalResult =
+  operations["setAllowExternalSharing"]["responses"]["200"]["content"]["application/json"];
 
 // ---- Shared error envelope ------------------------------------------------
 
@@ -118,7 +135,41 @@ async function apiFetch<T>(
   return (await res.json()) as T;
 }
 
-// ---- Typed endpoints (Phase 1 surface; mirrors openapi.yaml) --------------
+/**
+ * Like apiFetch but JWT-FREE — for the password-mode authz exchange, whose Go
+ * endpoint is `security: []` (the password is the only credential and the minted
+ * token's sub is anonymous). Deliberately omits the Authorization header so the
+ * viewer's dashboard identity never leaks into an anonymous content grant.
+ */
+async function apiFetchPublic<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...init.headers,
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      // non-JSON error body; leave as null
+    }
+    throw new ApiError(res.status, `API ${res.status} on ${path}`, body);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+// ---- Typed endpoints (Phase 1 + Phase 2 surface; mirrors openapi.yaml) -----
 
 export const api = {
   /** Echo the caller's verified identity (user_id / org_id / role). */
@@ -151,6 +202,110 @@ export const api = {
    */
   publish(siteId: string, input: { version_id: string }): Promise<PublishResult> {
     return apiFetch<PublishResult>(`/v1/sites/${siteId}/publish`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  // ---- Phase 2: access control, sharing policy, members, domains ----------
+
+  /** List the caller org's members (Better Auth roles, RLS/org-scoped). */
+  async listMembers(): Promise<Member[]> {
+    const body = await apiFetch<{ members?: Member[] }>("/v1/members");
+    return body.members ?? [];
+  },
+
+  /**
+   * Set a site's access mode + policy (admin/owner only → 403 otherwise). The
+   * Go API hashes any password server-side and rewrites the edge RouteValue.
+   */
+  setSiteAccess(siteId: string, input: SetAccessInput): Promise<SetAccessResult> {
+    return apiFetch<SetAccessResult>(`/v1/sites/${siteId}/access`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** List a site's allowlist (emails + claim state). */
+  async listAllowlist(siteId: string): Promise<AllowlistEntry[]> {
+    const body = await apiFetch<{ allowlist?: AllowlistEntry[] }>(
+      `/v1/sites/${siteId}/allowlist`,
+    );
+    return body.allowlist ?? [];
+  },
+
+  /**
+   * Add an email to a site's allowlist (admin/owner only). is_external is set
+   * server-side; an external grant under allow_external_sharing=false → 403.
+   */
+  addAllowlistEntry(siteId: string, email: string): Promise<AllowlistEntry> {
+    return apiFetch<AllowlistEntry>(`/v1/sites/${siteId}/allowlist`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  /** Remove an email from a site's allowlist (admin/owner only). */
+  removeAllowlistEntry(siteId: string, email: string): Promise<{ removed?: string }> {
+    return apiFetch<{ removed?: string }>(`/v1/sites/${siteId}/allowlist`, {
+      method: "DELETE",
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  /** List a site's custom domains. */
+  async listDomains(siteId: string): Promise<Domain[]> {
+    const body = await apiFetch<{ domains?: Domain[] }>(
+      `/v1/sites/${siteId}/domains`,
+    );
+    return body.domains ?? [];
+  },
+
+  /**
+   * Register a custom domain for a site (admin/owner only). Returns the pending
+   * row + the DNS DCV record the user must create. 409 if the host is taken.
+   */
+  addDomain(siteId: string, hostname: string): Promise<Domain> {
+    return apiFetch<Domain>(`/v1/sites/${siteId}/domains`, {
+      method: "POST",
+      body: JSON.stringify({ hostname }),
+    });
+  },
+
+  /** Poll a custom domain's verification + TLS status (advances the state machine). */
+  getDomainStatus(domainId: string): Promise<Domain> {
+    return apiFetch<Domain>(`/v1/domains/${domainId}/status`);
+  },
+
+  /**
+   * Toggle the org allow_external_sharing policy (owner/admin only → 403). When
+   * disabling, the API reconciles (downgrades public sites + revokes external
+   * grants) and returns the count of downgraded sites.
+   */
+  setAllowExternalSharing(enabled: boolean): Promise<AllowExternalResult> {
+    return apiFetch<AllowExternalResult>("/v1/orgs/allow-external-sharing", {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  /**
+   * Mint a host-scoped edge token for an org_only/allowlist site (the viewer's
+   * Better Auth JWT authorizes). 403 → not permitted; 400 → password-mode host.
+   */
+  authzMint(input: { host: string; next?: string }): Promise<EdgeToken> {
+    return apiFetch<EdgeToken>("/v1/authz/mint", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /**
+   * Mint an anonymous edge token for a password-protected site. JWT-FREE — the
+   * password is the only credential. 401 → wrong password / unknown host.
+   */
+  authzPassword(input: { host: string; password: string }): Promise<EdgeToken> {
+    return apiFetchPublic<EdgeToken>("/v1/authz/password", {
       method: "POST",
       body: JSON.stringify(input),
     });

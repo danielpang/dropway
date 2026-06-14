@@ -12,13 +12,14 @@ import (
 )
 
 type AppAllowlistEntry struct {
-	ID         string
-	OrgID      string
-	SiteID     string
-	Email      string
-	IsExternal bool
-	ClaimedAt  pgtype.Timestamptz
-	CreatedAt  time.Time
+	ID              string
+	OrgID           string
+	SiteID          string
+	Email           string
+	IsExternal      bool
+	ClaimedAt       pgtype.Timestamptz
+	ClaimedByUserID *string
+	CreatedAt       time.Time
 }
 
 type AppAuditLog struct {
@@ -49,6 +50,8 @@ type AppDomain struct {
 	Hostname     string
 	VerifyStatus string
 	TlsStatus    string
+	CfHostnameID pgtype.Text
+	DcvRecord    pgtype.Text
 	CreatedAt    time.Time
 }
 
@@ -90,6 +93,7 @@ type AppSiteAccessPolicy struct {
 	Mode         string
 	PasswordHash pgtype.Text
 	ExpiresAt    pgtype.Timestamptz
+	Unlisted     bool
 	UpdatedAt    time.Time
 }
 

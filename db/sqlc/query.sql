@@ -130,6 +130,18 @@ SELECT host, org_id, site_id, created_at
 FROM app.host_routes
 WHERE host = $1;
 
+-- name: ListHostRoutesForSite :many
+-- Every host registered for a site in the GLOBAL registry — the canonical
+-- <slug>.shippedusercontent.com host AND every verified custom-domain host. RLS
+-- scopes the rows to the active org, so a caller only ever sees its own site's
+-- hosts. An access-mode / policy change must rewrite EVERY one of these routes
+-- (not just the canonical one), or a verified custom host keeps serving at the
+-- OLD access_mode after the policy tightened (ARCHITECTURE.md §6 revocation).
+SELECT host, org_id, site_id, created_at
+FROM app.host_routes
+WHERE site_id = $1
+ORDER BY host;
+
 -- ===========================================================================
 -- projection rebuild (the "KV is rebuildable from Postgres" invariant)
 -- ===========================================================================
@@ -147,3 +159,180 @@ SELECT
 FROM app.sites s
 WHERE s.current_version_id IS NOT NULL
 ORDER BY s.created_at;
+
+-- ===========================================================================
+-- access policy (Phase 2) — per-site gating config
+-- ===========================================================================
+
+-- name: SetSiteAccessMode :exec
+-- Flip a site's access_mode (the source for the edge RouteValue). RLS scopes the
+-- UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
+-- under a false org policy.
+UPDATE app.sites
+SET access_mode = $2
+WHERE id = $1;
+
+-- name: UpsertSiteAccessPolicy :one
+-- Insert or replace the per-site access policy (one row per site, PK = site_id).
+-- password_hash is non-null only for mode='password'; expires_at / unlisted are
+-- optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
+-- under a false org policy.
+INSERT INTO app.site_access_policy (site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
+ON CONFLICT (site_id) DO UPDATE
+SET mode          = EXCLUDED.mode,
+    password_hash = EXCLUDED.password_hash,
+    expires_at    = EXCLUDED.expires_at,
+    unlisted      = EXCLUDED.unlisted,
+    updated_at    = now()
+RETURNING site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at;
+
+-- name: GetSiteAccessPolicy :one
+SELECT site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at
+FROM app.site_access_policy
+WHERE site_id = $1;
+
+-- ===========================================================================
+-- allowlist (Phase 2)
+-- ===========================================================================
+
+-- name: UpsertAllowlistEntry :one
+-- Add (or re-add) an email grant to a site's allowlist. is_external marks an
+-- email whose domain is not an org verified domain; the external-sharing trigger
+-- (0004) rejects is_external=true under a false org policy. Re-adding an email
+-- resets it to a fresh pending (unclaimed) grant.
+INSERT INTO app.allowlist_entries (org_id, site_id, email, is_external)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (site_id, email) DO UPDATE
+SET is_external        = EXCLUDED.is_external,
+    claimed_at         = NULL,
+    claimed_by_user_id = NULL
+RETURNING id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at;
+
+-- name: DeleteAllowlistEntry :exec
+DELETE FROM app.allowlist_entries
+WHERE site_id = $1 AND email = $2;
+
+-- name: ListAllowlistEntries :many
+SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
+FROM app.allowlist_entries
+WHERE site_id = $1
+ORDER BY created_at;
+
+-- name: GetAllowlistEntryByEmail :one
+-- Look up a grant by (site, email) for the authz claim path.
+SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
+FROM app.allowlist_entries
+WHERE site_id = $1 AND email = $2;
+
+-- name: ClaimAllowlistEntry :exec
+-- Claim a pending grant for the first verified account that matches it: set
+-- claimed_at + claimed_by_user_id. Idempotent — re-claiming by the same user is a
+-- no-op; we only set claim fields when still unclaimed so the original claimant
+-- and timestamp are preserved.
+UPDATE app.allowlist_entries
+SET claimed_at         = COALESCE(claimed_at, now()),
+    claimed_by_user_id = COALESCE(claimed_by_user_id, $2)
+WHERE id = $1;
+
+-- ===========================================================================
+-- domains (Phase 2) — Cloudflare-for-SaaS custom hostnames
+-- ===========================================================================
+
+-- name: InsertDomain :one
+-- Reserve a custom hostname for a site. hostname is GLOBALLY UNIQUE, so a
+-- conflicting insert from any org raises 23505 (surfaced as ErrHostTaken). Stores
+-- the Cloudflare custom-hostname id + the DCV record to surface to the user.
+INSERT INTO app.domains (org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record)
+VALUES ($1, $2, $3, 'pending', 'pending', $4, $5)
+RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at;
+
+-- name: GetDomain :one
+SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
+FROM app.domains
+WHERE id = $1;
+
+-- name: ListDomainsForSite :many
+SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
+FROM app.domains
+WHERE site_id = $1
+ORDER BY created_at;
+
+-- name: UpdateDomainStatus :one
+-- Advance the custom-domain state machine (pending → verifying → verified/failed)
+-- and the TLS status from a Cloudflare Status() poll.
+UPDATE app.domains
+SET verify_status = $2,
+    tls_status    = $3
+WHERE id = $1
+RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at;
+
+-- ===========================================================================
+-- host_routes (Phase 2) — register/unregister a custom host in the global registry
+-- ===========================================================================
+
+-- name: UpsertHostRoute :exec
+-- Register a host → (org, site) in the GLOBAL registry. Used when a custom domain
+-- verifies (the content host is the custom hostname). PK on host enforces global
+-- uniqueness; a conflict with another org raises 23505 (ErrHostTaken). ON CONFLICT
+-- updates only when the row is already owned by THIS (org, site) — a different
+-- owner can never be overwritten because RLS makes its row invisible to UPDATE, so
+-- the ON CONFLICT target row isn't visible and the upsert raises instead.
+INSERT INTO app.host_routes (host, org_id, site_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (host) DO UPDATE
+SET site_id = EXCLUDED.site_id
+WHERE app.host_routes.org_id = EXCLUDED.org_id;
+
+-- name: DeleteHostRoute :exec
+DELETE FROM app.host_routes WHERE host = $1;
+
+-- ===========================================================================
+-- host resolution (Phase 2) — resolve a content host → owning site (for /authz)
+-- ===========================================================================
+
+-- name: ResolveSiteByHostRoute :one
+-- Resolve a content host (the *.shippedusercontent.com label OR a verified custom
+-- host) to its owning site via the global host registry, returning the site's
+-- access fields. Runs under RLS so only the active org's hosts resolve — the
+-- /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
+SELECT
+    hr.host       AS host,
+    s.id          AS site_id,
+    s.org_id      AS org_id,
+    s.slug        AS slug,
+    s.access_mode AS access_mode,
+    s.current_version_id AS version_id
+FROM app.host_routes hr
+JOIN app.sites s ON s.id = hr.site_id
+WHERE hr.host = $1;
+
+-- ===========================================================================
+-- org policy (Phase 2) — allow_external_sharing toggle + reconcile
+-- ===========================================================================
+
+-- name: SetAllowExternalSharing :exec
+-- Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
+UPDATE app.org_meta
+SET allow_external_sharing = $2
+WHERE id = $1;
+
+-- name: ListPublicSitesForOrg :many
+-- Every site in the active org whose access_mode = 'public' (used by the reconcile
+-- on disabling external sharing: these are downgraded to org_only).
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+FROM app.sites
+WHERE access_mode = 'public'
+ORDER BY created_at;
+
+-- name: DeleteExternalAllowlistEntriesForOrg :exec
+-- Remove every external-email allowlist grant in the active org (reconcile on
+-- disabling external sharing — revoke external access).
+DELETE FROM app.allowlist_entries
+WHERE is_external = true;
+
+-- NOTE: resolving a content host → owning site via the RLS-bypassing
+-- app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
+-- pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types
+-- from a RETURNS TABLE function (it emits interface{}). The store scans the known
+-- types directly. See services/api/internal/store/authz.go.

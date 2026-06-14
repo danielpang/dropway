@@ -6,7 +6,8 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@shipped/contracts": "workspace:*"
+    "@shipped/contracts": "workspace:*",
+    "jose": "^5.10.0"
   },
   "scripts": {
     "dev": "wrangler dev",

@@ -19,7 +19,13 @@
 // 501 (see `gatedStub`) and DO NOT exchange identity here — that is the
 // host-scoped `/authz` exchange on app.shipped.app, built in Phase 2.
 
-import { type RouteValue, cleanPath, parseRouteValue, routeKey } from "./route";
+import {
+  type RouteValue,
+  cleanPath,
+  isRouteExpired,
+  parseRouteValue,
+  routeKey,
+} from "./route";
 import {
   type Manifest,
   NOT_FOUND_PATH,
@@ -29,6 +35,9 @@ import {
   resolveManifestEntry,
 } from "./manifest";
 import { publicResponseHeaders, securityHeaders } from "./http";
+import { type GatedConfig, gatedConfig } from "./config";
+import type { FetchLike } from "./edgetoken";
+import { serveGated } from "./gated";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -54,12 +63,23 @@ export interface RoutesKVLike {
   get(key: string, type: "json"): Promise<unknown>;
 }
 
-/** Worker environment bindings (declared in wrangler.toml). */
+/** Worker environment bindings + vars (declared in wrangler.toml). */
 export interface Env {
   /** KV namespace: `route:<host>` → RouteValue (written only by the Go API). */
   ROUTES: RoutesKVLike;
   /** Single private R2 bucket holding all tenant content, per-org prefixed. */
   BUCKET: BucketLike;
+  /**
+   * Edge JWKS endpoint (the Go API's edge signer public keys). The gated path
+   * fetches + caches this to verify the host-scoped edge token. Optional: falls
+   * back to the production default in config.ts.
+   */
+  EDGE_JWKS_URL?: string;
+  /**
+   * Dashboard `/authz` exchange origin. A gated request with no/invalid edge
+   * token 302s here. Optional: falls back to the production default.
+   */
+  APP_AUTHZ_URL?: string;
 }
 
 /**
@@ -92,6 +112,13 @@ export interface ServeOptions {
   cache?: CacheLike | null;
   /** Schedules background work (cache writes) past the response. */
   waitUntil?: (p: Promise<unknown>) => void;
+  /**
+   * Fetch used by the gated path to load the edge JWKS. Defaults to the runtime
+   * `fetch`. Injected in tests to serve a mock JWKS without network.
+   */
+  fetchImpl?: FetchLike;
+  /** Clock injection for tests (edge-token exp + route expiry). */
+  now?: Date;
 }
 
 /**
@@ -121,22 +148,52 @@ export async function serve(
   const raw = await env.ROUTES.get(routeKey(url.host), "json");
   const route = parseRouteValue(raw);
   if (route === null) {
-    // Unknown host or malformed/old projection → fail closed.
+    // Unknown host or malformed/old projection → fail closed. The contract
+    // validator accepts schema_version 1 AND 2 (v2 adds optional expires_at);
+    // anything else (or a malformed shape) parses to null here.
     return notFound(null);
   }
 
-  // 2. Dispatch by access mode. Phase 1 = public only.
+  // 2. Edge link-expiry (v2 RouteValue.expires_at). A public/unlisted share can
+  //    carry an expiry the Go API serializes into the projection; once past, the
+  //    Worker refuses to serve and shows a platform "link expired" page. (Gated
+  //    expiry is refused earlier, at mint time in the Go API.)
+  const now = opts.now ?? new Date();
+  if (isRouteExpired(route, now)) {
+    return linkExpired();
+  }
+
+  // 3. Dispatch by access mode.
   switch (route.access_mode) {
     case "public":
       return servePublic(request, env, route, url, opts);
     case "password":
     case "allowlist":
     case "org_only":
-      return gatedStub(route, url);
+      return serveGated(request, env, route, url, gateOpts(env, opts), {
+        serveContent: () => servePublicBody(request, env, route, url),
+      });
     default:
       // Unreachable given parseRouteValue, but fail closed.
       return notFound(route);
   }
+}
+
+/** Resolve the gated-path config + injected fetch from env/opts. */
+function gateOpts(
+  env: Env,
+  opts: ServeOptions,
+): { cfg: GatedConfig; fetchImpl: FetchLike; now: number } {
+  return {
+    cfg: gatedConfig(env),
+    fetchImpl: opts.fetchImpl ?? defaultFetch(),
+    now: (opts.now ?? new Date()).getTime(),
+  };
+}
+
+/** The runtime `fetch`, narrowed to FetchLike (tests inject their own). */
+function defaultFetch(): FetchLike {
+  return (input: string) => fetch(input);
 }
 
 /**
@@ -164,42 +221,17 @@ async function servePublic(
     if (hit) return bodyFor(request, hit);
   }
 
-  // Sanitize the request path before resolving it against the manifest.
-  const clean = cleanPath(url.pathname);
-  if (clean === null) {
-    // Unsafe path (traversal etc.) → 404, never an error that leaks structure.
-    return notFound(route);
-  }
+  const resolved = await resolveBlob(request, env, route, url);
+  if (resolved.kind === "not-found") return resolved.response;
 
-  // Fetch + cache (within this request) the deploy manifest.
-  const manifest = await loadManifest(env, route);
-  if (manifest === null) {
-    // Missing/corrupt manifest → fail closed with the default 404 (we have no
-    // manifest, so no custom 404 page to look up).
-    return notFound(route);
-  }
-
-  const match = resolveManifestEntry(manifest, clean);
-  if (match === null) {
-    // No served path matched → the version's custom 404 page, else the default.
-    return notFound(route, env, manifest);
-  }
-
-  const object = await env.BUCKET.get(blobKey(route.org_id, match.entry.sha256));
-  if (object === null) {
-    // Manifest referenced a blob that is not in R2 — projection drift. Fail
-    // closed rather than serving the wrong/empty bytes.
-    return notFound(route, env, manifest);
-  }
-
-  const headers = publicResponseHeaders(match.path, {
-    contentType: match.entry.content_type,
-    etag: object.httpEtag,
-    lastModified: object.uploaded,
-    contentLength: object.size ?? match.entry.size,
+  const headers = publicResponseHeaders(resolved.servedPath, {
+    contentType: resolved.contentType,
+    etag: resolved.etag,
+    lastModified: resolved.lastModified,
+    contentLength: resolved.contentLength,
   });
 
-  const response = new Response(object.body, { status: 200, headers });
+  const response = new Response(resolved.body, { status: 200, headers });
 
   // Best-effort: populate the PoP cache for subsequent requests. We cache a
   // clone so the streamed body is still available to the caller.
@@ -211,6 +243,96 @@ async function servePublic(
   }
 
   return bodyFor(request, response);
+}
+
+/**
+ * Build the body of a GATED (password/allowlist/org_only) success response —
+ * the SAME manifest→blob resolution as the public path, but WITHOUT the public
+ * Cache API and with the caller (gated module) overriding Cache-Control to
+ * `private, no-store` (§10: protected bytes never enter a shared cache). Returns
+ * a 200 Response with content headers, or the appropriate 404 on a miss/drift.
+ * `bodyFor` strips the body for HEAD. Never consults or writes any cache.
+ */
+async function servePublicBody(
+  request: Request,
+  env: Env,
+  route: RouteValue,
+  url: URL,
+): Promise<Response> {
+  const resolved = await resolveBlob(request, env, route, url);
+  if (resolved.kind === "not-found") return resolved.response;
+
+  const headers = publicResponseHeaders(resolved.servedPath, {
+    contentType: resolved.contentType,
+    etag: resolved.etag,
+    lastModified: resolved.lastModified,
+    contentLength: resolved.contentLength,
+  });
+  const response = new Response(resolved.body, { status: 200, headers });
+  return bodyFor(request, response);
+}
+
+/** Outcome of resolving a request path to its R2 blob (shared public/gated). */
+type BlobResolution =
+  | {
+      kind: "ok";
+      servedPath: string;
+      contentType: string;
+      body: ReadableStream | null;
+      etag?: string;
+      lastModified?: Date;
+      contentLength?: number;
+    }
+  | { kind: "not-found"; response: Response };
+
+/**
+ * Resolve a request to its content-addressed blob via the deploy manifest:
+ * sanitize the path, load + validate the manifest, match an entry (with the
+ * index/pretty-URL fallbacks), and fetch the blob from R2. Returns the blob
+ * stream + metadata, or a ready 404 (custom page when the manifest ships one).
+ * This is the shared core of BOTH the public and gated serve paths; only the
+ * surrounding Cache-Control / Cache-API behavior differs.
+ */
+async function resolveBlob(
+  _request: Request,
+  env: Env,
+  route: RouteValue,
+  url: URL,
+): Promise<BlobResolution> {
+  // Sanitize the request path before resolving it against the manifest.
+  const clean = cleanPath(url.pathname);
+  if (clean === null) {
+    // Unsafe path (traversal etc.) → 404, never an error that leaks structure.
+    return { kind: "not-found", response: await notFound(route) };
+  }
+
+  const manifest = await loadManifest(env, route);
+  if (manifest === null) {
+    // Missing/corrupt manifest → fail closed with the default 404.
+    return { kind: "not-found", response: await notFound(route) };
+  }
+
+  const match = resolveManifestEntry(manifest, clean);
+  if (match === null) {
+    // No served path matched → the version's custom 404 page, else the default.
+    return { kind: "not-found", response: await notFound(route, env, manifest) };
+  }
+
+  const object = await env.BUCKET.get(blobKey(route.org_id, match.entry.sha256));
+  if (object === null) {
+    // Manifest referenced a blob not in R2 — projection drift. Fail closed.
+    return { kind: "not-found", response: await notFound(route, env, manifest) };
+  }
+
+  return {
+    kind: "ok",
+    servedPath: match.path,
+    contentType: match.entry.content_type,
+    body: object.body,
+    etag: object.httpEtag,
+    lastModified: object.uploaded,
+    contentLength: object.size ?? match.entry.size,
+  };
 }
 
 /**
@@ -304,33 +426,19 @@ async function notFound(
 }
 
 /**
- * Phase-2 stub for identity-gated access modes. We DELIBERATELY do not read a
- * JWT or perform any identity exchange here. The real implementation is the
- * host-scoped `/authz` exchange on app.shipped.app (docs/ARCHITECTURE.md §6):
- * the Worker will 302 there and later verify a host-scoped token — never the
- * operator dashboard JWT. Until then, fail closed with a clear 501.
- *
- * TODO(phase-2): replace with the `/authz` exchange:
- *   - password  → prompt + verify → host-scoped signed cookie (no identity).
- *   - allowlist / org_only → 302 → app.shipped.app/authz?return=<host>.
+ * Platform "link expired" page — served when a public/unlisted route carries an
+ * `expires_at` (v2 RouteValue) that is now past (docs/ARCHITECTURE.md §6, edge
+ * link-expiry). 410 Gone is the right status (the resource intentionally no
+ * longer exists at this URL). Never shared-cached so a future re-publish (new
+ * expiry) is visible immediately.
  */
-function gatedStub(route: RouteValue, url: URL): Response {
+export function linkExpired(): Response {
   const headers = new Headers({
-    "Content-Type": "text/plain; charset=utf-8",
-    // Never cache a gated response in the shared namespace (§10 invariant).
-    "Cache-Control": "private, no-store",
-    "X-Shipped-Phase": "2",
-    "X-Shipped-Access-Mode": route.access_mode,
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
     ...securityHeaders(),
   });
-  return new Response(
-    `501 Not Implemented — Phase 2: /authz exchange.\n` +
-      `Host "${url.host}" is served with access_mode="${route.access_mode}", ` +
-      `which requires the host-scoped identity exchange on app.shipped.app ` +
-      `(not yet implemented). The public serve path is JWT-free; gated tiers ` +
-      `are Phase 2.\n`,
-    { status: 501, headers },
-  );
+  return new Response(LINK_EXPIRED_HTML, { status: 410, headers });
 }
 
 const DEFAULT_404_HTML = `<!doctype html>
@@ -352,6 +460,36 @@ const DEFAULT_404_HTML = `<!doctype html>
   <main>
     <h1>404</h1>
     <p>This page could not be found.</p>
+  </main>
+</body>
+</html>
+`;
+
+/**
+ * Platform-controlled "link expired" page (served on a past `expires_at`). Kept
+ * static + self-contained (no tenant content, no scripts) — anti-phishing parity
+ * with the password gate (§10): an expired link must show a platform page tenant
+ * JS can neither render nor script.
+ */
+const LINK_EXPIRED_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link expired</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  p { opacity: .7; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>This link has expired</h1>
+    <p>The share link for this site is no longer active. Ask the site owner for a new one.</p>
   </main>
 </body>
 </html>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
+import { MainNav } from "@/components/main-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
@@ -44,6 +45,8 @@ export default async function AppLayout({
             Shipped
           </Link>
           <div className="flex items-center gap-2">
+            <MainNav />
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <ThemeToggle />
             <SignOutButton />
           </div>

@@ -24,8 +24,8 @@ type Pending = null | "google" | "email" | "magic";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Where to land after a successful credential / OAuth flow. */
-const CALLBACK_URL = "/dashboard";
+/** Default landing after a successful credential / OAuth flow. */
+const DEFAULT_CALLBACK_URL = "/dashboard";
 
 function describeError(err: unknown): string {
   if (typeof err === "object" && err !== null) {
@@ -35,7 +35,18 @@ function describeError(err: unknown): string {
   return "Something went wrong. Try again.";
 }
 
-export function AuthForm({ mode }: { mode: Mode }) {
+/**
+ * `callbackURL` lets a caller (e.g. the /authz viewer exchange) route the user
+ * back to where they came from after sign-in. It is validated server-side to a
+ * same-site path before being passed here, so it's safe to hand to Better Auth.
+ */
+export function AuthForm({
+  mode,
+  callbackURL = DEFAULT_CALLBACK_URL,
+}: {
+  mode: Mode;
+  callbackURL?: string;
+}) {
   const isSignUp = mode === "sign-up";
 
   const [name, setName] = React.useState("");
@@ -66,7 +77,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
       // Redirects to Google; on return Better Auth lands us on callbackURL.
       await authClient.signIn.social({
         provider: "google",
-        callbackURL: CALLBACK_URL,
+        callbackURL: callbackURL,
       });
     } catch (err) {
       setError(describeError(err));
@@ -87,7 +98,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
           name: name.trim(),
           email,
           password,
-          callbackURL: CALLBACK_URL,
+          callbackURL: callbackURL,
         });
         if (err) throw err;
         // Email verification is required before sign-in completes.
@@ -98,10 +109,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
         const { error: err } = await authClient.signIn.email({
           email,
           password,
-          callbackURL: CALLBACK_URL,
+          callbackURL: callbackURL,
         });
         if (err) throw err;
-        window.location.assign(CALLBACK_URL);
+        window.location.assign(callbackURL);
       }
     } catch (err) {
       setError(describeError(err));
@@ -121,7 +132,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     try {
       const { error: err } = await authClient.signIn.magicLink({
         email,
-        callbackURL: CALLBACK_URL,
+        callbackURL: callbackURL,
       });
       if (err) throw err;
       setNotice(`We sent a sign-in link to ${email}. Check your inbox.`);

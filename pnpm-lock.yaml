@@ -92,6 +92,9 @@ importers:
       '@shipped/contracts':
         specifier: workspace:*
         version: link:../../contracts
+      jose:
+        specifier: ^5.10.0
+        version: 5.10.0
     devDependencies:
       '@cloudflare/vitest-pool-workers':
         specifier: 0.16.15
