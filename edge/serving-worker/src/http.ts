@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: FSL-1.1-Apache-2.0
+//
+// HTTP response concerns for the public serve path: Content-Type derivation and
+// Cache-Control policy. Pure functions, unit-tested in test/serve.test.ts.
+//
+// Cache policy (docs/ARCHITECTURE.md §6, "Cache API for public only"):
+//  - Content-addressed / hashed assets are immutable → cache hard + immutable.
+//  - HTML (and other non-hashed entry docs) get a SHORT TTL so a pointer flip
+//    (publish/rollback) is visible quickly while still cutting Class-B R2 ops.
+// Every public response also carries content-security hardening headers; the
+// public path NEVER sets `private`/`no-store` (that is reserved for gated tiers
+// in Phase 2 — the cache-key-isolation invariant in §10).
+
+const MIME: Record<string, string> = {
+  // Documents
+  html: "text/html; charset=utf-8",
+  htm: "text/html; charset=utf-8",
+  xml: "application/xml; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+  md: "text/markdown; charset=utf-8",
+  // Styles / scripts
+  css: "text/css; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  mjs: "text/javascript; charset=utf-8",
+  map: "application/json; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  // Images
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  svg: "image/svg+xml",
+  ico: "image/x-icon",
+  // Fonts
+  woff: "font/woff",
+  woff2: "font/woff2",
+  ttf: "font/ttf",
+  otf: "font/otf",
+  eot: "application/vnd.ms-fontobject",
+  // Media / misc
+  wasm: "application/wasm",
+  pdf: "application/pdf",
+  webmanifest: "application/manifest+json",
+};
+
+const DEFAULT_CONTENT_TYPE = "application/octet-stream";
+
+/** Lowercased file extension of a key/path, or "" if none. */
+export function extensionOf(key: string): string {
+  const last = key.split("/").pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  if (dot <= 0 || dot === last.length - 1) return "";
+  return last.slice(dot + 1).toLowerCase();
+}
+
+/** Map an object key to a Content-Type, defaulting to octet-stream. */
+export function contentTypeFor(key: string): string {
+  return MIME[extensionOf(key)] ?? DEFAULT_CONTENT_TYPE;
+}
+
+/** HTML is the short-TTL "entry document" class; everything else is an asset. */
+export function isHtml(key: string): boolean {
+  const ext = extensionOf(key);
+  return ext === "html" || ext === "htm";
+}
+
+/**
+ * Heuristic: does this asset name look content-hash-fingerprinted, so it is
+ * safe to cache immutably forever? Matches the common bundler patterns:
+ *   app.4f3a9c2b.js · main-9Hs2Kd.css · chunk.abcdef0123456789.mjs
+ * i.e. a >=8-char hex/base62 token delimited by `.` or `-` before the ext.
+ */
+export function isHashedAsset(key: string): boolean {
+  if (isHtml(key)) return false; // entry docs are never treated as immutable
+  const last = key.split("/").pop() ?? "";
+  return /[.\-_][0-9a-zA-Z]{8,}\.[0-9a-zA-Z]+$/.test(last);
+}
+
+/** Short TTL (seconds) for HTML and non-fingerprinted assets. */
+export const SHORT_TTL_SECONDS = 60;
+
+/**
+ * Cache-Control for a public asset:
+ *  - hashed/immutable asset → 1 year, immutable.
+ *  - HTML / non-hashed asset → short TTL, revalidatable.
+ */
+export function cacheControlFor(key: string): string {
+  if (isHashedAsset(key)) {
+    return "public, max-age=31536000, immutable";
+  }
+  return `public, max-age=${SHORT_TTL_SECONDS}, must-revalidate`;
+}
+
+/**
+ * Security headers applied to every served content response. CSP is explicitly
+ * NOT the isolation control here (domain/PSL separation is — §10); these are
+ * defense-in-depth. `Referrer-Policy: no-referrer` avoids leaking hashed
+ * preview URLs; nosniff prevents MIME confusion on untrusted tenant uploads.
+ */
+export function securityHeaders(): Record<string, string> {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "SAMEORIGIN",
+    // Content origins must never register a service worker (§10 MEDIUM).
+    "Service-Worker-Allowed": "",
+  };
+}
+
+/**
+ * Build the full header set for a successful public object response.
+ * `extraEtag`/`lastModified` come from the R2 object when available.
+ */
+export function publicResponseHeaders(
+  key: string,
+  opts: { etag?: string; lastModified?: Date; contentLength?: number } = {},
+): Headers {
+  const h = new Headers();
+  h.set("Content-Type", contentTypeFor(key));
+  h.set("Cache-Control", cacheControlFor(key));
+  for (const [k, v] of Object.entries(securityHeaders())) {
+    if (v !== "") h.set(k, v);
+  }
+  if (opts.etag) h.set("ETag", opts.etag);
+  if (opts.lastModified) h.set("Last-Modified", opts.lastModified.toUTCString());
+  if (typeof opts.contentLength === "number") {
+    h.set("Content-Length", String(opts.contentLength));
+  }
+  return h;
+}

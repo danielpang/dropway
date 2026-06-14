@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Shipped — one-command self-host stack (ARCHITECTURE.md §13 row 13, §14.4).
+#
+# This boots the OSS core's data plane locally/offline:
+#   * postgres  — the single source of truth (app + auth schemas; FORCE RLS)
+#   * minio     — an R2/S3-compatible object store stand-in for blobs/manifests
+#   * migrate   — a one-shot goose runner that applies db/migrations/app
+#
+# It deliberately does NOT include Stripe, the quota/billing module, or any cap:
+# SHIPPED_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ self-host is unlimited.
+# The Go API (services/api) and the dashboard (apps/dashboard) are built by other
+# agents; once present, add them here behind the same env contract in .env.example.
+#
+# Quickstart:  cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up
+# See deploy/README.md for the full walkthrough.
+
+name: shipped
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres — system of record. The migrate service provisions the runtime role
+  # and applies the app schema; this container runs as the privileged owner.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-shipped}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-shipped}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # MinIO — R2/S3-compatible object store. Holds per-org blobs/<org>/<sha256>
+  # and immutable deploy manifests. Console on :9001, S3 API on :9000.
+  # NOTE: in our hosted cloud this is Cloudflare R2; MinIO is the self-host
+  # stand-in only (ARCHITECTURE.md §11/§14.4).
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shipped}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shipped-dev-secret}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"   # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # web console
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # createbucket — one-shot: ensure the blob bucket exists in MinIO.
+  # ---------------------------------------------------------------------------
+  createbucket:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-shipped} ${MINIO_ROOT_PASSWORD:-shipped-dev-secret} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET:-shipped-blobs} &&
+      echo 'bucket ${MINIO_BUCKET:-shipped-blobs} ready'
+      "
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # migrate — one-shot goose runner. Applies the Go-owned `app` schema migrations
+  # as the privileged OWNER role (DATABASE_OWNER_URL), then sets the runtime
+  # `shipped_app` role's password (the role is created NOSUPERUSER / NOBYPASSRLS
+  # by migration 0001), then exits. It does NOT apply the cloud-only
+  # db/migrations/billing — that schema only exists in our hosted deployment
+  # (ARCHITECTURE.md §5/§9).
+  #
+  # Schema ownership / ordering (ARCHITECTURE.md §8): the `auth` schema is owned
+  # and migrated by Better Auth (it runs its own migrations when the dashboard
+  # boots). The `app` migrations here create an EMPTY `auth` schema only as a
+  # namespace and do NOT hard-FK auth.organization — app rows attach via
+  # `app.org_meta` (PK = Better Auth organization.id), which the API populates
+  # when an org is provisioned. So goose and Better Auth can apply in either order
+  # without breaking; just don't expect org_meta rows before an org is created.
+  #
+  # psql is installed from apt here only to set the runtime role's password; for
+  # local dev the default below is fine. See deploy/README.md.
+  # ---------------------------------------------------------------------------
+  migrate:
+    image: golang:1.25
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: ${DATABASE_OWNER_URL:-postgres://postgres:postgres@postgres:5432/shipped?sslmode=disable}
+      SHIPPED_APP_DB_PASSWORD: ${SHIPPED_APP_DB_PASSWORD:-shipped-app-dev-secret}
+    working_dir: /repo
+    volumes:
+      - ../db:/repo/db:ro
+    entrypoint: >
+      /bin/sh -c "
+      set -e &&
+      go install github.com/pressly/goose/v3/cmd/goose@latest &&
+      /go/bin/goose -dir /repo/db/migrations/app postgres \"$$GOOSE_DBSTRING\" up &&
+      apt-get update >/dev/null && apt-get install -y --no-install-recommends postgresql-client >/dev/null &&
+      psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE shipped_app WITH PASSWORD '$$SHIPPED_APP_DB_PASSWORD';\" &&
+      echo 'app migrations applied + shipped_app password set'
+      "
+    restart: "no"
+
+volumes:
+  pgdata:
+  miniodata:

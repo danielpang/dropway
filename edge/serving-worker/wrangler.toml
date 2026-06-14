@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Shipped serving Worker — *.shippedusercontent.com (Cloudflare).
+# Phase 1: PUBLIC serve path only (JWT-free, cacheable). See README.md and
+# docs/ARCHITECTURE.md §3/§6.
+#
+# This Worker is READ-ONLY against its bindings: KV (ROUTES) and R2 (BUCKET)
+# are projections the Go API is the sole writer of. The IDs below are
+# placeholders — the infra agent fills them in (or supplies them via the
+# Cloudflare dashboard / `wrangler ... create`) per environment.
+
+name = "shipped-serving-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+# Workers runtime flags. `nodejs_compat` is harmless here and eases any future
+# shared code; the Worker itself uses only Web-standard APIs.
+compatibility_flags = ["nodejs_compat"]
+
+# Observability: structured logs for edge serve decisions (§2.3).
+[observability]
+enabled = true
+
+# --- Bindings ----------------------------------------------------------------
+
+# KV: host routing projection. Key `route:<host>` → RouteValue
+#   { org_id, site_id, version_id, access_mode, schema_version }
+# Replace `id` / `preview_id` with the real namespace IDs.
+[[kv_namespaces]]
+binding = "ROUTES"
+id = "REPLACE_WITH_ROUTES_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
+
+# R2: the single private bucket holding all tenant content, per-org prefixed:
+#   sites/<org_id>/<site_id>/<version_id>/<path>
+# Replace `bucket_name` with the real bucket; `preview_bucket_name` is used by
+# `wrangler dev` so local runs don't touch the production bucket.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "shipped-content"
+preview_bucket_name = "shipped-content-preview"
+
+# --- Routing (production) ----------------------------------------------------
+# The Worker answers for every tenant subdomain on the PSL content domain.
+# Commented out so `wrangler deploy` doesn't fail before the zone/route exist;
+# the infra agent enables this once `shippedusercontent.com` is on Cloudflare.
+#
+# [[routes]]
+# pattern = "*.shippedusercontent.com/*"
+# zone_name = "shippedusercontent.com"

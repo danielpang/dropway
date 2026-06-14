@@ -1,0 +1,30 @@
+{
+  "name": "@shipped/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "license": "FSL-1.1-Apache-2.0",
+  "description": "Cross-language data contracts for Shipped. The KV route value shape (Go API ⇄ Cloudflare Worker), defined once.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./kv-route.schema.json": "./kv-route.schema.json"
+  },
+  "files": [
+    "dist",
+    "kv-route.schema.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "5.7.3"
+  }
+}

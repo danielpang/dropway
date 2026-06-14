@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Cloudflare Workers runtime globals (Request/Response/ReadableStream,
+    // R2/KV binding types) plus the DOM lib for the standard Fetch types the
+    // Workers runtime implements. We type-check only (Wrangler bundles).
+    "lib": ["ES2022", "WebWorker"],
+    "types": ["@cloudflare/workers-types"],
+    "noEmit": true,
+    // Vitest globals (describe/it/expect) are imported explicitly in tests,
+    // so no test types are needed on the type-check pass.
+    "moduleResolution": "Bundler"
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "Base config for the Cloudflare serving Worker (edge/serving-worker). WebWorker libs, no DOM. The worker package owns its final tsconfig.json and extends this.",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "types": []
+  }
+}

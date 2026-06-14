@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Builds / output
+dist/
+build/
+out/
+.next/
+.turbo/
+bin/
+*.tsbuildinfo
+coverage/
+*.out
+
+# Go
+/tmp/
+vendor/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Local infra state
+.data/
+minio-data/
+supabase/.branches/
+supabase/.temp/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

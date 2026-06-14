@@ -1,0 +1,15 @@
+{
+  "name": "@shipped/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "license": "FSL-1.1-Apache-2.0",
+  "description": "Shared ESLint flat config for the Shipped workspace.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@shipped/serving-worker",
+  "version": "0.0.0",
+  "private": true,
+  "license": "FSL-1.1-Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.16.15",
+    "@cloudflare/workers-types": "4.20260613.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8",
+    "wrangler": "4.100.0"
+  }
+}

@@ -1,0 +1,19 @@
+Shipped Enterprise Edition License
+Copyright (c) 2026 Daniel Pang ("Shipped"). All rights reserved.
+
+This directory (ee/) and all of its contents are licensed under the Shipped
+Enterprise Edition License and are NOT covered by the repository's Functional
+Source License (FSL-1.1-Apache-2.0) that governs the rest of this repository.
+
+The Enterprise Edition is PROPRIETARY and source-visible for transparency only.
+Use of the Enterprise Edition features in production requires a valid Shipped
+Enterprise license key and a commercial agreement with the copyright holder.
+
+Subject to the terms above, you may view this source. You may NOT use, copy,
+modify, distribute, sublicense, or deploy the Enterprise Edition, in whole or in
+part, in production without a valid license key and commercial agreement.
+
+The open-source / self-host build of Shipped does not depend on this directory
+and is fully functional without it.
+
+Unauthorized use is prohibited.
