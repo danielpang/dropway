@@ -229,6 +229,20 @@ func (c *CloudflareKV) Revoke(ctx context.Context, kind edgerevoke.Kind, id stri
 	return c.do(req, "revoke "+key)
 }
 
+// LookupRevoked reads the denylist entry for (kind, id) — the read side of the
+// hard-revocation denylist the /authz mint path consults so a revoked subject
+// cannot immediately re-mint a fresh edge token (H2). A clean miss → (_, false, nil);
+// a transient KV error is returned so the caller FAILS CLOSED.
+func (c *CloudflareKV) LookupRevoked(ctx context.Context, kind edgerevoke.Kind, id string) (edgerevoke.Value, bool, error) {
+	if !kind.Valid() {
+		return edgerevoke.Value{}, false, fmt.Errorf("projection: invalid revoke kind %q", kind)
+	}
+	if id == "" {
+		return edgerevoke.Value{}, false, fmt.Errorf("projection: revoke id is empty")
+	}
+	return c.getRevoked(ctx, edgerevoke.Key(kind, id))
+}
+
 // getRevoked GETs the denylist value at key. (false, nil) on a 404 (no entry yet).
 func (c *CloudflareKV) getRevoked(ctx context.Context, key string) (edgerevoke.Value, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.kvValueURL(key), nil)

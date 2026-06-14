@@ -128,6 +128,13 @@ func (l *Local) GetRevoked(kind edgerevoke.Kind, id string) (edgerevoke.Value, b
 	return v, ok
 }
 
+// LookupRevoked is GetRevoked with the ctx+error signature the API's mint-path
+// RevocationReader expects (H2). Local reads from memory and never errors.
+func (l *Local) LookupRevoked(_ context.Context, kind edgerevoke.Kind, id string) (edgerevoke.Value, bool, error) {
+	v, ok := l.GetRevoked(kind, id)
+	return v, ok, nil
+}
+
 // SetOrgStatus projects the org's suspension/over-limit signal in memory. A blocking
 // status records org_status:<orgID>; "active" (or "") CLEARS it (the org is served).
 // In-memory only and not persisted across restarts (see the Local doc comment) —

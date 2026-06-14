@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { finalizeMemberRemovalAction } from "@/app/(app)/members/actions";
 import type { Role } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import type { OrgMember } from "@/lib/org";
@@ -95,6 +96,17 @@ export function MemberList({
         organizationId,
       });
       if (err) throw err;
+      // Removal isn't complete until the removed user's access is actually revoked
+      // (C2 / ARCHITECTURE.md §10): kill their Better Auth sessions AND bump the edge
+      // denylist so they can't keep viewing — or re-mint tokens for — gated sites on
+      // a still-valid JWT. Do this BEFORE refreshing; a non-fatal failure here is
+      // surfaced (the member row is already gone, but access revocation matters).
+      const revoked = await finalizeMemberRemovalAction({ userId: removing.userId });
+      if (!revoked.ok && "message" in revoked) {
+        setError(
+          `Member removed, but revoking their active access failed: ${revoked.message} Their tokens expire within ~15 minutes; retry "Sign out everywhere" to revoke immediately.`,
+        );
+      }
       setRemoving(null);
       router.refresh();
     } catch (err) {

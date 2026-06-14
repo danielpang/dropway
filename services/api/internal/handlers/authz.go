@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/shipped/internal/edgerevoke"
 	"github.com/danielpang/shipped/internal/edgetoken"
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/internal/middleware"
@@ -99,6 +101,17 @@ func (a *API) AuthzMint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// H2: even after a clean live-authorization, refuse to mint if the viewer's JWT
+	// predates a HARD revocation of the user/site/org. The edge denylist alone can't
+	// stop this — a freshly minted edge token's iat always post-dates min_iat — so
+	// the gate compares the JWT's iat to min_iat (mirroring the edge predicate). A
+	// viewer who re-authenticated AFTER the revocation (jwt.iat ≥ min_iat) is allowed
+	// through, which is correct: a true ban kills the Better Auth session (so no
+	// fresh JWT) and removal fails the live membership/allowlist re-check above.
+	if a.mintBlockedByRevocation(w, r, claims, decision) {
+		return
+	}
+
 	token, err := a.EdgeSigner.Mint(edgetoken.MintParams{
 		ContentHost: decision.Host,
 		Subject:     decision.Subject,
@@ -113,6 +126,48 @@ func (a *API) AuthzMint(w http.ResponseWriter, r *http.Request) {
 		"host", decision.Host, "site_id", decision.SiteID, "mode", decision.Mode,
 		"sub", decision.Subject, "org_id", decision.OrgID)
 	httpx.WriteJSON(w, http.StatusOK, mintResponse{Token: token, Host: decision.Host, Mode: decision.Mode})
+}
+
+// mintBlockedByRevocation reports whether the viewer must be refused a fresh edge
+// token because their JWT predates a hard revocation of the user, site, or org (and
+// writes the 403 when so). It mirrors the serving Worker's denylist predicate
+// (reject when min_iat > token.iat), applied to the JWT iat the viewer is using to
+// authorize the mint. A denylist READ error FAILS CLOSED (a revocation we can't
+// confirm absent must deny). No reader wired → the check is skipped.
+func (a *API) mintBlockedByRevocation(w http.ResponseWriter, r *http.Request, claims *auth.Claims, d store.MintDecision) bool {
+	if a.RevocationReader == nil {
+		return false
+	}
+	var jwtIAT int64
+	if claims.IssuedAt != nil {
+		jwtIAT = claims.IssuedAt.Unix()
+	}
+	for _, s := range []struct {
+		kind edgerevoke.Kind
+		id   string
+	}{
+		{edgerevoke.KindUser, d.Subject},
+		{edgerevoke.KindSite, d.SiteID},
+		{edgerevoke.KindOrg, d.OrgID},
+	} {
+		if s.id == "" {
+			continue
+		}
+		v, ok, err := a.RevocationReader.LookupRevoked(r.Context(), s.kind, s.id)
+		if err != nil {
+			logger(r).Error("mint revocation lookup failed; failing closed",
+				"kind", string(s.kind), "id", s.id, "err", err)
+			httpx.WriteError(w, fmt.Errorf("%w: revocation status unavailable", httpx.ErrForbidden))
+			return true
+		}
+		if ok && v.MinIAT > jwtIAT {
+			logger(r).Info("mint refused: subject revoked after credential issuance",
+				"kind", string(s.kind), "id", s.id, "min_iat", v.MinIAT, "jwt_iat", jwtIAT)
+			httpx.WriteError(w, fmt.Errorf("%w: access has been revoked; please sign in again", httpx.ErrForbidden))
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/danielpang/shipped/internal/customdomains"
+	"github.com/danielpang/shipped/internal/edgerevoke"
 	"github.com/danielpang/shipped/internal/edgetoken"
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/storage"
@@ -63,6 +64,18 @@ type SiteStore interface {
 // projection (the "revoked:" prefix); it may be nil in a DB-less/dev deployment, in
 // which case the short edge-token TTL is the only revocation backstop.
 type EdgeRevoker = projection.Revoker
+
+// EdgeRevocationReader READS the hard-revocation denylist so the /authz mint path
+// can refuse to issue a fresh edge token to a viewer whose JWT predates a hard
+// revocation of the user/site/org (H2). The edge denylist alone can't stop a
+// re-mint — a freshly minted edge token's iat always post-dates min_iat — so the
+// mint compares the VIEWER'S JWT iat to min_iat (mirroring the edge's predicate).
+// Optional: nil → the check is skipped (the short edge-token TTL + the live
+// membership/allowlist re-checks remain). The same KV reader as the route
+// projection implements it (CloudflareKV / Local).
+type EdgeRevocationReader interface {
+	LookupRevoked(ctx context.Context, kind edgerevoke.Kind, id string) (edgerevoke.Value, bool, error)
+}
 
 // Ensure the concrete store satisfies the handler surface.
 var _ SiteStore = (*store.Store)(nil)

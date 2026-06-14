@@ -162,6 +162,11 @@ func run(baseLogger *slog.Logger) error {
 	if rev, ok := proj.(handlers.EdgeRevoker); ok {
 		api.Revoker = rev
 	}
+	// The same KV reader backs the /authz mint-time denylist check (H2): refuse to
+	// re-mint for a viewer whose JWT predates a hard revocation.
+	if rdr, ok := proj.(handlers.EdgeRevocationReader); ok {
+		api.RevocationReader = rdr
+	}
 	api.AllowJWTRoleFallback = cfg.AllowJWTRoleFallback
 	if cfg.AllowJWTRoleFallback {
 		slog.Warn("ALLOW_JWT_ROLE_FALLBACK=true — admin gating will trust the JWT role claim when auth.member is unavailable")

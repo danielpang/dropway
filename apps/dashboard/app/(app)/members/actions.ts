@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { api, ApiError } from "@/lib/api";
+import { auth } from "@/lib/auth";
 
 /**
  * Result of a hard-revocation ("sign out / revoke access everywhere") write.
@@ -58,4 +59,37 @@ export async function revokeAccessAction(input: {
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }
+}
+
+/**
+ * Hard-finalize a member removal (C2 / ARCHITECTURE.md §10). After the org plugin
+ * deletes the member row, removal MUST also:
+ *   1. revoke the removed user's Better Auth sessions, so the jwt() plugin can't
+ *      re-mint a fresh JWT they'd use to re-authorize at /authz; and
+ *   2. bump the edge denylist (revoked:user:<id>), so every edge token they hold is
+ *      rejected immediately at the serving Worker instead of riding the 15m TTL.
+ *
+ * Without this, a removed member kept a valid ~10m JWT + live edge tokens and could
+ * keep viewing gated sites (and, paired with the /authz mint denylist check, re-mint
+ * them) for minutes after removal. The session kill is best-effort; the denylist
+ * write + the Go API's live membership re-check are the authoritative gated-access
+ * controls. Called by the member list immediately after removeMember succeeds.
+ */
+export async function finalizeMemberRemovalAction(input: {
+  userId: string;
+}): Promise<RevokeActionResult> {
+  if (!input.userId) {
+    return { ok: false, message: "Missing user." };
+  }
+  // 1. Kill the removed user's sessions so a still-valid session can't re-mint a JWT.
+  try {
+    const ctx = await auth.$context;
+    await ctx.internalAdapter.deleteSessions(input.userId);
+  } catch {
+    // Best-effort: a failed session delete still leaves the edge denylist + the live
+    // membership re-check in force (gated access is revoked); it only leaves a ≤10m
+    // dashboard-JWT window. Fall through to the authoritative denylist write.
+  }
+  // 2. Edge denylist write — the authoritative, edge-enforced revocation.
+  return revokeAccessAction({ kind: "user", id: input.userId });
 }

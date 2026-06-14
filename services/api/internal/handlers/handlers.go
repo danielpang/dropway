@@ -46,6 +46,12 @@ type API struct {
 	// it is the same Cloudflare KV writer as Projection (ARCHITECTURE.md §6/§10).
 	Revoker EdgeRevoker
 
+	// RevocationReader reads the same denylist so the /authz mint path refuses to
+	// re-mint for a viewer whose JWT predates a revocation (H2). Optional: nil → the
+	// mint-time denylist check is skipped (edge TTL + live re-checks remain). In
+	// production it is the same Cloudflare KV reader as Projection/Revoker.
+	RevocationReader EdgeRevocationReader
+
 	// AllowJWTRoleFallback gates the requireAdmin fallback to the verified JWT role
 	// claim when the Better Auth auth.member table is unavailable. Default false
 	// (strict): admin-gated actions are DENIED when membership can't be confirmed

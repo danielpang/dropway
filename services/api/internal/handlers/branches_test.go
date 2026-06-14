@@ -4,12 +4,16 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/shipped/internal/edgerevoke"
 	"github.com/danielpang/shipped/internal/edgetoken"
 	"github.com/danielpang/shipped/internal/middleware"
 	"github.com/danielpang/shipped/internal/projection"
@@ -231,6 +235,84 @@ func TestAuthzMint_HostNotFound_404(t *testing.T) {
 	rr := postJSON(h, "/v1/authz/mint", `{"host":"ghost.shippedusercontent.com"}`)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (host not found)", rr.Code)
+	}
+}
+
+// fakeRevReader is an in-memory EdgeRevocationReader for the mint-revocation tests
+// (H2): it maps edgerevoke.Key(kind,id) → value, or returns a forced error.
+type fakeRevReader struct {
+	entries map[string]edgerevoke.Value
+	err     error
+}
+
+func (f fakeRevReader) LookupRevoked(_ context.Context, kind edgerevoke.Kind, id string) (edgerevoke.Value, bool, error) {
+	if f.err != nil {
+		return edgerevoke.Value{}, false, f.err
+	}
+	v, ok := f.entries[edgerevoke.Key(kind, id)]
+	return v, ok, nil
+}
+
+// mintOrgOnly returns a fake store whose AuthorizeMint cleanly authorizes an
+// org_only mint for the viewer (so the test exercises the post-authorization
+// revocation gate, not the authz logic itself).
+func mintOrgOnly() *fakeStore {
+	fs := newFakeStore()
+	fs.p2().mintFn = func(v store.MintViewer, host string) (store.MintDecision, error) {
+		return store.MintDecision{Host: host, SiteID: "site_1", OrgID: v.OrgID, Mode: projection.AccessOrgOnly, Subject: v.UserID}, nil
+	}
+	return fs
+}
+
+// H2: a viewer whose JWT was issued BEFORE a hard revocation of their user id must
+// be refused a fresh edge token (403), even though AuthorizeMint authorized them —
+// the denylist alone can't stop a re-mint because the new token's iat post-dates
+// min_iat, so the mint compares the JWT iat to min_iat.
+func TestAuthzMint_RevokedSubjectBeforeJWT_403(t *testing.T) {
+	a := NewFull(quota.Unlimited{}, mintOrgOnly(), nil, nil)
+	a.EdgeSigner = testSigner(t)
+	a.RevocationReader = fakeRevReader{entries: map[string]edgerevoke.Value{
+		edgerevoke.Key(edgerevoke.KindUser, "u"): {MinIAT: 2000},
+	}}
+	c := claims("u", "o", "member")
+	c.IssuedAt = jwt.NewNumericDate(time.Unix(1000, 0)) // JWT predates the revocation
+	h := mountAccess(a, c)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (revoked-before-JWT re-mint blocked): %s", rr.Code, rr.Body.String())
+	}
+}
+
+// H2: a viewer who re-authenticated AFTER the revocation (jwt.iat ≥ min_iat) is
+// allowed — a true ban kills the session so no fresh JWT is obtainable, and removal
+// fails the live re-check, so this branch can't restore a banned viewer.
+func TestAuthzMint_RevokedButReauthed_200(t *testing.T) {
+	a := NewFull(quota.Unlimited{}, mintOrgOnly(), nil, nil)
+	a.EdgeSigner = testSigner(t)
+	a.RevocationReader = fakeRevReader{entries: map[string]edgerevoke.Value{
+		edgerevoke.Key(edgerevoke.KindUser, "u"): {MinIAT: 1000},
+	}}
+	c := claims("u", "o", "member")
+	c.IssuedAt = jwt.NewNumericDate(time.Unix(2000, 0)) // re-authed AFTER the revocation
+	h := mountAccess(a, c)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (re-authed after revocation): %s", rr.Code, rr.Body.String())
+	}
+}
+
+// H2: a denylist READ error must FAIL CLOSED (403) — a revocation we can't confirm
+// absent must deny the mint, never open it.
+func TestAuthzMint_RevocationReadError_FailsClosed_403(t *testing.T) {
+	a := NewFull(quota.Unlimited{}, mintOrgOnly(), nil, nil)
+	a.EdgeSigner = testSigner(t)
+	a.RevocationReader = fakeRevReader{err: errors.New("kv unavailable")}
+	c := claims("u", "o", "member")
+	c.IssuedAt = jwt.NewNumericDate(time.Unix(1000, 0))
+	h := mountAccess(a, c)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (fail-closed on denylist read error)", rr.Code)
 	}
 }
 
