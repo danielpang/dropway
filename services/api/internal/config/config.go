@@ -141,6 +141,21 @@ func Load() (Config, error) {
 		cfg.Port = n
 	}
 
+	// SECURITY (audit HIGH): when a JWKS is configured (the API verifies real
+	// Better Auth tokens), JWT_ISSUER and JWT_AUDIENCE MUST be set. golang-jwt v5
+	// SKIPS the iss/aud check when the expected value is empty, so an empty
+	// JWT_ISSUER/JWT_AUDIENCE would accept ANY EdDSA-signed, unexpired token
+	// regardless of who minted it or for whom. Fail fast rather than run auth that
+	// doesn't pin iss/aud.
+	if cfg.JWKSURL != "" {
+		if cfg.JWTIssuer == "" {
+			return Config{}, fmt.Errorf("config: JWT_ISSUER must be set when JWKS_URL is configured (issuer is otherwise unenforced)")
+		}
+		if cfg.JWTAudience == "" {
+			return Config{}, fmt.Errorf("config: JWT_AUDIENCE must be set when JWKS_URL is configured (audience is otherwise unenforced)")
+		}
+	}
+
 	return cfg, nil
 }
 

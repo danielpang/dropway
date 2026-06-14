@@ -237,8 +237,11 @@ func (s *Store) ResolveForPassword(ctx context.Context, host string) (PasswordDe
 		return PasswordDecision{}, "", ErrHostNotFound
 	}
 
-	// Read the policy under the site's tenant context.
-	if err := setTenant(ctx, tx, rh.OrgID, rh.OrgID); err != nil {
+	// Read the policy under the site's tenant context. Password mode is anonymous
+	// (no viewer identity): set only the org GUC; the user GUC stays empty rather
+	// than mis-reusing the org id as a user id (audit LOW — avoids a latent
+	// mis-scoping trap for any future user-scoped query under this context).
+	if err := setTenant(ctx, tx, "", rh.OrgID); err != nil {
 		return PasswordDecision{}, "", err
 	}
 	q := db.New(tx)

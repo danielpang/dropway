@@ -6,7 +6,7 @@ import { ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { AuditEvent } from "@/lib/api";
-import { isSecurityAction } from "@/lib/audit";
+import { isSecurityAction } from "@/lib/audit-actions";
 
 /**
  * Renders a page of audit events as an accessible table (architecture §10/§12).

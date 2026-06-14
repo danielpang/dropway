@@ -169,8 +169,6 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrExternalSharingDisabled):
 		// The org's allow_external_sharing policy forbids a public site (§5.4).
 		httpx.WriteError(w, fmt.Errorf("%w: external sharing is disabled for this org; an admin must enable it", httpx.ErrForbidden))
-	case errors.Is(err, store.ErrHostTaken):
-		httpx.WriteError(w, fmt.Errorf("%w: hostname already in use", httpx.ErrConflict))
 	case errors.Is(err, store.ErrInvalidMode):
 		httpx.WriteError(w, fmt.Errorf("%w: invalid access mode", httpx.ErrBadRequest))
 	case errors.Is(err, store.ErrInvalidDomainStatus):

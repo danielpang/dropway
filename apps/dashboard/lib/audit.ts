@@ -92,29 +92,7 @@ export async function loadAuditPage(page = 0): Promise<AuditLoad> {
   }
 }
 
-/**
- * Security-relevant audit actions get a highlighted row in the viewer. We match
- * by a small set of prefixes/keywords so the highlight stays correct even as the
- * Go API adds new verbs in these families (access-mode flips, sharing-policy
- * changes, revocations, member/role changes, suspensions). Matching is on the
- * dotted `action` string; unknown actions render normally.
- */
-const SECURITY_ACTION_PATTERNS: RegExp[] = [
-  /revoke/i,
-  /^member\.(removed|role)/i,
-  /unshare/i,
-  /external[_.]sharing/i,
-  /access[_.]?mode/i,
-  /\.access\b/i,
-  /allowlist/i,
-  /suspend/i,
-  /billing\.(suspended|past_due)/i,
-  /token\.(revoked|issued)/i,
-  /password/i,
-];
-
-/** True when an audit action is access-mode / security relevant → highlight it. */
-export function isSecurityAction(action: string | null | undefined): boolean {
-  if (!action) return false;
-  return SECURITY_ACTION_PATTERNS.some((re) => re.test(action));
-}
+// The pure highlight matcher lives in the client-safe lib/audit-actions.ts (a
+// "use client" component imports it, so it can't live in this "server-only"
+// module). Re-export it here for server-side callers.
+export { isSecurityAction } from "@/lib/audit-actions";
