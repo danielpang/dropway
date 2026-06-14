@@ -54,7 +54,8 @@ type Verifier struct {
 
 	mu          sync.RWMutex
 	keys        map[string]ed25519.PublicKey
-	lastRefresh time.Time
+	lastRefresh time.Time // last SUCCESSFUL refresh (observability)
+	lastAttempt time.Time // last refresh ATTEMPT (success OR failure) — the rate-limit gate
 }
 
 // Option configures a Verifier.
@@ -144,13 +145,27 @@ type jwkSet struct {
 }
 
 // refresh fetches and parses the JWKS. Unless force is true, refreshes that land
-// within minRefreshInterval of the previous one are skipped (anti-DoS).
+// within minRefreshInterval of the previous ATTEMPT are skipped (anti-DoS).
+//
+// The rate-limit gate keys off lastAttempt, which is stamped BEFORE the fetch and
+// thus on every attempt — success OR failure (M4). Stamping only on success (the old
+// behavior) meant that while the JWKS endpoint was erroring, every unknown-kid token
+// (the kid is attacker-controlled) fired an unthrottled outbound GET — turning a
+// flood of forged kids into a fetch storm against the already-unhealthy endpoint.
+//
+// A successful fetch that yields ZERO usable keys does NOT overwrite the cache (M5):
+// replacing live keys with an empty map would fail ALL verification (a fleet-wide
+// control-plane auth outage) until the next refresh, which the rate-limit then
+// suppresses. We keep the last-known-good keys and return an error instead.
 func (v *Verifier) refresh(ctx context.Context, force bool) error {
 	v.mu.Lock()
-	if !force && !v.lastRefresh.IsZero() && time.Since(v.lastRefresh) < v.minRefreshInterval {
+	if !force && !v.lastAttempt.IsZero() && time.Since(v.lastAttempt) < v.minRefreshInterval {
 		v.mu.Unlock()
 		return nil
 	}
+	// Stamp the attempt NOW, under the lock, so the gate throttles even when the fetch
+	// below fails. Only one goroutine per interval gets past the gate to fetch.
+	v.lastAttempt = time.Now()
 	v.mu.Unlock()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
@@ -181,6 +196,11 @@ func (v *Verifier) refresh(ctx context.Context, force bool) error {
 			continue
 		}
 		keys[k.Kid] = ed25519.PublicKey(raw)
+	}
+
+	// M5: never clobber a live key set with an empty one — keep last-known-good.
+	if len(keys) == 0 {
+		return fmt.Errorf("auth: jwks returned no usable Ed25519 keys; keeping last-known-good")
 	}
 
 	v.mu.Lock()

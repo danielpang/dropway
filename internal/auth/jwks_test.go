@@ -180,6 +180,56 @@ func TestVerify_RefreshesOnUnknownKid(t *testing.T) {
 	}
 }
 
+// M5: a successful fetch that yields ZERO usable keys must NOT wipe the cache — the
+// last-known-good keys keep verifying (no fleet-wide auth outage).
+func TestVerify_EmptyJWKSKeepsLastKnownGood(t *testing.T) {
+	pub1, priv1 := newKey(t)
+	js := newJWKSServer(map[string]ed25519.PublicKey{"k1": pub1})
+	defer js.Close()
+	v := NewVerifier(js.URL, testIssuer, testAud,
+		WithHTTPClient(js.Client()), WithMinRefreshInterval(0))
+	if err := v.Prime(context.Background()); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// The server now publishes NO keys (a transient bad publish / rotation race).
+	js.setKeys(map[string]ed25519.PublicKey{})
+
+	// A token with an UNKNOWN kid triggers a refresh that returns an empty set. The
+	// refresh must keep the cached keys (M5), so that token fails for "unknown kid"...
+	_, priv2 := newKey(t)
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv2, "k2", goodClaims())); err == nil {
+		t.Fatal("a token with an unknown kid against an empty JWKS must fail")
+	}
+	// ...but the previously-good k1 key SURVIVED the empty refresh and still verifies.
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv1, "k1", goodClaims())); err != nil {
+		t.Fatalf("k1 must still verify after an empty refresh (last-known-good kept): %v", err)
+	}
+}
+
+// M4: the refresh rate-limit must apply even while the JWKS endpoint is ERRORING —
+// otherwise a flood of unknown (attacker-controlled) kids becomes an unthrottled
+// fetch storm. Two unknown-kid verifies within the interval hit the endpoint once.
+func TestVerify_RefreshRateLimitedWhenEndpointErrors(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	// A long interval so the second attempt within it MUST be throttled.
+	v := NewVerifier(srv.URL, testIssuer, testAud,
+		WithHTTPClient(srv.Client()), WithMinRefreshInterval(time.Hour))
+
+	_, priv := newKey(t)
+	_, _ = v.Verify(context.Background(), signEdDSA(t, priv, "kX", goodClaims()))
+	_, _ = v.Verify(context.Background(), signEdDSA(t, priv, "kX", goodClaims()))
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("JWKS endpoint hit %d times; want exactly 1 (rate-limited despite the 500 — M4)", got)
+	}
+}
+
 // Expired tokens are rejected (exp is required and enforced).
 func TestVerify_RejectsExpired(t *testing.T) {
 	pub, priv := newKey(t)
