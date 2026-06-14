@@ -621,3 +621,37 @@ Shipped follows the **Supabase/PostHog open-core playbook**: a public, source-av
 
 ### 14.4 Open-source operational must-haves (MVP)
 Public mono-repo with clear `LICENSE` per directory + SPDX headers; `CONTRIBUTING.md` + DCO bot; reproducible **one-command self-host** (`docker compose up` / Helm) that boots Postgres + dashboard + Go API + a local object store (MinIO as an R2/S3-compatible stand-in for self-host) + a self-host serving path; `.env.example` with `SHIPPED_CLOUD=false`; security policy + responsible-disclosure; and CI that builds **both** the OSS-only image (asserts `cloud/`+`ee/` absent) and the cloud image.
+
+---
+
+## 15. Post-launch backlog (deferred from Phase 4)
+
+Phase 4 deliberately scoped down to the **security/ops hardening** that is achievable and testable inside the repo with no new external accounts or vendor contracts. The items below were on the original §12 Phase-4 wish-list but are **intentionally NOT yet built** — each needs external services, paid runtime infrastructure, or a vendor relationship, so they are post-launch (mostly enterprise) work rather than launch-blocking. They are listed here so the omission is a documented decision, not a gap.
+
+### 15.1 What Phase 4 *shipped* (the hardening core)
+For reference, so the backlog is read against what exists. Phase 4 delivered, with tests, and kept all Phase 0–3 tests green:
+
+- **Audit logging.** Writes to the existing `app.audit_log` table (`org_id, actor_user, actor_token, action, target, metadata jsonb, ip, created_at`) on security-relevant mutations (member add/remove, role change, policy/access-mode change, publish/unshare, billing lifecycle), correlated by `request_id`, read back through an org-scoped, RLS-enforced audit API.
+- **Hard revocation / denylist.** The Go API (via the projection / Cloudflare-KV writer) writes `revoked:user:<id>` / `revoked:site:<id>` / `revoked:org:<id>` → `{ min_iat }` keys on the **three** real token-revocation triggers: **member removal**, **site unshare / access-tightening**, and **`allow_external_sharing` disable**. Writes are **idempotent** (`max(existing, new)` min_iat) and **rebuildable** — a stale denylist only fails **closed** (extra re-auth), never opens access. Both the **serving Worker** (gated path) and the **`/authz` exchange** reject an edge token whose `iat` predates any matching `min_iat` (302 → `/authz` re-auth). Short edge-token TTL (15m) is the backstop; the denylist makes revocation immediate. **Billing suspension / over_limit is NOT a token revocation** — it would hard-cut existing viewers, contradicting the §9 read-only `over_limit` model. Instead, billing writes the per-org **`org_status:<org_id>` KV flag** (via the same projection writer, `OrgStatusWriter`); the edge then serves a **platform block page** (read-only) for a suspended/over-limit org while the org keeps all its data and existing tokens stay valid.
+- **Edge rate-limiting + denial-of-wallet caps.** Per-subject/per-site limits and hard caps fail closed before any expensive work.
+- **Content security headers** on served content (CSP as defense-in-depth — *not* the isolation control, which remains domain/PSL/origin separation per §10 — plus `Referrer-Policy: no-referrer`, frame/`nosniff`/permissions controls, and `Cache-Control: private, no-store` on gated responses).
+- **RLS policy test suite** — a table-driven integration suite asserting the `FORCE RLS`, subquery-free, `org_id`-keyed policies (org A cannot read/write org B; `shipped_app` is non-`BYPASSRLS`; GUC isolation across pooled transactions).
+- **R2 version GC** — reaps blobs/versions unreferenced by any live deployment pointer (per-org keyspace, GDPR-hard-delete-safe).
+- **DR rebuild** — a CLI/ops path over the existing `store.RebuildProjection` that wipes and rebuilds the KV/D1 routing + denylist projection from authoritative Postgres (the §13 #8 DR drill).
+
+### 15.2 Deferred — NOT yet built, and why
+
+| Deferred item | Why deferred (what it needs) | Lands in |
+|---|---|---|
+| **SSO / SAML** — Better Auth SSO plugin, **UUID-keyed** IdP config | Needs real IdP accounts (Okta/Entra/Google Workspace) + per-customer metadata exchange; enterprise sales-gated, license-key feature | `ee/`, post-launch |
+| **SCIM** — directory-driven user/group provisioning + deprovisioning | Pairs with SSO; needs an IdP SCIM connector and a long-lived provisioning token surface | `ee/`, post-launch |
+| **Runtime APIs — collection DB + realtime** (rows tagged org+site+collection under RLS; Supabase Broadcast-from-DB keyed by site) | A whole stateful data product (write APIs, realtime fan-out, quotas) beyond static serving; large surface, separate hardening pass | runtime APIs, §7.3 `later` |
+| **Runtime APIs — file uploads** (presigned R2 `uploads/<org>/<site>/…`, quota-checked) | Per-site upload quota accounting + abuse controls not yet in place | runtime APIs, §7.3 `later` |
+| **Runtime APIs — LLM / image proxy** with the §10 **denial-of-wallet** guardrails (server-side keys; off-by-default on public; hard per-site $ cap + DO rate limit; Turnstile/PoW; never echo provider error bodies) | Needs paid provider keys + spend-cap billing plumbing + Turnstile; the §4 edge rate-limit/DoW caps shipped in Phase 4 are the *substrate*, but the metered proxy itself is post-launch | runtime APIs, §7.3 `later` |
+| **WebSockets / Durable Objects / Workers-for-Platforms dynamic runtime** (untrusted user-Workers behind the same Host, per-tenant CPU cap) | Real dynamic-compute isolation + per-tenant resource accounting; substantial new trust boundary | runtime APIs, §7.3 `later` |
+| **Third-party malware / abuse scanning vendor + automated takedown / quarantine** | Requires a scanning-vendor contract/API and a takedown workflow; the serving plane (PSL isolation, no-service-worker on content origins, per-org keyspace) already contains hostile content, so this is an abuse-ops add-on, not a launch blocker | abuse-ops, post-launch |
+| **Per-site configurable CSP UI** | CSP ships as a sane fixed default in Phase 4 (defense-in-depth); a per-site policy editor is a product-surface enhancement, not a security control | product, post-launch |
+| **Usage-based runtime billing** (metering the runtime APIs above) | Depends on the runtime APIs existing first; extends `cloud/billing` with metered Stripe usage once there is runtime usage to meter | `cloud/`, post-launch |
+| **Full OpenTelemetry tracing backend** (end-to-end Vercel → Worker → Go → PG spans into a collector/backend) | Needs a hosted tracing backend + collector deployment. Phase 4 ships **structured logs with a correlated `request_id`** propagated across the API and onto audit rows (the trace *substrate*); exporting OTel spans to a backend is the deferred piece | ops, post-launch |
+
+These deferrals do not weaken the launch posture: the authz boundary (Go API + RLS), the edge isolation (PSL/origin separation), hard revocation, audit, and the rate-limit / denial-of-wallet caps are all in place. The deferred items are additive enterprise and dynamic-runtime capabilities layered on top.

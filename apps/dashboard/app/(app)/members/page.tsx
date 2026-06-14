@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { Mail, Users } from "lucide-react";
+import { Mail, ShieldAlert, Users } from "lucide-react";
 
 import { InviteMemberForm } from "@/components/members/invite-member-form";
 import { MemberList } from "@/components/members/member-list";
 import { PendingInvitations } from "@/components/members/pending-invitations";
+import { RevokeAccessControl } from "@/components/members/revoke-access-control";
 import {
   Card,
   CardContent,
@@ -107,6 +108,26 @@ export default async function MembersPage() {
           </CardHeader>
           <CardContent>
             <PendingInvitations invitations={org.invitations} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Danger zone: org-wide hard revocation (architecture §6/§10). Admin-only;
+          the Go API re-checks role and writes the KV denylist min_iat. */}
+      {manage && (
+        <Card className="border-destructive/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlert className="size-4 text-destructive" aria-hidden />
+              Security
+            </CardTitle>
+            <CardDescription>
+              Revoke access in an emergency — for example after a removed member,
+              a leaked link, or a suspected breach.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <RevokeAccessControl organizationId={org.organizationId} />
           </CardContent>
         </Card>
       )}

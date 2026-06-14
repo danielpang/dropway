@@ -370,3 +370,50 @@ WHERE is_external = true;
 -- pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types
 -- from a RETURNS TABLE function (it emits interface{}). The store scans the known
 -- types directly. See services/api/internal/store/authz.go.
+
+-- ===========================================================================
+-- audit_log (Phase 4) — append-only record of sensitive actions
+-- ===========================================================================
+
+-- name: WriteAuditLog :one
+-- Append an audit row for a sensitive mutation. Runs inside the SAME RLS tenant
+-- tx as the action it records (org-scoped by the per-tx GUC + the explicit org_id),
+-- so an audit write can never land under the wrong tenant. actor_user is the verified
+-- user id (null for a deploy-token actor); actor_token is the deploy-token id when a
+-- token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
+-- the request provenance (ARCHITECTURE.md §10 / §2.3).
+INSERT INTO app.audit_log (
+    org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id, created_at;
+
+-- ===========================================================================
+-- R2 version GC (Phase 4) — versions to retain per org
+-- ===========================================================================
+
+-- name: ListVersionsForGC :many
+-- Every version of every site in the active org, newest first within each site,
+-- flagged with whether it is the site's CURRENT (live) version. Drives the R2
+-- version GC retention policy (keep current + last N): the GC groups by site, keeps
+-- the current version + the top-N by version_no, reads those versions' manifests to
+-- collect referenced blob shas, and deletes every org blob not in that set. RLS
+-- scopes the rows to the active org. r2_prefix + id locate the manifest object.
+SELECT
+    v.id            AS version_id,
+    v.site_id       AS site_id,
+    v.version_no    AS version_no,
+    v.r2_prefix     AS r2_prefix,
+    (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
+FROM app.site_versions v
+JOIN app.sites s ON s.id = v.site_id
+ORDER BY v.site_id, v.version_no DESC;
+
+-- name: ListAuditLog :many
+-- Page the active org's audit log newest-first. RLS scopes the read to the org; the
+-- (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
+-- adequate for an admin audit viewer (small N per page).
+SELECT id, org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id, created_at
+FROM app.audit_log
+ORDER BY created_at DESC, id DESC
+LIMIT $1 OFFSET $2;

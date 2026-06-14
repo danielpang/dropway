@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danielpang/shipped/internal/audit"
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/quota"
@@ -84,6 +85,10 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger(r).Info("site created", "site_id", site.ID, "slug", site.Slug, "org_id", t.OrgID)
+	a.recordAudit(r, t, audit.ActionSiteCreate, "site:"+site.ID, map[string]any{
+		"slug":        site.Slug,
+		"access_mode": site.AccessMode,
+	})
 	httpx.WriteJSON(w, http.StatusCreated, toSiteResponse(site))
 }
 

@@ -23,14 +23,17 @@ type AppAllowlistEntry struct {
 }
 
 type AppAuditLog struct {
-	ID        string
-	OrgID     string
-	ActorUser *string
-	Action    string
-	Target    pgtype.Text
-	Metadata  []byte
-	Ip        *netip.Addr
-	CreatedAt time.Time
+	ID         string
+	OrgID      string
+	ActorUser  *string
+	ActorToken *string
+	Action     string
+	Target     pgtype.Text
+	Metadata   []byte
+	Ip         *netip.Addr
+	RequestID  pgtype.Text
+	TraceID    pgtype.Text
+	CreatedAt  time.Time
 }
 
 type AppDeployToken struct {

@@ -33,6 +33,10 @@ type p2State struct {
 	mintFn     func(v store.MintViewer, host string) (store.MintDecision, error)
 	passwordFn func(host string) (store.PasswordDecision, string, error)
 	reconcile  store.ReconcileResult
+
+	// Phase 4 — captured audit rows + an optional injected error.
+	audit    []store.AuditEntry
+	auditErr error
 }
 
 var p2registry = map[*fakeStore]*p2State{}

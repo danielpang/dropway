@@ -42,6 +42,12 @@ type cloudDeps struct {
 	Store                *store.Store                    // nil when no DATABASE_URL; billing's live role re-check
 	Verifier             middleware.Verifier             // the EdDSA JWT verifier (authz boundary)
 	EnsureOrgProvisioned func(http.Handler) http.Handler // ensure-org-provisioned middleware
+	// Projection is the SAME edge-projection writer the route projection uses
+	// (Cloudflare KV in prod, a local writer in dev). The cloud build threads it into
+	// the BillingStore so a billing org_status change is pushed to the edge
+	// (org_status:<orgID>) — making suspension/over_limit actually block at the
+	// serving Worker. The OSS build ignores it.
+	Projection projection.Writer
 }
 
 func main() {
@@ -149,6 +155,13 @@ func run(baseLogger *slog.Logger) error {
 	api := handlers.NewFull(qp, siteStore, obj, proj)
 	api.EdgeSigner = edgeSigner
 	api.Domains = domains
+	// The edge revoker (hard-revocation denylist writer) is the SAME KV writer as
+	// the route projection — both the Cloudflare KV and the local writer implement
+	// projection.Revoker on the "revoked:" prefix. Wire it when the writer supports
+	// it so member/site/org revocation is immediate (ARCHITECTURE.md §6/§10).
+	if rev, ok := proj.(handlers.EdgeRevoker); ok {
+		api.Revoker = rev
+	}
 	api.AllowJWTRoleFallback = cfg.AllowJWTRoleFallback
 	if cfg.AllowJWTRoleFallback {
 		slog.Warn("ALLOW_JWT_ROLE_FALLBACK=true — admin gating will trust the JWT role claim when auth.member is unavailable")
@@ -167,6 +180,7 @@ func run(baseLogger *slog.Logger) error {
 		Store:                st,
 		Verifier:             verifier,
 		EnsureOrgProvisioned: api.EnsureOrgProvisioned,
+		Projection:           proj,
 	})
 
 	srv := &http.Server{

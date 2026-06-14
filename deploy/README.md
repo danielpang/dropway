@@ -89,3 +89,12 @@ docker compose -f deploy/docker-compose.yml down -v        # stop + wipe pgdata/
 - Swap the local MinIO `S3_*` values for managed object storage if you prefer.
 - Back up the `pgdata` volume; the KV/edge routing projection is fully rebuildable
   from Postgres, so Postgres is the only stateful thing you must protect.
+- **Dev projection writer is in-memory.** When no Cloudflare KV creds are set, the API
+  uses the local (dev) projection writer. Its route map can be mirrored to
+  `PROJECTION_FILE`, but the **denylist (`revoked:*`) and org-status (`org_status:*`)
+  projections are kept ONLY in memory and are NOT persisted across restarts** — after
+  a restart they start empty. This is acceptable by design: both fail **closed** (a
+  missing denylist entry just forces an extra re-auth; a missing org-status is
+  re-derived on the next billing webhook) and are fully **rebuildable from Postgres**,
+  so a restart never opens access or loses durable state. Production uses Cloudflare
+  KV, which is durable.

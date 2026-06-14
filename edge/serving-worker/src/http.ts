@@ -10,6 +10,13 @@
 // Every public response also carries content-security hardening headers; the
 // public path NEVER sets `private`/`no-store` (that is reserved for gated tiers
 // in Phase 2 — the cache-key-isolation invariant in §10).
+//
+// The security headers themselves (CSP/COOP/CORP/nosniff/no-referrer/frame +
+// service-worker block) live in ./security and are shared with the platform
+// pages; `securityHeaders()` here re-exports the CONTENT set so existing call
+// sites keep their import surface.
+
+import { contentSecurityHeaders } from "./security";
 
 const MIME: Record<string, string> = {
   // Documents
@@ -99,19 +106,17 @@ export function cacheControlFor(servedPath: string): string {
 }
 
 /**
- * Security headers applied to every served content response. CSP is explicitly
- * NOT the isolation control here (domain/PSL separation is — §10); these are
- * defense-in-depth. `Referrer-Policy: no-referrer` avoids leaking hashed
- * preview URLs; nosniff prevents MIME confusion on untrusted tenant uploads.
+ * Security headers applied to every served TENANT content response (public +
+ * gated). Delegates to ./security so the CSP/COOP/CORP/nosniff/no-referrer/frame
+ * + service-worker-block policy is defined in exactly one place and shared with
+ * the platform pages. CSP is explicitly NOT the isolation control here
+ * (domain/PSL separation is — §10); these are defense-in-depth.
+ *
+ * Kept as a named export with the same signature so existing call sites
+ * (index.ts, authz.ts) and tests need no change.
  */
 export function securityHeaders(): Record<string, string> {
-  return {
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "X-Frame-Options": "SAMEORIGIN",
-    // Content origins must never register a service worker (§10 MEDIUM).
-    "Service-Worker-Allowed": "",
-  };
+  return contentSecurityHeaders();
 }
 
 /**

@@ -40,6 +40,12 @@ type API struct {
 	EdgeSigner EdgeSigner
 	Domains    DomainProvider
 
+	// Revoker writes the hard-revocation denylist (revoked:user/site/org) the
+	// serving Worker + /authz read. Optional: when nil, hard revocation degrades to
+	// the short edge-token TTL only (the routes are still rewritten). In production
+	// it is the same Cloudflare KV writer as Projection (ARCHITECTURE.md §6/§10).
+	Revoker EdgeRevoker
+
 	// AllowJWTRoleFallback gates the requireAdmin fallback to the verified JWT role
 	// claim when the Better Auth auth.member table is unavailable. Default false
 	// (strict): admin-gated actions are DENIED when membership can't be confirmed

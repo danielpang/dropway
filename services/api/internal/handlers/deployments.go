@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danielpang/shipped/internal/audit"
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/internal/manifest"
 	"github.com/danielpang/shipped/internal/projection"
@@ -262,6 +263,11 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	logger(r).Info("deployment finalized",
 		"site_id", siteID, "version_id", ver.ID, "version_no", ver.VersionNo,
 		"org_id", t.OrgID, "size_bytes", totalSize)
+	a.recordAudit(r, t, audit.ActionDeployFinalize, "site:"+siteID, map[string]any{
+		"version_id": ver.ID,
+		"version_no": ver.VersionNo,
+		"size_bytes": totalSize,
+	})
 
 	// Preview URL enforces the SAME access tier as the live site (§7.1); in
 	// Phase 1 (public) it is the per-version host label.
@@ -354,6 +360,10 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 
 	logger(r).Info("published",
 		"site_id", siteID, "version_id", req.VersionID, "host", res.Host, "org_id", t.OrgID)
+	a.recordAudit(r, t, audit.ActionDeployPublish, "site:"+siteID, map[string]any{
+		"version_id": req.VersionID,
+		"host":       res.Host,
+	})
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
 		LiveURL:   "https://" + res.Host,
 		VersionID: req.VersionID,

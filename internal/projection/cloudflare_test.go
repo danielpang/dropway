@@ -65,6 +65,54 @@ func TestCloudflareKV_DeleteRoute(t *testing.T) {
 	}
 }
 
+// TestCloudflareKV_SetOrgStatus verifies the org-status projection: a blocking
+// status PUTs the bare status string to org_status:<orgID> (the Worker's read key),
+// and "active" DELETEs the key (clearing the edge block). FIX 2.
+func TestCloudflareKV_SetOrgStatus(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewCloudflareKV("acct-1", "ns-1", "tok")
+	c.BaseURL = srv.URL
+	const org = "org-123"
+
+	// Blocking status → PUT the bare status string at org_status:<orgID>.
+	if err := c.SetOrgStatus(context.Background(), org, "over_limit"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("blocking status method = %s, want PUT", gotMethod)
+	}
+	if !strings.HasSuffix(gotPath, "org_status:"+org) {
+		t.Errorf("path = %q, want suffix org_status:%s", gotPath, org)
+	}
+	if gotBody != "over_limit" {
+		t.Errorf("body = %q, want the bare status %q", gotBody, "over_limit")
+	}
+
+	// "active" → DELETE the key (clear the edge block).
+	if err := c.SetOrgStatus(context.Background(), org, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("active status method = %s, want DELETE (clear)", gotMethod)
+	}
+	if !strings.HasSuffix(gotPath, "org_status:"+org) {
+		t.Errorf("clear path = %q, want suffix org_status:%s", gotPath, org)
+	}
+
+	// Empty org id is rejected before any HTTP call.
+	if err := c.SetOrgStatus(context.Background(), "", "over_limit"); err == nil {
+		t.Error("empty org id must be rejected")
+	}
+}
+
 func TestCloudflareKV_ErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

@@ -137,3 +137,18 @@ export async function loadActiveOrg(): Promise<ActiveOrg | null> {
 export function canManage(role: Role): boolean {
   return role === "owner" || role === "admin";
 }
+
+/**
+ * Resolve ONLY the viewer's role in the active org — a lightweight alternative
+ * to loadActiveOrg() for the app shell, which just needs to decide whether to
+ * show admin-only nav (e.g. the Audit link). Uses the org plugin's
+ * getActiveMember (a single member-row read) and degrades to "member" on any
+ * failure so the shell never shows admin affordances by accident (fail closed).
+ */
+export async function loadActiveRole(): Promise<Role> {
+  const requestHeaders = await headers();
+  const member = (await auth.api
+    .getActiveMember({ headers: requestHeaders })
+    .catch(() => null)) as { role?: string } | null;
+  return asRole(member?.role);
+}

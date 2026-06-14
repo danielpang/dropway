@@ -33,6 +33,13 @@ EDGE_JWKS_URL = "https://api.shipped.app/.well-known/edge-jwks"
 # Dashboard /authz exchange a gated request with no/invalid edge token 302s to.
 APP_AUTHZ_URL = "https://app.shipped.app/authz"
 
+# --- Phase 4 hardening (edge rate limiting / denial-of-wallet) ---------------
+# Fixed-window rate limit applied per client IP (else host) BEFORE the route
+# lookup. Defaults (src/ratelimit.ts) are 600 req / 60s. Absent LIMITS binding
+# (below) makes rate limiting a no-op (fail open). Tune per environment.
+RATE_LIMIT_MAX = "600"
+RATE_LIMIT_WINDOW_SECONDS = "60"
+
 # --- Bindings ----------------------------------------------------------------
 
 # KV: host routing projection. Key `route:<host>` → RouteValue
@@ -52,6 +59,31 @@ preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
 binding = "BUCKET"
 bucket_name = "shipped-content"
 preview_bucket_name = "shipped-content-preview"
+
+# --- Phase 4 hardening bindings (OPTIONAL) -----------------------------------
+# LIMITS: KV for the edge rate-limiter counters (`rl:*`) AND the per-org
+# suspension/over-limit status (`org_status:<org_id>` → "suspended"|"over_limit",
+# written by the Go API on billing suspension / quota over-limit). Absent → rate
+# limiting is a no-op (fail open) and the org-status check is skipped. Uncomment
+# and fill the IDs to enable (a separate namespace from ROUTES is recommended so
+# high-churn counters don't contend with the route projection).
+#
+# [[kv_namespaces]]
+# binding = "LIMITS"
+# id = "REPLACE_WITH_LIMITS_KV_NAMESPACE_ID"
+# preview_id = "REPLACE_WITH_LIMITS_KV_PREVIEW_NAMESPACE_ID"
+#
+# REVOKED: KV for the hard-revocation denylist (`revoked:user|site|org:<id>` →
+# { "min_iat": <unix seconds> }, written by the Go API on member removal / unshare
+# / external-sharing disable / suspension). If this binding is OMITTED the Worker
+# reuses the ROUTES namespace with the `revoked:` prefix (the §6 contract default),
+# so gated revocation works out of the box. Supply a dedicated namespace only if
+# you want to isolate denylist writes from the route projection.
+#
+# [[kv_namespaces]]
+# binding = "REVOKED"
+# id = "REPLACE_WITH_REVOKED_KV_NAMESPACE_ID"
+# preview_id = "REPLACE_WITH_REVOKED_KV_PREVIEW_NAMESPACE_ID"
 
 # --- Routing (production) ----------------------------------------------------
 # The Worker answers for every tenant subdomain on the PSL content domain.

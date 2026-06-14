@@ -87,11 +87,95 @@ isolate (5-min TTL; a transient JWKS outage falls back to the last-good keys).
 | HTML / non-hashed assets                     | `public, max-age=60, must-revalidate`    |
 | Gated (password/allowlist/org_only) responses | `private, no-store, max-age=0, must-revalidate` + `Vary: Cookie` (never shared-cached) |
 | Expired link (`410`)                          | `no-store`                               |
+| Platform pages (`429` / `503`)                | `no-store` (+ `Retry-After`)             |
 
-Every public response also carries defense-in-depth security headers
-(`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
-`X-Frame-Options: SAMEORIGIN`). CSP is **not** the isolation control here —
-domain/PSL separation is (§10).
+Every response (public, gated, **and** the platform 404/410/429/503 pages)
+carries defense-in-depth content-security headers — see **Edge hardening
+(Phase 4)** below. CSP is **not** the isolation control here — domain/PSL
+separation is (§10).
+
+## Edge hardening (Phase 4)
+
+Three launch-blocking controls live entirely at the edge (`docs/ARCHITECTURE.md`
+§10/§12). All are driven by injected KV/clock so they unit-test without a live
+edge (`src/security.ts`, `src/ratelimit.ts`, `src/revoke.ts`).
+
+### 1. Content-security headers (every response)
+
+`src/security.ts` defines two header sets, both applied via `securityHeaders()`
+(content) and `platformSecurityHeaders()` (our own pages):
+
+| Header | Content (tenant bytes) | Platform pages (404/410/429/503) |
+| --- | --- | --- |
+| `Content-Security-Policy` | **permissive-but-safe** default (see below) | **strict** `default-src 'none'`, no scripts |
+| `X-Content-Type-Options` | `nosniff` | `nosniff` |
+| `Referrer-Policy` | `no-referrer` | `no-referrer` |
+| `X-Frame-Options` | `DENY` | `DENY` |
+| `Cross-Origin-Opener-Policy` | `same-origin` | `same-origin` |
+| `Cross-Origin-Resource-Policy` | `same-site` | `same-site` |
+
+The **default content CSP** is deliberately permissive enough that an ordinary
+static site (its own HTML/CSS/JS, **inline** scripts/styles, `data:`/`blob:`
+images & fonts, `eval`/`blob:` workers, XHR/fetch to self + any `https:`) keeps
+working, while denying the dangerous primitives: `frame-ancestors 'none'`
+(clickjacking), `base-uri 'self'` + `form-action 'self'`, `object-src 'none'`.
+CSP is **defense in depth, not the isolation boundary** — the separate PSL
+content domain is (§10) — so we optimize for "static sites just work" and leave
+a stricter per-site CSP as a future opt-in. `CONTENT_CSP` / `PLATFORM_CSP` are
+exported and the exact string is asserted in tests.
+
+`Cross-Origin-Resource-Policy: same-site` (not `same-origin`) is deliberate: a
+site legitimately loads its own subdomain assets, but a **different registrable
+site** cannot embed a tenant resource as a subresource.
+
+### 2. Service-worker registration blocked on content origins
+
+`isServiceWorkerScript()` recognizes the conventional SW script names (`sw.js`,
+`service-worker.js`, `ngsw-worker.js`, …) and the Worker **refuses to serve a
+scriptable body** at those paths (returns the platform 404), so a tenant can
+never register a service worker that would persist its JS, intercept fetches, or
+survive a takedown (§10 MEDIUM). Enforced on **both** the public and gated paths.
+
+### 3. Edge rate limiting + denial-of-wallet
+
+- **Per-(IP|host) rate limit** — a fixed-window KV counter
+  (`rateLimitDecision()`, pure over an injected counter store + clock) checked
+  **before** the route lookup so a flood is rejected for one KV op. Over the
+  limit → **`429` with `Retry-After`**. Identity is `CF-Connecting-IP` (else the
+  host). Fails **open** (a missing `LIMITS` binding or KV error never blocks a
+  real request); the authoritative spend caps live in the Go API. Tunable via
+  `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` (default 600 req / 60 s).
+- **Per-org suspension / over-limit** — after the route is resolved, the Worker
+  reads `org_status:<org_id>` from KV; `suspended` (billing/abuse) or
+  `over_limit` (quota/egress cap) → a platform **`503` "account unavailable"
+  page** instead of **any** tenant content (public or gated), with
+  `Retry-After: 300`. Skipped when no status KV is configured; fails **open** on
+  a miss/error (the Go API + billing stay authoritative).
+
+### 4. Hard revocation — KV denylist / `min_iat` (gated path)
+
+After the edge token verifies, the gated path consults the **revocation
+denylist** (`src/revoke.ts`) per the §6 contract:
+
+```
+revoked:user:<sub>   → { "min_iat": <unix seconds> }
+revoked:site:<siteId>→ { "min_iat": <unix seconds> }
+revoked:org:<orgId>  → { "min_iat": <unix seconds> }     # org from the ROUTE, not a token claim
+```
+
+If **any** dimension has `min_iat > token.iat`, the token is treated as invalid
+→ **302 to `/authz`** (re-auth). This makes a ban / unshare / org-suspension
+take effect **immediately** instead of waiting out the 15-minute token TTL (the
+TTL is the backstop). The denylist is **rebuildable from Postgres** and only
+ever fails **closed** — a stale or unavailable denylist causes at most an extra
+re-auth, never opens access (a missing denylist binding or a KV read error →
+treated as revoked). The Go API is the **sole writer** (Phase-4 backlog). The
+**public path never consults the denylist** (it is identity-free).
+
+The denylist KV defaults to the **ROUTES namespace with the `revoked:` prefix**;
+supply a dedicated `REVOKED` binding to isolate it. The edge token now carries
+`iat` (already minted by the Go signer) which `verifyEdgeToken()` surfaces for
+this comparison.
 
 ## The cross-language contract
 
@@ -125,15 +209,19 @@ type-check and tests resolve it without a build step.
 
 | Binding  | Type | Purpose                                                                       |
 | -------- | ---- | ---------------------------------------------------------------------------- |
-| `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only).                |
+| `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only). Also the **default** denylist namespace (`revoked:*` keys) when `REVOKED` is unset. |
 | `BUCKET` | R2   | Single private bucket: `manifests/<org>/<site>/<version>.json` + `blobs/<org>/<sha256>`. |
+| `LIMITS` | KV   | **(Phase 4, optional)** rate-limiter counters (`rl:*`) + per-org status (`org_status:<org>`). Absent → rate limiting no-op + status check skipped. |
+| `REVOKED`| KV   | **(Phase 4, optional)** hard-revocation denylist (`revoked:user\|site\|org:*`). Absent → reuse `ROUTES` with the `revoked:` prefix (§6 contract default). |
 
-### Vars (Phase 2 gated path — `wrangler.toml [vars]`)
+### Vars (`wrangler.toml [vars]`)
 
 | Var             | Purpose                                                                 | Default                                          |
 | --------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
 | `EDGE_JWKS_URL` | Edge signer public JWKS (OKP/Ed25519) — fetched + cached to verify tokens. | `https://api.shipped.app/.well-known/edge-jwks` |
 | `APP_AUTHZ_URL` | Dashboard `/authz` exchange a gated request 302s to.                    | `https://app.shipped.app/authz`                  |
+| `RATE_LIMIT_MAX` | **(Phase 4)** max requests per window per identity.                    | `600`                                            |
+| `RATE_LIMIT_WINDOW_SECONDS` | **(Phase 4)** rate-limit window length (seconds).          | `60`                                             |
 
 Both have safe production defaults in `src/config.ts`; set them per environment.
 There are **no secrets** here — the Worker only ever verifies with the *public*
@@ -150,16 +238,19 @@ commented out until `shippedusercontent.com` is live on Cloudflare.
 ```
 edge/serving-worker/
 ├── src/
-│   ├── index.ts     # fetch handler + serve(): KV lookup, expiry, dispatch, manifest fetch, blob stream, Cache API, 404, 410
+│   ├── index.ts     # fetch handler + serve(): rate limit, KV lookup, expiry, org-status, dispatch, blob stream, Cache API, 404/410/429/503 + SW block
 │   ├── route.ts     # PURE host normalize + route parse (via @shipped/contracts) + path sanitize + isRouteExpired
 │   ├── manifest.ts  # PURE manifest model + parse + path→entry resolution; manifest/blob R2 keys
-│   ├── http.ts      # PURE Content-Type + Cache-Control + security headers
+│   ├── http.ts      # PURE Content-Type + Cache-Control; re-exports content security headers
+│   ├── security.ts  # PURE content/platform CSP + COOP/CORP/nosniff/no-referrer/frame + service-worker-script block (Phase 4)
+│   ├── ratelimit.ts # PURE fixed-window KV-counter rate limiter + per-org status read (Phase 4)
+│   ├── revoke.ts    # PURE hard-revocation denylist (revoked:user|site|org → min_iat) check (Phase 4)
 │   ├── config.ts    # gated-path config (EDGE_JWKS_URL/APP_AUTHZ_URL), issuer + cookie name
-│   ├── edgetoken.ts # edge-token verification (jose): JWKS fetch+cache, alg/iss/aud/exp/site_id checks
+│   ├── edgetoken.ts # edge-token verification (jose): JWKS fetch+cache, alg/iss/aud/exp/site_id checks; surfaces iat
 │   ├── authz.ts     # cookie read, /authz 302, __Host-edge Set-Cookie, /__authz/callback, safe-next redirect
-│   └── gated.ts     # gated dispatch: verify cookie → serve private, or 302; callback handling
+│   └── gated.ts     # gated dispatch: verify cookie → revocation check → serve private, or 302; callback handling
 ├── test/
-│   └── serve.test.ts  # vitest: public path + edge-token accept/reject, /authz 302, callback, expiry (mocked KV/R2/JWKS)
+│   └── serve.test.ts  # vitest: public + gated + platform headers, SW block, rate limit/429, org suspension, revocation min_iat (mocked KV/R2/JWKS/clock)
 ├── wrangler.toml
 ├── vitest.config.ts   # node pool; aliases @shipped/contracts → source
 ├── tsconfig.json      # extends ../../tsconfig.base.json + workers types; @shipped/contracts path
@@ -210,11 +301,20 @@ wrangler r2 object put --preview \
 ## Phase boundaries
 
 - **Phase 1:** `public` only. JWT-free, cacheable.
-- **Phase 2 (here):** `password` (host-scoped cookie, anon identity) and
+- **Phase 2:** `password` (host-scoped cookie, anon identity) and
   `allowlist` / `org_only` (302 → `app.shipped.app/authz` host-scoped token
   exchange; the Worker verifies *that* edge token, never the operator JWT) plus
   **edge link-expiry** (`expires_at` in the v2 `RouteValue` → `410`). Gated
   responses are always `private, no-store` and never enter the public Cache API.
+- **Phase 4 (here):** edge security/ops hardening — content-security headers on
+  every response (content vs strict platform CSP, COOP/CORP/nosniff/no-referrer/
+  frame), **service-worker registration block** on content origins, **edge rate
+  limiting** (`429` + `Retry-After`) + **denial-of-wallet** per-org suspension
+  (`503` block page), and **hard revocation** via the KV `min_iat` denylist on
+  the gated path (immediate ban/unshare; fail-closed, rebuildable). See **Edge
+  hardening (Phase 4)** above. Out of scope this phase (Go/infra-owned backlog):
+  SSO/SAML, SCIM, runtime collection-DB + LLM/image proxy APIs, third-party
+  malware-scanning vendor integration.
 
 ## License
 

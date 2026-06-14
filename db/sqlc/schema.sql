@@ -118,16 +118,20 @@ CREATE TABLE app.deploy_tokens (
     revoked_at timestamptz
 );
 
--- audit_log: append-only record of sensitive actions.
+-- audit_log: append-only record of sensitive actions. actor_token / request_id /
+-- trace_id added in migration 0007 (Phase 4 audit + tracing provenance).
 CREATE TABLE app.audit_log (
-    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    actor_user uuid,
-    action     text NOT NULL,
-    target     text,
-    metadata   jsonb NOT NULL DEFAULT '{}'::jsonb,
-    ip         inet,
-    created_at timestamptz NOT NULL DEFAULT now()
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    actor_user  uuid,
+    actor_token uuid,
+    action      text NOT NULL,
+    target      text,
+    metadata    jsonb NOT NULL DEFAULT '{}'::jsonb,
+    ip          inet,
+    request_id  text,
+    trace_id    text,
+    created_at  timestamptz NOT NULL DEFAULT now()
 );
 
 -- host_routes: GLOBAL host -> owning (org, site) registry. host is the PRIMARY
@@ -161,4 +165,25 @@ AS $$
     FROM app.host_routes hr
     JOIN app.sites s ON s.id = hr.site_id
     WHERE hr.host = p_host;
+$$;
+
+-- all_org_ids: RLS-bypassing system enumeration of org ids for cross-org jobs (DR
+-- rebuild + R2 GC). SECURITY DEFINER, returns only ids (no secrets). OPS-ONLY: the
+-- body RAISES unless app.ops_mode='1' (migration 0009), so a normal request can't
+-- enumerate all org ids; the DR/GC path sets the GUC. Mirror of migrations 0008 +
+-- 0009 for sqlc typing (the function is called via raw pgx in the store).
+CREATE FUNCTION app.all_org_ids()
+    RETURNS TABLE (id uuid)
+    LANGUAGE plpgsql
+    STABLE
+    SECURITY DEFINER
+    SET search_path = app, pg_temp
+AS $$
+BEGIN
+    IF current_setting('app.ops_mode', true) IS DISTINCT FROM '1' THEN
+        RAISE EXCEPTION 'app.all_org_ids() is ops-only; set app.ops_mode=1 (DR rebuild / GC path)'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN QUERY SELECT om.id FROM app.org_meta om ORDER BY om.created_at;
+END;
 $$;

@@ -18,6 +18,7 @@ import (
 	cloudbilling "github.com/danielpang/shipped/cloud/billing"
 	cloudquota "github.com/danielpang/shipped/cloud/quota"
 	"github.com/danielpang/shipped/internal/middleware"
+	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/services/api/internal/config"
 	"github.com/danielpang/shipped/services/api/internal/store"
@@ -87,6 +88,18 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	}
 
 	store := cloudbilling.NewStore(deps.Pool)
+	// Attach the edge org-status projection writer (the SAME KV/local writer as the
+	// route projection) so a billing org_status change (suspended / over_limit /
+	// active) is pushed to org_status:<orgID> in KV AFTER the DB commit — making
+	// suspension/over_limit actually BLOCK at the serving Worker (the DB column alone
+	// never reaches the edge). Best-effort: a KV failure is logged, not fatal (the DB
+	// is authoritative; the projection is rebuildable). FIX 2.
+	if osw, ok := deps.Projection.(projection.OrgStatusWriter); ok && osw != nil {
+		store = store.WithOrgStatusWriter(osw)
+		slog.Info("cloud billing: edge org_status projection wired (suspension blocks at the edge)")
+	} else {
+		slog.Warn("cloud billing: no org_status projection writer — suspension will NOT block at the edge")
+	}
 	prices := cloudbilling.NewPriceMap(deps.Cfg.StripePriceBusiness, deps.Cfg.StripePriceEnterprise)
 
 	// Webhook: verify → ProcessEvent (dedupe + persist ATOMICALLY in one tx, FIX 1).

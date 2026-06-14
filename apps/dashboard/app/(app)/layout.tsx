@@ -8,6 +8,7 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
 import { loadOrgBillingState } from "@/lib/billing-server";
+import { canManage, loadActiveRole } from "@/lib/org";
 
 /**
  * Authenticated app shell. Guards the whole (app) route group server-side:
@@ -33,7 +34,13 @@ export default async function AppLayout({
   // Billing-derived account state (over_limit / past_due) → drives the
   // non-dismissible banner. UX mirror of the server-side quota enforcement; a
   // billing-API hiccup degrades to "active" so the shell never wrongly locks.
-  const { orgStatus } = await loadOrgBillingState();
+  // The viewer's role gates admin-only nav (the Audit link). Resolved in
+  // parallel; both fail soft (active / member) so the shell always renders.
+  const [{ orgStatus }, role] = await Promise.all([
+    loadOrgBillingState(),
+    loadActiveRole(),
+  ]);
+  const isAdmin = canManage(role);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -52,7 +59,7 @@ export default async function AppLayout({
             Shipped
           </Link>
           <div className="flex items-center gap-2">
-            <MainNav />
+            <MainNav admin={isAdmin} />
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <ThemeToggle />
             <SignOutButton />

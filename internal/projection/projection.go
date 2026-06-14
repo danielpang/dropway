@@ -13,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/danielpang/shipped/internal/edgerevoke"
 )
 
 // SchemaVersion is the version of THIS contract shape. It MUST equal
@@ -106,6 +108,51 @@ type Writer interface {
 	// authoritative rows. routes maps host → RouteValue.
 	RebuildFromDB(ctx context.Context, routes map[string]RouteValue) error
 }
+
+// Revoker writes the hard-revocation denylist the serving Worker + the /authz
+// exchange read (the edgerevoke contract). The Go API is the ONLY writer; readers
+// are read-only. Revoke is IDEMPOTENT — it takes max(existing, new) min_iat, so the
+// denylist only ever tightens — and a write FAILS CLOSED (a lost key just forces an
+// extra re-auth), so it is safe to retry and to rebuild (ARCHITECTURE.md §6/§10).
+//
+// The production CloudflareKV and the dev/test Local writers both implement it on
+// the same KV namespace as the route projection (the "revoked:" prefix), so no
+// separate binding is required.
+type Revoker interface {
+	// Revoke records that every edge token for (kind, id) issued before minIAT
+	// (unix seconds) is invalid. Idempotent: an existing entry with a LATER min_iat
+	// is preserved (max wins).
+	Revoke(ctx context.Context, kind edgerevoke.Kind, id string, minIAT int64) error
+}
+
+// OrgStatusWriter projects the per-org SUSPENSION / over-limit signal the serving
+// Worker reads at `org_status:<org_id>` (edge/serving-worker ratelimit.ts). The Go
+// API / cloud billing is the ONLY writer; the Worker is read-only.
+//
+// This is what makes edge suspension actually BLOCK: cloud/billing writes
+// org_status to the DB (billing.subscriptions / app.org_meta), but the Worker can
+// only see a fast KV flag — without this projection the suspension is dead (fails
+// open). It is best-effort AFTER the DB commit (DB is source of truth; KV is a
+// rebuildable projection), so a write failure is logged, not fatal.
+//
+// The model is READ-ONLY / NON-DESTRUCTIVE: a blocking status (`suspended` /
+// `over_limit`) makes the edge serve a platform block page; it is NOT a token
+// revocation and never deletes data. "active" CLEARS the flag (DeleteOrgStatus-
+// equivalent), so a re-subscribe immediately restores serving.
+type OrgStatusWriter interface {
+	// SetOrgStatus projects the org's status. A blocking status ("suspended" /
+	// "over_limit" / "past_due") writes `org_status:<orgID>`; "active" (or "") CLEARS
+	// the key (the org may be served). Idempotent and rebuildable from the DB.
+	SetOrgStatus(ctx context.Context, orgID, status string) error
+}
+
+// OrgStatusKey returns the KV key for an org's status flag ("org_status:<orgID>").
+// It MUST match the Worker's ORG_STATUS_PREFIX (edge/serving-worker ratelimit.ts).
+func OrgStatusKey(orgID string) string { return "org_status:" + orgID }
+
+// OrgStatusActive is the status that means "serve normally" — writing it CLEARS the
+// projected flag (the absence of a key is what the Worker treats as servable).
+const OrgStatusActive = "active"
 
 // HostForSlug returns the canonical Phase-1 content host for a site slug.
 //

@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -561,6 +562,53 @@ func (q *Queries) ListAllowlistEntries(ctx context.Context, siteID string) ([]Ap
 	return items, nil
 }
 
+const listAuditLog = `-- name: ListAuditLog :many
+SELECT id, org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id, created_at
+FROM app.audit_log
+ORDER BY created_at DESC, id DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListAuditLogParams struct {
+	Limit  int32
+	Offset int32
+}
+
+// Page the active org's audit log newest-first. RLS scopes the read to the org; the
+// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
+// adequate for an admin audit viewer (small N per page).
+func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error) {
+	rows, err := q.db.Query(ctx, listAuditLog, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAuditLog{}
+	for rows.Next() {
+		var i AppAuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ActorUser,
+			&i.ActorToken,
+			&i.Action,
+			&i.Target,
+			&i.Metadata,
+			&i.Ip,
+			&i.RequestID,
+			&i.TraceID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDomainsForSite = `-- name: ListDomainsForSite :many
 SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
 FROM app.domains
@@ -787,6 +835,62 @@ func (q *Queries) ListSites(ctx context.Context) ([]AppSite, error) {
 			&i.AccessMode,
 			&i.CurrentVersionID,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVersionsForGC = `-- name: ListVersionsForGC :many
+
+SELECT
+    v.id            AS version_id,
+    v.site_id       AS site_id,
+    v.version_no    AS version_no,
+    v.r2_prefix     AS r2_prefix,
+    (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
+FROM app.site_versions v
+JOIN app.sites s ON s.id = v.site_id
+ORDER BY v.site_id, v.version_no DESC
+`
+
+type ListVersionsForGCRow struct {
+	VersionID string
+	SiteID    string
+	VersionNo int32
+	R2Prefix  string
+	IsCurrent pgtype.Bool
+}
+
+// ===========================================================================
+// R2 version GC (Phase 4) — versions to retain per org
+// ===========================================================================
+// Every version of every site in the active org, newest first within each site,
+// flagged with whether it is the site's CURRENT (live) version. Drives the R2
+// version GC retention policy (keep current + last N): the GC groups by site, keeps
+// the current version + the top-N by version_no, reads those versions' manifests to
+// collect referenced blob shas, and deletes every org blob not in that set. RLS
+// scopes the rows to the active org. r2_prefix + id locate the manifest object.
+func (q *Queries) ListVersionsForGC(ctx context.Context) ([]ListVersionsForGCRow, error) {
+	rows, err := q.db.Query(ctx, listVersionsForGC)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVersionsForGCRow{}
+	for rows.Next() {
+		var i ListVersionsForGCRow
+		if err := rows.Scan(
+			&i.VersionID,
+			&i.SiteID,
+			&i.VersionNo,
+			&i.R2Prefix,
+			&i.IsCurrent,
 		); err != nil {
 			return nil, err
 		}
@@ -1106,6 +1210,71 @@ func (q *Queries) UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAcce
 		&i.ExpiresAt,
 		&i.Unlisted,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const writeAuditLog = `-- name: WriteAuditLog :one
+
+
+INSERT INTO app.audit_log (
+    org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id, created_at
+`
+
+type WriteAuditLogParams struct {
+	OrgID      string
+	ActorUser  *string
+	ActorToken *string
+	Action     string
+	Target     pgtype.Text
+	Metadata   []byte
+	Ip         *netip.Addr
+	RequestID  pgtype.Text
+	TraceID    pgtype.Text
+}
+
+// NOTE: resolving a content host → owning site via the RLS-bypassing
+// app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
+// pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types
+// from a RETURNS TABLE function (it emits interface{}). The store scans the known
+// types directly. See services/api/internal/store/authz.go.
+// ===========================================================================
+// audit_log (Phase 4) — append-only record of sensitive actions
+// ===========================================================================
+// Append an audit row for a sensitive mutation. Runs inside the SAME RLS tenant
+// tx as the action it records (org-scoped by the per-tx GUC + the explicit org_id),
+// so an audit write can never land under the wrong tenant. actor_user is the verified
+// user id (null for a deploy-token actor); actor_token is the deploy-token id when a
+// token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
+// the request provenance (ARCHITECTURE.md §10 / §2.3).
+func (q *Queries) WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) (AppAuditLog, error) {
+	row := q.db.QueryRow(ctx, writeAuditLog,
+		arg.OrgID,
+		arg.ActorUser,
+		arg.ActorToken,
+		arg.Action,
+		arg.Target,
+		arg.Metadata,
+		arg.Ip,
+		arg.RequestID,
+		arg.TraceID,
+	)
+	var i AppAuditLog
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ActorUser,
+		&i.ActorToken,
+		&i.Action,
+		&i.Target,
+		&i.Metadata,
+		&i.Ip,
+		&i.RequestID,
+		&i.TraceID,
+		&i.CreatedAt,
 	)
 	return i, err
 }

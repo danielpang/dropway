@@ -91,8 +91,12 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	qp := cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"})
 	st := store.New(pool, qp)
 
-	// The production billing persistence + webhook handler over the SAME pool.
-	bstore := cloudbilling.NewStore(pool)
+	// The production billing persistence + webhook handler over the SAME pool. The
+	// in-memory Local projection writer stands in for Cloudflare KV so we can assert
+	// the edge org_status flag is projected on the real webhook path (FIX 2): the DB
+	// is the source of truth, the KV flag is what makes suspension block at the edge.
+	orgStatusKV := projection.NewLocal()
+	bstore := cloudbilling.NewStore(pool).WithOrgStatusWriter(orgStatusKV)
 	prices := cloudbilling.NewPriceMap(cbPriceBiz, cbPriceEnt)
 	verifier := cloudbilling.NewRealSignatureVerifier(cbWhSecret, prices)
 	webhookHandler := cloudbilling.NewHandler(verifier, bstore, nil)
@@ -156,7 +160,12 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	if got := cbScanText(t, pool, "SELECT org_status FROM billing.subscriptions WHERE org_id=$1", orgID); got != "active" {
 		t.Fatalf("org_status=%q, want active", got)
 	}
-	t.Log("PASS: signed webhook set plan_tier=business in billing.subscriptions AND app.org_meta")
+	// EDGE PROJECTION (FIX 2): an active subscription clears the org_status KV flag
+	// (active = served), so no blocking entry should be present for the org.
+	if status, blocked := orgStatusKV.GetOrgStatus(orgID); blocked {
+		t.Fatalf("after activation the edge org_status flag must be CLEARED, got %q", status)
+	}
+	t.Log("PASS: signed webhook set plan_tier=business in billing.subscriptions AND app.org_meta; edge org_status cleared (active)")
 
 	// -----------------------------------------------------------------------
 	// 3. PAYING RAISED THE CAP: the SAME user can now create the 11th..100th site.
@@ -230,6 +239,13 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	}
 	if got := cbScanText(t, pool, "SELECT org_status FROM billing.subscriptions WHERE org_id=$1", orgID); got != "over_limit" {
 		t.Fatalf("after deletion org_status=%q, want over_limit (user has >10 sites)", got)
+	}
+	// EDGE PROJECTION (FIX 2): the cancel pushed the org over the Free caps, so the
+	// webhook must have projected org_status="over_limit" to the edge KV — THIS is
+	// what makes the suspension actually block at the serving Worker (without it the
+	// suspension is dead/fails open). Best-effort but must have landed here.
+	if status, blocked := orgStatusKV.GetOrgStatus(orgID); !blocked || status != "over_limit" {
+		t.Fatalf("after cancel the edge org_status flag must be over_limit (blocked=%v status=%q)", blocked, status)
 	}
 	if got := cbScanText(t, pool, "SELECT status FROM billing.subscriptions WHERE org_id=$1", orgID); got != "canceled" {
 		t.Fatalf("after deletion subscriptions.status=%q, want canceled", got)

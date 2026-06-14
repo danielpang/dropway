@@ -175,6 +175,55 @@ func (s *S3Store) PutManifest(ctx context.Context, orgID, siteID, versionID stri
 	return nil
 }
 
+// ListBlobInfos enumerates every blob under the org's prefix (blobs/<org>/),
+// returning the content-addressed sha256 (the last key segment) PLUS each object's
+// LastModified time (the GC's age guard input). It paginates so a large org
+// enumerates fully. The list is the GC's "what exists" input.
+func (s *S3Store) ListBlobInfos(ctx context.Context, orgID string) ([]BlobInfo, error) {
+	prefix := fmt.Sprintf("blobs/%s/", orgID)
+	var out []BlobInfo
+	p := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(prefix),
+	})
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("storage: list blobs %s: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			if obj.Key == nil {
+				continue
+			}
+			key := *obj.Key
+			// Key is blobs/<org>/<sha>; take the segment after the prefix.
+			sha := key[len(prefix):]
+			if sha == "" {
+				continue
+			}
+			var lastMod time.Time
+			if obj.LastModified != nil {
+				lastMod = *obj.LastModified
+			}
+			out = append(out, BlobInfo{SHA: sha, LastModified: lastMod})
+		}
+	}
+	return out, nil
+}
+
+// DeleteBlob removes a blob by its content-addressed key. An absent key is not an
+// error (S3/R2 DeleteObject is idempotent), so a GC re-run is safe.
+func (s *S3Store) DeleteBlob(ctx context.Context, orgID, sha256 string) error {
+	key := BlobKey(orgID, sha256)
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}); err != nil {
+		return fmt.Errorf("storage: delete %s: %w", key, err)
+	}
+	return nil
+}
+
 // GetManifest reads a deploy manifest back.
 func (s *S3Store) GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error) {
 	key := ManifestKey(orgID, siteID, versionID)

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/danielpang/shipped/internal/edgerevoke"
 )
 
 // Local is a Writer that keeps the projection in-memory and, optionally, mirrors
@@ -21,23 +23,34 @@ import (
 // When Path is non-empty, every mutation rewrites the file so an out-of-process
 // reader (a local serving shim) can pick it up. When empty, it is purely
 // in-memory.
+//
+// NOT PERSISTED ACROSS RESTARTS (dev/self-host only): the denylist (revoked:*) and
+// the org-status (org_status:*) projections are kept ONLY in memory — they are NOT
+// written to Path (only the route map is mirrored to disk). After a process restart
+// they start empty. This is acceptable by design: both projections fail CLOSED
+// (a missing denylist entry forces an extra re-auth; a missing org_status is
+// re-derived on the next billing webhook) and are fully REBUILDABLE from Postgres
+// (the source of truth), so a dev restart never opens access or loses durable
+// state. Production uses CloudflareKV, which is durable.
 type Local struct {
-	Path string // optional: JSON file the projection is mirrored to
+	Path string // optional: JSON file the ROUTE projection is mirrored to (not denylist/org-status)
 
-	mu     sync.RWMutex
-	routes map[string]RouteValue
+	mu        sync.RWMutex
+	routes    map[string]RouteValue
+	revoked   map[string]edgerevoke.Value // denylist key (edgerevoke.Key) → value (in-memory only)
+	orgStatus map[string]string           // orgID → status (in-memory only); absent/"active" = served
 }
 
 // NewLocal returns an empty in-memory Local writer. Pass Path via the struct
 // literal (or NewLocalFile) to also mirror to disk.
 func NewLocal() *Local {
-	return &Local{routes: map[string]RouteValue{}}
+	return &Local{routes: map[string]RouteValue{}, revoked: map[string]edgerevoke.Value{}, orgStatus: map[string]string{}}
 }
 
 // NewLocalFile returns a Local writer that mirrors to the given JSON file,
 // loading any existing routes from it first.
 func NewLocalFile(path string) (*Local, error) {
-	l := &Local{Path: path, routes: map[string]RouteValue{}}
+	l := &Local{Path: path, routes: map[string]RouteValue{}, revoked: map[string]edgerevoke.Value{}, orgStatus: map[string]string{}}
 	if err := l.load(); err != nil {
 		return nil, err
 	}
@@ -78,6 +91,71 @@ func (l *Local) RebuildFromDB(_ context.Context, routes map[string]RouteValue) e
 		l.routes[host] = v
 	}
 	return l.flushLocked()
+}
+
+// Revoke records (or tightens) a denylist entry for (kind, id). Idempotent: an
+// existing entry with a LATER min_iat is preserved (max wins), so the denylist
+// only ever tightens (the edgerevoke contract).
+func (l *Local) Revoke(_ context.Context, kind edgerevoke.Kind, id string, minIAT int64) error {
+	if !kind.Valid() {
+		return fmt.Errorf("projection: invalid revoke kind %q", kind)
+	}
+	if id == "" {
+		return fmt.Errorf("projection: revoke id is empty")
+	}
+	v := edgerevoke.Value{MinIAT: minIAT}
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	key := edgerevoke.Key(kind, id)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.revoked == nil {
+		l.revoked = map[string]edgerevoke.Value{}
+	}
+	if cur, ok := l.revoked[key]; ok && cur.MinIAT >= v.MinIAT {
+		return nil // existing entry is at least as tight; keep it (max wins)
+	}
+	l.revoked[key] = v
+	return nil
+}
+
+// GetRevoked returns the denylist entry for (kind, id) (test/serving-shim helper).
+func (l *Local) GetRevoked(kind edgerevoke.Kind, id string) (edgerevoke.Value, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	v, ok := l.revoked[edgerevoke.Key(kind, id)]
+	return v, ok
+}
+
+// SetOrgStatus projects the org's suspension/over-limit signal in memory. A blocking
+// status records org_status:<orgID>; "active" (or "") CLEARS it (the org is served).
+// In-memory only and not persisted across restarts (see the Local doc comment) —
+// acceptable because it fails closed and is rebuildable from the DB.
+func (l *Local) SetOrgStatus(_ context.Context, orgID, status string) error {
+	if orgID == "" {
+		return fmt.Errorf("projection: SetOrgStatus with empty orgID")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.orgStatus == nil {
+		l.orgStatus = map[string]string{}
+	}
+	if status == "" || status == OrgStatusActive {
+		delete(l.orgStatus, orgID)
+		return nil
+	}
+	l.orgStatus[orgID] = status
+	return nil
+}
+
+// GetOrgStatus returns the projected status for an org (test/serving-shim helper).
+// ok=false when no blocking status is set (the org is served).
+func (l *Local) GetOrgStatus(orgID string) (string, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	v, ok := l.orgStatus[orgID]
+	return v, ok
 }
 
 // Get returns the route for a host (test/serving-shim helper).
@@ -144,5 +222,9 @@ func (l *Local) flushLocked() error {
 	return os.WriteFile(l.Path, b, 0o644)
 }
 
-// Ensure Local satisfies Writer.
-var _ Writer = (*Local)(nil)
+// Ensure Local satisfies Writer, Revoker, and OrgStatusWriter.
+var (
+	_ Writer          = (*Local)(nil)
+	_ Revoker         = (*Local)(nil)
+	_ OrgStatusWriter = (*Local)(nil)
+)

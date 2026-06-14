@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danielpang/shipped/internal/audit"
 	"github.com/danielpang/shipped/internal/customdomains"
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/services/api/internal/store"
@@ -93,6 +94,10 @@ func (a *API) AddDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger(r).Info("custom domain registered", "site_id", siteID, "hostname", hostname, "cf_id", created.ID)
+	a.recordAudit(r, t, audit.ActionDomainAdd, "domain:"+domain.ID, map[string]any{
+		"site_id":  siteID,
+		"hostname": hostname,
+	})
 	httpx.WriteJSON(w, http.StatusCreated, toDomainResponse(domain))
 }
 
@@ -168,6 +173,10 @@ func (a *API) GetDomainStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logger(r).Info("custom domain verified; route written", "host", res.Host, "site_id", res.Domain.SiteID)
+		a.recordAudit(r, t, audit.ActionDomainVerify, "domain:"+res.Domain.ID, map[string]any{
+			"site_id":  res.Domain.SiteID,
+			"hostname": res.Host,
+		})
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, toDomainResponse(res.Domain))

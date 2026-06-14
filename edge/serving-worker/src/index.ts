@@ -35,9 +35,25 @@ import {
   resolveManifestEntry,
 } from "./manifest";
 import { publicResponseHeaders, securityHeaders } from "./http";
+import {
+  applyHeaders,
+  isServiceWorkerScript,
+  platformSecurityHeaders,
+} from "./security";
 import { type GatedConfig, gatedConfig } from "./config";
 import type { FetchLike } from "./edgetoken";
 import { serveGated } from "./gated";
+import {
+  type CounterKVLike,
+  DEFAULT_RATE_LIMIT,
+  type RateLimitPolicy,
+  type StatusKVLike,
+  isBlockingStatus,
+  rateLimitDecision,
+  rateLimitIdentity,
+  readOrgStatus,
+} from "./ratelimit";
+import type { RevokedKVLike } from "./revoke";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -58,9 +74,15 @@ export interface BucketLike {
   get(key: string): Promise<R2ObjectLike | null>;
 }
 
-/** Minimal KV binding: read the route value as parsed JSON. */
+/**
+ * Minimal KV binding for the route projection. The Worker reads the route value
+ * as parsed JSON; the SAME namespace also backs the hard-revocation denylist
+ * (`revoked:*` keys) per the §6 contract — Cloudflare KV's `get` supports both a
+ * typed-json read and a plain-string read, so we declare both overloads.
+ */
 export interface RoutesKVLike {
   get(key: string, type: "json"): Promise<unknown>;
+  get(key: string): Promise<string | null>;
 }
 
 /** Worker environment bindings + vars (declared in wrangler.toml). */
@@ -80,6 +102,23 @@ export interface Env {
    * token 302s here. Optional: falls back to the production default.
    */
   APP_AUTHZ_URL?: string;
+  /**
+   * OPTIONAL (Phase 4) KV for the edge rate-limiter counters AND the per-org
+   * suspension/over-limit status (`rl:*` and `org_status:*` keys). Read+write
+   * (counters), read (status). Absent → rate limiting is a no-op (fail open) and
+   * the org-status check is skipped; the Go API + billing remain authoritative.
+   */
+  LIMITS?: CounterKVLike;
+  /**
+   * OPTIONAL (Phase 4) KV for the hard-revocation denylist (`revoked:user|site|
+   * org:*` keys). When unset the Worker reuses the ROUTES namespace with the
+   * `revoked:` prefix (§6 contract). Read-only; the Go API is the sole writer.
+   */
+  REVOKED?: RevokedKVLike;
+  /** OPTIONAL: rate-limit max requests per window (overrides DEFAULT_RATE_LIMIT). */
+  RATE_LIMIT_MAX?: string;
+  /** OPTIONAL: rate-limit window length in seconds (overrides the default 60s). */
+  RATE_LIMIT_WINDOW_SECONDS?: string;
 }
 
 /**
@@ -117,8 +156,35 @@ export interface ServeOptions {
    * `fetch`. Injected in tests to serve a mock JWKS without network.
    */
   fetchImpl?: FetchLike;
-  /** Clock injection for tests (edge-token exp + route expiry). */
+  /** Clock injection for tests (edge-token exp + route expiry + rate window). */
   now?: Date;
+}
+
+/** Resolve the rate-limit policy from env vars, falling back to the default. */
+function rateLimitPolicy(env: Env): RateLimitPolicy {
+  const max = Number.parseInt(env.RATE_LIMIT_MAX ?? "", 10);
+  const win = Number.parseInt(env.RATE_LIMIT_WINDOW_SECONDS ?? "", 10);
+  return {
+    limit: Number.isFinite(max) && max > 0 ? max : DEFAULT_RATE_LIMIT.limit,
+    windowSeconds:
+      Number.isFinite(win) && win > 0 ? win : DEFAULT_RATE_LIMIT.windowSeconds,
+  };
+}
+
+/** The KV backing the org-status read (the LIMITS namespace, when configured). */
+function statusKV(env: Env): StatusKVLike | undefined {
+  return env.LIMITS;
+}
+
+/**
+ * The KV backing the hard-revocation denylist. Prefers a dedicated REVOKED
+ * binding; otherwise reuses the ROUTES namespace with the `revoked:` prefix (§6
+ * contract — "reuse the ROUTES KV with a `revoked:` prefix, or a REVOKED
+ * binding"). ROUTES is always present, so a gated deployment always has a
+ * denylist to consult (a missing `revoked:*` key is a clean miss → not revoked).
+ */
+function revokedKV(env: Env): RevokedKVLike {
+  return env.REVOKED ?? env.ROUTES;
 }
 
 /**
@@ -140,6 +206,19 @@ export async function serve(
   }
 
   const url = new URL(request.url);
+  const nowDate = opts.now ?? new Date();
+
+  // 0. EDGE RATE LIMITING (denial-of-wallet, §10/§12). The cheapest gate: a single
+  //    KV-counter op keyed by client IP (else host), BEFORE the route lookup, so a
+  //    flood is rejected without touching the route projection or R2. Fails OPEN
+  //    (a missing LIMITS binding or KV error never blocks a real request); the
+  //    authoritative spend caps live in the Go API.
+  const policy = rateLimitPolicy(env);
+  const identity = rateLimitIdentity(request, url.host);
+  const rl = await rateLimitDecision(env.LIMITS, identity, nowDate.getTime(), policy);
+  if (!rl.allowed) {
+    return tooManyRequests(rl.retryAfterSeconds);
+  }
 
   // 1. Resolve the host → route value from KV. The Host header is the tenant
   //    identity on the content domain; there is no JWT to consult. The shared
@@ -158,12 +237,22 @@ export async function serve(
   //    carry an expiry the Go API serializes into the projection; once past, the
   //    Worker refuses to serve and shows a platform "link expired" page. (Gated
   //    expiry is refused earlier, at mint time in the Go API.)
-  const now = opts.now ?? new Date();
-  if (isRouteExpired(route, now)) {
+  if (isRouteExpired(route, nowDate)) {
     return linkExpired();
   }
 
-  // 3. Dispatch by access mode.
+  // 3. PER-ORG SUSPENSION / over-limit (denial-of-wallet, §10/§12). If the Go API
+  //    has flagged this route's org as suspended (billing/abuse) or over-limit
+  //    (quota/egress cap) in KV, serve a platform "account suspended" page instead
+  //    of ANY tenant content — public or gated. Skipped (served) when no status KV
+  //    is configured; fails OPEN on a KV miss/error (the Go API stays
+  //    authoritative). One extra KV get, only after the route is known.
+  const orgStatus = await readOrgStatus(statusKV(env), route.org_id);
+  if (isBlockingStatus(orgStatus)) {
+    return accountSuspended(orgStatus);
+  }
+
+  // 4. Dispatch by access mode.
   switch (route.access_mode) {
     case "public":
       return servePublic(request, env, route, url, opts);
@@ -172,6 +261,8 @@ export async function serve(
     case "org_only":
       return serveGated(request, env, route, url, gateOpts(env, opts), {
         serveContent: () => servePublicBody(request, env, route, url),
+        revokedKV: revokedKV(env),
+        orgId: route.org_id,
       });
     default:
       // Unreachable given parseRouteValue, but fail closed.
@@ -306,6 +397,16 @@ async function resolveBlob(
     return { kind: "not-found", response: await notFound(route) };
   }
 
+  // BLOCK SERVICE-WORKER REGISTRATION on the content origin (§10 MEDIUM): refuse
+  // to serve a scriptable body at the conventional SW script paths (sw.js,
+  // service-worker.js, …). A tenant therefore cannot register a SW that would
+  // persist its JS, intercept fetches, or survive a takedown. We 404 (the same
+  // fail-closed shape as any unmatched path) rather than leak that the path is
+  // special.
+  if (isServiceWorkerScript(clean)) {
+    return { kind: "not-found", response: await notFound(route) };
+  }
+
   const manifest = await loadManifest(env, route);
   if (manifest === null) {
     // Missing/corrupt manifest → fail closed with the default 404.
@@ -404,24 +505,29 @@ async function notFound(
   env?: Env,
   manifest?: Manifest,
 ): Promise<Response> {
-  const headers = new Headers({
-    "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": "public, max-age=30",
-    ...securityHeaders(),
-  });
-
   if (route && env && manifest) {
     const entry = manifest.files[NOT_FOUND_PATH];
     if (entry !== undefined) {
       const object = await env.BUCKET.get(blobKey(route.org_id, entry.sha256));
       if (object !== null) {
-        // Serve the custom 404 with its manifest Content-Type but the 404 status.
-        headers.set("Content-Type", entry.content_type);
-        return new Response(object.body, { status: 404, headers });
+        // A version's CUSTOM 404 page is tenant content → tenant CSP, not the
+        // strict platform CSP (it may legitimately load the site's own assets).
+        const customHeaders = new Headers({
+          "Cache-Control": "public, max-age=30",
+          ...securityHeaders(),
+        });
+        customHeaders.set("Content-Type", entry.content_type);
+        return new Response(object.body, { status: 404, headers: customHeaders });
       }
     }
   }
 
+  // The platform default 404 is our own page → strict platform headers.
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "public, max-age=30",
+    ...platformSecurityHeaders(),
+  });
   return new Response(DEFAULT_404_HTML, { status: 404, headers });
 }
 
@@ -436,9 +542,44 @@ export function linkExpired(): Response {
   const headers = new Headers({
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
-    ...securityHeaders(),
+    ...platformSecurityHeaders(),
   });
   return new Response(LINK_EXPIRED_HTML, { status: 410, headers });
+}
+
+/**
+ * Platform "Too Many Requests" page (429) — served when the edge rate limiter
+ * trips (§10 denial-of-wallet). Carries `Retry-After` (seconds) so a well-behaved
+ * client backs off, and `no-store` so the 429 is never cached as if it were the
+ * site. Strict platform headers (our own page, no tenant content).
+ */
+export function tooManyRequests(retryAfterSeconds: number): Response {
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Retry-After": String(Math.max(1, Math.ceil(retryAfterSeconds))),
+    ...platformSecurityHeaders(),
+  });
+  return new Response(TOO_MANY_REQUESTS_HTML, { status: 429, headers });
+}
+
+/**
+ * Platform "account suspended / over limit" page — served INSTEAD of any tenant
+ * content when the route's org is flagged suspended/over_limit in KV (§10/§12
+ * denial-of-wallet + billing suspension). 503 with a short `Retry-After` (the
+ * org may be reinstated) and `no-store` so a reinstatement is visible
+ * immediately. The two statuses share one page with a status-specific line.
+ */
+export function accountSuspended(status: "suspended" | "over_limit"): Response {
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Retry-After": "300",
+    ...platformSecurityHeaders(),
+  });
+  const html =
+    status === "over_limit" ? ACCOUNT_OVER_LIMIT_HTML : ACCOUNT_SUSPENDED_HTML;
+  return new Response(html, { status: 503, headers });
 }
 
 const DEFAULT_404_HTML = `<!doctype html>
@@ -490,6 +631,90 @@ const LINK_EXPIRED_HTML = `<!doctype html>
   <main>
     <h1>This link has expired</h1>
     <p>The share link for this site is no longer active. Ask the site owner for a new one.</p>
+  </main>
+</body>
+</html>
+`;
+
+/**
+ * Platform "Too Many Requests" page (429). Static + self-contained — same
+ * anti-phishing posture as the other platform pages (no tenant content/scripts).
+ */
+const TOO_MANY_REQUESTS_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Too many requests</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  p { opacity: .7; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>Too many requests</h1>
+    <p>You have made too many requests in a short time. Please wait a moment and try again.</p>
+  </main>
+</body>
+</html>
+`;
+
+/**
+ * Platform "account suspended" page (503) — billing suspension / abuse hold. The
+ * page deliberately reveals nothing about the tenant beyond "unavailable".
+ */
+const ACCOUNT_SUSPENDED_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Site unavailable</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  p { opacity: .7; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>This site is temporarily unavailable</h1>
+    <p>The account for this site has been suspended. If you own this site, sign in to your dashboard to resolve it.</p>
+  </main>
+</body>
+</html>
+`;
+
+/**
+ * Platform "over limit" page (503) — quota / egress cap reached. Distinct copy
+ * from suspension so a site owner knows it is a usage cap, not an abuse hold.
+ */
+const ACCOUNT_OVER_LIMIT_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Site unavailable</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; }
+  p { opacity: .7; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>This site is temporarily unavailable</h1>
+    <p>This account has reached its usage limit. If you own this site, sign in to your dashboard to upgrade or wait for the limit to reset.</p>
   </main>
 </body>
 </html>

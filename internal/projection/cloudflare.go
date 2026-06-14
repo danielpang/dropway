@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/danielpang/shipped/internal/edgerevoke"
 )
 
 // CloudflareKV is a Writer backed by the Cloudflare Workers KV REST API. It is
@@ -104,6 +106,104 @@ func (c *CloudflareKV) RebuildFromDB(ctx context.Context, routes map[string]Rout
 	return nil
 }
 
+// Revoke writes (or tightens) the hard-revocation denylist entry for (kind, id) in
+// the SAME KV namespace as the route projection, under the "revoked:" prefix (the
+// edgerevoke contract). It is IDEMPOTENT: it reads the existing entry and keeps the
+// LATER min_iat (max wins), so the denylist only ever tightens and a re-run is a
+// no-op. The serving Worker + /authz read these keys on every gated request.
+func (c *CloudflareKV) Revoke(ctx context.Context, kind edgerevoke.Kind, id string, minIAT int64) error {
+	if !kind.Valid() {
+		return fmt.Errorf("projection: invalid revoke kind %q", kind)
+	}
+	if id == "" {
+		return fmt.Errorf("projection: revoke id is empty")
+	}
+	v := edgerevoke.Value{MinIAT: minIAT}
+	if err := v.Validate(); err != nil {
+		return err
+	}
+	key := edgerevoke.Key(kind, id)
+
+	// Idempotent max: read the current value; if it already has a >= min_iat, keep
+	// it. A read failure (missing key / transient) falls through to a write — a
+	// LOWER min_iat can never be written because we only proceed to write our value,
+	// and our value is monotonic from the caller (now()); the worst case is a
+	// redundant write, never a loosened denylist.
+	if cur, ok, err := c.getRevoked(ctx, key); err == nil && ok && cur.MinIAT >= v.MinIAT {
+		return nil
+	}
+
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.kvValueURL(key), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.auth(req)
+	return c.do(req, "revoke "+key)
+}
+
+// getRevoked GETs the denylist value at key. (false, nil) on a 404 (no entry yet).
+func (c *CloudflareKV) getRevoked(ctx context.Context, key string) (edgerevoke.Value, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.kvValueURL(key), nil)
+	if err != nil {
+		return edgerevoke.Value{}, false, err
+	}
+	c.auth(req)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return edgerevoke.Value{}, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return edgerevoke.Value{}, false, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return edgerevoke.Value{}, false, fmt.Errorf("projection: get %s: cloudflare returned %d: %s",
+			key, resp.StatusCode, bytes.TrimSpace(b))
+	}
+	var v edgerevoke.Value
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return edgerevoke.Value{}, false, err
+	}
+	return v, true, nil
+}
+
+// SetOrgStatus projects the org's suspension/over-limit signal to
+// `org_status:<orgID>` (the Worker's read key). A blocking status PUTs the bare
+// status string; the canonical "active" (or empty) DELETEs the key so the org is
+// served again. This is the fast KV flag that makes a DB-side suspension actually
+// block at the edge (the DB column alone never reaches the Worker). It is
+// best-effort and rebuildable — the caller logs a failure rather than failing the
+// webhook (DB is the source of truth).
+func (c *CloudflareKV) SetOrgStatus(ctx context.Context, orgID, status string) error {
+	if orgID == "" {
+		return fmt.Errorf("projection: SetOrgStatus with empty orgID")
+	}
+	key := OrgStatusKey(orgID)
+	if status == "" || status == OrgStatusActive {
+		// Clear: an active org is served, so the absence of the key is the signal.
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.kvValueURL(key), nil)
+		if err != nil {
+			return err
+		}
+		c.auth(req)
+		return c.do(req, "clear org_status "+orgID)
+	}
+	// Block: write the bare status string the Worker reads (isBlockingStatus).
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.kvValueURL(key), bytes.NewReader([]byte(status)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	c.auth(req)
+	return c.do(req, "set org_status "+orgID)
+}
+
 func (c *CloudflareKV) auth(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.APIToken)
 }
@@ -123,5 +223,9 @@ func (c *CloudflareKV) do(req *http.Request, what string) error {
 	return nil
 }
 
-// Ensure CloudflareKV satisfies Writer.
-var _ Writer = (*CloudflareKV)(nil)
+// Ensure CloudflareKV satisfies Writer, Revoker, and OrgStatusWriter.
+var (
+	_ Writer          = (*CloudflareKV)(nil)
+	_ Revoker         = (*CloudflareKV)(nil)
+	_ OrgStatusWriter = (*CloudflareKV)(nil)
+)

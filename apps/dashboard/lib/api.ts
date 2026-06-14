@@ -33,6 +33,63 @@ export type AllowlistEntry = components["schemas"]["AllowlistEntry"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
 
+// ---- Phase 4: audit log + hard revocation --------------------------------
+//
+// NOTE: as of this writing the Go API's /v1/audit and /v1/orgs/revoke-access
+// endpoints are NOT YET in services/api/openapi/openapi.yaml (the Go agent's
+// Phase-4 audit + denylist work). So these shapes are hand-written to the
+// REVOCATION DENYLIST CONTRACT / app.audit_log table and are intentionally
+// permissive (every field optional) so the UI stays forward-compatible with
+// the spec the Go agent ships.
+//
+// TODO(phase4): once /v1/audit and /v1/orgs/revoke-access land in openapi.yaml,
+// run `pnpm gen:api` and replace these with
+//   components["schemas"]["AuditEvent"] etc. — the runtime methods below already
+// degrade gracefully (404 → "not supported on this build") so no UI changes are
+// needed when that happens.
+
+/** One row of app.audit_log (org_id, actor_user, actor_token, action, target, metadata, ip, created_at). */
+export interface AuditEvent {
+  /** Stable row id (for React keys / pagination cursors). */
+  id?: string;
+  /** RFC3339 timestamp the event was recorded. */
+  created_at?: string;
+  /** Dotted action verb, e.g. "member.removed", "site.unshared", "org.external_sharing.disabled". */
+  action?: string;
+  /** The acting user id (null for token/service actors). */
+  actor_user?: string | null;
+  /** Human label for the actor when the API can resolve it (email / name). */
+  actor_label?: string | null;
+  /** The acting deploy/edge token id, when the actor was a token rather than a user. */
+  actor_token?: string | null;
+  /** The thing acted on (a site id/slug, member id, email, org id …). */
+  target?: string | null;
+  /** Source IP of the request that produced the event. */
+  ip?: string | null;
+  /** Free-form structured context (jsonb). */
+  metadata?: Record<string, unknown> | null;
+  /** Correlated request id (Phase-4 tracing), when present. */
+  request_id?: string | null;
+}
+
+/** A page of audit events (cursor + offset friendly). */
+export interface AuditPage {
+  events: AuditEvent[];
+  /** Total matching rows, when the API reports it (drives the page count). */
+  total?: number;
+  /** Opaque cursor for the next page, when the API is cursor-based. */
+  next_cursor?: string | null;
+}
+
+/** Result of a "sign out / revoke access everywhere" write (denylist min_iat bump). */
+export interface RevokeResult {
+  /** Echoes the subject kind/id that was revoked. */
+  kind?: "user" | "site" | "org";
+  id?: string;
+  /** The new denylist floor (unix seconds): tokens issued before this are dead. */
+  min_iat?: number;
+}
+
 /** Successful body of `POST /v1/sites/{id}/publish` (the live URL + version). */
 export type PublishResult =
   operations["publish"]["responses"]["200"]["content"]["application/json"];
@@ -369,5 +426,55 @@ export const api = {
    */
   createPortal(): Promise<PortalResult> {
     return apiFetch<PortalResult>("/v1/billing/portal", { method: "POST" });
+  },
+
+  // ---- Phase 4: audit log + hard revocation --------------------------------
+  //
+  // These hit endpoints that may not exist yet on every build (see the type
+  // note above). A 404 is mapped to ApiError(status=404) and the server loaders
+  // (lib/audit.ts) treat that as "feature not available", degrading the UI
+  // instead of crashing — exactly like the billing 404 → "no billing" path.
+
+  /**
+   * List the caller org's recent audit events (owner/admin only → 403). The Go
+   * API reads app.audit_log RLS-scoped to the active org and returns newest
+   * first. `limit`/`offset` are best-effort pagination; the API may instead
+   * return a `next_cursor`.
+   *
+   * TODO(phase4): replace the manual querystring + shape once /v1/audit is in
+   * openapi.yaml (operationId `listAudit`).
+   */
+  async listAudit(params: { limit?: number; offset?: number } = {}): Promise<AuditPage> {
+    const q = new URLSearchParams();
+    if (params.limit != null) q.set("limit", String(params.limit));
+    if (params.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    const body = await apiFetch<{ events?: AuditEvent[]; total?: number; next_cursor?: string | null }>(
+      `/v1/audit${qs ? `?${qs}` : ""}`,
+    );
+    return {
+      events: body.events ?? [],
+      total: body.total,
+      next_cursor: body.next_cursor ?? null,
+    };
+  },
+
+  /**
+   * Hard-revoke a subject's edge tokens by bumping the KV denylist `min_iat`
+   * (the REVOCATION DENYLIST CONTRACT). owner/admin only → 403. Used by the
+   * members "sign out everywhere" affordance:
+   *   - kind="user" → revoke one member's content access immediately
+   *   - kind="org"  → org-wide kill switch (sign everyone out everywhere)
+   * Idempotent server-side (max of existing/new min_iat); a stale denylist only
+   * fails closed (extra re-auth), never opens access.
+   *
+   * TODO(phase4): replace path/shape once /v1/orgs/revoke-access (or the Go
+   * agent's chosen route) lands in openapi.yaml.
+   */
+  revokeAccess(input: { kind: "user" | "org" | "site"; id: string }): Promise<RevokeResult> {
+    return apiFetch<RevokeResult>("/v1/orgs/revoke-access", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 };

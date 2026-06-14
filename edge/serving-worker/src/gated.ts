@@ -23,6 +23,7 @@ import {
   isAuthzCallback,
   redirectToAuthz,
 } from "./authz";
+import { type RevokedKVLike, isRevoked } from "./revoke";
 
 /** Resolved gated-path inputs (config + injected fetch + clock). */
 export interface GateOpts {
@@ -40,6 +41,13 @@ export interface GatedContent {
    * a shared cache (§10). For HEAD the body is already stripped by the caller.
    */
   serveContent: () => Promise<Response>;
+  /**
+   * KV backing the hard-revocation denylist (reuses ROUTES with the `revoked:`
+   * prefix, or a dedicated REVOKED binding). Checked AFTER token verification.
+   */
+  revokedKV: RevokedKVLike;
+  /** The route's org_id — the org dimension of the denylist check. */
+  orgId: string;
 }
 
 /**
@@ -78,6 +86,23 @@ export async function serveGated(
   if (claims === null) {
     // No/invalid edge cookie → bounce to the dashboard exchange. The `next` is
     // the path+query the viewer wanted, returned to the content-host callback.
+    const nextPath = url.pathname + url.search;
+    return redirectToAuthz(opts.cfg, url.host, nextPath);
+  }
+
+  // HARD REVOCATION (§6 contract, Phase 4): the token verified, but a ban /
+  // unshare / org-suspension may have invalidated it before its 15m exp. Consult
+  // the KV denylist (revoked:user:<sub> / site:<site_id> / org:<orgId>); if any
+  // min_iat > token.iat, treat the token as invalid → re-auth via /authz. The
+  // org dimension comes from the ROUTE (authoritative), not a token claim. Fails
+  // CLOSED (a denylist read error → revoked → 302), per §10.
+  const revoked = await isRevoked(content.revokedKV, {
+    sub: claims.sub,
+    siteId: claims.site_id,
+    orgId: content.orgId,
+    iat: claims.iat,
+  });
+  if (revoked) {
     const nextPath = url.pathname + url.search;
     return redirectToAuthz(opts.cfg, url.host, nextPath);
   }

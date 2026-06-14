@@ -38,6 +38,15 @@ export interface EdgeClaims {
   site_id: string;
   /** Access mode the token authorizes. */
   mode: EdgeMode;
+  /**
+   * Issued-at (unix SECONDS). Surfaced so the Phase-4 hard-revocation check can
+   * compare it against the KV denylist's per-subject `min_iat`: a token whose
+   * `iat` predates `revoked:{user|site|org}.min_iat` is treated as invalid even
+   * before its 15-minute exp. `requiredClaims` does NOT force `iat`, so a token
+   * minted without one reads as 0 (which a non-zero `min_iat` always revokes →
+   * fail closed). The Go signer always sets `iat`.
+   */
+  iat: number;
 }
 
 /**
@@ -218,6 +227,10 @@ export async function verifyEdgeToken(p: VerifyParams): Promise<EdgeClaims | nul
   const sub = payload.sub;
   if (typeof sub !== "string" || sub === "") return null;
 
+  // `iat` (unix seconds) for the hard-revocation comparison. Absent/garbled → 0
+  // so any non-zero denylist `min_iat` revokes the token (fail closed).
+  const iat = typeof payload.iat === "number" && Number.isFinite(payload.iat) ? payload.iat : 0;
+
   // `aud` is normalized by jose to string|string[]; we required it == host.
-  return { sub, aud: p.host, site_id: siteId, mode: mode as EdgeMode };
+  return { sub, aud: p.host, site_id: siteId, mode: mode as EdgeMode, iat };
 }

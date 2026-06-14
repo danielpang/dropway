@@ -10,6 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danielpang/shipped/internal/audit"
+	"github.com/danielpang/shipped/internal/edgerevoke"
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/pwhash"
@@ -106,7 +108,27 @@ func (a *API) SetSiteAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Hard revocation: an access-mode / policy change can TIGHTEN access (a viewer
+	// who was allowed under the old mode must no longer be), so write the site
+	// denylist key (revoked:site:<id>). Every edge token for this site issued before
+	// now is invalidated immediately — the Worker + /authz reject it and force a
+	// re-auth against the NEW mode, rather than honoring the stale grant until the
+	// short TTL lapses (ARCHITECTURE.md §6/§10). Writing on every change is correct
+	// and fail-closed: it only affects gated tokens, and a loosen-then-write at worst
+	// forces one harmless extra re-auth. Idempotent (max min_iat).
+	if a.Revoker != nil {
+		minIAT := time.Now().Unix()
+		if err := a.Revoker.Revoke(r.Context(), edgerevoke.KindSite, siteID, minIAT); err != nil {
+			logger(r).Error("denylist write failed after access change", "site_id", siteID, "err", err)
+		}
+	}
+
 	logger(r).Info("site access changed", "site_id", siteID, "mode", req.Mode, "org_id", t.OrgID)
+	a.recordAudit(r, t, audit.ActionSiteAccessChange, "site:"+siteID, map[string]any{
+		"mode":     req.Mode,
+		"unlisted": req.Unlisted,
+		"expires":  req.ExpiresAt != nil,
+	})
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"site_id":  siteID,
 		"mode":     req.Mode,
@@ -172,6 +194,10 @@ func (a *API) AddAllowlistEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger(r).Info("allowlist entry added", "site_id", siteID, "email", email, "external", isExternal)
+	a.recordAudit(r, t, audit.ActionAllowlistAdd, "site:"+siteID, map[string]any{
+		"email":    email,
+		"external": isExternal,
+	})
 	httpx.WriteJSON(w, http.StatusCreated, toAllowlistEntryResponse(entry))
 }
 
@@ -204,6 +230,7 @@ func (a *API) RemoveAllowlistEntry(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	a.recordAudit(r, t, audit.ActionAllowlistRemove, "site:"+siteID, map[string]any{"email": email})
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"removed": email})
 }
 
@@ -281,8 +308,25 @@ func (a *API) SetAllowExternalSharing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Hard revocation: disabling external sharing tightens org-wide access, so write
+	// the org denylist key (revoked:org:<org>) — every edge token issued before now
+	// for this org's external/public viewers is invalidated immediately, not just at
+	// the next short-TTL expiry. Idempotent (max min_iat). Best-effort: the routes
+	// were already rewritten above; a denylist hiccup only loses the IMMEDIATE
+	// revocation, the short TTL still backstops it (and a rebuild re-asserts it).
+	if !res.AllowExternalSharing && a.Revoker != nil {
+		minIAT := time.Now().Unix()
+		if err := a.Revoker.Revoke(r.Context(), edgerevoke.KindOrg, t.OrgID, minIAT); err != nil {
+			logger(r).Error("denylist write failed disabling external sharing", "org_id", t.OrgID, "err", err)
+		}
+	}
+
 	logger(r).Info("allow_external_sharing toggled",
 		"org_id", t.OrgID, "enabled", res.AllowExternalSharing, "downgraded", len(res.Downgraded))
+	a.recordAudit(r, t, audit.ActionAllowExternalSharing, "org:"+t.OrgID, map[string]any{
+		"enabled":          res.AllowExternalSharing,
+		"downgraded_sites": len(res.Downgraded),
+	})
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"allow_external_sharing": res.AllowExternalSharing,
 		"downgraded_sites":       len(res.Downgraded),

@@ -33,6 +33,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/danielpang/shipped/internal/projection"
 )
 
 // Free-tier caps mirrored from §9 (the cloud quota bands). A read-only downgrade
@@ -47,6 +49,13 @@ const (
 type BillingStore struct {
 	pool *pgxpool.Pool
 	log  *slog.Logger
+	// status projects the per-org suspension/over-limit flag to the edge
+	// (org_status:<orgID> in KV). It is BEST-EFFORT and applied AFTER the DB commit:
+	// the DB is the source of truth, the KV flag is a rebuildable projection that
+	// makes the suspension actually block at the Worker. nil → no edge projection
+	// (the DB write still lands; the edge just won't get the fast flag). Set it with
+	// WithOrgStatusWriter.
+	status projection.OrgStatusWriter
 }
 
 // NewStore wraps the shared shipped_app pool. The pool MUST be the non-BYPASSRLS
@@ -54,6 +63,15 @@ type BillingStore struct {
 // scopes the single cross-schema org_meta write.
 func NewStore(pool *pgxpool.Pool) *BillingStore {
 	return &BillingStore{pool: pool, log: slog.Default()}
+}
+
+// WithOrgStatusWriter attaches the edge org-status projection writer so a billing
+// org_status change (suspended / over_limit / active) is pushed to KV after the DB
+// commit, making suspension enforceable at the serving Worker. Returns the store for
+// chaining. Passing nil leaves edge projection disabled.
+func (s *BillingStore) WithOrgStatusWriter(w projection.OrgStatusWriter) *BillingStore {
+	s.status = w
+	return s
 }
 
 // Compile-time proof the store satisfies the webhook interfaces.
@@ -107,43 +125,98 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 	// Apply the entitlement change INSIDE this same tx. The org-scoped writes set
 	// SET LOCAL app.current_org_id on tx so the cross-schema org_meta UPDATE is
 	// RLS-permitted and scoped to the event's own org (§9). If this errors, the
-	// deferred Rollback discards the just-inserted ledger row too.
-	if err := applyEvent(ctx, txSubsStore{tx: tx}, s.log, ev); err != nil {
+	// deferred Rollback discards the just-inserted ledger row too. The adapter
+	// records the resulting (org, org_status) so we can project it to the edge AFTER
+	// the commit (the DB is authoritative; the KV flag is a best-effort projection).
+	sink := &txSubsStore{tx: tx}
+	if err := applyEvent(ctx, sink, s.log, ev); err != nil {
 		return false, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("billing: commit: %w", err)
 	}
+
+	// Best-effort edge projection AFTER the durable commit: push the new org_status
+	// to KV so a suspension/over_limit actually BLOCKS at the serving Worker (the DB
+	// column alone never reaches the edge). A failure here is logged, NOT returned —
+	// the DB is the source of truth and the projection is rebuildable, so we must not
+	// 500 the webhook (which would make Stripe retry an already-applied event).
+	s.projectOrgStatus(ctx, sink.orgID, sink.orgStatus)
 	return true, nil
+}
+
+// projectOrgStatus pushes an org's status to the edge org-status projection (KV),
+// best-effort. No-op when no writer is wired or when there is nothing to project
+// (an unhandled event records no org/status). Logged, never fatal — the DB commit
+// already succeeded and the projection is rebuildable from Postgres.
+func (s *BillingStore) projectOrgStatus(ctx context.Context, orgID, status string) {
+	if s.status == nil || orgID == "" || status == "" {
+		return
+	}
+	if err := s.status.SetOrgStatus(ctx, orgID, status); err != nil {
+		s.logger().Error("edge org_status projection failed (DB is source of truth; will be rebuilt)",
+			"org_id", orgID, "org_status", status, "err", err)
+	}
+}
+
+// logger returns the store's logger, defaulting to slog.Default() when unset (so a
+// zero-value store built in a test never nil-panics on a log call).
+func (s *BillingStore) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
 }
 
 // txSubsStore adapts an open pgx.Tx to the SubscriptionStore surface applyEvent
 // dispatches to, so the entitlement write runs in the SAME tx as the dedupe-ledger
 // insert (FIX 1). It establishes the per-event RLS tenant context on the tx before
 // the cross-schema org_meta write, exactly as the standalone inOrgTx helper does.
-type txSubsStore struct{ tx pgx.Tx }
+//
+// It also CAPTURES the org id + the resulting org_status of the apply so the caller
+// (ProcessEvent) can project that status to the edge AFTER the commit. It is a
+// pointer so those captured fields are observable by the caller.
+type txSubsStore struct {
+	tx pgx.Tx
 
-var _ SubscriptionStore = txSubsStore{}
+	orgID     string // org the apply touched (empty for an unhandled event)
+	orgStatus string // resulting org_status to project ("active" | "over_limit" | ...)
+}
 
-func (t txSubsStore) UpsertSubscription(ctx context.Context, d EventData) error {
+var _ SubscriptionStore = (*txSubsStore)(nil)
+
+func (t *txSubsStore) UpsertSubscription(ctx context.Context, d EventData) error {
 	if d.OrgID == "" {
 		return errors.New("billing: UpsertSubscription with empty OrgID")
 	}
 	if err := setOrgContext(ctx, t.tx, d.OrgID); err != nil {
 		return err
 	}
-	return upsertSubscriptionTx(ctx, t.tx, d)
+	if err := upsertSubscriptionTx(ctx, t.tx, d); err != nil {
+		return err
+	}
+	// A healthy active subscription resets org_status to 'active' (clears any edge
+	// block) — mirrors the 'active' the UPSERT writes.
+	t.orgID, t.orgStatus = d.OrgID, "active"
+	return nil
 }
 
-func (t txSubsStore) SetCanceled(ctx context.Context, orgID string) error {
+func (t *txSubsStore) SetCanceled(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return errors.New("billing: SetCanceled with empty OrgID")
 	}
 	if err := setOrgContext(ctx, t.tx, orgID); err != nil {
 		return err
 	}
-	return setCanceledTx(ctx, t.tx, orgID)
+	status, err := setCanceledTx(ctx, t.tx, orgID)
+	if err != nil {
+		return err
+	}
+	// On cancel the org becomes 'over_limit' (read-only) if it now exceeds Free caps,
+	// else 'active'. Project whichever it is so the edge blocks/clears accordingly.
+	t.orgID, t.orgStatus = orgID, status
+	return nil
 }
 
 // UpsertSubscription persists a paid entitlement. THIS IS THE ONLY WRITER OF
@@ -161,9 +234,14 @@ func (s *BillingStore) UpsertSubscription(ctx context.Context, d EventData) erro
 	if d.OrgID == "" {
 		return errors.New("billing: UpsertSubscription with empty OrgID")
 	}
-	return s.inOrgTx(ctx, d.OrgID, func(tx pgx.Tx) error {
+	if err := s.inOrgTx(ctx, d.OrgID, func(tx pgx.Tx) error {
 		return upsertSubscriptionTx(ctx, tx, d)
-	})
+	}); err != nil {
+		return err
+	}
+	// A healthy active subscription clears any edge block (best-effort, post-commit).
+	s.projectOrgStatus(ctx, d.OrgID, "active")
+	return nil
 }
 
 // upsertSubscriptionTx does the actual UPSERT + org_meta plan_tier write inside an
@@ -242,18 +320,28 @@ func (s *BillingStore) SetCanceled(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return errors.New("billing: SetCanceled with empty OrgID")
 	}
-	return s.inOrgTx(ctx, orgID, func(tx pgx.Tx) error {
-		return setCanceledTx(ctx, tx, orgID)
-	})
+	var status string
+	if err := s.inOrgTx(ctx, orgID, func(tx pgx.Tx) error {
+		st, err := setCanceledTx(ctx, tx, orgID)
+		status = st
+		return err
+	}); err != nil {
+		return err
+	}
+	// Best-effort edge projection after the durable commit (same model as
+	// ProcessEvent): a cancel may push the org to over_limit → block at the edge.
+	s.projectOrgStatus(ctx, orgID, status)
+	return nil
 }
 
 // setCanceledTx does the read-only downgrade inside an already-open, org-scoped tx
 // (the GUC must already be set for orgID). Shared by the standalone SetCanceled and
-// the atomic ProcessEvent path (FIX 1).
-func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) error {
+// the atomic ProcessEvent path (FIX 1). It returns the computed org_status
+// ('over_limit' or 'active') so the caller can project it to the edge.
+func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error) {
 	over, err := orgExceedsFreeCaps(ctx, tx, orgID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	orgStatus := "active"
 	if over {
@@ -273,7 +361,7 @@ func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) error {
 		 WHERE org_id = $1`,
 		orgID, orgStatus,
 	); err != nil {
-		return fmt.Errorf("billing: cancel subscription %s: %w", orgID, err)
+		return "", fmt.Errorf("billing: cancel subscription %s: %w", orgID, err)
 	}
 
 	// Downgrade the authoritative entitlement (RLS-scoped to orgID).
@@ -281,9 +369,9 @@ func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) error {
 		`UPDATE app.org_meta SET plan_tier = 'free' WHERE id = $1`,
 		orgID,
 	); err != nil {
-		return fmt.Errorf("billing: downgrade org_meta.plan_tier %s: %w", orgID, err)
+		return "", fmt.Errorf("billing: downgrade org_meta.plan_tier %s: %w", orgID, err)
 	}
-	return nil
+	return orgStatus, nil
 }
 
 // ReadPlanTier returns the org's authoritative plan tier for the billing page. It

@@ -29,8 +29,11 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	}
 	r := chi.NewRouter()
 
-	// Baseline middleware: request id, real-ip, then the structured per-request
-	// logger (must run AFTER RequestID so it can tag the id), then panic recovery.
+	// Baseline middleware: SANITIZE the inbound X-Request-Id (drop a forgeable value
+	// so chi mints a fresh one — prevents log/audit forgery via injected newlines /
+	// control chars), THEN request id, real-ip, the structured per-request logger
+	// (must run AFTER RequestID so it can tag the id), then panic recovery.
+	r.Use(logx.SanitizeRequestID)
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(logx.Middleware(baseLogger))
@@ -58,8 +61,22 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		r.Get("/me", api.Me)
 		r.Get("/members", api.ListMembers)
 
+		// Hard revocation (Phase 4): admin/owner writes the edge denylist so a
+		// removed/banned member's edge tokens are rejected immediately, not just at
+		// the short TTL (ARCHITECTURE.md §6/§10).
+		r.Post("/members/{userId}/revoke", api.RevokeMember)
+
+		// Audit log (Phase 4): admin/owner reads the org's sensitive-action trail,
+		// newest first, paginated (RLS-scoped).
+		r.Get("/audit", api.ListAudit)
+
 		// Org-level policy (admin/owner only, re-checked in the handler).
 		r.Put("/orgs/allow-external-sharing", api.SetAllowExternalSharing)
+
+		// Generic hard-revoke (admin/owner only): {kind:user|site|org, id} → bump the
+		// denylist min_iat. The unified "sign-out-everywhere" affordance the dashboard
+		// calls; complements the RESTful members/{id}/revoke + sites/{id}/revoke-access.
+		r.Post("/orgs/revoke-access", api.RevokeAccess)
 
 		// The cross-domain /authz viewer exchange (Phase 2). mint takes the viewer's
 		// Better Auth JWT (so it's behind Auth). password is mounted JWT-free above.
@@ -76,6 +93,10 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 			// Phase 2 — access control & domains.
 			r.Put("/{id}/access", api.SetSiteAccess)
+
+			// Phase 4 — generic admin hard-revoke of a site's edge tokens (a
+			// "kill the share now" affordance independent of an access change).
+			r.Post("/{id}/revoke-access", api.RevokeSiteAccess)
 
 			r.Post("/{id}/allowlist", api.AddAllowlistEntry)
 			r.Delete("/{id}/allowlist", api.RemoveAllowlistEntry)

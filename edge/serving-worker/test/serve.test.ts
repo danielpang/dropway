@@ -58,13 +58,25 @@ function sha256(text: string): string {
 
 // --- Mocks ------------------------------------------------------------------
 
-/** In-memory KV: route:<host> → RouteValue. */
-function mockRoutes(routes: Record<string, RouteValue>) {
-  return {
-    async get(key: string, _type: "json"): Promise<unknown> {
+/**
+ * In-memory KV: route:<host> → RouteValue, AND the `revoked:*` / `org_status:*`
+ * denylist+status string keys (Phase 4). Mirrors Cloudflare KV's overloaded
+ * `get`: `get(key, "json")` returns the parsed route object; `get(key)` returns
+ * the raw string (or null). Tests seed string keys via the second arg.
+ */
+function mockRoutes(
+  routes: Record<string, RouteValue>,
+  strings: Record<string, string> = {},
+) {
+  function get(key: string, type: "json"): Promise<unknown>;
+  function get(key: string): Promise<string | null>;
+  async function get(key: string, type?: "json"): Promise<unknown> {
+    if (type === "json") {
       return key in routes ? routes[key] : null;
-    },
-  };
+    }
+    return key in strings ? strings[key]! : null;
+  }
+  return { get };
 }
 
 /**
@@ -1151,5 +1163,550 @@ describe("serve() gated path stays operator-JWT-free", () => {
     });
     const res = await serve(req, env, { cache: null, fetchImpl: mockJwksFetch(signer.jwks) });
     expect(res.status).toBe(302);
+  });
+});
+
+// ============================================================================
+// Phase 4 — security/ops hardening (edge)
+// ============================================================================
+// Content-security headers on every response, service-worker registration block,
+// edge rate limiting + denial-of-wallet (429 + org suspension), and hard
+// revocation via the KV denylist (min_iat). All driven by the same mocked
+// KV/R2/clock the rest of the suite uses — no live edge.
+
+import {
+  CONTENT_CSP,
+  PLATFORM_CSP,
+  contentSecurityHeaders,
+  isServiceWorkerScript,
+  platformSecurityHeaders,
+} from "../src/security";
+import {
+  DEFAULT_RATE_LIMIT,
+  type CounterKVLike,
+  isBlockingStatus,
+  rateLimitDecision,
+  rateLimitIdentity,
+  readOrgStatus,
+  windowKey,
+} from "../src/ratelimit";
+import {
+  denylistKeys,
+  isRevoked,
+  parseRevokedEntry,
+  type RevokedKVLike,
+} from "../src/revoke";
+
+/** In-memory counter KV (get/put with TTL) for the rate limiter + org-status. */
+function mockCounterKV(seed: Record<string, string> = {}): CounterKVLike & {
+  store: Map<string, string>;
+} {
+  const store = new Map<string, string>(Object.entries(seed));
+  return {
+    store,
+    async get(key: string): Promise<string | null> {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    async put(key: string, value: string): Promise<void> {
+      store.set(key, value);
+    },
+  };
+}
+
+/** A read-only denylist KV over a seeded string map. */
+function mockRevokedKV(seed: Record<string, string> = {}): RevokedKVLike {
+  const store = new Map<string, string>(Object.entries(seed));
+  return {
+    async get(key: string): Promise<string | null> {
+      return store.has(key) ? store.get(key)! : null;
+    },
+  };
+}
+
+// --- security headers --------------------------------------------------------
+
+describe("security headers (content vs platform)", () => {
+  it("content headers carry the permissive-but-safe CSP + COOP/CORP + SW posture", () => {
+    const h = contentSecurityHeaders();
+    expect(h["Content-Security-Policy"]).toBe(CONTENT_CSP);
+    // A static site's own inline script/style must be allowed (CSP is not the
+    // isolation control — domain separation is).
+    expect(CONTENT_CSP).toContain("script-src 'self' 'unsafe-inline'");
+    expect(CONTENT_CSP).toContain("frame-ancestors 'none'");
+    expect(h["X-Content-Type-Options"]).toBe("nosniff");
+    expect(h["Referrer-Policy"]).toBe("no-referrer");
+    expect(h["Cross-Origin-Opener-Policy"]).toBe("same-origin");
+    expect(h["Cross-Origin-Resource-Policy"]).toBe("same-site");
+    expect(h["X-Frame-Options"]).toBe("DENY");
+  });
+
+  it("platform headers carry a STRICT self-only CSP (no scripts)", () => {
+    const h = platformSecurityHeaders();
+    expect(h["Content-Security-Policy"]).toBe(PLATFORM_CSP);
+    expect(PLATFORM_CSP).toContain("default-src 'none'");
+    expect(PLATFORM_CSP).not.toContain("script-src");
+    expect(h["X-Content-Type-Options"]).toBe("nosniff");
+    expect(h["Referrer-Policy"]).toBe("no-referrer");
+  });
+});
+
+describe("security headers are present on EVERY response", () => {
+  function assertHardened(res: Response, kind: "content" | "platform") {
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect(res.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("same-site");
+    expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+    const csp = res.headers.get("Content-Security-Policy");
+    expect(csp).toBe(kind === "content" ? CONTENT_CSP : PLATFORM_CSP);
+  }
+
+  it("PUBLIC content response is hardened (tenant CSP)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html; charset=utf-8" },
+    });
+    const res = await serveNoCache(get(HOST, "/"), envFor(PUBLIC_ROUTE, HOST, objects));
+    expect(res.status).toBe(200);
+    assertHardened(res, "content");
+  });
+
+  it("GATED content response is hardened (tenant CSP) AND private", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<h1>secret</h1>", content_type: "text/html; charset=utf-8" },
+    });
+    const env = gatedEnv(route, GATED_HOST, objects);
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID });
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(200);
+    assertHardened(res, "content");
+    expect(res.headers.get("Cache-Control")).toContain("no-store");
+  });
+
+  it("PLATFORM 404 / 410 / 429 / 503 pages get the STRICT platform CSP", async () => {
+    // Default 404 (no manifest match, no custom page) → platform.
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const notFoundRes = await serveNoCache(get(HOST, "/missing"), envFor(PUBLIC_ROUTE, HOST, objects));
+    expect(notFoundRes.status).toBe(404);
+    assertHardened(notFoundRes, "platform");
+
+    // 410 link-expired.
+    const expiredRoute = {
+      ...PUBLIC_ROUTE,
+      schema_version: 2,
+      expires_at: "2020-01-01T00:00:00Z",
+    } as RouteValue;
+    const expiredRes = await serveNoCache(get(HOST, "/"), gatedEnv(expiredRoute, HOST, objects));
+    expect(expiredRes.status).toBe(410);
+    assertHardened(expiredRes, "platform");
+  });
+
+  it("405 method-not-allowed carries content security headers too", async () => {
+    const env = envFor(PUBLIC_ROUTE, HOST, {});
+    const res = await serve(new Request(`https://${HOST}/`, { method: "POST" }), env, {
+      cache: null,
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Content-Security-Policy")).toBe(CONTENT_CSP);
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+
+  it("a version's CUSTOM 404 page keeps the tenant CSP (it may load site assets)", async () => {
+    const { objects } = deploy({
+      "404.html": { body: "<h1>custom 404</h1>", content_type: "text/html" },
+    });
+    const res = await serveNoCache(get(HOST, "/missing"), envFor(PUBLIC_ROUTE, HOST, objects));
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("<h1>custom 404</h1>");
+    expect(res.headers.get("Content-Security-Policy")).toBe(CONTENT_CSP);
+  });
+});
+
+// --- service-worker registration block --------------------------------------
+
+describe("service-worker registration is blocked on content origins", () => {
+  it("recognizes the conventional SW script names (case-insensitive)", () => {
+    for (const p of ["sw.js", "service-worker.js", "ngsw-worker.js", "Service-Worker.JS", "a/b/sw.js"]) {
+      expect(isServiceWorkerScript(p)).toBe(true);
+    }
+    for (const p of ["app.js", "index.html", "assets/main.4f3a9c2b.js", "swagger.json"]) {
+      expect(isServiceWorkerScript(p)).toBe(false);
+    }
+  });
+
+  it("404s a request for /sw.js even when the manifest ships one (no scriptable body)", async () => {
+    // Put a real entry at sw.js in the manifest; the Worker must STILL refuse it.
+    const { objects } = deploy({
+      "sw.js": { body: "self.addEventListener('install', () => {})", content_type: "text/javascript" },
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/sw.js"), env);
+    expect(res.status).toBe(404);
+    // The platform 404 body, NOT the service-worker script bytes.
+    const body = await res.text();
+    expect(body).not.toContain("addEventListener");
+    expect(body).toContain("404");
+  });
+
+  it("blocks the SW script on the GATED path too (after a valid token)", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "service-worker.js": { body: "self.x=1", content_type: "text/javascript" },
+    });
+    const env = gatedEnv(route, GATED_HOST, objects);
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID });
+    const res = await serve(getWithCookie(GATED_HOST, "/service-worker.js", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("self.x");
+  });
+});
+
+// --- edge rate limiting (pure) ----------------------------------------------
+
+describe("rateLimitDecision (fixed-window KV counter)", () => {
+  const NOW = 1_700_000_000_000; // fixed epoch-ms
+
+  it("allows requests under the limit, then 429s once over", async () => {
+    const kv = mockCounterKV();
+    const policy = { limit: 3, windowSeconds: 60 };
+    const id = "ip:1.2.3.4";
+    const results = [];
+    for (let i = 0; i < 4; i++) {
+      results.push(await rateLimitDecision(kv, id, NOW, policy));
+    }
+    expect(results.map((r) => r.allowed)).toEqual([true, true, true, false]);
+    expect(results[3]!.retryAfterSeconds).toBeGreaterThan(0);
+    expect(results[3]!.retryAfterSeconds).toBeLessThanOrEqual(60);
+  });
+
+  it("resets in the NEXT window (a later window is a fresh counter key)", async () => {
+    const kv = mockCounterKV();
+    const policy = { limit: 1, windowSeconds: 60 };
+    const id = "ip:9.9.9.9";
+    expect((await rateLimitDecision(kv, id, NOW, policy)).allowed).toBe(true);
+    expect((await rateLimitDecision(kv, id, NOW, policy)).allowed).toBe(false);
+    // Advance past the window → new key → allowed again.
+    const next = NOW + 61_000;
+    expect((await rateLimitDecision(kv, id, next, policy)).allowed).toBe(true);
+    expect(windowKey(id, NOW, policy)).not.toBe(windowKey(id, next, policy));
+  });
+
+  it("is a no-op (fail open) when no counter KV is bound", async () => {
+    const r = await rateLimitDecision(undefined, "ip:1.1.1.1", NOW, DEFAULT_RATE_LIMIT);
+    expect(r.allowed).toBe(true);
+  });
+
+  it("derives the identity from CF-Connecting-IP, else falls back to host", () => {
+    const withIp = new Request("https://h/", { headers: { "CF-Connecting-IP": "203.0.113.7" } });
+    expect(rateLimitIdentity(withIp, "h")).toBe("ip:203.0.113.7");
+    expect(rateLimitIdentity(new Request("https://h/"), "acme.example")).toBe("host:acme.example");
+  });
+});
+
+describe("serve() enforces the edge rate limit end-to-end", () => {
+  it("serves under the limit, then returns 429 with Retry-After + platform CSP", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const LIMITS = mockCounterKV();
+    const env: Env = {
+      ...envFor(PUBLIC_ROUTE, HOST, objects),
+      LIMITS,
+      RATE_LIMIT_MAX: "2",
+      RATE_LIMIT_WINDOW_SECONDS: "60",
+    };
+    const req = () =>
+      new Request(`https://${HOST}/`, {
+        method: "GET",
+        headers: { "CF-Connecting-IP": "198.51.100.42" },
+      });
+
+    const a = await serve(req(), env, { cache: null });
+    const b = await serve(req(), env, { cache: null });
+    const c = await serve(req(), env, { cache: null });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(c.status).toBe(429);
+    const retry = c.headers.get("Retry-After");
+    expect(retry).not.toBeNull();
+    expect(Number(retry)).toBeGreaterThan(0);
+    expect(c.headers.get("Content-Security-Policy")).toBe(PLATFORM_CSP);
+    expect(c.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("does not rate-limit when no LIMITS binding is present (public fast path stays cheap)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects); // no LIMITS
+    for (let i = 0; i < 50; i++) {
+      const res = await serve(
+        new Request(`https://${HOST}/`, { headers: { "CF-Connecting-IP": "10.0.0.1" } }),
+        env,
+        { cache: null },
+      );
+      expect(res.status).toBe(200);
+    }
+  });
+});
+
+// --- per-org suspension / over-limit ----------------------------------------
+
+describe("readOrgStatus + isBlockingStatus", () => {
+  it("classifies suspended / over_limit as blocking; active / absent as not", () => {
+    expect(isBlockingStatus("suspended")).toBe(true);
+    expect(isBlockingStatus("over_limit")).toBe(true);
+    expect(isBlockingStatus("active")).toBe(false);
+    expect(isBlockingStatus(null)).toBe(false);
+  });
+
+  it("reads a bare status string or a {status} JSON envelope", async () => {
+    const kv = mockCounterKV({
+      [`org_status:${ORG_ID}`]: "suspended",
+      [`org_status:${SITE_ID}`]: JSON.stringify({ status: "over_limit", reason: "egress" }),
+    });
+    expect(await readOrgStatus(kv, ORG_ID)).toBe("suspended");
+    expect(await readOrgStatus(kv, SITE_ID)).toBe("over_limit");
+    expect(await readOrgStatus(kv, "00000000-0000-0000-0000-000000000000")).toBeNull();
+  });
+});
+
+describe("serve() blocks a suspended / over-limit org with a platform page", () => {
+  for (const status of ["suspended", "over_limit"] as const) {
+    it(`serves the platform 503 page (not tenant content) when org is ${status}`, async () => {
+      const { objects } = deploy({
+        "index.html": { body: "<h1>secret tenant</h1>", content_type: "text/html" },
+      });
+      const LIMITS = mockCounterKV({ [`org_status:${ORG_ID}`]: status });
+      const env: Env = { ...envFor(PUBLIC_ROUTE, HOST, objects), LIMITS };
+      const res = await serveNoCache(get(HOST, "/"), env);
+      expect(res.status).toBe(503);
+      const body = await res.text();
+      expect(body).not.toContain("secret tenant");
+      expect(body).toContain("unavailable");
+      expect(res.headers.get("Retry-After")).toBe("300");
+      expect(res.headers.get("Content-Security-Policy")).toBe(PLATFORM_CSP);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+    });
+  }
+
+  it("blocks a GATED route's org too (before serving protected bytes)", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<h1>secret</h1>", content_type: "text/html" },
+    });
+    const LIMITS = mockCounterKV({ [`org_status:${ORG_ID}`]: "suspended" });
+    const env: Env = { ...gatedEnv(route, GATED_HOST, objects), LIMITS };
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID });
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(503);
+    expect(await res.text()).not.toContain("secret");
+  });
+
+  it("serves normally when the org status is active / absent", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const LIMITS = mockCounterKV({ [`org_status:${ORG_ID}`]: "active" });
+    const env: Env = { ...envFor(PUBLIC_ROUTE, HOST, objects), LIMITS };
+    const res = await serveNoCache(get(HOST, "/"), env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<h1>home</h1>");
+  });
+});
+
+// --- hard revocation (KV denylist / min_iat) --------------------------------
+
+describe("parseRevokedEntry + denylistKeys", () => {
+  it("parses the {min_iat} envelope and a bare numeric string", () => {
+    expect(parseRevokedEntry(JSON.stringify({ min_iat: 1700 }))).toEqual({ min_iat: 1700 });
+    expect(parseRevokedEntry("1700")).toEqual({ min_iat: 1700 });
+    expect(parseRevokedEntry(null)).toBeNull();
+    expect(parseRevokedEntry("not-json{")).toBeNull();
+    expect(parseRevokedEntry(JSON.stringify({ min_iat: -5 }))).toBeNull();
+  });
+
+  it("builds the three denylist keys", () => {
+    const k = denylistKeys("user-1", "site-1", "org-1");
+    expect(k.user).toBe("revoked:user:user-1");
+    expect(k.site).toBe("revoked:site:site-1");
+    expect(k.org).toBe("revoked:org:org-1");
+  });
+});
+
+describe("isRevoked (pure denylist check)", () => {
+  const subject = { sub: "u1", siteId: "s1", orgId: "o1", iat: 1000 };
+
+  it("is NOT revoked on a clean denylist", async () => {
+    expect(await isRevoked(mockRevokedKV(), subject)).toBe(false);
+  });
+
+  it("revokes when ANY dimension's min_iat > token.iat", async () => {
+    expect(
+      await isRevoked(mockRevokedKV({ "revoked:user:u1": JSON.stringify({ min_iat: 1001 }) }), subject),
+    ).toBe(true);
+    expect(
+      await isRevoked(mockRevokedKV({ "revoked:site:s1": JSON.stringify({ min_iat: 2000 }) }), subject),
+    ).toBe(true);
+    expect(
+      await isRevoked(mockRevokedKV({ "revoked:org:o1": JSON.stringify({ min_iat: 5000 }) }), subject),
+    ).toBe(true);
+  });
+
+  it("does NOT revoke a token issued at or after min_iat", async () => {
+    // min_iat == iat → token issued before the cutoff second is invalid; a token
+    // at iat=1000 with min_iat=1000 is NOT revoked (1000 is the first valid sec).
+    expect(
+      await isRevoked(mockRevokedKV({ "revoked:user:u1": JSON.stringify({ min_iat: 1000 }) }), subject),
+    ).toBe(false);
+    expect(
+      await isRevoked(mockRevokedKV({ "revoked:user:u1": JSON.stringify({ min_iat: 999 }) }), subject),
+    ).toBe(false);
+  });
+
+  it("fails CLOSED (revoked) when no denylist KV is bound", async () => {
+    expect(await isRevoked(undefined, subject)).toBe(true);
+  });
+
+  it("fails CLOSED (revoked) when a denylist read throws", async () => {
+    const throwing: RevokedKVLike = {
+      async get() {
+        throw new Error("KV down");
+      },
+    };
+    expect(await isRevoked(throwing, subject)).toBe(true);
+  });
+});
+
+describe("serve() gated path — hard revocation end-to-end", () => {
+  /** Seed a denylist key into the ROUTES KV (the default denylist namespace). */
+  function gatedEnvWithDenylist(
+    route: RouteValue,
+    host: string,
+    objects: Record<string, string>,
+    denylist: Record<string, string>,
+  ): Env {
+    return {
+      ROUTES: mockRoutes({ [routeKey(host)]: route }, denylist),
+      BUCKET: mockBucket(objects),
+      EDGE_JWKS_URL: JWKS_URL,
+      APP_AUTHZ_URL: AUTHZ_URL,
+    };
+  }
+
+  it("REJECTS a token whose iat < revoked min_iat → 302 to /authz (re-auth)", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<h1>secret</h1>", content_type: "text/html" },
+    });
+    // The token is minted at "now"; set the user's min_iat 1000s in the FUTURE so
+    // the token's iat is strictly before it.
+    const future = Math.floor(Date.now() / 1000) + 1000;
+    const VIEWER = "44444444-4444-4444-4444-444444444444";
+    const env = gatedEnvWithDenylist(route, GATED_HOST, objects, {
+      [`revoked:user:${VIEWER}`]: JSON.stringify({ min_iat: future }),
+    });
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID, sub: VIEWER });
+
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe(AUTHZ_URL);
+  });
+
+  it("PASSES a token whose iat > revoked min_iat (re-issued after the revocation)", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<h1>secret</h1>", content_type: "text/html" },
+    });
+    // min_iat is in the PAST; the freshly minted token's iat is after it → valid.
+    const past = Math.floor(Date.now() / 1000) - 1000;
+    const VIEWER = "44444444-4444-4444-4444-444444444444";
+    const env = gatedEnvWithDenylist(route, GATED_HOST, objects, {
+      [`revoked:user:${VIEWER}`]: JSON.stringify({ min_iat: past }),
+    });
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID, sub: VIEWER });
+
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<h1>secret</h1>");
+  });
+
+  it("revokes via the SITE dimension (unshare) even for a different viewer", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<h1>secret</h1>", content_type: "text/html" },
+    });
+    const future = Math.floor(Date.now() / 1000) + 1000;
+    const env = gatedEnvWithDenylist(route, GATED_HOST, objects, {
+      [`revoked:site:${SITE_ID}`]: JSON.stringify({ min_iat: future }),
+    });
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID });
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(302);
+  });
+
+  it("revokes via the ORG dimension (taken from the ROUTE, not a token claim)", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<h1>secret</h1>", content_type: "text/html" },
+    });
+    const future = Math.floor(Date.now() / 1000) + 1000;
+    const env = gatedEnvWithDenylist(route, GATED_HOST, objects, {
+      [`revoked:org:${ORG_ID}`]: JSON.stringify({ min_iat: future }),
+    });
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID });
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(302);
+  });
+
+  it("does NOT consult the denylist on the PUBLIC path (revocation is gated-only)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    // Even with a wide-open org revocation seeded, a PUBLIC route serves normally
+    // (the public path is identity-free; revocation applies to edge tokens only).
+    const future = Math.floor(Date.now() / 1000) + 100000;
+    const env: Env = {
+      ROUTES: mockRoutes(
+        { [routeKey(HOST)]: PUBLIC_ROUTE },
+        { [`revoked:org:${ORG_ID}`]: JSON.stringify({ min_iat: future }) },
+      ),
+      BUCKET: mockBucket(objects),
+    };
+    const res = await serveNoCache(get(HOST, "/"), env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<h1>home</h1>");
   });
 });

@@ -67,7 +67,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 // RebuildProjection rebuilds the entire edge routing projection from Postgres for
 // the supplied org ids and pushes it through w (the DR drill / drift reconciler).
 // The caller supplies the org id set (in production, a system job enumerates
-// app.org_meta on a BYPASSRLS pool; for Phase 1 / tests the set is passed in).
+// app.org_meta; for Phase 1 / tests the set is passed in).
 func (s *Store) RebuildProjection(ctx context.Context, w projection.Writer, orgIDs []string) error {
 	all := map[string]projection.RouteValue{}
 	for _, orgID := range orgIDs {
@@ -80,4 +80,37 @@ func (s *Store) RebuildProjection(ctx context.Context, w projection.Writer, orgI
 		}
 	}
 	return w.RebuildFromDB(ctx, all)
+}
+
+// RebuildResult summarizes a DR rebuild: how many orgs were scanned and how many
+// routes were re-pushed to the edge projection.
+type RebuildResult struct {
+	Orgs   int
+	Routes int
+}
+
+// RebuildAllOrgs is the DR drill (ARCHITECTURE.md §13 row 8): enumerate EVERY org
+// (via the SECURITY DEFINER app.all_org_ids(), not a BYPASSRLS pool), collect each
+// org's live routes under its own RLS tenant context, and replay the whole set
+// through w.RebuildFromDB — restoring serving after a KV/D1 wipe. Postgres is
+// authoritative; the projection is a rebuildable cache.
+func (s *Store) RebuildAllOrgs(ctx context.Context, w projection.Writer) (RebuildResult, error) {
+	orgIDs, err := s.ListAllOrgIDs(ctx)
+	if err != nil {
+		return RebuildResult{}, err
+	}
+	all := map[string]projection.RouteValue{}
+	for _, orgID := range orgIDs {
+		routes, err := s.CollectRoutesForOrg(ctx, orgID)
+		if err != nil {
+			return RebuildResult{}, err
+		}
+		for host, v := range routes {
+			all[host] = v
+		}
+	}
+	if err := w.RebuildFromDB(ctx, all); err != nil {
+		return RebuildResult{}, err
+	}
+	return RebuildResult{Orgs: len(orgIDs), Routes: len(all)}, nil
 }

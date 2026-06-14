@@ -89,6 +89,10 @@ type Querier interface {
 	// global regardless of RLS visibility.
 	InsertHostRoute(ctx context.Context, arg InsertHostRouteParams) error
 	ListAllowlistEntries(ctx context.Context, siteID string) ([]AppAllowlistEntry, error)
+	// Page the active org's audit log newest-first. RLS scopes the read to the org; the
+	// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
+	// adequate for an admin audit viewer (small N per page).
+	ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error)
 	ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error)
 	// Every host registered for a site in the GLOBAL registry — the canonical
 	// <slug>.shippedusercontent.com host AND every verified custom-domain host. RLS
@@ -109,6 +113,16 @@ type Querier interface {
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
 	ListSiteVersions(ctx context.Context, siteID string) ([]AppSiteVersion, error)
 	ListSites(ctx context.Context) ([]AppSite, error)
+	// ===========================================================================
+	// R2 version GC (Phase 4) — versions to retain per org
+	// ===========================================================================
+	// Every version of every site in the active org, newest first within each site,
+	// flagged with whether it is the site's CURRENT (live) version. Drives the R2
+	// version GC retention policy (keep current + last N): the GC groups by site, keeps
+	// the current version + the top-N by version_no, reads those versions' manifests to
+	// collect referenced blob shas, and deletes every org blob not in that set. RLS
+	// scopes the rows to the active org. r2_prefix + id locate the manifest object.
+	ListVersionsForGC(ctx context.Context) ([]ListVersionsForGCRow, error)
 	// Serialize the members-cap preflight for an org: a transaction-scoped advisory
 	// lock keyed by hashtext(org||':members'). Best-effort server-side enforcement on
 	// OUR code path (Better Auth actually inserts the member row), so the lock just
@@ -175,6 +189,21 @@ type Querier interface {
 	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
 	// under a false org policy.
 	UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAccessPolicyParams) (AppSiteAccessPolicy, error)
+	// NOTE: resolving a content host → owning site via the RLS-bypassing
+	// app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
+	// pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types
+	// from a RETURNS TABLE function (it emits interface{}). The store scans the known
+	// types directly. See services/api/internal/store/authz.go.
+	// ===========================================================================
+	// audit_log (Phase 4) — append-only record of sensitive actions
+	// ===========================================================================
+	// Append an audit row for a sensitive mutation. Runs inside the SAME RLS tenant
+	// tx as the action it records (org-scoped by the per-tx GUC + the explicit org_id),
+	// so an audit write can never land under the wrong tenant. actor_user is the verified
+	// user id (null for a deploy-token actor); actor_token is the deploy-token id when a
+	// token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
+	// the request provenance (ARCHITECTURE.md §10 / §2.3).
+	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) (AppAuditLog, error)
 }
 
 var _ Querier = (*Queries)(nil)

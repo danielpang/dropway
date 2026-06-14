@@ -52,7 +52,17 @@ type SiteStore interface {
 	// Global host registry (canonical + verified custom hosts) for a site — used to
 	// rewrite EVERY route on an access/policy change (FIX 1).
 	ListHostRoutesForSite(ctx context.Context, t store.Tenant, siteID string) ([]store.HostRoute, error)
+
+	// Phase 4 — audit logging.
+	WriteAudit(ctx context.Context, t store.Tenant, rec store.AuditRecord) (store.AuditEntry, error)
+	ListAudit(ctx context.Context, t store.Tenant, p store.ListAuditParams) ([]store.AuditEntry, error)
 }
+
+// EdgeRevoker writes the hard-revocation denylist the serving Worker + /authz read
+// (projection.Revoker). The concrete impl is the same KV writer as the route
+// projection (the "revoked:" prefix); it may be nil in a DB-less/dev deployment, in
+// which case the short edge-token TTL is the only revocation backstop.
+type EdgeRevoker = projection.Revoker
 
 // Ensure the concrete store satisfies the handler surface.
 var _ SiteStore = (*store.Store)(nil)

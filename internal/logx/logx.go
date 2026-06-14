@@ -34,10 +34,69 @@ func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
 	return context.WithValue(ctx, ctxKey{}, l)
 }
 
+// RequestIDHeader is the HTTP header that carries the request correlation id. The
+// Go API HONORS an inbound value (chi's RequestID middleware reuses it) and ECHOES
+// it on every response, so a caller / the edge Worker can propagate one id across
+// the whole edge→Go→Postgres path (ARCHITECTURE.md §2.3). It matches
+// chimiddleware.RequestIDHeader's default.
+const RequestIDHeader = "X-Request-Id"
+
+// maxRequestIDLen caps the accepted inbound X-Request-Id length. A correlation id
+// is short; anything longer is rejected (replaced with a generated id) to bound the
+// bytes that land in every log line and audit row.
+const maxRequestIDLen = 128
+
+// validRequestID reports whether s is a safe inbound correlation id: a NON-EMPTY,
+// length-bounded string drawn only from an unambiguous, control-character-free
+// charset (ASCII alphanumerics plus '-', '_', '.'). This is the allowlist that
+// blocks LOG / AUDIT FORGERY: a client-supplied X-Request-Id is written verbatim
+// into structured logs and audit rows, so an injected newline or control char could
+// forge a fake log line or split a record. Anything outside this set is rejected and
+// a fresh id is generated instead (SanitizeRequestID).
+func validRequestID(s string) bool {
+	if s == "" || len(s) > maxRequestIDLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-' || c == '_' || c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// SanitizeRequestID is middleware that must run BEFORE chi's RequestID middleware.
+// chi REUSES an inbound X-Request-Id verbatim; since that value flows unmodified
+// into structured logs and audit rows, an attacker could inject newlines / control
+// chars to forge or split log/audit records. This middleware STRIPS an inbound
+// header that fails the bounded-charset/length allowlist (validRequestID), so chi
+// then generates a fresh, safe id. A well-formed inbound id is left untouched, so
+// legitimate edge→Go→Postgres correlation still works end to end.
+func SanitizeRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if v := r.Header.Get(RequestIDHeader); v != "" && !validRequestID(v) {
+			// Untrusted/forgeable value → drop it so chi.RequestID mints a fresh id.
+			r.Header.Del(RequestIDHeader)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequestIDFromContext returns the per-request correlation id (set by chi's
+// RequestID middleware, honoring an inbound X-Request-Id). Empty when unset.
+func RequestIDFromContext(ctx context.Context) string {
+	return chimw.GetReqID(ctx)
+}
+
 // Middleware derives a per-request logger from base, tags it with the chi
-// request id (set by chimiddleware.RequestID, which must run before this), and
-// stores it in the request context. It logs one structured line per request at
-// completion with method, path, status, and byte count.
+// request id (set by chimiddleware.RequestID, which must run before this), stores
+// it in the request context, AND echoes the id on the response (X-Request-Id) so
+// the value is observable end to end. It logs one structured line per request at
+// completion with method, path, status, byte count, and the request id.
 //
 // It must be mounted AFTER chi's RequestID middleware so the id is present.
 func Middleware(base *slog.Logger) func(http.Handler) http.Handler {
@@ -47,6 +106,12 @@ func Middleware(base *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqID := chimw.GetReqID(r.Context())
+			// Echo the correlation id back so the caller/edge can tie its logs to
+			// ours. Set BEFORE ServeHTTP so it lands even if the handler writes the
+			// status early. trace_id mirrors request_id (cheap tracing hook; no OTel).
+			if reqID != "" {
+				w.Header().Set(RequestIDHeader, reqID)
+			}
 			l := base.With("request_id", reqID)
 			ctx := WithLogger(r.Context(), l)
 

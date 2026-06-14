@@ -26,6 +26,18 @@ import (
 // ErrNotFound is returned by Head/GetObject when the object is absent.
 var ErrNotFound = errors.New("storage: object not found")
 
+// BlobInfo is one stored blob's content-addressed sha256 plus its store-side
+// last-modified time. The R2 version GC needs LastModified to apply an AGE GUARD:
+// a blob is uploaded via a presigned PUT BEFORE its version row is finalized, so a
+// GC overlapping an in-flight deploy could otherwise delete that deploy's just-
+// uploaded, not-yet-referenced blobs and corrupt it. The GC therefore refuses to
+// delete an orphan younger than GCPolicy.MinAge (presign TTL + safety margin),
+// using LastModified (ARCHITECTURE.md §12).
+type BlobInfo struct {
+	SHA          string
+	LastModified time.Time
+}
+
 // Store is the object-store surface the deploy/serve loop depends on.
 type Store interface {
 	// PresignPut returns a URL the client can PUT the blob's bytes to directly.
@@ -52,6 +64,20 @@ type Store interface {
 	// GetManifest reads a deploy manifest back (e.g. for the serving rebuild / a
 	// content-type lookup). Returns ErrNotFound if absent.
 	GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error)
+
+	// ListBlobInfos returns every blob stored under the org's prefix
+	// (blobs/<org_id>/) as a {SHA, LastModified} pair. It is the input to the R2
+	// version GC: blobs no longer referenced by any retained deploy manifest are
+	// orphans (ARCHITECTURE.md §12 "R2 version GC"), but the GC only deletes an
+	// orphan OLDER than GCPolicy.MinAge — so the LastModified time is surfaced here
+	// to guard against deleting an in-flight deploy's just-uploaded (not-yet-
+	// referenced) blobs. It must paginate internally so a large org enumerates fully.
+	ListBlobInfos(ctx context.Context, orgID string) ([]BlobInfo, error)
+
+	// DeleteBlob removes a single blob by its content-addressed key. Used by the GC
+	// to delete an orphaned blob. Deleting an absent blob is not an error
+	// (idempotent), so a re-run of the GC is safe.
+	DeleteBlob(ctx context.Context, orgID, sha256 string) error
 }
 
 // BlobKey returns the canonical R2/S3 key for a blob. Exported so callers

@@ -36,6 +36,35 @@ default implementations** (e.g. the Go `QuotaProvider`). CI proves the OSS build
 **zero references** into `cloud/` or `ee/` — see the `open-core-boundary` job in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
+## Status — what's built, what's deferred
+
+Phases 0–4 are in the tree. **Phase 4 shipped the security/ops hardening:** audit logging
+into `app.audit_log` (correlated by `request_id`); **hard revocation** via a Cloudflare-KV
+denylist (`revoked:user|site|org` → `{min_iat}`, written by the Go API on the three
+token-revocation triggers — member removal / site unshare / access-tighten /
+`allow_external_sharing` disable — idempotent and rebuildable, checked by both the serving
+Worker and the `/authz` exchange — fail-closed); **billing suspension / over_limit** sets the
+per-org **`org_status` KV flag** instead (the edge serves a read-only platform block page —
+*not* a token revocation, so existing viewers aren't hard-cut, per the §9 read-only model);
+edge rate-limiting + denial-of-wallet caps; content security headers; an **RLS policy test
+suite**; **R2 version GC** (with an age guard so an in-flight deploy's just-uploaded blobs are
+never reaped); and the **DR rebuild** path (`store.RebuildProjection` re-derives the KV/D1
+projection from Postgres).
+
+**Intentionally NOT yet built** (post-launch / enterprise — each needs external accounts,
+paid runtime infra, or a vendor relationship; full rationale in
+[`docs/ARCHITECTURE.md` §15](docs/ARCHITECTURE.md)):
+
+- **SSO/SAML** (Better Auth SSO plugin, UUID-keyed) and **SCIM** provisioning — `ee/`.
+- **Runtime APIs** — collection DB + realtime, file uploads, the **LLM/image proxy** with the
+  §10 denial-of-wallet guardrails, and websockets / Durable Objects / Workers-for-Platforms
+  dynamic runtime.
+- **Third-party malware / abuse scanning vendor** + automated takedown / quarantine.
+- **Per-site configurable CSP UI** (Phase 4 ships a fixed sane default).
+- **Usage-based runtime billing** (depends on the runtime APIs landing first).
+- **Full OpenTelemetry tracing backend** — Phase 4 ships structured logs with a correlated
+  `request_id`; exporting OTel spans to a collector/backend is deferred.
+
 ## Monorepo map
 
 ```

@@ -14,6 +14,9 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true, // we print errors ourselves in main
 	}
 	root.AddCommand(newDeployCmd(defaultClientFactory))
+	// Phase-4 operator jobs (direct DB/R2 access, not the deploy-token API path).
+	root.AddCommand(newGCCmd(defaultOpsFactory))
+	root.AddCommand(newDRCmd(defaultOpsFactory))
 	return root
 }
 

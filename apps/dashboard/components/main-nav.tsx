@@ -6,9 +6,13 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 /** Top-level app sections. `match` is the path prefix used for active state. */
-const LINKS: { href: string; label: string; match: string }[] = [
+type NavLink = { href: string; label: string; match: string; admin?: boolean };
+
+const LINKS: NavLink[] = [
   { href: "/dashboard", label: "Sites", match: "/dashboard" },
   { href: "/members", label: "Members", match: "/members" },
+  // Audit is owner/admin only (the page also re-gates server-side).
+  { href: "/audit", label: "Audit", match: "/audit", admin: true },
   { href: "/billing", label: "Billing", match: "/billing" },
   { href: "/settings", label: "Settings", match: "/settings" },
 ];
@@ -16,13 +20,18 @@ const LINKS: { href: string; label: string; match: string }[] = [
 /**
  * Primary navigation in the app shell. Highlights the active section by path
  * prefix (so /sites/[id] keeps "Sites" lit). Client component for `usePathname`.
+ *
+ * `admin` controls visibility of admin-only entries (the Audit log). This is a
+ * convenience gate — the audit page itself re-checks owner/admin server-side and
+ * the Go API independently enforces the role on /v1/audit.
  */
-export function MainNav() {
+export function MainNav({ admin = false }: { admin?: boolean }) {
   const pathname = usePathname();
+  const links = LINKS.filter((link) => !link.admin || admin);
 
   return (
     <nav className="flex items-center gap-1" aria-label="Primary">
-      {LINKS.map((link) => {
+      {links.map((link) => {
         const active =
           pathname === link.match || pathname.startsWith(`${link.match}/`) ||
           // /sites/* belongs to the Sites section.

@@ -66,6 +66,37 @@ func TestLocal_RebuildReplacesAll(t *testing.T) {
 	}
 }
 
+// TestLocal_OrgStatus proves the org-status projection: a blocking status is
+// recorded (the edge would block), and "active" CLEARS it (the org is served).
+func TestLocal_OrgStatus(t *testing.T) {
+	ctx := context.Background()
+	l := NewLocal()
+	const org = "11111111-1111-1111-1111-111111111111"
+
+	// Initially nothing is projected → the org is served.
+	if _, blocked := l.GetOrgStatus(org); blocked {
+		t.Fatal("a fresh org must have no blocking status")
+	}
+	// Suspension/over_limit blocks at the edge.
+	if err := l.SetOrgStatus(ctx, org, "over_limit"); err != nil {
+		t.Fatal(err)
+	}
+	if status, blocked := l.GetOrgStatus(org); !blocked || status != "over_limit" {
+		t.Fatalf("got (%q, %v), want (over_limit, true)", status, blocked)
+	}
+	// "active" CLEARS the flag (re-subscribe restores serving).
+	if err := l.SetOrgStatus(ctx, org, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if status, blocked := l.GetOrgStatus(org); blocked {
+		t.Fatalf("active must clear the flag, got (%q, %v)", status, blocked)
+	}
+	// Empty org id is rejected.
+	if err := l.SetOrgStatus(ctx, "", "suspended"); err == nil {
+		t.Error("empty org id must be rejected")
+	}
+}
+
 // TestLocal_FileMirror proves the file-backed writer persists + reloads, which is
 // what the offline self-host serving shim reads.
 func TestLocal_FileMirror(t *testing.T) {
