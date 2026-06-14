@@ -61,6 +61,30 @@ export type AllowExternalResult =
 export type QuotaExceeded = components["schemas"]["QuotaExceeded"];
 export type QuotaResource = NonNullable<QuotaExceeded["limit"]>;
 
+// ---- Billing shapes (CLOUD-ONLY surface; §9/§14) --------------------------
+//
+// These mirror the [CLOUD-ONLY] /v1/billing/* endpoints. On the OSS/self-host
+// build those routes don't exist (the API returns 404) — the dashboard treats a
+// 404 here as "no billing / unlimited" and simply hides the upgrade affordances.
+
+/** The org's authoritative plan (GET /v1/billing). plan_tier comes from app.org_meta. */
+export type BillingPlan = components["schemas"]["BillingPlan"];
+/** Paid-tier ladder as the API spells it (free → business → enterprise). */
+export type PlanTier = NonNullable<BillingPlan["plan_tier"]>;
+/** Derived account state mirrored to the edge (drives the over-limit banner). */
+export type OrgStatus = NonNullable<BillingPlan["org_status"]>;
+/** The tier a Checkout session can target (the self-serve, non-contact-sales tiers). */
+export type CheckoutTier =
+  operations["createCheckout"]["requestBody"]["content"]["application/json"]["target_tier"];
+
+/** Successful body of `POST /v1/billing/checkout` (Stripe-hosted URL to redirect to). */
+export type CheckoutResult =
+  operations["createCheckout"]["responses"]["200"]["content"]["application/json"];
+
+/** Successful body of `POST /v1/billing/portal` (Stripe Billing Portal URL). */
+export type PortalResult =
+  operations["createPortal"]["responses"]["200"]["content"]["application/json"];
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body: unknown;
@@ -309,5 +333,41 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+
+  // ---- Phase 3: billing (CLOUD-ONLY; §9). 404 on the self-host build. ------
+
+  /**
+   * Read the org's current plan (any authenticated member). plan_tier is read
+   * from app.org_meta (authoritative) and is mirrored from the signed Stripe
+   * webhook — NOT from any browser redirect. Drives the plan banner + CTAs.
+   * On the OSS build this 404s; callers treat that as "no billing".
+   */
+  getBilling(): Promise<BillingPlan> {
+    return apiFetch<BillingPlan>("/v1/billing");
+  },
+
+  /**
+   * Start a Stripe Checkout session for {target_tier} (owner/admin → 403
+   * otherwise). Returns the Stripe-hosted checkout_url to redirect the user to.
+   * The success redirect grants NOTHING — only the webhook flips plan_tier (§9).
+   */
+  createCheckout(input: {
+    target_tier: CheckoutTier;
+    seats?: number;
+  }): Promise<CheckoutResult> {
+    return apiFetch<CheckoutResult>("/v1/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /**
+   * Open the Stripe Billing Portal for the org's existing Customer (owner/admin
+   * → 403). Returns portal_url; 409 if the org has no Stripe customer yet (the
+   * caller should run Checkout first).
+   */
+  createPortal(): Promise<PortalResult> {
+    return apiFetch<PortalResult>("/v1/billing/portal", { method: "POST" });
   },
 };

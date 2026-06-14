@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { QuotaExceeded } from "@/lib/api";
 
 /** A slug is a single DNS label: lowercase alphanumerics + hyphens. */
@@ -34,10 +35,14 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /**
  * "New site" affordance: a trigger button + a dialog that POSTs to the Go API
  * via the create-site server action. On a 402 it closes and opens the upgrade
- * modal placeholder, reading the quota body the API returned. On success it
- * navigates to the new site's detail page.
+ * modal, reading the quota body the API returned (→ Stripe Checkout). On success
+ * it navigates to the new site's detail page.
+ *
+ * When `readOnly` is set (org is over_limit / past_due / suspended per §9) the
+ * trigger is DISABLED with an explanatory tooltip and the dialog can't open —
+ * a UX mirror of the server-side restriction (the API would 402/403 anyway).
  */
-export function NewSiteDialog() {
+export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
   const router = useRouter();
 
   const [open, setOpen] = React.useState(false);
@@ -85,6 +90,20 @@ export function NewSiteDialog() {
 
     setError(result.message);
     setPending(false);
+  }
+
+  if (readOnly) {
+    // Account is restricted by billing: disable the action and explain why.
+    // `disabled` buttons don't emit focus/hover, so the Tooltip wrapper (its
+    // own focusable span) carries the hover/focus + aria-describedby.
+    return (
+      <Tooltip label="Your organization is over its plan limit. Visit Billing to upgrade before creating new sites.">
+        <Button disabled aria-disabled className="pointer-events-none">
+          <Plus aria-hidden />
+          New site
+        </Button>
+      </Tooltip>
+    );
   }
 
   return (

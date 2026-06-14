@@ -319,6 +319,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/stripe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * [CLOUD-ONLY] Stripe webhook (JWT-FREE, signature-verified)
+         * @description The Stripe webhook endpoint. UNAUTHENTICATED (no Better Auth JWT) but SIGNATURE-VERIFIED against STRIPE_WEBHOOK_SECRET via the Stripe-Signature header. The handler (1) verifies the signature (else 400, no DB write), (2) dedupes by Stripe event id (replay → 200 no-op), (3) maps the event to a plan_tier change and persists it (the ONLY writer of plan_tier). This is the source of truth for entitlement (§9). checkout.session.completed / customer.subscription.created|updated → upsert subscription + raise plan_tier; customer.subscription.deleted → downgrade to Free + org_status (over_limit if the org now exceeds Free caps), NEVER deleting data.
+         */
+        post: operations["stripeWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * [CLOUD-ONLY] Get the org's current plan
+         * @description Returns the org's authoritative plan (read from app.org_meta) plus the subscription status / org_status / seats if a subscription row exists. Any authenticated member may read it (it drives the dashboard's plan banner and upgrade CTA); billing WRITES still require owner/admin.
+         */
+        get: operations["getBilling"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * [CLOUD-ONLY] Start a Stripe Checkout session (owner/admin)
+         * @description Owner/admin only. Ensures a Stripe Customer for the org (one per org, persisting stripe_customer_id), then creates a subscription-mode Checkout Session for {target_tier} with client_reference_id=org_id and metadata{org_id,target_tier} so the signed webhook can resolve + entitle the org. Returns the Stripe-hosted checkout_url. The success redirect grants NOTHING — only the webhook flips plan_tier (§9).
+         */
+        post: operations["createCheckout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * [CLOUD-ONLY] Open the Stripe Billing Portal (owner/admin)
+         * @description Owner/admin only. Creates a Stripe Billing Portal session for the org's existing Stripe Customer (self-serve seat/plan/payment-method/cancel) and returns the portal_url. 409 if the org has no Stripe customer yet (run Checkout first).
+         */
+        post: operations["createPortal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -419,6 +499,23 @@ export interface components {
             error?: string;
             message?: string;
         };
+        /** @description [CLOUD-ONLY] The org's current plan (GET /v1/billing). plan_tier is read from app.org_meta (authoritative). */
+        BillingPlan: {
+            /** @enum {string} */
+            plan_tier?: "free" | "business" | "enterprise";
+            /**
+             * @description Stripe subscription status (omitted if no subscription row).
+             * @enum {string}
+             */
+            status?: "active" | "trialing" | "past_due" | "canceled" | "incomplete";
+            /**
+             * @description Derived account state mirrored to the edge.
+             * @enum {string}
+             */
+            org_status?: "active" | "over_limit" | "past_due" | "suspended";
+            /** Format: int64 */
+            seats?: number;
+        };
         /** @description 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal. */
         QuotaExceeded: {
             /** @enum {string} */
@@ -497,6 +594,24 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["QuotaExceeded"];
+            };
+        };
+        /** @description Method not allowed (e.g. a non-POST to the Stripe webhook) */
+        Error405: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Internal error (the request may be retried; persistence is idempotent) */
+        Error500: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
             };
         };
     };
@@ -1116,6 +1231,140 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    stripeWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stripe's t=<ts>,v1=<hmac> signature over the raw body. */
+                "Stripe-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The raw Stripe event JSON (verified against the signature). */
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Processed (or acknowledged duplicate / unhandled type). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example ok */
+                        status?: string;
+                    };
+                };
+            };
+            /** @description Invalid or missing signature — nothing is persisted. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            405: components["responses"]["Error405"];
+            500: components["responses"]["Error500"];
+        };
+    };
+    getBilling: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's current plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingPlan"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Cloud build not present (self-host) — route does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createCheckout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    target_tier: "business" | "enterprise";
+                    /**
+                     * Format: int64
+                     * @description Seats (defaults to 1).
+                     */
+                    seats?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description A Stripe Checkout Session URL to redirect the user to. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uri */
+                        checkout_url?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createPortal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A Stripe Billing Portal URL to redirect the user to. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uri */
+                        portal_url?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
 }

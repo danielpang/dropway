@@ -563,6 +563,143 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  # ===========================================================================
+  # Billing (CLOUD-ONLY / PROPRIETARY — docs/ARCHITECTURE.md §9/§14).
+  #
+  # These paths exist ONLY in the hosted-cloud build (compiled under the `cloud`
+  # Go build tag and mounted by mountCloud). The open-source / self-host build
+  # does NOT serve /webhooks/stripe or /v1/billing/* — self-host is unlimited and
+  # has no Stripe. They are documented here for the cloud client; a self-host
+  # client will get 404 on them, which is expected.
+  #
+  # CRITICAL invariant: the paid entitlement (plan_tier) is written to the DB ONLY
+  # by the signature-verified /webhooks/stripe handler — never by the browser's
+  # success redirect. Checkout/Portal only START a Stripe-hosted flow.
+  # ===========================================================================
+
+  /webhooks/stripe:
+    post:
+      summary: "[CLOUD-ONLY] Stripe webhook (JWT-FREE, signature-verified)"
+      description: >
+        The Stripe webhook endpoint. UNAUTHENTICATED (no Better Auth JWT) but
+        SIGNATURE-VERIFIED against STRIPE_WEBHOOK_SECRET via the Stripe-Signature
+        header. The handler (1) verifies the signature (else 400, no DB write),
+        (2) dedupes by Stripe event id (replay → 200 no-op), (3) maps the event to
+        a plan_tier change and persists it (the ONLY writer of plan_tier). This is
+        the source of truth for entitlement (§9). checkout.session.completed /
+        customer.subscription.created|updated → upsert subscription + raise
+        plan_tier; customer.subscription.deleted → downgrade to Free + org_status
+        (over_limit if the org now exceeds Free caps), NEVER deleting data.
+      operationId: stripeWebhook
+      security: []
+      tags: [billing-cloud]
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+          description: "Stripe's t=<ts>,v1=<hmac> signature over the raw body."
+      requestBody:
+        required: true
+        description: The raw Stripe event JSON (verified against the signature).
+        content:
+          application/json:
+            schema: { type: object, description: A Stripe Event object. }
+      responses:
+        "200":
+          description: Processed (or acknowledged duplicate / unhandled type).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "400":
+          description: Invalid or missing signature — nothing is persisted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "405": { $ref: "#/components/responses/Error405" }
+        "500": { $ref: "#/components/responses/Error500" }
+
+  /v1/billing:
+    get:
+      summary: "[CLOUD-ONLY] Get the org's current plan"
+      description: >
+        Returns the org's authoritative plan (read from app.org_meta) plus the
+        subscription status / org_status / seats if a subscription row exists. Any
+        authenticated member may read it (it drives the dashboard's plan banner and
+        upgrade CTA); billing WRITES still require owner/admin.
+      operationId: getBilling
+      tags: [billing-cloud]
+      responses:
+        "200":
+          description: The org's current plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BillingPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Cloud build not present (self-host) — route does not exist.
+
+  /v1/billing/checkout:
+    post:
+      summary: "[CLOUD-ONLY] Start a Stripe Checkout session (owner/admin)"
+      description: >
+        Owner/admin only. Ensures a Stripe Customer for the org (one per org,
+        persisting stripe_customer_id), then creates a subscription-mode Checkout
+        Session for {target_tier} with client_reference_id=org_id and
+        metadata{org_id,target_tier} so the signed webhook can resolve + entitle the
+        org. Returns the Stripe-hosted checkout_url. The success redirect grants
+        NOTHING — only the webhook flips plan_tier (§9).
+      operationId: createCheckout
+      tags: [billing-cloud]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_tier]
+              properties:
+                target_tier: { type: string, enum: [business, enterprise] }
+                seats: { type: integer, format: int64, minimum: 1, description: "Seats (defaults to 1)." }
+      responses:
+        "200":
+          description: A Stripe Checkout Session URL to redirect the user to.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkout_url: { type: string, format: uri }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/billing/portal:
+    post:
+      summary: "[CLOUD-ONLY] Open the Stripe Billing Portal (owner/admin)"
+      description: >
+        Owner/admin only. Creates a Stripe Billing Portal session for the org's
+        existing Stripe Customer (self-serve seat/plan/payment-method/cancel) and
+        returns the portal_url. 409 if the org has no Stripe customer yet (run
+        Checkout first).
+      operationId: createPortal
+      tags: [billing-cloud]
+      responses:
+        "200":
+          description: A Stripe Billing Portal URL to redirect the user to.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  portal_url: { type: string, format: uri }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -673,6 +810,15 @@ components:
         error: { type: string, description: Stable machine-readable code }
         message: { type: string }
 
+    BillingPlan:
+      type: object
+      description: "[CLOUD-ONLY] The org's current plan (GET /v1/billing). plan_tier is read from app.org_meta (authoritative)."
+      properties:
+        plan_tier: { type: string, enum: [free, business, enterprise] }
+        status: { type: string, enum: [active, trialing, past_due, canceled, incomplete], description: Stripe subscription status (omitted if no subscription row). }
+        org_status: { type: string, enum: [active, over_limit, past_due, suspended], description: Derived account state mirrored to the edge. }
+        seats: { type: integer, format: int64 }
+
     QuotaExceeded:
       type: object
       description: 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal.
@@ -721,3 +867,13 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/QuotaExceeded" }
+    Error405:
+      description: Method not allowed (e.g. a non-POST to the Stripe webhook)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error500:
+      description: Internal error (the request may be retried; persistence is idempotent)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

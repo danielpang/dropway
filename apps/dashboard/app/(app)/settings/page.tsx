@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Globe2, ShieldAlert, Users } from "lucide-react";
+import { CreditCard, Globe2, ShieldAlert, Users } from "lucide-react";
 
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { Button } from "@/components/ui/button";
@@ -97,6 +97,24 @@ export default async function OrgSettingsPage() {
         <CardContent>
           <Button asChild variant="outline">
             <Link href="/members">Manage members</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Billing shortcut */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <CreditCard className="size-4 text-muted-foreground" aria-hidden />
+            Billing &amp; plan
+          </CardTitle>
+          <CardDescription>
+            View your plan and limits, upgrade, or manage your subscription.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline">
+            <Link href="/billing">Go to billing</Link>
           </Button>
         </CardContent>
       </Card>

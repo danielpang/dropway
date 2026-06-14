@@ -61,7 +61,38 @@ CREATE TABLE billing.processed_stripe_events (
 );
 -- +goose StatementEnd
 
+-- ---------------------------------------------------------------------------
+-- Runtime grants. The cloud BillingStore (cloud/billing/store.go) connects as the
+-- SAME non-BYPASSRLS `shipped_app` runtime role as the rest of the API (the
+-- per-event SET LOCAL app.current_org_id is the isolation, NOT a privileged role
+-- -- §9). billing.* tables have NO RLS (they are the cloud-only Stripe mirror), so
+-- the runtime role just needs schema USAGE + table DML here; the ONE cross-schema
+-- write it makes (UPDATE app.org_meta.plan_tier) is already granted + RLS-scoped by
+-- the app migrations (0003). The role is created by the app migrations (0001), so
+-- the app schema must be migrated before this (documented run-ordering above).
+-- +goose StatementBegin
+GRANT USAGE ON SCHEMA billing TO shipped_app;
+-- +goose StatementEnd
+-- +goose StatementBegin
+GRANT SELECT, INSERT, UPDATE, DELETE ON billing.subscriptions TO shipped_app;
+-- +goose StatementEnd
+-- +goose StatementBegin
+GRANT SELECT, INSERT, UPDATE, DELETE ON billing.processed_stripe_events TO shipped_app;
+-- +goose StatementEnd
+
 -- +goose Down
+
+-- Grants are dropped implicitly when the objects/schema are dropped below; the
+-- explicit REVOKEs keep the rollback tidy if the role outlives the schema.
+-- +goose StatementBegin
+REVOKE ALL ON billing.processed_stripe_events FROM shipped_app;
+-- +goose StatementEnd
+-- +goose StatementBegin
+REVOKE ALL ON billing.subscriptions FROM shipped_app;
+-- +goose StatementEnd
+-- +goose StatementBegin
+REVOKE USAGE ON SCHEMA billing FROM shipped_app;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 DROP TABLE IF EXISTS billing.processed_stripe_events;

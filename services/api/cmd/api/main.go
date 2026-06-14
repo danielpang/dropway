@@ -23,6 +23,7 @@ import (
 	"github.com/danielpang/shipped/internal/auth"
 	"github.com/danielpang/shipped/internal/customdomains"
 	"github.com/danielpang/shipped/internal/edgetoken"
+	"github.com/danielpang/shipped/internal/middleware"
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/storage"
 	"github.com/danielpang/shipped/services/api/internal/config"
@@ -30,6 +31,18 @@ import (
 	"github.com/danielpang/shipped/services/api/internal/router"
 	"github.com/danielpang/shipped/services/api/internal/store"
 )
+
+// cloudDeps carries the dependencies the build-tag-selected mountCloud needs to
+// wire cloud-only routes. It is declared here (not under a build tag) so both
+// wire_oss.go (no-op mountCloud) and wire_cloud.go (real mountCloud) share one
+// signature; the OSS build simply ignores every field.
+type cloudDeps struct {
+	Cfg                  config.Config
+	Pool                 *pgxpool.Pool                   // nil when no DATABASE_URL
+	Store                *store.Store                    // nil when no DATABASE_URL; billing's live role re-check
+	Verifier             middleware.Verifier             // the EdDSA JWT verifier (authz boundary)
+	EnsureOrgProvisioned func(http.Handler) http.Handler // ensure-org-provisioned middleware
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -60,12 +73,18 @@ func run(baseLogger *slog.Logger) error {
 	slog.Info("quota provider wired", "cloud_build", cloudBuild, "provider", quotaProviderName())
 
 	// ---- Data layer: pgx pool (non-BYPASSRLS shipped_app role) → Store. ----
+	// The pool is hoisted to the run() scope so the cloud build's mountCloud can
+	// build the BillingStore over the SAME non-BYPASSRLS pool (the per-event SET
+	// LOCAL app.current_org_id is the isolation, §9). It stays nil when there's no
+	// DATABASE_URL, and mountCloud then skips billing.
 	var st *store.Store
+	var pool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
-		pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+		p, err := pgxpool.New(ctx, cfg.DatabaseURL)
 		if err != nil {
 			return err
 		}
+		pool = p
 		defer pool.Close()
 		st = store.New(pool, qp)
 		slog.Info("store wired (RLS tenant context per request)")
@@ -134,9 +153,25 @@ func run(baseLogger *slog.Logger) error {
 	if cfg.AllowJWTRoleFallback {
 		slog.Warn("ALLOW_JWT_ROLE_FALLBACK=true — admin gating will trust the JWT role claim when auth.member is unavailable")
 	}
+
+	// Build the router (concrete *chi.Mux), then let the build-tag-selected
+	// mountCloud add cloud-only routes onto it. In the OSS build mountCloud is a
+	// no-op (wire_oss.go) → no /webhooks/stripe, no /v1/billing (self-host has no
+	// billing). In the cloud build it mounts the signed Stripe webhook + the authed
+	// billing routes (wire_cloud.go). The OSS route surface is therefore identical
+	// whether or not this call is present.
+	mux := router.New(verifier, api, baseLogger)
+	mountCloud(mux, cloudDeps{
+		Cfg:                  cfg,
+		Pool:                 pool,
+		Store:                st,
+		Verifier:             verifier,
+		EnsureOrgProvisioned: api.EnsureOrgProvisioned,
+	})
+
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           router.New(verifier, api, baseLogger),
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

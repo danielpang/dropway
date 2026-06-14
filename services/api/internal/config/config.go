@@ -69,6 +69,29 @@ type Config struct {
 	// ProjectionFilePath, when set (PROJECTION_FILE), mirrors the local projection
 	// writer to a JSON file (the offline/self-host serving shim reads it).
 	ProjectionFilePath string
+
+	// ---- Cloud-only billing (Stripe). These are read ONLY by the cloud build's
+	// mountCloud (wire_cloud.go) to wire cloud/billing; the OSS build ignores them
+	// and never mounts /webhooks/stripe or /v1/billing (self-host has no billing,
+	// ARCHITECTURE.md §9/§14). They're declared here (not under a build tag) so the
+	// single Config type is shared; documented cloud-only in deploy/.env.example. ----
+
+	// StripeSecretKey is the restricted Stripe API key (STRIPE_SECRET_KEY) used to
+	// create Checkout + Billing-Portal sessions and Customers.
+	StripeSecretKey string
+	// StripeWebhookSecret (STRIPE_WEBHOOK_SECRET) verifies the Stripe-Signature on
+	// the inbound /webhooks/stripe payload — the ONLY thing that may mutate the paid
+	// entitlement (§9).
+	StripeWebhookSecret string
+	// StripePriceBusiness / StripePriceEnterprise are the Stripe Price ids for the
+	// self-serve tiers (STRIPE_PRICE_BUSINESS / STRIPE_PRICE_ENTERPRISE). They map
+	// a checkout target_tier → price and a webhook subscription price → plan_tier.
+	StripePriceBusiness   string
+	StripePriceEnterprise string
+
+	// DashboardURL is the dashboard origin (DASHBOARD_URL) used for Checkout
+	// success/cancel + Billing-Portal return URLs. Defaults to https://app.shipped.app.
+	DashboardURL string
 }
 
 // Load reads the environment and returns a validated Config. It returns an error
@@ -99,6 +122,12 @@ func Load() (Config, error) {
 		EdgeSigningKey: os.Getenv("EDGE_SIGNING_KEY"),
 
 		ProjectionFilePath: os.Getenv("PROJECTION_FILE"),
+
+		StripeSecretKey:       os.Getenv("STRIPE_SECRET_KEY"),
+		StripeWebhookSecret:   os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
+		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
+		DashboardURL:          envOr("DASHBOARD_URL", "https://app.shipped.app"),
 	}
 
 	if p := os.Getenv("PORT"); p != "" {
@@ -117,6 +146,14 @@ func Load() (Config, error) {
 
 // Addr returns the host:port string for ListenAndServe.
 func (c Config) Addr() string { return fmt.Sprintf(":%d", c.Port) }
+
+// envOr returns the environment value for key, or def when it's unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
 // parseBool treats the common truthy spellings as true; everything else
 // (including empty) is false. self-host defaults to false.

@@ -2,10 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
+import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { MainNav } from "@/components/main-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
+import { loadOrgBillingState } from "@/lib/billing-server";
 
 /**
  * Authenticated app shell. Guards the whole (app) route group server-side:
@@ -27,6 +29,11 @@ export default async function AppLayout({
     .listOrganizations({ headers: requestHeaders })
     .catch(() => []);
   if (!orgs || orgs.length === 0) redirect("/onboarding");
+
+  // Billing-derived account state (over_limit / past_due) → drives the
+  // non-dismissible banner. UX mirror of the server-side quota enforcement; a
+  // billing-API hiccup degrades to "active" so the shell never wrongly locks.
+  const { orgStatus } = await loadOrgBillingState();
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -52,6 +59,8 @@ export default async function AppLayout({
           </div>
         </div>
       </header>
+
+      <OverLimitBanner status={orgStatus} />
 
       <main className="container flex-1 py-10">{children}</main>
     </div>

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 const LINKS: { href: string; label: string; match: string }[] = [
   { href: "/dashboard", label: "Sites", match: "/dashboard" },
   { href: "/members", label: "Members", match: "/members" },
+  { href: "/billing", label: "Billing", match: "/billing" },
   { href: "/settings", label: "Settings", match: "/settings" },
 ];
 

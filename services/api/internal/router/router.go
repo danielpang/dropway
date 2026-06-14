@@ -4,7 +4,6 @@ package router
 
 import (
 	"log/slog"
-	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -14,11 +13,17 @@ import (
 	"github.com/danielpang/shipped/services/api/internal/handlers"
 )
 
-// New builds the HTTP handler. `verifier` verifies the Bearer EdDSA JWT for the
+// New builds the HTTP router. `verifier` verifies the Bearer EdDSA JWT for the
 // authenticated routes; `api` carries the handler dependencies (quota seam, the
 // Store, object storage, and the projection writer). `baseLogger` is the root
 // logger the per-request logx middleware derives request_id-tagged loggers from.
-func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logger) http.Handler {
+//
+// It returns the concrete *chi.Mux (not just http.Handler) so the cloud build can
+// mount additional routes onto it via mountCloud (the /webhooks/stripe webhook +
+// the authed /v1/billing/* group). The OSS build's mountCloud is a no-op, so the
+// returned mux is identical to the self-host surface — billing routes simply don't
+// exist there (ARCHITECTURE.md §14: self-host has no billing).
+func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logger) *chi.Mux {
 	if baseLogger == nil {
 		baseLogger = slog.Default()
 	}

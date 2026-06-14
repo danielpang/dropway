@@ -7,6 +7,7 @@ import { NewSiteDialog } from "@/components/sites/new-site-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { api, ApiError, type Site } from "@/lib/api";
+import { loadOrgBillingState } from "@/lib/billing-server";
 
 export const metadata: Metadata = { title: "Sites" };
 
@@ -23,9 +24,17 @@ export default async function DashboardPage() {
   let sites: Site[] | null = null;
   let loadError: string | null = null;
 
-  try {
-    sites = await api.listSites();
-  } catch (err) {
+  // Billing-derived read-only state (over_limit / past_due) disables "New site"
+  // (§9). UX mirror of server enforcement; loads in parallel with the sites list.
+  const [sitesResult, billing] = await Promise.allSettled([
+    api.listSites(),
+    loadOrgBillingState(),
+  ]);
+
+  if (sitesResult.status === "fulfilled") {
+    sites = sitesResult.value;
+  } else {
+    const err = sitesResult.reason;
     // The Go API may be unreachable in local dev; degrade to an inline notice
     // rather than crashing the shell.
     loadError =
@@ -33,6 +42,9 @@ export default async function DashboardPage() {
         ? `The API returned ${err.status}.`
         : "Couldn't reach the control-plane API.";
   }
+
+  const readOnly =
+    billing.status === "fulfilled" ? billing.value.readOnly : false;
 
   return (
     <div className="mx-auto max-w-5xl space-y-8">
@@ -43,7 +55,7 @@ export default async function DashboardPage() {
             Deploy a folder, get a live, access-controlled URL.
           </p>
         </div>
-        <NewSiteDialog />
+        <NewSiteDialog readOnly={readOnly} />
       </div>
 
       {loadError ? (
@@ -59,7 +71,7 @@ export default async function DashboardPage() {
           ))}
         </ul>
       ) : (
-        <EmptyState />
+        <EmptyState readOnly={readOnly} />
       )}
     </div>
   );
@@ -112,7 +124,7 @@ function SiteRow({ site }: { site: Site }) {
 }
 
 /** Shown when the org has no sites yet. */
-function EmptyState() {
+function EmptyState({ readOnly }: { readOnly: boolean }) {
   return (
     <Card className="flex flex-col items-center gap-4 border-dashed p-12 text-center">
       <span className="grid size-12 place-items-center rounded-xl bg-secondary text-secondary-foreground">
@@ -128,7 +140,7 @@ function EmptyState() {
           to push your first deploy.
         </p>
       </div>
-      <NewSiteDialog />
+      <NewSiteDialog readOnly={readOnly} />
     </Card>
   );
 }
