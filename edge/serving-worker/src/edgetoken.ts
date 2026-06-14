@@ -79,6 +79,17 @@ interface JwksCacheEntry {
 /** Default JWKS cache TTL (ms). Short so a key rotation propagates quickly. */
 const JWKS_TTL_MS = 5 * 60_000;
 
+/**
+ * How long past its TTL a cached key set may still be served when a refetch is
+ * FAILING (a transient JWKS outage). Bounded on purpose: an UNBOUNDED stale
+ * fallback would let a rotated-out (or compromised) key keep verifying for the
+ * whole isolate lifetime as long as the JWKS endpoint kept erroring (M1). After
+ * TTL + this grace with no successful refetch we fail closed (throw → the caller
+ * 302s to /authz) instead of trusting a key the signer may have revoked. Max stale
+ * window ≈ JWKS_TTL_MS + this, measured from the last SUCCESSFUL fetch.
+ */
+const JWKS_STALE_GRACE_MS = 10 * 60_000;
+
 /** The cache map: jwksUrl → entry. Module-scoped (one per isolate). */
 const jwksCache = new Map<string, JwksCacheEntry>();
 
@@ -116,9 +127,10 @@ async function loadKeys(
   }
 
   if (doc === null) {
-    // Fetch/parse failed. Fall back to a stale-but-good cache if we have one,
-    // rather than denying every request on a transient JWKS hiccup.
-    if (cached) return cached.keys;
+    // Fetch/parse failed. Fall back to a stale-but-good cache ONLY within the
+    // bounded grace window (M1) — past it, fail closed rather than trust keys the
+    // signer may have rotated/revoked while the endpoint stays down.
+    if (cached && now < cached.expiresAt + JWKS_STALE_GRACE_MS) return cached.keys;
     throw new Error("edge JWKS unavailable");
   }
 
@@ -137,7 +149,9 @@ async function loadKeys(
   }
 
   if (keys.size === 0) {
-    if (cached) return cached.keys;
+    // A fetched-but-empty/all-filtered key set: keep serving the last good keys
+    // only within the bounded grace window (M1), then fail closed.
+    if (cached && now < cached.expiresAt + JWKS_STALE_GRACE_MS) return cached.keys;
     throw new Error("edge JWKS has no usable Ed25519 keys");
   }
 
@@ -167,6 +181,15 @@ export interface VerifyParams {
   host: string;
   /** The route's site_id — the token's `site_id` claim MUST equal this. */
   siteId: string;
+  /**
+   * The ROUTE's current access_mode — the token's `mode` claim MUST equal this
+   * (H1). Without this binding, a token minted while the site was one gated mode
+   * (e.g. `password`, with an anon subject) would still verify after the operator
+   * switched the site to another mode (e.g. `org_only`) without republishing,
+   * serving member-only content to a password-token holder. Omit (undefined) only
+   * where the route mode isn't applicable.
+   */
+  expectedMode?: string;
   /** The edge JWKS endpoint (env-configurable). */
   jwksUrl: string;
   /** Injected fetch (Worker runtime / test mock). */
@@ -224,6 +247,9 @@ export async function verifyEdgeToken(p: VerifyParams): Promise<EdgeClaims | nul
   if (typeof mode !== "string" || !(EDGE_MODES as readonly string[]).includes(mode)) {
     return null;
   }
+  // H1: the token's mode must match the ROUTE's current access_mode — a token
+  // minted for a now-stale mode (after a mode switch without republish) is invalid.
+  if (p.expectedMode !== undefined && mode !== p.expectedMode) return null;
   const sub = payload.sub;
   if (typeof sub !== "string" || sub === "") return null;
 

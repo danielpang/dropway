@@ -28,8 +28,8 @@ import {
   applyHeaders,
   CONTENT_CSP,
   PLATFORM_CSP,
+  isServiceWorkerRequest,
   isServiceWorkerScript,
-  serviceWorkerBlockHeaders,
 } from "../src/security";
 import {
   candidatePaths,
@@ -207,9 +207,14 @@ describe("isServiceWorkerScript (more conventional names + negatives)", () => {
   });
 });
 
-describe("serviceWorkerBlockHeaders + applyHeaders", () => {
-  it("emits no Service-Worker-Allowed widening on content (empty record)", () => {
-    expect(serviceWorkerBlockHeaders()).toEqual({});
+describe("isServiceWorkerRequest + applyHeaders", () => {
+  it("flags a SW-script fetch (Service-Worker: script) regardless of path", () => {
+    const sw = new Request("https://acme.shippedusercontent.com/assets/app-worker.js", {
+      headers: { "Service-Worker": "script" },
+    });
+    expect(isServiceWorkerRequest(sw)).toBe(true);
+    const normal = new Request("https://acme.shippedusercontent.com/assets/app-worker.js");
+    expect(isServiceWorkerRequest(normal)).toBe(false);
   });
 
   it("applyHeaders sets non-empty values and SKIPS empty-string values", () => {

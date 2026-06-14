@@ -165,6 +165,7 @@ export async function handleAuthzCallback(
           token,
           host: url.host,
           siteId: route.site_id,
+          expectedMode: route.access_mode,
           jwksUrl: cfg.jwksUrl,
           fetchImpl,
           now,
@@ -203,6 +204,7 @@ export async function authorizeGated(
     token,
     host: url.host,
     siteId: route.site_id,
+    expectedMode: route.access_mode,
     jwksUrl: cfg.jwksUrl,
     fetchImpl,
     now,
@@ -214,6 +216,7 @@ async function verifyTokenSafely(p: {
   token: string;
   host: string;
   siteId: string;
+  expectedMode?: string;
   jwksUrl: string;
   fetchImpl: FetchLike;
   now?: number;

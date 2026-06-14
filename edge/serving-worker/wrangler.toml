@@ -34,11 +34,23 @@ EDGE_JWKS_URL = "https://api.shipped.app/.well-known/edge-jwks"
 APP_AUTHZ_URL = "https://app.shipped.app/authz"
 
 # --- Phase 4 hardening (edge rate limiting / denial-of-wallet) ---------------
-# Fixed-window rate limit applied per client IP (else host) BEFORE the route
-# lookup. Defaults (src/ratelimit.ts) are 600 req / 60s. Absent LIMITS binding
-# (below) makes rate limiting a no-op (fail open). Tune per environment.
+# Rate limit applied per client IP (else host) BEFORE the route lookup. The
+# PRIMARY limiter is the native `ratelimit` binding below (atomic — it actually
+# counts a single-IP flood); these vars only tune the KV-counter FALLBACK
+# (src/ratelimit.ts, best-effort: KV can't count a hot-key flood). Defaults
+# 600 req / 60s.
 RATE_LIMIT_MAX = "600"
 RATE_LIMIT_WINDOW_SECONDS = "60"
+
+# Native, atomic Rate Limiting binding — the REAL denial-of-wallet control (it
+# correctly counts a single-IP flood the KV counter cannot). Keep `simple.limit`
+# /`period` in sync with the vars above; `namespace_id` is an arbitrary per-Worker
+# integer you choose. When this binding is present the Worker prefers it over the
+# KV counter (src/index.ts).
+[[ratelimit]]
+binding = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 600, period = 60 }
 
 # --- Bindings ----------------------------------------------------------------
 

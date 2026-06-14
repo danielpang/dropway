@@ -623,6 +623,54 @@ describe("serve() caches public blob responses via the Cache API", () => {
   });
 });
 
+// --- edge rate limiting: native binding preferred (H9) ----------------------
+
+describe("edge rate limiting — native Rate Limiting binding (H9)", () => {
+  it("429s when the native RATE_LIMITER denies (it actually counts a flood)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "x", content_type: "text/html; charset=utf-8" },
+    });
+    const env: Env = {
+      ...envFor(PUBLIC_ROUTE, HOST, objects),
+      RATE_LIMITER: { limit: async () => ({ success: false }) },
+    };
+    const res = await serveNoCache(get(HOST, "/"), env);
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBeTruthy();
+  });
+
+  it("serves normally when the native RATE_LIMITER allows", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>ok</h1>", content_type: "text/html; charset=utf-8" },
+    });
+    const env: Env = {
+      ...envFor(PUBLIC_ROUTE, HOST, objects),
+      RATE_LIMITER: { limit: async () => ({ success: true }) },
+    };
+    const res = await serveNoCache(get(HOST, "/"), env);
+    expect(res.status).toBe(200);
+  });
+});
+
+// --- service-worker registration block (M3) ---------------------------------
+
+describe("service-worker registration is blocked under any path (M3)", () => {
+  it("404s a `Service-Worker: script` fetch regardless of the path name", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html; charset=utf-8" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    // Non-conventional SW name the filename list would MISS, but the request header
+    // (sent by the browser on every SW-script fetch) is caught.
+    const swReq = new Request(`https://${HOST}/assets/app-worker.js`, {
+      method: "GET",
+      headers: { "Service-Worker": "script" },
+    });
+    const res = await serveNoCache(swReq, env);
+    expect(res.status).toBe(404);
+  });
+});
+
 // ============================================================================
 // Phase 2 — gated serving (password | allowlist | org_only)
 // ============================================================================
@@ -868,6 +916,23 @@ describe("serve() gated path — edge-token verification", () => {
       siteId: SITE_ID,
       expSecondsFromNow: -60, // already expired
     });
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(302);
+  });
+
+  it("302s when the token's MODE does not match the route's access_mode (H1)", async () => {
+    const signer = await makeEdgeSigner();
+    // Route is org_only now, but the held cookie was minted for `password` (e.g. the
+    // site was switched password→org_only without republishing). The token must NOT
+    // be accepted to serve org_only content.
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = gatedDeploy();
+    const env = gatedEnv(route, GATED_HOST, objects);
+    const token = await signer.mint({ host: GATED_HOST, siteId: SITE_ID, mode: "password" });
+
     const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
       cache: null,
       fetchImpl: mockJwksFetch(signer.jwks),

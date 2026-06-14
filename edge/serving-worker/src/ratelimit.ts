@@ -5,10 +5,14 @@
 // caps"). Two independent controls, both READ-ONLY-ish projections over KV so the
 // Worker stays a thin consumer:
 //
-//   1. A per-(host|IP) request RATE LIMITER — a fixed-window counter in KV. Kept
-//      as a PURE function `rateLimitDecision()` over an injected counter store +
-//      clock, so it is fully unit-testable with no live KV/Durable Object. Over
-//      the limit → 429 with a `Retry-After`.
+//   1. A per-(host|IP) request RATE LIMITER. The PRIMARY limiter is Cloudflare's
+//      native Rate Limiting binding (`rateLimitNative`) — an ATOMIC, edge-local
+//      counter that correctly counts a single-IP flood. A KV fixed-window counter
+//      (`rateLimitDecision`) is kept ONLY as a best-effort fallback for self-host
+//      deployments without the native binding: KV throttles writes to ~1/sec/key
+//      and reads are eventually consistent, so it CANNOT count a real hot-key flood
+//      (it never trips) — never rely on it as the sole DoW control. Over the limit
+//      → 429 with a `Retry-After`.
 //
 //   2. A per-ORG SUSPENSION / over-limit signal — `org_status:<org_id>` in KV,
 //      written by the Go API on billing suspension / quota over-limit. When set,
@@ -37,6 +41,39 @@ export interface CounterKVLike {
 /** Minimal KV surface for the org-status read (a single string get). */
 export interface StatusKVLike {
   get(key: string): Promise<string | null>;
+}
+
+/**
+ * Cloudflare's native Rate Limiting binding surface: a single ATOMIC
+ * `limit({ key })` that returns `{ success }`. Unlike a KV counter this is
+ * edge-local and correctly counts a flood on one key, so it is the PRIMARY edge
+ * limiter (configured in wrangler.toml as a `ratelimit` binding). Declared as a
+ * minimal interface so tests can inject a mock.
+ */
+export interface RateLimiterLike {
+  limit(opts: { key: string }): Promise<{ success: boolean }>;
+}
+
+/**
+ * The PRIMARY rate-limit decision: Cloudflare's native, atomic limiter keyed by
+ * the request identity. `{ success:false }` → over the limit (429). A limiter
+ * error FAILS OPEN (availability over a soft denial-of-wallet control; the
+ * authoritative spend caps live in the Go API). retryAfterSeconds is the policy
+ * window (the native binding doesn't expose a precise reset).
+ */
+export async function rateLimitNative(
+  limiter: RateLimiterLike,
+  identity: string,
+  windowSeconds: number = DEFAULT_RATE_LIMIT.windowSeconds,
+): Promise<RateLimitResult> {
+  try {
+    const { success } = await limiter.limit({ key: identity });
+    return success
+      ? { allowed: true, count: 0, retryAfterSeconds: 0 }
+      : { allowed: false, count: 0, retryAfterSeconds: windowSeconds };
+  } catch {
+    return { allowed: true, count: 0, retryAfterSeconds: 0 };
+  }
 }
 
 /** Tunable rate-limit policy. Defaults target abusive bursts, not real traffic. */

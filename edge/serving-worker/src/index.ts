@@ -37,6 +37,7 @@ import {
 import { publicResponseHeaders, securityHeaders } from "./http";
 import {
   applyHeaders,
+  isServiceWorkerRequest,
   isServiceWorkerScript,
   platformSecurityHeaders,
 } from "./security";
@@ -47,10 +48,12 @@ import {
   type CounterKVLike,
   DEFAULT_RATE_LIMIT,
   type RateLimitPolicy,
+  type RateLimiterLike,
   type StatusKVLike,
   isBlockingStatus,
   rateLimitDecision,
   rateLimitIdentity,
+  rateLimitNative,
   readOrgStatus,
 } from "./ratelimit";
 import type { RevokedKVLike } from "./revoke";
@@ -103,10 +106,20 @@ export interface Env {
    */
   APP_AUTHZ_URL?: string;
   /**
-   * OPTIONAL (Phase 4) KV for the edge rate-limiter counters AND the per-org
+   * PRIMARY edge rate limiter: Cloudflare's native, atomic Rate Limiting binding
+   * (declared as a `ratelimit` binding in wrangler.toml). Correctly counts a
+   * single-IP flood — unlike the KV counter, which can't (KV throttles writes to
+   * ~1/sec/key). When present it is preferred; absent → fall back to the LIMITS KV
+   * counter (best-effort only) or no-op.
+   */
+  RATE_LIMITER?: RateLimiterLike;
+  /**
+   * OPTIONAL (Phase 4) KV for the FALLBACK rate-limiter counters AND the per-org
    * suspension/over-limit status (`rl:*` and `org_status:*` keys). Read+write
-   * (counters), read (status). Absent → rate limiting is a no-op (fail open) and
-   * the org-status check is skipped; the Go API + billing remain authoritative.
+   * (counters), read (status). The `rl:*` counter is a best-effort fallback only
+   * (see RATE_LIMITER); the `org_status:*` read is authoritative-cache. Absent →
+   * fallback rate limiting is a no-op (fail open) and the org-status check is
+   * skipped; the Go API + billing remain authoritative.
    */
   LIMITS?: CounterKVLike;
   /**
@@ -205,17 +218,30 @@ export async function serve(
     });
   }
 
+  // BLOCK SERVICE-WORKER REGISTRATION on the content origin (§10 MEDIUM), BEFORE
+  // the cache lookup — a SW-script fetch carries `Service-Worker: script` and must
+  // be refused under ANY path (a warm cache entry must not be served back as a
+  // registrable SW script). isServiceWorkerScript() (in resolveBlob) additionally
+  // 404s the conventional SW filenames as belt-and-suspenders.
+  if (isServiceWorkerRequest(request)) {
+    return notFound(null);
+  }
+
   const url = new URL(request.url);
   const nowDate = opts.now ?? new Date();
 
-  // 0. EDGE RATE LIMITING (denial-of-wallet, §10/§12). The cheapest gate: a single
-  //    KV-counter op keyed by client IP (else host), BEFORE the route lookup, so a
-  //    flood is rejected without touching the route projection or R2. Fails OPEN
-  //    (a missing LIMITS binding or KV error never blocks a real request); the
-  //    authoritative spend caps live in the Go API.
+  // 0. EDGE RATE LIMITING (denial-of-wallet, §10/§12). Keyed by client IP (else
+  //    host), BEFORE the route lookup, so a flood is rejected without touching the
+  //    route projection or R2. PREFER the native Rate Limiting binding (atomic —
+  //    actually counts a single-IP flood); fall back to the KV counter (best-effort
+  //    only) when the native binding isn't configured. Fails OPEN (a missing binding
+  //    or limiter error never blocks a real request); authoritative spend caps live
+  //    in the Go API.
   const policy = rateLimitPolicy(env);
   const identity = rateLimitIdentity(request, url.host);
-  const rl = await rateLimitDecision(env.LIMITS, identity, nowDate.getTime(), policy);
+  const rl = env.RATE_LIMITER
+    ? await rateLimitNative(env.RATE_LIMITER, identity, policy.windowSeconds)
+    : await rateLimitDecision(env.LIMITS, identity, nowDate.getTime(), policy);
   if (!rl.allowed) {
     return tooManyRequests(rl.retryAfterSeconds);
   }
@@ -473,15 +499,26 @@ async function readBodyJson(object: R2ObjectLike): Promise<unknown> {
 }
 
 /**
- * The Cache API key for a public response. We key on the ORIGIN + version + path
- * so a pointer flip (new version_id) is a fresh key, and one host's cache can
- * never satisfy another's. Method is normalized to GET so HEAD reuses the entry.
+ * The Cache API key for a public response. We key on the ORIGIN + access_mode +
+ * version + path so:
+ *  - a pointer flip (new version_id) is a fresh key (publish/rollback never serves
+ *    stale), and one host's cache can never satisfy another's;
+ *  - the access_mode is PART of the key (M2) so a body cached while the route was
+ *    `public` can never be matched to satisfy a request the route now resolves as
+ *    gated — the cache is partitioned by mode, never reused across an access flip.
+ *
+ * Residual (inherent to eventual consistency): during the brief KV propagation
+ * window after a public→gated flip, a lagging PoP still reads `public` and serves
+ * the public path; the route rewrite + the revocation denylist (gated path) are the
+ * authoritative immediate controls. Method is normalized to GET so HEAD reuses the
+ * entry.
  */
 function cacheKey(route: RouteValue, url: URL): Request {
   const keyUrl = new URL(url.toString());
   keyUrl.search = ""; // static content does not vary by query string
-  // Fold the version into the key path so a publish/rollback never serves stale.
-  keyUrl.pathname = `/${route.version_id}${keyUrl.pathname}`;
+  // Fold access_mode + version into the key path so neither an access change nor a
+  // publish/rollback can ever serve a stale or cross-mode cache entry.
+  keyUrl.pathname = `/${route.access_mode}/${route.version_id}${keyUrl.pathname}`;
   return new Request(keyUrl.toString(), { method: "GET" });
 }
 

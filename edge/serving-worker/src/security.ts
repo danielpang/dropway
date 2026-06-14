@@ -90,7 +90,10 @@ export const PLATFORM_CSP =
  *    resource as a subresource. `same-site` (not `same-origin`) is deliberate:
  *    sibling tenant hosts share the registrable site, and a site legitimately
  *    loads its OWN subdomain assets; cross-SITE hotlinking/embedding is blocked.
- *  - Service-worker block: see serviceWorkerBlockHeaders().
+ *
+ * Service-worker registration is blocked at the ROUTER (isServiceWorkerRequest +
+ * isServiceWorkerScript), not by a response header — there is no header that
+ * reliably does it (see those functions).
  */
 function baseSecurityHeaders(): Record<string, string> {
   return {
@@ -99,7 +102,6 @@ function baseSecurityHeaders(): Record<string, string> {
     "X-Frame-Options": "DENY",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-site",
-    ...serviceWorkerBlockHeaders(),
   };
 }
 
@@ -108,23 +110,28 @@ function baseSecurityHeaders(): Record<string, string> {
  *
  * A registered SW on a tenant host could persist arbitrary tenant JS across
  * navigations, intercept fetches, and survive a takedown — so we deny it in two
- * complementary ways:
- *  1. `Service-Worker-Allowed` is NOT widened — the platform never serves a SW
- *     script from a privileged scope, and (see index.ts) a request for the
- *     conventional SW path is refused outright.
- *  2. The conventional registration entrypoints are denied at the router: a
- *     request whose path looks like a service-worker script is 404'd with these
- *     headers, so `navigator.serviceWorker.register('/sw.js')` cannot fetch a
- *     scriptable body from us.
+ * complementary, PATH-INDEPENDENT ways (the previous header-only seam was a no-op):
+ *  1. isServiceWorkerRequest() — every SW-script fetch (registration AND update)
+ *     carries the request header `Service-Worker: script`. The router refuses ANY
+ *     such request (platform 404), so a tenant cannot register a SW under ANY path
+ *     — including non-conventional names like `/assets/app-worker.js` that the
+ *     filename list below would miss.
+ *  2. isServiceWorkerScript() — the conventional SW file names (sw.js, …) are
+ *     additionally 404'd by name, as belt-and-suspenders for any client/runtime
+ *     that omits the request header.
  *
- * (`Service-Worker-Allowed: ""` would scope any SW to nothing; we omit it on
- * content so we never even hint a SW is registrable, and rely on the router
- * refusal — see isServiceWorkerScript.)
+ * There is no response header that reliably blocks registration (`Service-Worker-
+ * Allowed` only WIDENS scope; CSP `worker-src` would also break legitimate Web
+ * Workers), so the request-header + filename refusals are the real controls.
  */
-export function serviceWorkerBlockHeaders(): Record<string, string> {
-  // No `Service-Worker-Allowed` widening header is emitted on content. We expose
-  // this seam so a future per-site policy could attach one if a site opts in.
-  return {};
+
+/**
+ * True when the request is a service-worker SCRIPT fetch (registration/update).
+ * The browser sets `Service-Worker: script` on exactly these; refusing them blocks
+ * SW registration on the content origin regardless of the request path (§10).
+ */
+export function isServiceWorkerRequest(request: Request): boolean {
+  return request.headers.get("Service-Worker") === "script";
 }
 
 /**
