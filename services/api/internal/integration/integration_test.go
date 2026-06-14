@@ -194,6 +194,16 @@ func TestIntegration_Phase1(t *testing.T) {
 	if _, err := st.CreateSite(ctx, tC, "gamma", projection.AccessPublic); err != store.ErrExternalSharingDisabled {
 		t.Fatalf("expected ErrExternalSharingDisabled for public site under false policy, got %v", err)
 	}
+	// ...but the DEFAULT (empty access_mode) inherits the org's default_visibility =
+	// org_only (migration 0010), so a fresh INTERNAL org can create a site WITHOUT
+	// first enabling external sharing — the gap this fixes (§2.2 "default org-visible").
+	internalSite, err := st.CreateSite(ctx, tC, "gamma-internal", "")
+	if err != nil {
+		t.Fatalf("fresh internal org should create an org_only site by default, got %v", err)
+	}
+	if internalSite.AccessMode != projection.AccessOrgOnly {
+		t.Fatalf("default access_mode = %q, want org_only", internalSite.AccessMode)
+	}
 
 	// --- Cross-tenant public-host hijack guard (FIX 1, global host registry). ---
 	// Org A creates + publishes slug 'acme'. Org B then tries the SAME slug: the

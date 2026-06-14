@@ -43,9 +43,13 @@ func toSiteResponse(s store.Site) siteResponse {
 	}
 }
 
-// createSiteRequest is the POST /v1/sites body.
+// createSiteRequest is the POST /v1/sites body. access_mode is optional: omit it
+// to inherit the org's default_visibility (org_only for a fresh org). Only the
+// no-extra-config modes are accepted at create time; password/allowlist are
+// configured afterward via PUT /v1/sites/{id}/access (they need a password / entries).
 type createSiteRequest struct {
-	Slug string `json:"slug"`
+	Slug       string `json:"slug"`
+	AccessMode string `json:"access_mode,omitempty"`
 }
 
 // CreateSite reserves quota for one more site for the caller and inserts it under
@@ -75,11 +79,25 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, fmt.Errorf("%w: slug %q is reserved", httpx.ErrBadRequest, req.Slug))
 		return
 	}
+	// Only the no-extra-config modes are valid at create. "" → the store inherits
+	// the org's default_visibility (org_only for a fresh org). password/allowlist
+	// require a follow-up PUT /v1/sites/{id}/access to set the password / entries.
+	switch req.AccessMode {
+	case "", projection.AccessPublic, projection.AccessOrgOnly:
+		// ok
+	case projection.AccessPassword, projection.AccessAllowlist:
+		httpx.WriteError(w, fmt.Errorf("%w: set access_mode %q via PUT /v1/sites/{id}/access (it needs a password/allowlist)", httpx.ErrBadRequest, req.AccessMode))
+		return
+	default:
+		httpx.WriteError(w, fmt.Errorf("%w: invalid access_mode %q", httpx.ErrBadRequest, req.AccessMode))
+		return
+	}
 
 	// The hard-cap check (§9) happens INSIDE store.CreateSite's tx (advisory lock
 	// + COUNT → quota.Provider.Allow → INSERT), so it's race-safe. OSS = Unlimited;
 	// cloud returns a *quota.ExceededError that writeStoreError renders as 402.
-	site, err := a.Store.CreateSite(r.Context(), t, req.Slug, projection.AccessPublic)
+	// access_mode "" → store inherits the org's default_visibility (org_only).
+	site, err := a.Store.CreateSite(r.Context(), t, req.Slug, req.AccessMode)
 	if err != nil {
 		writeStoreError(w, err)
 		return

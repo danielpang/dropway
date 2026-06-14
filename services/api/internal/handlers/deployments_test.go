@@ -81,7 +81,7 @@ func TestDeployFlow_PrepareFinalizePublish(t *testing.T) {
 	h := routerFor(a, "org_1", "user_1")
 
 	// 1. Create the site.
-	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"my-docs"}`)
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"my-docs","access_mode":"public"}`)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create site: %d %s", rr.Code, rr.Body.String())
 	}
@@ -281,7 +281,7 @@ func TestRollback_PublishOlderVersion(t *testing.T) {
 	a := NewFull(quota.Unlimited{}, fs, obj, proj)
 	h := routerFor(a, "org_1", "user_1")
 
-	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"my-app"}`)
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"my-app","access_mode":"public"}`)
 	var site siteResponse
 	mustJSON(t, rr, &site)
 

@@ -20,7 +20,7 @@ CREATE TABLE app.org_meta (
     id                     uuid PRIMARY KEY,
     plan_tier              text NOT NULL DEFAULT 'free',
     allow_external_sharing boolean NOT NULL DEFAULT false,
-    default_visibility     text NOT NULL DEFAULT 'public',
+    default_visibility     text NOT NULL DEFAULT 'org_only',
     created_at             timestamptz NOT NULL DEFAULT now()
 );
 

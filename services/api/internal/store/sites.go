@@ -133,19 +133,33 @@ func (s *Store) EnsureOrgProvisioned(ctx context.Context, t Tenant) error {
 // is the race-safe guard against duplicate slugs.
 //
 // quota is checked by the caller (the handler) BEFORE this, via quota.Provider —
-// the store stays cloud-free. accessMode defaults to "public".
+// the store stays cloud-free. An empty accessMode inherits the ORG's
+// default_visibility (org_only for a fresh org — internal-by-default, §2.2/§5.4),
+// NOT public: a brand-new org has allow_external_sharing=false, and a public site
+// would be 403'd by the external-sharing trigger.
 func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode string) (Site, error) {
 	if IsReservedSlug(slug) {
 		return Site{}, ErrReservedSlug
-	}
-	if accessMode == "" {
-		accessMode = projection.AccessPublic
 	}
 
 	host := projection.HostForSlug(slug)
 
 	var out Site
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		// Default a new site's visibility to the org's default_visibility (read under
+		// the tenant context). Falls back to org_only if the org_meta row somehow has
+		// no value — never public, so a fresh internal org can always create a site.
+		if accessMode == "" {
+			om, err := q.GetOrgMeta(ctx, t.OrgID)
+			if err != nil {
+				return err
+			}
+			accessMode = om.DefaultVisibility
+			if accessMode == "" {
+				accessMode = projection.AccessOrgOnly
+			}
+		}
+
 		// Race-safe per-user site cap (§9): take a per-(org,user) advisory lock for
 		// the rest of the tx, then COUNT → policy → INSERT as one critical section,
 		// so two concurrent same-user creates can't both read current=N and both

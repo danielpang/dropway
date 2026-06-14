@@ -61,6 +61,11 @@ func (f *fakeStore) CreateSite(_ context.Context, t store.Tenant, slug, mode str
 	if store.IsReservedSlug(slug) {
 		return store.Site{}, store.ErrReservedSlug
 	}
+	// Mirror the real store: an empty access_mode inherits the org default
+	// (org_only for a fresh org), never "" — so the publish projection is valid.
+	if mode == "" {
+		mode = "org_only"
+	}
 	s := store.Site{ID: "site_" + slug, OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, AccessMode: mode}
 	f.sites[s.ID] = s
 	return s, nil
