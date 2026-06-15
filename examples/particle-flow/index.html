@@ -1,0 +1,72 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+<!-- Particle Flow — an interactive flow-field particle art piece advecting thousands of particles through evolving simplex noise. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="Particle Flow — an interactive generative flow-field particle art piece built for the Shipped static-site hosting platform." />
+  <meta name="theme-color" content="#05060c" />
+  <title>Particle Flow — Generative Flow-Field Art</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- The art surface. aria-hidden because the canvas content is decorative; controls below carry the semantics. -->
+  <canvas id="field" aria-hidden="true"></canvas>
+
+  <!-- Glassmorphic HUD -->
+  <main class="hud" id="hud">
+    <header class="hud__head">
+      <h1 class="hud__title">Particle&nbsp;Flow</h1>
+      <p class="hud__subtitle">Interactive flow-field particle art</p>
+    </header>
+
+    <form class="controls" id="controls" autocomplete="off">
+      <div class="control">
+        <label for="count">Particles <output id="countOut">3000</output></label>
+        <input id="count" type="range" min="500" max="9000" step="250" value="3000" />
+      </div>
+
+      <div class="control">
+        <label for="speed">Flow speed <output id="speedOut">1.0×</output></label>
+        <input id="speed" type="range" min="0.2" max="3" step="0.05" value="1" />
+      </div>
+
+      <div class="control">
+        <label for="trail">Trail persistence <output id="trailOut">86%</output></label>
+        <input id="trail" type="range" min="50" max="98" step="1" value="86" />
+      </div>
+
+      <div class="control">
+        <label for="palette">Palette</label>
+        <select id="palette">
+          <option value="0">Aurora</option>
+          <option value="1">Nebula</option>
+          <option value="2">Ember</option>
+          <option value="3">Bioluminescence</option>
+          <option value="4">Iridium</option>
+        </select>
+      </div>
+    </form>
+
+    <footer class="hud__hint" id="hint">
+      <span><kbd>Move</kbd> to swirl the field</span>
+      <span><kbd>Click</kbd> to shift palette</span>
+      <span><kbd>Space</kbd> to pause</span>
+    </footer>
+  </main>
+
+  <button class="hud-toggle" id="hudToggle" type="button" aria-expanded="true" aria-controls="hud">
+    Hide panel
+  </button>
+
+  <script src="script.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+<!-- Helix Terminal: an animated, fully synthetic trading-market dashboard (candlesticks, ticker tape, sparkline cards, sector heatmap) rendered entirely client-side. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>HELIX · Markets Terminal</title>
+  <meta name="description" content="Helix Terminal — an animated market dashboard demo. All figures are simulated." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Chivo+Mono:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- ============ TICKER TAPE ============ -->
+  <header class="tape" aria-label="Live market ticker">
+    <div class="tape__brand">
+      <span class="tape__live" aria-hidden="true"></span>
+      <span class="tape__brandmark">HELIX</span>
+    </div>
+    <div class="tape__viewport">
+      <div class="tape__track" id="tapeTrack" role="marquee" aria-live="off"></div>
+    </div>
+    <div class="tape__clock" id="clock" aria-label="Session clock">--:--:--</div>
+  </header>
+
+  <main class="shell">
+    <!-- ============ TOP BAR ============ -->
+    <section class="masthead">
+      <div class="masthead__id">
+        <h1 class="masthead__title">Markets&nbsp;Terminal</h1>
+        <p class="masthead__sub">
+          <span class="dot dot--sim" aria-hidden="true"></span>
+          Simulated data · no real quotes · refreshed in-browser
+        </p>
+      </div>
+      <dl class="masthead__stats" id="indexStats" aria-label="Synthetic index summary"></dl>
+    </section>
+
+    <!-- ============ HERO CHART ============ -->
+    <section class="panel panel--chart" aria-label="Primary instrument chart">
+      <div class="charthead">
+        <div class="charthead__id">
+          <h2 class="charthead__ticker">
+            HLX<span class="charthead__exch">·NYS</span>
+          </h2>
+          <span class="charthead__name">Helix Dynamics Corp</span>
+        </div>
+        <div class="charthead__price">
+          <span class="charthead__last" id="heroLast">0.00</span>
+          <span class="charthead__chg" id="heroChg">+0.00 (0.00%)</span>
+        </div>
+        <div class="charthead__tools" role="group" aria-label="Chart timeframe">
+          <button class="chip is-active" type="button" data-tf="1D">1D</button>
+          <button class="chip" type="button" data-tf="1W">1W</button>
+          <button class="chip" type="button" data-tf="1M">1M</button>
+          <button class="chip chip--ma" type="button" id="toggleMA" aria-pressed="true">MA&nbsp;20</button>
+        </div>
+      </div>
+      <div class="chartwrap">
+        <canvas id="heroChart" aria-label="Synthetic candlestick chart for HLX with 20-period moving average. Hover for crosshair details."></canvas>
+        <div class="crosshair-readout" id="readout" hidden></div>
+      </div>
+      <div class="chartfoot">
+        <div class="legend">
+          <span class="legend__item"><i class="swatch swatch--up"></i>Up candle</span>
+          <span class="legend__item"><i class="swatch swatch--down"></i>Down candle</span>
+          <span class="legend__item"><i class="swatch swatch--ma"></i>MA&nbsp;20</span>
+        </div>
+        <div class="chartfoot__vol" id="volNote">vol —</div>
+      </div>
+    </section>
+
+    <!-- ============ SPARKLINE CARDS ============ -->
+    <section class="panel panel--watch" aria-label="Watchlist">
+      <div class="panel__head">
+        <h2 class="panel__title">Watchlist</h2>
+        <span class="panel__hint">live · simulated</span>
+      </div>
+      <div class="cards" id="cards"></div>
+    </section>
+
+    <!-- ============ SECTOR HEATMAP ============ -->
+    <section class="panel panel--heat" aria-label="Sector heatmap">
+      <div class="panel__head">
+        <h2 class="panel__title">Sector Heat</h2>
+        <div class="heatscale" aria-hidden="true">
+          <span>-3%</span>
+          <span class="heatscale__bar"></span>
+          <span>+3%</span>
+        </div>
+      </div>
+      <div class="heatmap" id="heatmap" role="list"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>HELIX TERMINAL</span>
+    <span class="foot__sep" aria-hidden="true">/</span>
+    <span>All prices, volumes &amp; tickers are <strong>simulated</strong> — for demonstration only.</span>
+    <span class="foot__sep" aria-hidden="true">/</span>
+    <span>Built for Shipped</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

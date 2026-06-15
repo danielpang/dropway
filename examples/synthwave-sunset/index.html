@@ -1,0 +1,45 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+<!-- Synthwave / outrun sunset scene built entirely from CSS gradients, masks and transforms — no images, no JS. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SHIPPED — Synthwave Sunset</title>
+  <meta name="description" content="A pure-CSS retro 80s outrun sunset scene: neon grid, scanline sun, twinkling stars and chrome title.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="scene" aria-label="Animated synthwave sunset landscape">
+    <!-- Sky gradient with twinkling starfield -->
+    <div class="sky" aria-hidden="true"></div>
+    <div class="stars" aria-hidden="true"><i></i></div>
+
+    <!-- The setting sun with scanline cutouts -->
+    <div class="sun" aria-hidden="true"></div>
+
+    <!-- Layered silhouette skyline against the glow -->
+    <div class="skyline" aria-hidden="true">
+      <span class="far"></span>
+      <span class="near"></span>
+    </div>
+
+    <!-- Neon perspective grid rushing toward the viewer -->
+    <div class="floor" aria-hidden="true"></div>
+    <div class="floor-fade" aria-hidden="true"></div>
+    <div class="horizon-glow" aria-hidden="true"></div>
+
+    <!-- Centered retro chrome / neon title -->
+    <h1 class="stage-title">
+      <span class="word">SHIPPED</span>
+      <span class="tag">DEPLOY AT THE SPEED OF LIGHT</span>
+    </h1>
+  </main>
+
+  <!-- Full-screen CRT scanline + vignette overlay -->
+  <div class="crt" aria-hidden="true"></div>
+</body>
+</html>
