@@ -39,6 +39,13 @@ import {
  *  - Google sign-in is a core, first-class method alongside email/password and
  *    magic link. Email verification is required.
  */
+// A single shared pg Pool for Better Auth's `auth` schema (search_path pinned to
+// auth). Reused by the session hook below to look up a user's organization.
+const authPool = new Pool({
+  connectionString: databaseUrl(),
+  options: "-c search_path=auth",
+});
+
 export const auth = betterAuth({
   appName: "Shipped",
   baseURL: betterAuthUrl(),
@@ -52,10 +59,37 @@ export const auth = betterAuth({
   // session search_path to `auth` so the adapter's UNqualified tables (user,
   // session, member, organization, …) are created in + read from `auth` — exactly
   // where the Go API reads them (auth.member) for authz.
-  database: new Pool({
-    connectionString: databaseUrl(),
-    options: "-c search_path=auth",
-  }),
+  database: authPool,
+
+  // Set the user's first organization as the session's ACTIVE org on every new
+  // session. Better Auth only sets activeOrganizationId on org create/switch (the
+  // onboarding flow), so a RETURNING user who just signs in would otherwise have no
+  // active org, and the jwt() plugin's definePayload would then mint org_id="". The
+  // Go API rejects that (RLS needs the tenant), 500-ing with "claims missing org_id".
+  // This backfills the active org so the minted JWT always carries it. Failures are
+  // non-fatal (a user with no membership simply gets none; onboarding sets it).
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          const s = session as { userId: string; activeOrganizationId?: string | null };
+          if (s.activeOrganizationId) return { data: session };
+          try {
+            const res = await authPool.query<{ organizationId: string }>(
+              `SELECT "organizationId" FROM auth.member WHERE "userId" = $1 ORDER BY "createdAt" LIMIT 1`,
+              [s.userId],
+            );
+            const orgId = res.rows[0]?.organizationId;
+            if (orgId) return { data: { ...session, activeOrganizationId: orgId } };
+          } catch {
+            // Transient lookup error or no membership: leave the active org unset
+            // (onboarding's organization.create sets it explicitly).
+          }
+          return { data: session };
+        },
+      },
+    },
+  },
 
   emailAndPassword: {
     enabled: true,
