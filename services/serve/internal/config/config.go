@@ -18,6 +18,13 @@ type Config struct {
 	// Port the HTTP server listens on (SERVE_PORT, else PORT). Defaults to 8090.
 	Port int
 
+	// InternalPort is a SEPARATE, internal-only listener (SERVE_INTERNAL_PORT,
+	// default 8091) for the health check + the on-demand-TLS authorization endpoint
+	// Caddy calls (GET /tls-check?domain=). It is kept off the Host-routed content
+	// port so /tls-check + /healthz can never collide with a tenant path, and is NOT
+	// published publicly (only the reverse proxy on the compose network reaches it).
+	InternalPort int
+
 	// DatabaseURL is the Postgres DSN (DATABASE_URL) — the SAME non-BYPASSRLS
 	// shipped_app role the API uses. Required to resolve hosts.
 	DatabaseURL string
@@ -62,8 +69,9 @@ type Config struct {
 // Load reads the environment into a validated Config.
 func Load() (Config, error) {
 	cfg := Config{
-		Port:        8090,
-		DatabaseURL: os.Getenv("DATABASE_URL"),
+		Port:         8090,
+		InternalPort: 8091,
+		DatabaseURL:  os.Getenv("DATABASE_URL"),
 
 		S3Endpoint:        os.Getenv("S3_ENDPOINT"),
 		S3Region:          os.Getenv("S3_REGION"),
@@ -97,6 +105,14 @@ func Load() (Config, error) {
 		cfg.Port = n
 	}
 
+	if v := os.Getenv("SERVE_INTERNAL_PORT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 65535 {
+			return Config{}, fmt.Errorf("config: invalid SERVE_INTERNAL_PORT %q", v)
+		}
+		cfg.InternalPort = n
+	}
+
 	if v := os.Getenv("RATE_LIMIT_MAX"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -115,8 +131,11 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// Addr returns the host:port for ListenAndServe.
+// Addr returns the host:port for the content ListenAndServe.
 func (c Config) Addr() string { return fmt.Sprintf(":%d", c.Port) }
+
+// InternalAddr returns the host:port for the internal (health + tls-check) listener.
+func (c Config) InternalAddr() string { return fmt.Sprintf(":%d", c.InternalPort) }
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {

@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Shipped self-host edge — Caddy reverse proxy in front of the `serve` content
+# server. This is the open-source replacement for Cloudflare-for-SaaS (per-tenant
+# custom-hostname TLS) + the Cloudflare edge cache:
+#
+#   * Automatic HTTPS for the content domain (*.shippedusercontent.com) AND for
+#     arbitrary tenant CUSTOM domains. Because custom hostnames are not known ahead
+#     of time, certs are issued via ON-DEMAND TLS for everything.
+#   * On-demand TLS is GATED by serve's ask endpoint
+#     (http://serve:8091/tls-check?domain=<host>): Caddy only issues a cert when
+#     serve answers 200 (a known/served route), else 403. WITHOUT this gate
+#     on-demand TLS is an abuse/DoS vector (anyone could point DNS at the box and
+#     make Caddy hammer the ACME CA), so the ask endpoint is mandatory.
+#   * Response caching via the cache-handler (Souin) module. It HONORS the origin's
+#     Cache-Control: serve marks public content `public, max-age=...` (cacheable) and
+#     gated/private content `private, no-store` + `Set-Cookie`/`Vary: Cookie`
+#     (NEVER cached). We do not force-cache anything, so private bytes stay private.
+#
+# ── LOCAL vs PRODUCTION ──────────────────────────────────────────────────────────
+# Real ACME / on-demand TLS needs PUBLIC DNS pointed at this box, so this Caddyfile
+# targets a PRODUCTION self-host (public, internet-facing). It will NOT obtain certs
+# on localhost — do not try to make ACME work there.
+#
+# For purely-local testing, skip this edge entirely and hit `serve` directly on its
+# published HTTP port (8090), faking the Host header:
+#
+#     curl -H 'Host: <slug>.shippedusercontent.com' http://localhost:8090/
+#
+# The `caddy` service is behind the compose profile `edge-tls` and is intended to run
+# ONLY when the box is internet-facing with DNS (the content domain + each tenant
+# custom domain) pointed at it.
+
+{
+	# ACME account email for Let's Encrypt expiry/recovery notices. Set
+	# CADDY_ACME_EMAIL in the compose env. Quoted with an empty default so the file
+	# still parses when the env is unset (empty ⇒ anonymous ACME account).
+	email "{$CADDY_ACME_EMAIL:}"
+
+	# On-demand TLS: only issue a certificate for a hostname when serve's internal
+	# authorization endpoint says it is a known/served route (200 ⇒ allow, else deny).
+	# This is the abuse gate that makes per-tenant custom-domain TLS safe.
+	on_demand_tls {
+		ask http://serve:8091/tls-check
+	}
+
+	# Souin response cache. Modest default TTL; the cache STILL honors origin
+	# Cache-Control and skips private / no-store / Set-Cookie responses, so this TTL
+	# only ever applies to responses serve explicitly marks public.
+	cache {
+		ttl 60s
+	}
+
+	# The cache-handler is an HTTP handler directive; give it an explicit slot in the
+	# global directive order so it runs before reverse_proxy.
+	order cache before reverse_proxy
+}
+
+# ── Content edge ─────────────────────────────────────────────────────────────────
+# Catch-all site block: hostnames are dynamic (every tenant custom domain plus
+# *.shippedusercontent.com), so we match all incoming Hosts here and let the
+# on-demand-TLS ask endpoint decide which ones actually get a certificate.
+:443 {
+	# Issue/renew certs on demand (gated by the global `ask` endpoint above).
+	tls {
+		on_demand
+	}
+
+	# Enable response caching for this site (honors origin Cache-Control).
+	cache
+
+	# Proxy to the content server. Caddy passes the original Host through and adds
+	# X-Forwarded-For / -Proto / -Host by default, which serve relies on for
+	# Host-based routing.
+	reverse_proxy serve:8090
+}

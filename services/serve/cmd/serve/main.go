@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/danielpang/shipped/services/serve/internal/config"
 	"github.com/danielpang/shipped/services/serve/internal/edgeverify"
 	"github.com/danielpang/shipped/services/serve/internal/ratelimit"
+	"github.com/danielpang/shipped/services/serve/internal/route"
 	"github.com/danielpang/shipped/services/serve/internal/serve"
 	"github.com/danielpang/shipped/services/serve/internal/storeadapter"
 )
@@ -93,10 +95,13 @@ func run() error {
 
 	limiter := ratelimit.New(cfg.RateLimitMax, cfg.RateLimitWindow)
 
-	// Org-status reader: self-host (OSS) has no billing/org_status source, so it is
-	// left unwired (nil ⇒ the org-status gate is skipped / fails open), matching the
-	// Worker's "no status KV configured" path. Link-expiry IS wired (from the route).
-	handler := serve.New(resolver, objStore, verifier, limiter, nil, serve.Config{
+	// Org-status reader: app.org_meta.org_status (migration 0013) — self-host's
+	// abuse/takedown suspension lever (default 'active'; cloud mirrors billing onto
+	// it). Read under the org's own tenant context; FAILS OPEN on a read error,
+	// matching the Worker's org-status gate. Link-expiry is wired from the route.
+	orgStatus := storeadapter.NewOrgStatusReader(pool)
+
+	handler := serve.New(resolver, objStore, verifier, limiter, orgStatus, serve.Config{
 		AppAuthzURL: cfg.AppAuthzURL,
 	})
 
@@ -109,10 +114,46 @@ func run() error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// Internal listener (health + on-demand-TLS "ask"), NOT published publicly — only
+	// the reverse proxy on the compose network reaches it. Kept off the Host-routed
+	// content port so these paths can never collide with a tenant path. Caddy calls
+	// GET /tls-check?domain=<host>: a 200 authorizes minting a TLS cert for that host,
+	// so Caddy never issues a cert for an unknown/unserved hostname (an abuse/DoS gate).
+	internalMux := http.NewServeMux()
+	internalMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+	})
+	internalMux.HandleFunc("/tls-check", func(w http.ResponseWriter, r *http.Request) {
+		host := route.NormalizeHost(r.URL.Query().Get("domain"))
+		if host == "" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		// Authorize a cert ONLY for a host that resolves to a live site. Unknown host
+		// or any backend error ⇒ 403 (fail closed: do not mint a cert).
+		if _, err := resolver.Resolve(r.Context(), host); err != nil {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	internalSrv := &http.Server{
+		Addr:              cfg.InternalAddr(),
+		Handler:           internalMux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
 	listenErr := make(chan error, 1)
 	go func() {
 		slog.Info("serve listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			listenErr <- err
+		}
+	}()
+	go func() {
+		slog.Info("serve internal listening (health + tls-check)", "addr", internalSrv.Addr)
+		if err := internalSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			listenErr <- err
 		}
 	}()
@@ -128,6 +169,7 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	_ = internalSrv.Shutdown(shutdownCtx)
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return err
 	}

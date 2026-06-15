@@ -6,9 +6,12 @@
 # WHOLE local stack:
 #   * api        — the Go control-plane API (built from services/api/Dockerfile)
 #   * dashboard  — the Next.js dashboard      (built from apps/dashboard/Dockerfile)
+#   * serve      — the self-host content server (built from services/serve/Dockerfile);
+#                  serves published sites on :8090 — the Cloudflare-Worker alternative
 #   * postgres   — bundled Postgres 16        [profile: local-db]      (OPTIONAL)
 #   * minio      — bundled R2/S3-compatible    [profile: local-storage] (OPTIONAL)
 #   * mailpit    — bundled SMTP + web inbox     [profile: local-mail]    (OPTIONAL)
+#   * caddy      — internet-facing TLS edge     [profile: edge-tls]      (OPTIONAL)
 #   * migrate    — one-shot goose runner for the `app` schema + shipped_app role
 #
 # OSS / self-host: SHIPPED_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ no
@@ -87,6 +90,48 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+        required: false
+
+  # ---------------------------------------------------------------------------
+  # serve — the self-host CONTENT server (the plain Go alternative to the
+  # Cloudflare serving Worker). Serves published tenant sites on
+  # *.shippedusercontent.com + custom domains, enforcing all four access modes.
+  # This is what closes the loop: after a deploy is published, serve actually
+  # streams the bytes — no Cloudflare needed.
+  #
+  # Connects to Postgres as the non-BYPASSRLS shipped_app role (DATABASE_URL) and
+  # reads blobs/manifests from the object store (S3_* → minio:9000, server-side).
+  # It VERIFIES gated edge tokens against the API's JWKS (EDGE_JWKS_URL, internal)
+  # and 302s unauthenticated gated requests to the dashboard /authz (APP_AUTHZ_URL,
+  # which is BROWSER-facing, so the host-published dashboard URL).
+  #
+  # Local testing has no wildcard DNS, so hit it by Host header on the published
+  # content port:  curl -H 'Host: <slug>.shippedusercontent.com' http://localhost:8090/
+  # Internet-facing self-host: put the `caddy` service (profile: edge-tls) in front
+  # for automatic HTTPS + on-demand TLS for custom domains.
+  # ---------------------------------------------------------------------------
+  serve:
+    build:
+      context: ..
+      dockerfile: services/serve/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Server-side fetch of the edge JWKS over the compose network (internal api).
+      EDGE_JWKS_URL: ${SERVE_EDGE_JWKS_URL:-http://api:8080/.well-known/edge-jwks}
+      # The gated 302 target is sent to the BROWSER → host-published dashboard origin.
+      APP_AUTHZ_URL: ${SERVE_APP_AUTHZ_URL:-http://localhost:3000/authz}
+    ports:
+      - "${SERVE_PORT:-8090}:8090" # content (Host-routed); 8091 is internal-only
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+      createbucket:
+        condition: service_completed_successfully
         required: false
 
   # ===========================================================================
@@ -232,6 +277,38 @@ services:
       timeout: 5s
       retries: 20
 
+  # ---------------------------------------------------------------------------
+  # caddy — internet-facing TLS edge in front of `serve`. [profile: edge-tls]
+  # Automatic HTTPS + ON-DEMAND TLS for tenant custom domains (gated by serve's
+  # /tls-check ask endpoint on :8091) + Cache-Control-honoring response cache (so
+  # public content is cached and gated/private content never is). The open-source
+  # Cloudflare-for-SaaS replacement.
+  #
+  # Run ONLY when the box is public with DNS (the content domain + each custom
+  # domain) pointed at it — real ACME can't work on localhost. For local testing,
+  # hit `serve` directly on its published 8090 with a Host header. Enable via:
+  #   COMPOSE_PROFILES=...,edge-tls   + set CADDY_ACME_EMAIL.
+  # ---------------------------------------------------------------------------
+  caddy:
+    build:
+      context: caddy
+      dockerfile: Dockerfile
+    profiles: ["edge-tls"]
+    restart: unless-stopped
+    environment:
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - serve
+
 volumes:
   pgdata:
   miniodata:
+  caddydata:
+  caddyconfig:
