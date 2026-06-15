@@ -94,7 +94,13 @@ export const auth = betterAuth({
   // cookie is host-only (no Domain=) so it never reaches the content domain.
   advanced: {
     cookiePrefix: "shipped",
-    useSecureCookies: process.env.NODE_ENV === "production",
+    // Secure cookies (and the `__Secure-` name prefix Better Auth adds with them)
+    // require an HTTPS origin — browsers REJECT them over http://. Drive this off
+    // the deployment's actual scheme, not NODE_ENV: a self-host served over plain
+    // http (e.g. http://<lan-ip>:3000) with NODE_ENV=production would otherwise set
+    // a `__Secure-` cookie the browser drops, silently breaking login. https origin
+    // → secure cookies; http (localhost / internal http self-host) → plain cookies.
+    useSecureCookies: betterAuthUrl().startsWith("https://"),
     defaultCookieAttributes: {
       sameSite: "lax",
       httpOnly: true,
