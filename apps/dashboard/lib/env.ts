@@ -46,6 +46,23 @@ export function betterAuthUrl(): string {
   );
 }
 
+/**
+ * The `iss` / `aud` Better Auth stamps on the JWTs the Go API verifies. The API
+ * PINS both (internal/auth/jwks.go: WithIssuer/WithAudience), and Better Auth
+ * otherwise defaults BOTH to its baseURL — so the API rejects the token (aud =
+ * dashboard URL, not the API). Reading the SAME JWT_ISSUER / JWT_AUDIENCE env the
+ * API verifies against makes the two agree by construction.
+ */
+export function jwtIssuer(): string {
+  requireServer();
+  return process.env.JWT_ISSUER ?? betterAuthUrl();
+}
+
+export function jwtAudience(): string {
+  requireServer();
+  return process.env.JWT_AUDIENCE ?? "http://localhost:8080";
+}
+
 export function googleClientId(): string {
   requireServer();
   return process.env.GOOGLE_CLIENT_ID ?? "";

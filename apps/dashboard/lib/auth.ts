@@ -8,6 +8,8 @@ import {
   databaseUrl,
   googleClientId,
   googleClientSecret,
+  jwtAudience,
+  jwtIssuer,
 } from "@/lib/env";
 
 /**
@@ -104,6 +106,12 @@ export const auth = betterAuth({
         // 5–15 min short-lived tokens (architecture §2.2). The verified token
         // carries the org/role claims the Go API uses for authz.
         expirationTime: "10m",
+        // The Go API PINS iss + aud on every token. Stamp them from the SAME env it
+        // verifies against (JWT_ISSUER / JWT_AUDIENCE) so issuer (dashboard) and
+        // verifier (API) agree. Without this Better Auth defaults aud=baseURL (the
+        // dashboard URL), which the API rejects with 401.
+        issuer: jwtIssuer(),
+        audience: jwtAudience(),
       },
     }),
   ],
