@@ -177,6 +177,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shipped}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shipped-dev-secret}
+      # CORS for browser folder drag-and-drop deploy: the dashboard hashes files
+      # and PUTs blobs DIRECTLY to presigned URLs on this store, a cross-origin
+      # request from the dashboard origin. Allow it (the presigned URL is itself the
+      # credential). Default '*' for self-host simplicity; restrict to your dashboard
+      # origin(s) in production (and set the matching R2 bucket CORS policy there).
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_CORS_ALLOW_ORIGIN:-*}
     ports:
       - "${MINIO_API_PORT:-9000}:9000"   # S3 API
       - "${MINIO_CONSOLE_PORT:-9001}:9001" # web console

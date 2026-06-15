@@ -94,6 +94,18 @@ export interface RevokeResult {
 export type PublishResult =
   operations["publish"]["responses"]["200"]["content"]["application/json"];
 
+/** Body of `POST /v1/sites/{id}/deployments/prepare` (the file manifest). */
+export type PrepareDeploymentInput =
+  operations["prepareDeployment"]["requestBody"]["content"]["application/json"];
+
+/** Successful prepare body: blobs the org lacks + a presigned PUT URL per sha256. */
+export type PrepareDeploymentResult =
+  operations["prepareDeployment"]["responses"]["200"]["content"]["application/json"];
+
+/** Body of `POST /v1/sites/{id}/deployments` (finalize: full manifest + digest). */
+export type FinalizeDeploymentInput =
+  operations["finalizeDeployment"]["requestBody"]["content"]["application/json"];
+
 /** Body the dashboard sends to `PUT /v1/sites/{id}/access`. */
 export type SetAccessInput =
   operations["setSiteAccess"]["requestBody"]["content"]["application/json"];
@@ -283,6 +295,37 @@ export const api = {
    */
   publish(siteId: string, input: { version_id: string }): Promise<PublishResult> {
     return apiFetch<PublishResult>(`/v1/sites/${siteId}/publish`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /**
+   * Prepare a deployment: send the file manifest (path/sha256/size/content_type),
+   * get back the blobs the org doesn't already have plus a presigned PUT URL for
+   * each. The browser uploads those blobs DIRECTLY to object storage — the bytes
+   * never pass through this API (only the manifest of hashes does).
+   */
+  prepareDeployment(
+    siteId: string,
+    input: PrepareDeploymentInput,
+  ): Promise<PrepareDeploymentResult> {
+    return apiFetch<PrepareDeploymentResult>(
+      `/v1/sites/${siteId}/deployments/prepare`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  },
+
+  /**
+   * Finalize a deployment: once every missing blob is uploaded, send the FULL
+   * manifest + the whole-deploy digest. The API re-hashes each stored blob and
+   * re-derives the digest server-side before creating the immutable version (201).
+   */
+  finalizeDeployment(
+    siteId: string,
+    input: FinalizeDeploymentInput,
+  ): Promise<Version> {
+    return apiFetch<Version>(`/v1/sites/${siteId}/deployments`, {
       method: "POST",
       body: JSON.stringify(input),
     });

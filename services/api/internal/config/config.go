@@ -48,6 +48,15 @@ type Config struct {
 	S3Bucket          string // S3_BUCKET
 	S3ForcePathStyle  bool   // S3_FORCE_PATH_STYLE (true for MinIO)
 
+	// S3PublicEndpoint is the BROWSER-reachable object-store host that presigned
+	// upload URLs are signed against (S3_PUBLIC_ENDPOINT). Server-side reads/writes
+	// use S3Endpoint (the internal host, e.g. http://minio:9000), but a browser
+	// folder drag-and-drop deploy PUTs blobs DIRECTLY to the presigned URL — so that
+	// URL's host must be one the browser can resolve (e.g. http://localhost:9000
+	// locally, or the public R2/custom-domain host in production). Empty → fall back
+	// to S3Endpoint (correct when the store is already a public host, e.g. real R2).
+	S3PublicEndpoint string // S3_PUBLIC_ENDPOINT
+
 	// Cloudflare KV projection (the edge routing projection writer). Optional in
 	// Phase 1: when unset, a local/in-memory projection writer is used so the
 	// publish path still works offline (the self-host serving path reads it).
@@ -113,6 +122,7 @@ func Load() (Config, error) {
 		S3SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
 		S3Bucket:          os.Getenv("S3_BUCKET"),
 		S3ForcePathStyle:  parseBool(os.Getenv("S3_FORCE_PATH_STYLE")),
+		S3PublicEndpoint:  os.Getenv("S3_PUBLIC_ENDPOINT"),
 
 		CFAccountID:     os.Getenv("CF_ACCOUNT_ID"),
 		CFKVNamespaceID: os.Getenv("CF_KV_NAMESPACE_ID"),

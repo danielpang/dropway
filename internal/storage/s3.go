@@ -26,6 +26,7 @@ type S3Config struct {
 	Bucket          string
 	Region          string // R2 ignores this but SigV4 requires a value (e.g. "auto" or "us-east-1")
 	Endpoint        string // R2/MinIO endpoint; empty → real AWS S3
+	PublicEndpoint  string // browser-reachable host for PRESIGNED URLs; empty → Endpoint
 	AccessKeyID     string
 	SecretAccessKey string
 	UsePathStyle    bool // true for MinIO; safe for R2 too
@@ -60,18 +61,43 @@ func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 		return nil, fmt.Errorf("storage: load aws config: %w", err)
 	}
 
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		if cfg.Endpoint != "" {
-			o.BaseEndpoint = aws.String(cfg.Endpoint)
-		}
-		o.UsePathStyle = cfg.UsePathStyle
-	})
+	// Server-side client: Head/Get/Put/List run over the INTERNAL endpoint
+	// (e.g. http://minio:9000 inside the compose network).
+	client := newS3Client(awsCfg, cfg.Endpoint, cfg.UsePathStyle)
+
+	// Presign client: presigned upload URLs are consumed by a BROWSER doing a
+	// direct PUT (folder drag-and-drop deploy), so they must be signed against a
+	// host the browser can resolve. SigV4 signs the Host header, so we presign
+	// with a client whose BaseEndpoint is the public host — rewriting the URL
+	// after signing would break the signature. Falls back to the internal endpoint
+	// when no public endpoint is set (correct when the store is already a public
+	// host, e.g. real R2). Reuse the same client when they're identical.
+	presignEndpoint := cfg.PublicEndpoint
+	if presignEndpoint == "" {
+		presignEndpoint = cfg.Endpoint
+	}
+	presignClient := client
+	if presignEndpoint != cfg.Endpoint {
+		presignClient = newS3Client(awsCfg, presignEndpoint, cfg.UsePathStyle)
+	}
 
 	return &S3Store{
 		client:  client,
-		presign: s3.NewPresignClient(client),
+		presign: s3.NewPresignClient(presignClient),
 		bucket:  cfg.Bucket,
 	}, nil
+}
+
+// newS3Client builds an S3 client bound to a specific endpoint host. Used twice:
+// once for server-side ops (internal endpoint) and once for presigning (the
+// browser-reachable public endpoint).
+func newS3Client(awsCfg aws.Config, endpoint string, usePathStyle bool) *s3.Client {
+	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+		}
+		o.UsePathStyle = usePathStyle
+	})
 }
 
 // EnsureBucket creates the configured bucket if it does not already exist. This

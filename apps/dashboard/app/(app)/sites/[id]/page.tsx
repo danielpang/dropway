@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, Globe, Link2, Settings } from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
+import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployInstructions } from "@/components/sites/deploy-instructions";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -161,13 +162,27 @@ export default async function SiteDetailPage({
         </CardContent>
       </Card>
 
-      {/* Deploy via CLI */}
+      {/* Deploy: drag-and-drop a folder (drop → live) */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Deploy via CLI</CardTitle>
+          <CardTitle className="text-base">Deploy</CardTitle>
           <CardDescription>
-            Push a folder of static files. Each deploy prints a version id you
-            can publish or roll back to.
+            Drag &amp; drop a folder of static files to {isLive ? "ship a new version" : "go live"}.
+            Only changed files upload, and your folder is live the moment it finishes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DeployDropzone siteId={site.id ?? id} isLive={isLive} />
+        </CardContent>
+      </Card>
+
+      {/* Or deploy via CLI */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Or deploy via CLI</CardTitle>
+          <CardDescription>
+            Prefer the terminal? Push the same folder with one command. Each deploy
+            prints a version id you can publish or roll back to.
           </CardDescription>
         </CardHeader>
         <CardContent>
