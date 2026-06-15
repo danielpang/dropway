@@ -11,11 +11,20 @@ function requireServer(): void {
   }
 }
 
-/** Postgres connection string Better Auth uses for its identity tables. */
+/**
+ * Postgres connection string Better Auth uses for its identity tables. Better Auth
+ * OWNS + migrates the `auth` schema, so it connects with a PRIVILEGED role (DDL +
+ * DML on the auth schema) — distinct from the Go API's restricted, non-BYPASSRLS
+ * `shipped_app` DATABASE_URL, which only needs SELECT on auth.* for authz reads.
+ *
+ * Prefers BETTER_AUTH_DATABASE_URL; falls back to DATABASE_URL for a single-role
+ * setup. (lib/auth.ts also pins the connection's search_path to `auth` so the
+ * unqualified Better Auth tables are created in + read from that schema.)
+ */
 export function databaseUrl(): string {
   requireServer();
-  const v = process.env.DATABASE_URL;
-  if (!v) throw new Error("DATABASE_URL is not set");
+  const v = process.env.BETTER_AUTH_DATABASE_URL ?? process.env.DATABASE_URL;
+  if (!v) throw new Error("BETTER_AUTH_DATABASE_URL / DATABASE_URL is not set");
   return v;
 }
 

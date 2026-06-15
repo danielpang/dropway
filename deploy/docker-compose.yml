@@ -94,11 +94,14 @@ services:
   # db/migrations/billing — that schema only exists in the hosted deployment.
   #
   # NOTE — Better Auth schema: the `auth` schema is owned + migrated by Better Auth
-  # (the dashboard), NOT by goose. Run it ONCE after first boot:
+  # (the dashboard), NOT by goose. The dashboard connects via BETTER_AUTH_DATABASE_URL
+  # (a privileged role that owns `auth`) with search_path=auth (lib/auth.ts). Run it
+  # ONCE after first boot (`@better-auth/cli` is a separate package → pnpm dlx):
   #   docker compose -f deploy/docker-compose.yml exec dashboard \
-  #     pnpm exec @better-auth/cli migrate --yes
+  #     pnpm dlx @better-auth/cli@1.3.4 migrate --yes
   # (See deploy/README.md.) The app migrations create an EMPTY `auth` schema as a
-  # namespace; app rows attach via app.org_meta (PK = Better Auth organization.id).
+  # namespace + grant shipped_app SELECT on the auth tables (0012); app rows attach
+  # via app.org_meta (PK = Better Auth organization.id).
   #
   # `required: false` on postgres so this also works against an external/Supabase
   # DATABASE_OWNER_URL with the bundled postgres profile disabled.

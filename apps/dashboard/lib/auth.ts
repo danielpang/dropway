@@ -32,7 +32,16 @@ export const auth = betterAuth({
 
   // Postgres via a node-postgres Pool. Better Auth uses its built-in Kysely
   // adapter when handed a `Pool`, generating + migrating its own identity tables.
-  database: new Pool({ connectionString: databaseUrl() }),
+  //
+  // Better Auth OWNS the `auth` schema (architecture §5/§8): `databaseUrl()` is a
+  // PRIVILEGED connection (it must CREATE its tables), and `options` pins the
+  // session search_path to `auth` so the adapter's UNqualified tables (user,
+  // session, member, organization, …) are created in + read from `auth` — exactly
+  // where the Go API reads them (auth.member) for authz.
+  database: new Pool({
+    connectionString: databaseUrl(),
+    options: "-c search_path=auth",
+  }),
 
   emailAndPassword: {
     enabled: true,
