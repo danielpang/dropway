@@ -63,6 +63,17 @@ export function jwtAudience(): string {
   return process.env.JWT_AUDIENCE ?? "http://localhost:8080";
 }
 
+/**
+ * Whether email verification is required before sign-in. Default FALSE: a self-host
+ * without an email provider wired can't SEND a verification email, so requiring it
+ * would lock every new user out. Production sets REQUIRE_EMAIL_VERIFICATION=true
+ * alongside a real provider (the sendVerificationEmail seam).
+ */
+export function requireEmailVerification(): boolean {
+  requireServer();
+  return process.env.REQUIRE_EMAIL_VERIFICATION === "true";
+}
+
 export function googleClientId(): string {
   requireServer();
   return process.env.GOOGLE_CLIENT_ID ?? "";

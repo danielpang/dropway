@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { betterAuth } from "better-auth";
 import { jwt, magicLink, organization } from "better-auth/plugins";
 import { Pool } from "pg";
@@ -10,6 +12,7 @@ import {
   googleClientSecret,
   jwtAudience,
   jwtIssuer,
+  requireEmailVerification,
 } from "@/lib/env";
 
 /**
@@ -47,8 +50,9 @@ export const auth = betterAuth({
 
   emailAndPassword: {
     enabled: true,
-    // Email verification is required before sign-in (Google is pre-verified).
-    requireEmailVerification: true,
+    // Required only when an email provider is wired (REQUIRE_EMAIL_VERIFICATION=true);
+    // off by default so a no-email self-host can sign up. Google is pre-verified.
+    requireEmailVerification: requireEmailVerification(),
     minPasswordLength: 8,
   },
 
@@ -67,6 +71,12 @@ export const auth = betterAuth({
     defaultCookieAttributes: {
       sameSite: "lax",
       httpOnly: true,
+    },
+    // The Go API's `app` schema keys orgs/users by `uuid` (org_meta.id, sites.
+    // owner_user_id, …). Better Auth's default IDs are nanoid-style strings, which a
+    // uuid column rejects (22P02), so generate real UUIDs for every Better Auth row.
+    database: {
+      generateId: () => randomUUID(),
     },
   },
 
