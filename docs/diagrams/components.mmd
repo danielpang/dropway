@@ -1,0 +1,41 @@
+flowchart LR
+  user(["User / Browser"])
+
+  subgraph edge["Content edge"]
+    direction TB
+    caddy["Caddy<br/>TLS · on-demand certs · cache"]
+    serve["serve (Go)<br/>*.shippedusercontent.com<br/>serve content + enforce access"]
+  end
+
+  subgraph control["Control plane"]
+    direction TB
+    dash["dashboard (Next.js)<br/>Better Auth · /authz<br/>app.shipped.app"]
+    api["api (Go)<br/>system of record + authz<br/>api.shipped.app"]
+  end
+
+  subgraph datap["Data plane"]
+    direction TB
+    pg[("Postgres<br/>auth + app schemas · RLS")]
+    redis[("Redis / Valkey<br/>route projection · revocation")]
+    store[("Object store · MinIO / R2<br/>blobs + manifests")]
+  end
+
+  smtp(["SMTP / Mailpit"])
+
+  user -->|session cookie| dash
+  user -->|content GET| caddy
+  user -. presigned blob upload .-> store
+  caddy -->|reverse proxy · tls-check| serve
+  dash -->|Bearer EdDSA JWT| api
+  dash -->|auth schema| pg
+  dash -. verify / magic link .-> smtp
+  api -->|app schema · shipped_app · RLS| pg
+  api -->|presign · write manifest| store
+  api -->|write route + revocation| redis
+  serve -->|resolve_host| pg
+  serve -->|read blobs + manifests| store
+  serve -->|read revocation| redis
+  serve -->|fetch edge JWKS| api
+
+  classDef plane fill:#f8fafc,stroke:#cbd5e1,color:#0f172a;
+  class edge,control,datap plane;

@@ -1,0 +1,61 @@
+sequenceDiagram
+  actor U as User (owner)
+  actor V as Viewer
+  participant D as dashboard
+  participant A as api
+  participant S as serve
+  participant PG as Postgres
+  participant OS as Object store
+  participant M as Email
+
+  rect rgb(232,245,233)
+    note over U,M: a) Sign up
+    U->>D: POST /api/auth/sign-up/email
+    D->>PG: create user + session (auth schema)
+    D->>M: send verification email
+    D-->>U: Set-Cookie session, redirect to /onboarding
+    U->>D: create organization
+    D->>PG: insert organization + member
+    D-->>U: redirect to /dashboard
+  end
+
+  rect rgb(227,242,253)
+    note over U,M: b) Sign in
+    U->>D: POST /api/auth/sign-in (password / magic link / Google)
+    D->>PG: verify credentials + create session
+    D-->>U: Set-Cookie session
+  end
+
+  rect rgb(255,243,224)
+    note over U,M: c) Create + deploy a site
+    U->>D: new site (slug) + drag-and-drop folder
+    D->>D: mint short-lived EdDSA JWT (org_id claim)
+    D->>A: POST /v1/sites (Bearer JWT)
+    A->>PG: verify JWT, SET LOCAL RLS, INSERT site
+    U->>A: POST /v1/sites/{id}/deployments/prepare (manifest)
+    A-->>U: missing blobs + presigned PUT URLs
+    U->>OS: PUT blobs (direct, presigned)
+    U->>A: POST .../deployments (finalize) then publish
+    A->>OS: write deploy manifest
+    A->>PG: insert version, flip current_version_id
+    A->>A: write route projection (route:host)
+  end
+
+  rect rgb(243,229,245)
+    note over V,M: d) Another user opens a site shared with them (gated)
+    V->>S: GET https://slug.shippedusercontent.com/
+    S->>PG: resolve_host -> access_mode = allowlist / org_only
+    S-->>V: 302 to dashboard /authz?host&next (no edge cookie)
+    V->>D: GET /authz (has Better Auth session)
+    D->>A: POST /v1/authz/mint (Bearer viewer JWT)
+    A->>PG: authorize: membership / allowlist + revocation
+    A-->>D: host-scoped edge token (EdDSA)
+    D-->>V: 302 to /__authz/callback?token=
+    V->>S: GET /__authz/callback?token=
+    S->>A: fetch edge JWKS
+    S->>S: verify token (aud=host, site_id, mode, revocation)
+    S-->>V: Set-Cookie __Host-edge, 302 to path
+    V->>S: GET / (with __Host-edge cookie)
+    S->>OS: read manifest + blob
+    S-->>V: stream content (private, no-store)
+  end
