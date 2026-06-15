@@ -4,6 +4,8 @@
 
 This plan was produced after reading Shopify's "Quick" writeup (https://shopify.engineering/quick) to copy its proven feature set, then extending it for true multi-tenancy + 3-tier sharing.
 
+> 📊 **Diagrams:** see [`docs/diagrams/`](diagrams/) for the component topology and the request-flow sequence diagrams (sign-up, sign-in, deploy, gated access).
+
 ---
 
 ## 1. Context — the why

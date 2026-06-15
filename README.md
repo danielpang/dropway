@@ -85,7 +85,8 @@ A **Next.js dashboard** (with Better Auth: Google / email / magic-link) is the c
 plane; a **Go API** is the system of record and the authorization boundary; a
 **Cloudflare Worker** serves content at the edge; **Postgres** (with row-level security
 per org) is the source of truth. The full design — domains, RLS data model, edge auth,
-deploy flow, billing — is in **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
+deploy flow, billing — is in **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**, and the
+component + request-flow **[diagrams are in `docs/diagrams/`](docs/diagrams/)**.
 
 ---
 
@@ -159,6 +160,8 @@ Pricing strategy for the hosted SaaS is in **[`docs/pricing.md`](docs/pricing.md
 ## Docs & status
 
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — the full system design.
+- **[`docs/diagrams/`](docs/diagrams/)** — component + sequence diagrams (sign-up,
+  sign-in, deploy, gated access).
 - **[`docs/pricing.md`](docs/pricing.md)** — pricing model + storage metering.
 - **[`status.md`](status.md)** — build status, monorepo map, and the complete local-run
   reference.
