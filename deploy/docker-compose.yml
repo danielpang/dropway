@@ -8,6 +8,7 @@
 #   * dashboard  — the Next.js dashboard      (built from apps/dashboard/Dockerfile)
 #   * postgres   — bundled Postgres 16        [profile: local-db]      (OPTIONAL)
 #   * minio      — bundled R2/S3-compatible    [profile: local-storage] (OPTIONAL)
+#   * mailpit    — bundled SMTP + web inbox     [profile: local-mail]    (OPTIONAL)
 #   * migrate    — one-shot goose runner for the `app` schema + shipped_app role
 #
 # OSS / self-host: SHIPPED_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ no
@@ -203,6 +204,27 @@ services:
       echo 'bucket ${MINIO_BUCKET:-shipped-blobs} ready'
       "
     restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # mailpit — bundled SMTP server + web inbox for LOCAL email. [profile: local-mail]
+  # Catches every message the dashboard sends (verification / reset / magic link)
+  # so you can click the link without a real provider. The dashboard sends here when
+  # MAIL_SMTP_URL=smtp://mailpit:1025 (set in deploy/.env). Open the inbox at
+  # http://localhost:8025. NOT for production — point MAIL_SMTP_URL at a real SMTP
+  # provider (SES, Mailgun, Postmark, Resend's SMTP, …) and disable this profile.
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["local-mail"]
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"   # web inbox
+      - "${MAILPIT_SMTP_PORT:-1025}:1025" # SMTP (dashboard → mailpit)
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 volumes:
   pgdata:

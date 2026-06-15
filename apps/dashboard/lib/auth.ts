@@ -4,6 +4,7 @@ import { betterAuth } from "better-auth";
 import { jwt, magicLink, organization } from "better-auth/plugins";
 import { Pool } from "pg";
 
+import { sendEmail } from "@/lib/email";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -54,6 +55,32 @@ export const auth = betterAuth({
     // off by default so a no-email self-host can sign up. Google is pre-verified.
     requireEmailVerification: requireEmailVerification(),
     minPasswordLength: 8,
+    // Password-reset link. sendEmail no-ops+logs when MAIL_SMTP_URL is unset (lib/email.ts).
+    sendResetPassword: async ({ user, url }) => {
+      await sendEmail({
+        to: user.email,
+        subject: "Reset your Shipped password",
+        text:
+          `Reset your Shipped password by opening this link:\n\n${url}\n\n` +
+          `If you didn't request this, you can safely ignore this email.`,
+      });
+    },
+  },
+
+  // Email-verification link. Only actually GATES sign-in when
+  // REQUIRE_EMAIL_VERIFICATION=true; the callback is registered regardless so the
+  // link is sent (or logged) whenever Better Auth asks to verify an address.
+  emailVerification: {
+    sendOnSignUp: true,
+    sendVerificationEmail: async ({ user, url }) => {
+      await sendEmail({
+        to: user.email,
+        subject: "Verify your email for Shipped",
+        text:
+          `Welcome to Shipped! Confirm your email by opening this link:\n\n${url}\n\n` +
+          `If you didn't create a Shipped account, you can ignore this email.`,
+      });
+    },
   },
 
   socialProviders: {
@@ -98,12 +125,15 @@ export const auth = betterAuth({
     // Passwordless magic-link sign-in as a secondary method on the auth screens.
     magicLink({
       sendMagicLink: async ({ email, url }) => {
-        // Wired to the transactional email provider by the infra agent. Until
-        // then, log so local development can complete the flow by hand.
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.log(`[magic-link] ${email} -> ${url}`);
-        }
+        // sendEmail no-ops+logs when MAIL_SMTP_URL is unset (lib/email.ts), so a
+        // no-email self-host can still sign in by copying the link from the logs.
+        await sendEmail({
+          to: email,
+          subject: "Your Shipped sign-in link",
+          text:
+            `Sign in to Shipped by opening this link:\n\n${url}\n\n` +
+            `This link expires shortly. If you didn't request it, ignore this email.`,
+        });
       },
     }),
 

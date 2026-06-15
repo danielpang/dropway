@@ -74,6 +74,28 @@ export function requireEmailVerification(): boolean {
   return process.env.REQUIRE_EMAIL_VERIFICATION === "true";
 }
 
+/**
+ * SMTP connection URL the dashboard sends transactional mail through
+ * (verification, password reset, magic links). SMTP is a vendor-neutral seam:
+ * point it at your own server, Gmail, SES, Mailgun, Postmark, Resend's SMTP, or
+ * the bundled local Mailpit — no hard dependency on any one provider.
+ *
+ * UNSET → email is a no-op (the message is logged, not sent). That keeps a
+ * no-email self-host working: signups succeed and the link is recoverable from
+ * the dashboard logs. An internet-facing deploy MUST set this (and flip
+ * REQUIRE_EMAIL_VERIFICATION=true) so verification mail actually reaches users.
+ */
+export function mailSmtpUrl(): string | undefined {
+  requireServer();
+  return process.env.MAIL_SMTP_URL || undefined;
+}
+
+/** From address on outgoing mail. Defaults to a local dev sender. */
+export function mailFrom(): string {
+  requireServer();
+  return process.env.MAIL_FROM ?? "Shipped <no-reply@localhost>";
+}
+
 export function googleClientId(): string {
   requireServer();
   return process.env.GOOGLE_CLIENT_ID ?? "";
