@@ -297,7 +297,7 @@ jobs:
   #     dashboard + worker as they land).
   # ---------------------------------------------------------------------------
   web:
-    name: web (pnpm typecheck)
+    name: web (pnpm typecheck + unit tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -315,3 +315,76 @@ jobs:
 
       - name: typecheck all packages
         run: pnpm -r typecheck
+
+      - name: unit tests (vitest)
+        # Pure lib logic, incl. the deploy manifest digest's byte-exact parity with
+        # Go's internal/manifest.Digest (a drift there silently breaks finalize).
+        run: pnpm -r --if-present test
+
+  # ---------------------------------------------------------------------------
+  # (e) E2E: the full self-host stack in Docker + a real browser. Boots compose
+  #     (dashboard + Go API + Postgres + MinIO), runs Better Auth's one-time
+  #     migration, then drives the browser folder drag-and-drop deploy through to
+  #     a live site. The only job that exercises the browser DOM + React + the
+  #     full prepare→upload→finalize→publish path end to end.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: e2e (browser · full stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: prepare env (safe local-dev defaults)
+        run: cp deploy/.env.example deploy/.env
+
+      - name: boot the stack
+        run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+
+      - name: run Better Auth migration (owns the auth schema)
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T dashboard \
+                 pnpm dlx @better-auth/cli@1.3.4 migrate --yes; then
+              echo "better-auth migrate ok"; exit 0
+            fi
+            echo "retry better-auth migrate ($i)"; sleep 5
+          done
+          echo "better-auth migrate failed"; exit 1
+
+      - name: wait for the dashboard
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/auth/ok || true)
+            [ "$code" = "200" ] && { echo "dashboard ready"; exit 0; }
+            sleep 3
+          done
+          echo "dashboard never became ready"; docker compose -f deploy/docker-compose.yml logs dashboard | tail -80; exit 1
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: install Playwright chromium
+        run: pnpm --filter @shipped/dashboard exec playwright install --with-deps chromium
+
+      - name: run deploy e2e
+        run: pnpm --filter @shipped/dashboard test:e2e
+
+      - name: stack logs on failure
+        if: failure()
+        run: docker compose -f deploy/docker-compose.yml logs --tail 200
+
+      - name: upload playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/dashboard/playwright-report/
+          retention-days: 7
