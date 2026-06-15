@@ -108,7 +108,47 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 	// 2–4. Collect referenced blobs from the retained manifests and delete orphans.
 	//      Extracted so the blob bookkeeping is unit-testable with the in-memory fake
 	//      (no live DB) — the only DB-dependent step is the version selection above.
-	return gcCollectAndDelete(ctx, obj, orgID, retained, pol, time.Now())
+	res, err := gcCollectAndDelete(ctx, obj, orgID, retained, pol, time.Now())
+	if err != nil {
+		return res, err
+	}
+
+	// 5. Reconcile the storage ledger with the R2 deletes (docs/pricing.md §5): drop
+	//    each deleted blob's org_blobs row and decrement the org's running total. The
+	//    R2 objects are already gone; a crash here leaves the counter slightly HIGH
+	//    until RecomputeOrgStorage reconciles — the safe direction (never under-counts
+	//    a tenant). Skipped on DryRun (nothing was deleted).
+	if !pol.DryRun && len(res.Orphans) > 0 {
+		if err := s.releaseStorageForBlobs(ctx, orgID, res.Orphans); err != nil {
+			return res, fmt.Errorf("gc: release storage for %s: %w", orgID, err)
+		}
+	}
+	return res, nil
+}
+
+// releaseStorageForBlobs drops the ledger rows for blobs GC deleted from R2 and
+// decrements the org's running storage total by their summed sizes, in one
+// org-scoped tx. A blob absent from the ledger (e.g. uploaded before metering
+// existed) frees nothing — DeleteOrgBlob returns no row.
+func (s *Store) releaseStorageForBlobs(ctx context.Context, orgID string, shas []string) error {
+	t := Tenant{OrgID: orgID, UserID: orgID} // user id unused by these writes; reuse org for a valid GUC
+	return s.withTx(ctx, t, func(q *db.Queries) error {
+		var freed int64
+		for _, sha := range shas {
+			n, err := q.DeleteOrgBlob(ctx, db.DeleteOrgBlobParams{OrgID: orgID, ContentHash: sha})
+			if err != nil {
+				if isNoRows(err) {
+					continue // not in the ledger → nothing to free
+				}
+				return err
+			}
+			freed += n
+		}
+		if freed > 0 {
+			return q.SubOrgStorage(ctx, db.SubOrgStorageParams{Delta: freed, OrgID: orgID})
+		}
+		return nil
+	})
 }
 
 // gcCollectAndDelete reads each retained version's manifest, unions the referenced

@@ -47,6 +47,16 @@ const (
 	enterpriseSitesCap   = 1000
 )
 
+// Per-org storage caps in BYTES (docs/pricing.md §3/§5). gib is binary (1<<30) to
+// match how the byte counter + infra tooling measure; the values are tunable.
+const (
+	gib = int64(1) << 30
+
+	freeStorageCap       = 5 * gib
+	businessStorageCap   = 100 * gib
+	enterpriseStorageCap = 500 * gib
+)
+
 // URLBuilder produces the upgrade / contact-sales URLs embedded in a 402 so the
 // dashboard can deep-link the right CTA. The dashboard fills in the active org
 // from the session, so these take no org id (keeping the policy pure).
@@ -66,10 +76,18 @@ func NewProvider(urls URLBuilder) *Provider { return &Provider{upgrade: urls} }
 // Ensure the cloud provider satisfies the core interface so DI is a drop-in.
 var _ corequota.Provider = (*Provider)(nil)
 
-// Allow enforces the hard cap for `res` given the org's live plan tier and the
-// current count, returning a *corequota.ExceededError (→ HTTP 402) when creating
-// one more would cross the cap. Pure: no IO, no side effects.
+// Allow enforces the hard cap for a discrete resource: creating ONE MORE
+// (current+1) must stay within the tier cap. It is AllowN with n=1.
 func (p *Provider) Allow(planTier string, res corequota.Resource, current int64) error {
+	return p.AllowN(planTier, res, current, 1)
+}
+
+// AllowN enforces the hard cap for `res` given the org's live plan tier: ADDING n
+// units to `current` must stay within the cap (current+n <= cap), else it returns a
+// *corequota.ExceededError (→ HTTP 402). For discrete resources the store passes
+// n=1; for storage, n is the deploy's new-blob byte delta. Pure: no IO, no side
+// effects.
+func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n int64) error {
 	tier := PlanTier(planTier)
 	if tier == "" {
 		tier = TierFree
@@ -82,13 +100,15 @@ func (p *Provider) Allow(planTier string, res corequota.Resource, current int64)
 		capMax, next = siteCap(tier)
 	case corequota.ResourceMemberPerOrg:
 		capMax, next = memberCap(tier)
+	case corequota.ResourceStorageBytesPerOrg:
+		capMax, next = storageCap(tier)
 	default:
 		// Unknown resources are not capped by the cloud policy (the store only
 		// calls Allow for the resources it enforces).
 		return nil
 	}
 
-	if current >= capMax {
+	if current+n > capMax {
 		return p.exceeded(res, current, capMax, tier, next)
 	}
 	return nil
@@ -135,5 +155,17 @@ func memberCap(tier PlanTier) (max int64, next PlanTier) {
 		return enterpriseMembersCap, tierSales
 	default: // free
 		return freeMembersCap, TierBusiness
+	}
+}
+
+// storageCap returns the per-org storage cap (bytes) and the next tier for `tier`.
+func storageCap(tier PlanTier) (max int64, next PlanTier) {
+	switch tier {
+	case TierBusiness:
+		return businessStorageCap, TierEnterprise
+	case TierEnterprise:
+		return enterpriseStorageCap, tierSales
+	default: // free
+		return freeStorageCap, TierBusiness
 	}
 }

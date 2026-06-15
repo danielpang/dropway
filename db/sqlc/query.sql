@@ -82,6 +82,68 @@ WHERE org_id = $1 AND owner_user_id = $2;
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':members'));
 
 -- ===========================================================================
+-- storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
+-- ===========================================================================
+
+-- name: LockOrgStorageQuota :exec
+-- Serialize concurrent deploys' storage accounting for an org: a transaction-scoped
+-- advisory lock keyed by hashtext(org||':storage'), so the GetOrgStorage → cap check
+-- → ledger INSERT → counter UPDATE is a critical section (the same TOCTOU guard the
+-- site cap uses). Held until the deploy tx commits/rolls back.
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'));
+
+-- name: GetOrgStorage :one
+-- The org's current stored bytes (the storage cap-check input). 0 when the
+-- org_usage row is somehow absent (fail-soft, like GetPlanTier).
+SELECT COALESCE(
+    (SELECT storage_bytes FROM app.org_usage WHERE org_id = $1),
+    0
+)::bigint AS storage_bytes;
+
+-- name: InsertOrgBlob :one
+-- Record a content-addressed blob as stored for the org. Dedup-aware: ON CONFLICT
+-- DO NOTHING means a blob already present for the org is NOT re-counted — RETURNING
+-- yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
+-- the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
+INSERT INTO app.org_blobs (org_id, content_hash, size_bytes)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, content_hash) DO NOTHING
+RETURNING size_bytes;
+
+-- name: AddOrgStorage :exec
+-- Increment the org's running storage total by the new-blob delta (called once per
+-- deploy with the sum of genuinely-new blob sizes).
+UPDATE app.org_usage
+SET storage_bytes = storage_bytes + sqlc.arg(delta)::bigint,
+    updated_at = now()
+WHERE org_id = sqlc.arg(org_id);
+
+-- name: DeleteOrgBlob :one
+-- Drop a blob's ledger row when GC removes the orphaned R2 object; RETURNING the
+-- size lets the caller decrement the running total. No row = it wasn't in the
+-- ledger (e.g. uploaded before metering existed) → nothing to decrement.
+DELETE FROM app.org_blobs
+WHERE org_id = $1 AND content_hash = $2
+RETURNING size_bytes;
+
+-- name: SubOrgStorage :exec
+-- Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
+-- floors at zero so a reconciliation skew can never make the counter negative.
+UPDATE app.org_usage
+SET storage_bytes = GREATEST(0, storage_bytes - sqlc.arg(delta)::bigint),
+    updated_at = now()
+WHERE org_id = sqlc.arg(org_id);
+
+-- name: RecomputeOrgStorage :exec
+-- Reconcile the running total to the authoritative ledger sum (the cheap drift
+-- fix; a deeper audit lists R2 to prune ledger rows orphaned by a crashed GC).
+UPDATE app.org_usage
+SET storage_bytes = COALESCE(
+        (SELECT SUM(b.size_bytes) FROM app.org_blobs b WHERE b.org_id = $1), 0),
+    updated_at = now()
+WHERE app.org_usage.org_id = $1;
+
+-- ===========================================================================
 -- sites
 -- ===========================================================================
 

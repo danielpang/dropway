@@ -29,7 +29,19 @@ CREATE TABLE app.org_usage (
     org_id        uuid PRIMARY KEY REFERENCES app.org_meta (id) ON DELETE CASCADE,
     members_count int NOT NULL DEFAULT 0,
     sites_count   int NOT NULL DEFAULT 0,
+    storage_bytes bigint NOT NULL DEFAULT 0 CHECK (storage_bytes >= 0),
     updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- org_blobs: the per-org set of stored, content-addressed blobs (one row per
+-- distinct org_id+content_hash). SUM(size_bytes) is the org's dedup-aware storage;
+-- org_usage.storage_bytes is the maintained running total (docs/pricing.md §5).
+CREATE TABLE app.org_blobs (
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    content_hash text NOT NULL,
+    size_bytes   bigint NOT NULL CHECK (size_bytes >= 0),
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, content_hash)
 );
 
 -- sites: a shareable static site owned by a user inside an org.

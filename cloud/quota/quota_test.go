@@ -39,6 +39,38 @@ func TestFreeTier_UnderSiteCap(t *testing.T) {
 	}
 }
 
+func TestStorageCap_Bands(t *testing.T) {
+	const gib = int64(1) << 30
+	p := newProvider()
+
+	// Free: filling EXACTLY to the 5 GiB cap is allowed; one byte over → 402 business.
+	if err := p.AllowN("free", corequota.ResourceStorageBytesPerOrg, 0, 5*gib); err != nil {
+		t.Fatalf("free: exactly 5 GiB should be allowed: %v", err)
+	}
+	err := p.AllowN("free", corequota.ResourceStorageBytesPerOrg, 4*gib, 1*gib+1)
+	ex, ok := corequota.AsExceeded(err)
+	if !ok || ex.PlanTier != "free" || ex.NextTier != "business" || ex.Max != 5*gib {
+		t.Fatalf("free storage over-cap = %v (ex=%+v)", err, ex)
+	}
+
+	// Business: 100 GiB cap; over → enterprise.
+	if err := p.AllowN("business", corequota.ResourceStorageBytesPerOrg, 0, 100*gib); err != nil {
+		t.Fatalf("business: 100 GiB should be allowed: %v", err)
+	}
+	if bizEx, ok := corequota.AsExceeded(
+		p.AllowN("business", corequota.ResourceStorageBytesPerOrg, 100*gib, 1)); !ok || bizEx.NextTier != "enterprise" {
+		t.Fatalf("business storage over-cap should point to enterprise")
+	}
+}
+
+// Allow is AllowN with n=1; confirm the delegation on a continuous resource (a
+// 1-byte add is within the Free cap).
+func TestAllow_DelegatesToAllowN(t *testing.T) {
+	if err := newProvider().Allow("free", corequota.ResourceStorageBytesPerOrg, 0); err != nil {
+		t.Fatalf("Allow(+1 byte) within cap should pass: %v", err)
+	}
+}
+
 func TestEmptyTier_DefaultsToFree(t *testing.T) {
 	// An empty/unknown plan tier must be treated as Free (fail-closed to the
 	// tightest paid-relevant cap, not unlimited).

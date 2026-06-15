@@ -65,6 +65,13 @@ type AppHostRoute struct {
 	CreatedAt time.Time
 }
 
+type AppOrgBlob struct {
+	OrgID       string
+	ContentHash string
+	SizeBytes   int64
+	CreatedAt   time.Time
+}
+
 type AppOrgMetum struct {
 	ID                   string
 	PlanTier             string
@@ -77,6 +84,7 @@ type AppOrgUsage struct {
 	OrgID        string
 	MembersCount int32
 	SitesCount   int32
+	StorageBytes int64
 	UpdatedAt    time.Time
 }
 

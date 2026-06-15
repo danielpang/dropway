@@ -31,6 +31,10 @@ type Resource string
 const (
 	ResourceSitePerUser  Resource = "sites_per_user"
 	ResourceMemberPerOrg Resource = "members_per_org"
+	// ResourceStorageBytesPerOrg is a CONTINUOUS resource (bytes), checked with
+	// AllowN(current, delta) rather than Allow's "+1" — a deploy adds `delta` bytes
+	// of new (dedup-aware) blob storage (docs/pricing.md §5).
+	ResourceStorageBytesPerOrg Resource = "storage_bytes_per_org"
 )
 
 // ExceededError is returned by an enforcing Provider when an action would cross
@@ -69,7 +73,14 @@ func AsExceeded(err error) (*ExceededError, bool) {
 // concurrent same-subject creates can't both slip past the cap). A pure policy
 // also means the `current` passed in must be the live count read under that lock.
 type Provider interface {
+	// Allow reports whether creating ONE MORE of a discrete resource (a site, a
+	// member) is within the tier cap — i.e. current+1 <= cap.
 	Allow(planTier string, res Resource, current int64) error
+	// AllowN reports whether ADDING n units of res to current stays within the tier
+	// cap — i.e. current+n <= cap. For discrete resources n=1 is identical to Allow;
+	// for a CONTINUOUS resource (storage bytes) n is the size delta. The store passes
+	// the live `current` read under the per-org advisory lock so it stays race-safe.
+	AllowN(planTier string, res Resource, current, n int64) error
 }
 
 // Unlimited is the core/self-host Provider: every action is allowed regardless of
@@ -79,6 +90,9 @@ type Unlimited struct{}
 
 // Allow always permits the action.
 func (Unlimited) Allow(string, Resource, int64) error { return nil }
+
+// AllowN always permits the action (self-host has no caps).
+func (Unlimited) AllowN(string, Resource, int64, int64) error { return nil }
 
 // Ensure Unlimited satisfies Provider.
 var _ Provider = Unlimited{}

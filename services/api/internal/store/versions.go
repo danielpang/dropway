@@ -6,9 +6,18 @@ import (
 	"context"
 
 	"github.com/danielpang/shipped/internal/projection"
+	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/internal/storage"
 	"github.com/danielpang/shipped/services/api/internal/store/db"
 )
+
+// BlobSize is one content-addressed blob's identity + server-observed size, used to
+// account per-org storage (docs/pricing.md §5). The handler passes the distinct
+// blobs of the deploy (its sizeBySHA), so storage is metered dedup-aware.
+type BlobSize struct {
+	SHA  string
+	Size int64
+}
 
 // CreateSiteVersionParams carries the inputs for an immutable deploy row.
 type CreateSiteVersionParams struct {
@@ -16,6 +25,10 @@ type CreateSiteVersionParams struct {
 	ContentHash string // sha256 of the deploy manifest (the whole-deploy digest)
 	SizeBytes   int64
 	Status      string // typically "ready" once blobs are verified + manifest written
+	// Blobs are the deploy's DISTINCT content-addressed blobs (+ sizes). On a
+	// genuinely-new version they feed the dedup-aware storage meter + cap; on an
+	// idempotent re-deploy (existing content_hash) they're ignored (no new storage).
+	Blobs []BlobSize
 }
 
 // CreateSiteVersion inserts the next immutable version for a site. It re-derives
@@ -58,6 +71,15 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 			return err
 		}
 
+		// Storage metering + cap (docs/pricing.md §5). Account this deploy's NEW,
+		// dedup-aware blob bytes and enforce the per-org storage cap — race-safe under
+		// a per-org advisory lock (the same TOCTOU guard the site cap uses). OSS =
+		// Unlimited (always allowed); cloud = the byte bands. Runs only for a
+		// genuinely-new version (the idempotent re-deploy above already returned).
+		if err := s.accountStorage(ctx, q, t.OrgID, p.Blobs); err != nil {
+			return err // *quota.ExceededError → 402; rolls back the whole deploy tx
+		}
+
 		nextNo, err := q.NextVersionNo(ctx, p.SiteID)
 		if err != nil {
 			return err
@@ -87,6 +109,75 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 		return nil
 	})
 	return out, err
+}
+
+// accountStorage records this deploy's DISTINCT blobs in the per-org ledger
+// (dedup-aware) and enforces the storage cap, inside the caller's deploy tx
+// (docs/pricing.md §5). It takes the per-org storage advisory lock, sums the
+// genuinely-NEW blob bytes (ON CONFLICT DO NOTHING → an already-stored blob isn't
+// re-counted), checks the cap against current+delta, then increments the running
+// total. delta==0 (every blob already stored) adds nothing and never trips the cap,
+// so a re-shuffle deploy of existing blobs always proceeds even at/over the cap.
+// Returns a *quota.ExceededError (→ 402) when the deploy would exceed the cap.
+func (s *Store) accountStorage(ctx context.Context, q *db.Queries, orgID string, blobs []BlobSize) error {
+	if len(blobs) == 0 {
+		return nil
+	}
+	if err := q.LockOrgStorageQuota(ctx, orgID); err != nil {
+		return err
+	}
+	current, err := q.GetOrgStorage(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	var delta int64
+	for _, b := range blobs {
+		if b.SHA == "" {
+			continue
+		}
+		n, err := q.InsertOrgBlob(ctx, db.InsertOrgBlobParams{
+			OrgID: orgID, ContentHash: b.SHA, SizeBytes: b.Size,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				continue // already stored for this org → not new, don't count
+			}
+			return err
+		}
+		delta += n // n == b.Size, only for a genuinely-new blob
+	}
+	if delta == 0 {
+		return nil // no new bytes → no cap check, no counter change
+	}
+	planTier, err := q.GetPlanTier(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	if err := s.quota.AllowN(planTier, quota.ResourceStorageBytesPerOrg, current, delta); err != nil {
+		return err // *quota.ExceededError → 402
+	}
+	return q.AddOrgStorage(ctx, db.AddOrgStorageParams{Delta: delta, OrgID: orgID})
+}
+
+// OrgStorageBytes returns the org's current stored bytes (the running counter the
+// storage cap reads; also the source for a usage view). RLS-scoped to the tenant.
+func (s *Store) OrgStorageBytes(ctx context.Context, t Tenant) (int64, error) {
+	var n int64
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		v, err := q.GetOrgStorage(ctx, t.OrgID)
+		n = v
+		return err
+	})
+	return n, err
+}
+
+// RecomputeOrgStorage reconciles an org's running storage total to the authoritative
+// ledger sum (the cheap drift fix — docs/pricing.md §5.5). Run periodically; a
+// deeper audit additionally lists R2 to prune ledger rows orphaned by a crashed GC.
+func (s *Store) RecomputeOrgStorage(ctx context.Context, t Tenant) error {
+	return s.withTx(ctx, t, func(q *db.Queries) error {
+		return q.RecomputeOrgStorage(ctx, t.OrgID)
+	})
 }
 
 // manifestPrefix is the R2 directory under which a site's per-version manifests

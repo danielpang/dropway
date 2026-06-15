@@ -30,6 +30,11 @@ func TestUnlimited_AllowsEverything(t *testing.T) {
 			t.Errorf("Unlimited.Allow(%q, %q, %d) = %v, want nil", c.tier, c.res, c.current, err)
 		}
 	}
+
+	// AllowN (the +N / storage path) is also always permitted in OSS, for any delta.
+	if err := u.AllowN("free", ResourceStorageBytesPerOrg, 1<<40, 1<<40); err != nil {
+		t.Errorf("Unlimited.AllowN(storage, 1TiB, +1TiB) = %v, want nil (self-host unlimited)", err)
+	}
 }
 
 // TestProvider_IsPure documents the seam contract: Provider.Allow takes only
@@ -63,9 +68,13 @@ func TestProvider_IsPure(t *testing.T) {
 // capAtFive is a minimal pure policy for the purity test: cap of 5, no IO.
 type capAtFive struct{}
 
-func (capAtFive) Allow(planTier string, res Resource, current int64) error {
+func (c capAtFive) Allow(planTier string, res Resource, current int64) error {
+	return c.AllowN(planTier, res, current, 1)
+}
+
+func (capAtFive) AllowN(planTier string, res Resource, current, n int64) error {
 	const max = 5
-	if current >= max {
+	if current+n > max {
 		return &ExceededError{Limit: res, Current: current, Max: max, PlanTier: planTier}
 	}
 	return nil

@@ -156,6 +156,20 @@ func TestIntegration_Phase4(t *testing.T) {
 	v2, blob2 := deployOneBlobVersion(t, ctx, st, obj, tA, gcSite.ID, "v2-content")
 	v3, blob3 := deployOneBlobVersion(t, ctx, st, obj, tA, gcSite.ID, "v3-content")
 
+	// STORAGE METER (docs/pricing.md §5): three distinct 10-byte blobs → 30 bytes.
+	const blobLen = int64(len("v1-content")) // 10; all three contents are 10 bytes
+	if got, err := st.OrgStorageBytes(ctx, tA); err != nil || got != 3*blobLen {
+		t.Fatalf("storage after 3 deploys = %d (err=%v), want %d", got, err, 3*blobLen)
+	}
+	// DEDUP: re-deploying an ALREADY-STORED blob (v2's content) to a NEW site adds a
+	// new version but NO new storage — the blob is counted once per org.
+	dedupSite, err := st.CreateSite(ctx, tA, "phase4dedup", projection.AccessOrgOnly)
+	must(t, err)
+	deployOneBlobVersion(t, ctx, st, obj, tA, dedupSite.ID, "v2-content")
+	if got, err := st.OrgStorageBytes(ctx, tA); err != nil || got != 3*blobLen {
+		t.Fatalf("storage after a dedup deploy = %d (err=%v), want %d (no double-count)", got, err, 3*blobLen)
+	}
+
 	// Publish v3 (current). With keepLastN=1, retain v3 (current+newest) only → v1,v2
 	// blobs become orphans. Publish v2 instead so the "current is not the newest"
 	// path is also covered: publish v2, keepLastN=1 retains v3 (newest) + v2 (current)
@@ -195,6 +209,17 @@ func TestIntegration_Phase4(t *testing.T) {
 	}
 	if res.Deleted != 1 {
 		t.Errorf("GC deleted %d blobs, want 1 (only v1's orphan)", res.Deleted)
+	}
+
+	// STORAGE: GC freed v1's 10-byte blob → the counter decremented (30 → 20). blob2
+	// is still referenced (gcSite current + dedupSite), so it was NOT freed.
+	if got, err := st.OrgStorageBytes(ctx, tA); err != nil || got != 2*blobLen {
+		t.Fatalf("storage after GC = %d (err=%v), want %d (only v1's blob freed)", got, err, 2*blobLen)
+	}
+	// Reconcile the counter to the authoritative ledger sum — unchanged here.
+	must(t, st.RecomputeOrgStorage(ctx, tA))
+	if got, err := st.OrgStorageBytes(ctx, tA); err != nil || got != 2*blobLen {
+		t.Fatalf("storage after reconcile = %d (err=%v), want %d", got, err, 2*blobLen)
 	}
 	_ = v1
 
@@ -266,6 +291,8 @@ func deployOneBlobVersion(t *testing.T, ctx context.Context, st *store.Store, ob
 	digest := hex.EncodeToString(digestSum[:])
 	ver, err := st.CreateSiteVersion(ctx, tn, store.CreateSiteVersionParams{
 		SiteID: siteID, ContentHash: digest, SizeBytes: int64(len(content)), Status: "ready",
+		// Feed the per-org storage meter the deploy's one (content-addressed) blob.
+		Blobs: []store.BlobSize{{SHA: sha, Size: int64(len(content))}},
 	})
 	must(t, err)
 

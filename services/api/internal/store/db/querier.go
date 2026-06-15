@@ -9,6 +9,9 @@ import (
 )
 
 type Querier interface {
+	// Increment the org's running storage total by the new-blob delta (called once per
+	// deploy with the sum of genuinely-new blob sizes).
+	AddOrgStorage(ctx context.Context, arg AddOrgStorageParams) error
 	// Claim a pending grant for the first verified account that matches it: set
 	// claimed_at + claimed_by_user_id. Idempotent — re-claiming by the same user is a
 	// no-op; we only set claim fields when still unclaimed so the original claimant
@@ -28,6 +31,10 @@ type Querier interface {
 	// disabling external sharing — revoke external access).
 	DeleteExternalAllowlistEntriesForOrg(ctx context.Context) error
 	DeleteHostRoute(ctx context.Context, host string) error
+	// Drop a blob's ledger row when GC removes the orphaned R2 object; RETURNING the
+	// size lets the caller decrement the running total. No row = it wasn't in the
+	// ledger (e.g. uploaded before metering existed) → nothing to decrement.
+	DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (int64, error)
 	// SPDX-License-Identifier: FSL-1.1-Apache-2.0
 	//
 	// db/sqlc/query.sql
@@ -57,7 +64,10 @@ type Querier interface {
 	// assert the publishing site OWNS the host before writing route:<host>.
 	GetHostRoute(ctx context.Context, host string) (AppHostRoute, error)
 	GetOrgMeta(ctx context.Context, id string) (AppOrgMetum, error)
-	GetOrgUsage(ctx context.Context, orgID string) (AppOrgUsage, error)
+	// The org's current stored bytes (the storage cap-check input). 0 when the
+	// org_usage row is somehow absent (fail-soft, like GetPlanTier).
+	GetOrgStorage(ctx context.Context, orgID string) (int64, error)
+	GetOrgUsage(ctx context.Context, orgID string) (GetOrgUsageRow, error)
 	// The org's live entitlement tier (the authoritative cap-check input). In the
 	// hosted build org_meta.plan_tier is synced from billing.subscriptions by the
 	// Stripe webhook; in self-host it stays 'free' but the Unlimited provider ignores
@@ -88,6 +98,11 @@ type Querier interface {
 	// the row to the active org for later SELECT/UPDATE/DELETE, but the PK guard is
 	// global regardless of RLS visibility.
 	InsertHostRoute(ctx context.Context, arg InsertHostRouteParams) error
+	// Record a content-addressed blob as stored for the org. Dedup-aware: ON CONFLICT
+	// DO NOTHING means a blob already present for the org is NOT re-counted — RETURNING
+	// yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
+	// the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
+	InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (int64, error)
 	ListAllowlistEntries(ctx context.Context, siteID string) ([]AppAllowlistEntry, error)
 	// Page the active org's audit log newest-first. RLS scopes the read to the org; the
 	// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
@@ -128,6 +143,14 @@ type Querier interface {
 	// OUR code path (Better Auth actually inserts the member row), so the lock just
 	// makes our COUNT → policy check coherent under concurrent preflights.
 	LockOrgMemberQuota(ctx context.Context, dollar_1 string) error
+	// ===========================================================================
+	// storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
+	// ===========================================================================
+	// Serialize concurrent deploys' storage accounting for an org: a transaction-scoped
+	// advisory lock keyed by hashtext(org||':storage'), so the GetOrgStorage → cap check
+	// → ledger INSERT → counter UPDATE is a critical section (the same TOCTOU guard the
+	// site cap uses). Held until the deploy tx commits/rolls back.
+	LockOrgStorageQuota(ctx context.Context, dollar_1 string) error
 	// Serialize concurrent site creates for the SAME (org, user): take a transaction-
 	// scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
 	// create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
@@ -140,6 +163,9 @@ type Querier interface {
 	// ===========================================================================
 	// The next monotonic version number for a site (1 on the first deploy).
 	NextVersionNo(ctx context.Context, siteID string) (int32, error)
+	// Reconcile the running total to the authoritative ledger sum (the cheap drift
+	// fix; a deeper audit lists R2 to prune ledger rows orphaned by a crashed GC).
+	RecomputeOrgStorage(ctx context.Context, orgID string) error
 	// ===========================================================================
 	// host resolution (Phase 2) — resolve a content host → owning site (for /authz)
 	// ===========================================================================
@@ -163,6 +189,9 @@ type Querier interface {
 	// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
 	// under a false org policy.
 	SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error
+	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
+	// floors at zero so a reconciliation skew can never make the counter negative.
+	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error
 	// Advance the custom-domain state machine (pending → verifying → verified/failed)
 	// and the TLS status from a Cloudflare Status() poll.
 	UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error)

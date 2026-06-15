@@ -235,6 +235,14 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		totalSize += n
 	}
 
+	// The distinct content-addressed blobs (+ server-observed sizes) for the per-org
+	// storage meter (docs/pricing.md §5); dedup-aware accounting + the cap happen in
+	// the store tx. sizeBySHA is already keyed by unique sha.
+	blobs := make([]store.BlobSize, 0, len(sizeBySHA))
+	for sha, n := range sizeBySHA {
+		blobs = append(blobs, store.BlobSize{SHA: sha, Size: n})
+	}
+
 	// Insert the immutable version (idempotent on per-site content_hash). The
 	// content_hash is the SERVER-computed digest, never the client's claim.
 	ver, err := a.Store.CreateSiteVersion(r.Context(), t, store.CreateSiteVersionParams{
@@ -242,6 +250,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		ContentHash: serverDigest,
 		SizeBytes:   totalSize,
 		Status:      "ready",
+		Blobs:       blobs,
 	})
 	if err != nil {
 		writeStoreError(w, err)

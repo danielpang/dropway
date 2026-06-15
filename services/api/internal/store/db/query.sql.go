@@ -8,9 +8,29 @@ package db
 import (
 	"context"
 	"net/netip"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const addOrgStorage = `-- name: AddOrgStorage :exec
+UPDATE app.org_usage
+SET storage_bytes = storage_bytes + $1::bigint,
+    updated_at = now()
+WHERE org_id = $2
+`
+
+type AddOrgStorageParams struct {
+	Delta int64
+	OrgID string
+}
+
+// Increment the org's running storage total by the new-blob delta (called once per
+// deploy with the sum of genuinely-new blob sizes).
+func (q *Queries) AddOrgStorage(ctx context.Context, arg AddOrgStorageParams) error {
+	_, err := q.db.Exec(ctx, addOrgStorage, arg.Delta, arg.OrgID)
+	return err
+}
 
 const claimAllowlistEntry = `-- name: ClaimAllowlistEntry :exec
 UPDATE app.allowlist_entries
@@ -173,6 +193,27 @@ func (q *Queries) DeleteHostRoute(ctx context.Context, host string) error {
 	return err
 }
 
+const deleteOrgBlob = `-- name: DeleteOrgBlob :one
+DELETE FROM app.org_blobs
+WHERE org_id = $1 AND content_hash = $2
+RETURNING size_bytes
+`
+
+type DeleteOrgBlobParams struct {
+	OrgID       string
+	ContentHash string
+}
+
+// Drop a blob's ledger row when GC removes the orphaned R2 object; RETURNING the
+// size lets the caller decrement the running total. No row = it wasn't in the
+// ledger (e.g. uploaded before metering existed) → nothing to decrement.
+func (q *Queries) DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (int64, error) {
+	row := q.db.QueryRow(ctx, deleteOrgBlob, arg.OrgID, arg.ContentHash)
+	var size_bytes int64
+	err := row.Scan(&size_bytes)
+	return size_bytes, err
+}
+
 const ensureOrgMeta = `-- name: EnsureOrgMeta :exec
 
 
@@ -307,15 +348,38 @@ func (q *Queries) GetOrgMeta(ctx context.Context, id string) (AppOrgMetum, error
 	return i, err
 }
 
+const getOrgStorage = `-- name: GetOrgStorage :one
+SELECT COALESCE(
+    (SELECT storage_bytes FROM app.org_usage WHERE org_id = $1),
+    0
+)::bigint AS storage_bytes
+`
+
+// The org's current stored bytes (the storage cap-check input). 0 when the
+// org_usage row is somehow absent (fail-soft, like GetPlanTier).
+func (q *Queries) GetOrgStorage(ctx context.Context, orgID string) (int64, error) {
+	row := q.db.QueryRow(ctx, getOrgStorage, orgID)
+	var storage_bytes int64
+	err := row.Scan(&storage_bytes)
+	return storage_bytes, err
+}
+
 const getOrgUsage = `-- name: GetOrgUsage :one
 SELECT org_id, members_count, sites_count, updated_at
 FROM app.org_usage
 WHERE org_id = $1
 `
 
-func (q *Queries) GetOrgUsage(ctx context.Context, orgID string) (AppOrgUsage, error) {
+type GetOrgUsageRow struct {
+	OrgID        string
+	MembersCount int32
+	SitesCount   int32
+	UpdatedAt    time.Time
+}
+
+func (q *Queries) GetOrgUsage(ctx context.Context, orgID string) (GetOrgUsageRow, error) {
 	row := q.db.QueryRow(ctx, getOrgUsage, orgID)
-	var i AppOrgUsage
+	var i GetOrgUsageRow
 	err := row.Scan(
 		&i.OrgID,
 		&i.MembersCount,
@@ -524,6 +588,30 @@ type InsertHostRouteParams struct {
 func (q *Queries) InsertHostRoute(ctx context.Context, arg InsertHostRouteParams) error {
 	_, err := q.db.Exec(ctx, insertHostRoute, arg.Host, arg.OrgID, arg.SiteID)
 	return err
+}
+
+const insertOrgBlob = `-- name: InsertOrgBlob :one
+INSERT INTO app.org_blobs (org_id, content_hash, size_bytes)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, content_hash) DO NOTHING
+RETURNING size_bytes
+`
+
+type InsertOrgBlobParams struct {
+	OrgID       string
+	ContentHash string
+	SizeBytes   int64
+}
+
+// Record a content-addressed blob as stored for the org. Dedup-aware: ON CONFLICT
+// DO NOTHING means a blob already present for the org is NOT re-counted — RETURNING
+// yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
+// the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
+func (q *Queries) InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertOrgBlob, arg.OrgID, arg.ContentHash, arg.SizeBytes)
+	var size_bytes int64
+	err := row.Scan(&size_bytes)
+	return size_bytes, err
 }
 
 const listAllowlistEntries = `-- name: ListAllowlistEntries :many
@@ -915,6 +1003,23 @@ func (q *Queries) LockOrgMemberQuota(ctx context.Context, dollar_1 string) error
 	return err
 }
 
+const lockOrgStorageQuota = `-- name: LockOrgStorageQuota :exec
+
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
+`
+
+// ===========================================================================
+// storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
+// ===========================================================================
+// Serialize concurrent deploys' storage accounting for an org: a transaction-scoped
+// advisory lock keyed by hashtext(org||':storage'), so the GetOrgStorage → cap check
+// → ledger INSERT → counter UPDATE is a critical section (the same TOCTOU guard the
+// site cap uses). Held until the deploy tx commits/rolls back.
+func (q *Queries) LockOrgStorageQuota(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockOrgStorageQuota, dollar_1)
+	return err
+}
+
 const lockUserSiteQuota = `-- name: LockUserSiteQuota :exec
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text || ':sites'))
 `
@@ -951,6 +1056,21 @@ func (q *Queries) NextVersionNo(ctx context.Context, siteID string) (int32, erro
 	var next_version_no int32
 	err := row.Scan(&next_version_no)
 	return next_version_no, err
+}
+
+const recomputeOrgStorage = `-- name: RecomputeOrgStorage :exec
+UPDATE app.org_usage
+SET storage_bytes = COALESCE(
+        (SELECT SUM(b.size_bytes) FROM app.org_blobs b WHERE b.org_id = $1), 0),
+    updated_at = now()
+WHERE app.org_usage.org_id = $1
+`
+
+// Reconcile the running total to the authoritative ledger sum (the cheap drift
+// fix; a deeper audit lists R2 to prune ledger rows orphaned by a crashed GC).
+func (q *Queries) RecomputeOrgStorage(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, recomputeOrgStorage, orgID)
+	return err
 }
 
 const resolveSiteByHostRoute = `-- name: ResolveSiteByHostRoute :one
@@ -1056,6 +1176,25 @@ type SetSiteAccessModeParams struct {
 // under a false org policy.
 func (q *Queries) SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error {
 	_, err := q.db.Exec(ctx, setSiteAccessMode, arg.ID, arg.AccessMode)
+	return err
+}
+
+const subOrgStorage = `-- name: SubOrgStorage :exec
+UPDATE app.org_usage
+SET storage_bytes = GREATEST(0, storage_bytes - $1::bigint),
+    updated_at = now()
+WHERE org_id = $2
+`
+
+type SubOrgStorageParams struct {
+	Delta int64
+	OrgID string
+}
+
+// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
+// floors at zero so a reconciliation skew can never make the counter negative.
+func (q *Queries) SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error {
+	_, err := q.db.Exec(ctx, subOrgStorage, arg.Delta, arg.OrgID)
 	return err
 }
 
