@@ -112,6 +112,17 @@ export const auth = betterAuth({
         // dashboard URL), which the API rejects with 401.
         issuer: jwtIssuer(),
         audience: jwtAudience(),
+        // CUSTOM CLAIMS the Go API reads (internal/auth/jwks.go Claims): `org_id` is
+        // the user's ACTIVE organization — REQUIRED for the per-request RLS tenant
+        // context (without it the API 500s "claims missing org_id"). email/
+        // email_verified back the allowlist authz path. `role` is intentionally
+        // omitted: it's a hint the API re-checks LIVE against auth.member, so a stale
+        // claim can't grant admin. `sub` (user id) is set separately by getSubject.
+        definePayload: ({ user, session }) => ({
+          org_id: session.activeOrganizationId ?? "",
+          email: user.email,
+          email_verified: user.emailVerified,
+        }),
       },
     }),
   ],
