@@ -2,192 +2,170 @@
 
 # Shipped
 
-**A folder of files → a live, access-controlled URL in one command.**
+### A folder of files → a live, access-controlled URL in one command.
 
-Shipped is a multi-tenant, Quick-style static-site share platform. Drop a folder
-(or run `shipped deploy ./dist`) and get an immutable, versioned, access-controlled
-URL — no pipeline, no config. It takes Shopify [Quick](https://shopify.engineering/quick)'s
-ergonomic promise external and multi-tenant: per-site ownership, three sharing tiers
-(public / password / allowlist / org-only), and orgs/enterprise as first-class tenants,
-serving untrusted tenant HTML/JS safely from a separate Public-Suffix-List domain.
+Shipped turns any static site — an HTML/CSS report, a data dashboard, a React or
+Vite build, a docs site, an AI-generated page — into a **live, versioned, shareable
+URL** in seconds. Drag a folder into the dashboard, or run `shipped deploy ./dist`,
+and you get a real URL you control: share it with the whole internet, your whole
+company, a few specific people, or behind a password — and change your mind anytime.
 
-> **Read the full design first:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the
-> approved architecture — domains, data model + RLS, edge auth, deploy flow, billing,
-> phased roadmap, and the open-core licensing model.
-
-## Open-core model
-
-Shipped follows the Supabase / PostHog open-core playbook: **open source + a hosted SaaS.**
-
-- **Core** (`apps/`, `services/`, `cli/`, `internal/`, `edge/`, `contracts/`, `db/migrations/app/`,
-  `deploy/`, `packages/`) is **source-available under [FSL-1.1-Apache-2.0](LICENSE)**
-  (Sentry's Functional Source License). You may self-host, modify, and use Shipped
-  internally for free — but you **may not** offer it to third parties as a competing
-  paid/hosted service. Each release **auto-converts to Apache 2.0 after two years**.
-- **`cloud/`** is **proprietary and cloud-only** — the Stripe billing integration and the
-  quota gate (the only place the Free 5-members/10-sites caps exist). It is **never shipped
-  in the self-host build**, so self-host is **unlimited**. The *license*, not a runtime
-  limit, is what prevents reselling.
-- **`ee/`** holds **Shipped Enterprise Edition** features (SSO/SAML, audit export, advanced
-  RBAC, custom domains) under a separate, license-key-gated EE license.
-
-The OSS core depends on `cloud/` / `ee/` **only through interfaces with no-op/unlimited
-default implementations** (e.g. the Go `QuotaProvider`). CI proves the OSS build has
-**zero references** into `cloud/` or `ee/` — see the `open-core-boundary` job in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-
-## Status — what's built, what's deferred
-
-Phases 0–4 are in the tree. **Phase 4 shipped the security/ops hardening:** audit logging
-into `app.audit_log` (correlated by `request_id`); **hard revocation** via a Cloudflare-KV
-denylist (`revoked:user|site|org` → `{min_iat}`, written by the Go API on the three
-token-revocation triggers — member removal / site unshare / access-tighten /
-`allow_external_sharing` disable — idempotent and rebuildable, checked by both the serving
-Worker and the `/authz` exchange — fail-closed); **billing suspension / over_limit** sets the
-per-org **`org_status` KV flag** instead (the edge serves a read-only platform block page —
-*not* a token revocation, so existing viewers aren't hard-cut, per the §9 read-only model);
-edge rate-limiting + denial-of-wallet caps; content security headers; an **RLS policy test
-suite**; **R2 version GC** (with an age guard so an in-flight deploy's just-uploaded blobs are
-never reaped); and the **DR rebuild** path (`store.RebuildProjection` re-derives the KV/D1
-projection from Postgres).
-
-**Intentionally NOT yet built** (post-launch / enterprise — each needs external accounts,
-paid runtime infra, or a vendor relationship; full rationale in
-[`docs/ARCHITECTURE.md` §15](docs/ARCHITECTURE.md)):
-
-- **SSO/SAML** (Better Auth SSO plugin, UUID-keyed) and **SCIM** provisioning — `ee/`.
-- **Runtime APIs** — collection DB + realtime, file uploads, the **LLM/image proxy** with the
-  §10 denial-of-wallet guardrails, and websockets / Durable Objects / Workers-for-Platforms
-  dynamic runtime.
-- **Third-party malware / abuse scanning vendor** + automated takedown / quarantine.
-- **Per-site configurable CSP UI** (Phase 4 ships a fixed sane default).
-- **Usage-based runtime billing** (depends on the runtime APIs landing first).
-- **Full OpenTelemetry tracing backend** — Phase 4 ships structured logs with a correlated
-  `request_id`; exporting OTel spans to a collector/backend is deferred.
-
-## Monorepo map
-
-```
-shipped/
-├── apps/
-│   └── dashboard/        [FSL] Next.js (app.shipped.app): Better Auth (Google/email/magic
-│                               + Organization + JWT/EdDSA), /authz exchange (P2). Calls the
-│                               Go API via a generated OpenAPI client — never touches Postgres.
-├── services/
-│   └── api/              [FSL] Go (api.shipped.app) = system of record + authz boundary.
-│                               Verifies EdDSA JWTs, orchestrates deploys, writes the KV/D1
-│                               projection. cloud/ wired in via build tags / DI.
-├── edge/
-│   └── serving-worker/   [FSL] Cloudflare Worker (*.shippedusercontent.com): R2 + KV + D1.
-│                               Public path = JWT-free cacheable router; gated tiers in P2.
-├── cli/                  [FSL] Go `shipped` binary — folder → live URL, shares deploy code.
-├── contracts/            [FSL] @shipped/contracts — the one cross-language data contract:
-│                               the KV route value shape (JSON Schema → Go + TS, round-trip test).
-├── internal/             [FSL] Shared Go libs: auth (EdDSA JWT verify), quota (Provider iface),
-│                               httpx, middleware.
-├── packages/             [FSL] Shared TS workspace config: tsconfig, eslint-config.
-├── db/
-│   ├── migrations/app/      [FSL] Go-owned `app` schema — goose migrations + hand-written
-│   │                              RLS / GRANT / external-sharing trigger.
-│   └── migrations/billing/  [proprietary, cloud-only] subscriptions + Stripe-event dedupe.
-├── deploy/               [FSL] docker-compose + .env.example + one-command self-host guide.
-├── cloud/               [PROPRIETARY, cloud-only] billing (Stripe) + quota (the hard caps).
-├── ee/                  [EE LICENSE] enterprise features.
-├── docs/ARCHITECTURE.md       The approved architecture.
-└── .github/workflows/ci.yml   go · open-core-boundary · sql (RLS) · web typecheck.
-```
-
-**Schema ownership** (ARCHITECTURE.md §5/§8): the **`auth`** schema is owned and migrated by
-Better Auth (the dashboard); the **`app`** schema is Go-owned via goose; the **`billing`**
-schema is cloud-only and FK's into `app` (the core never references billing). Every tenant
-table carries a denormalized `org_id` and is under `FORCE ROW LEVEL SECURITY`; the Go API
-connects as a **non-BYPASSRLS `shipped_app`** role and sets `app.current_org_id` per
-transaction.
-
-## Run everything locally with Docker
-
-One command builds and starts the **whole stack** — the Go API, the Next.js
-dashboard, a bundled Postgres, a bundled MinIO (R2/S3 stand-in), and the schema
-migrations:
+It's **open source and self-hostable**, with an optional hosted SaaS. Think
+"Netlify-meets-access-control," built multi-tenant from the ground up.
 
 ```sh
-cp deploy/.env.example deploy/.env        # safe local-dev defaults
+shipped deploy ./dist
+# → https://quarterly-report.shippedusercontent.com  (org-only, versioned, rollback-able)
+```
+
+---
+
+## Why teams need it
+
+**Building something is easy now. Sharing it — to exactly the right people, safely —
+is still annoying.** You've generated a report, a prototype, a dashboard, or a page,
+and your options are all bad:
+
+- **Email a zip / screenshot** → no live URL, instantly stale, impossible to update.
+- **Spin up S3 + CloudFront / a Vercel project** → IAM, build config, a new project
+  per artifact, and *no per-link access control* — it's public or it's nothing.
+- **Paste into a wiki** → loses the real layout, interactivity, and your CSS/JS.
+- **Internal file shares** → no link you can send someone outside the team, no expiry,
+  no audit of who saw what.
+
+None of these let you say *"share this with **these three people**,"* or *"anyone at
+my company,"* or *"public, but password-protected,"* — and then **revoke it**, **roll
+back** a bad version, or put it on a **custom domain**.
+
+Shipped is that missing layer: **one command to publish, with sharing and access
+control as first-class features.**
+
+## What you get
+
+- **One-command deploy** — folder → live URL. No pipeline, no config (CLI *or*
+  drag-and-drop in the dashboard). Pre-built static output just works.
+- **Four sharing tiers, per site** — **public**, **password-protected**, **specific
+  people** (email allowlist), or **anyone in your org**. Default-deny; you opt in.
+- **Multi-tenant orgs** — teams, roles (owner/admin/member), and an org-wide policy
+  that can forbid sharing outside the company entirely.
+- **Immutable, versioned deploys** — every deploy is content-addressed; **instant
+  rollback** to any previous version.
+- **Custom domains** + **expiring share links** + a full **audit log** of who shared
+  and accessed what.
+- **Immediate revocation** — remove a member or unshare a site and their access is
+  cut at the edge right away, not whenever a token happens to expire.
+- **Safe to serve untrusted content** — tenant HTML/JS is served from a separate
+  Public-Suffix-List domain, so one site can never reach another's (or your) session.
+- **No surprise bandwidth bills** — content is served from Cloudflare R2 (free egress),
+  so heavy traffic doesn't translate into a heavy invoice.
+- **Open source + self-hostable** — run the whole thing yourself, unlimited, for free.
+
+## Who it's for
+
+- **Engineers & data/analytics teams** sharing generated reports, notebooks-as-HTML,
+  benchmark dashboards, and one-off tools — internally or with a client.
+- **Designers & PMs** sharing static prototypes, design specs, and review builds with
+  the exact stakeholders who should see them, password-protected if needed.
+- **AI app / agent builders** that generate websites and need to hand a user a real,
+  access-controlled URL programmatically.
+- **Companies** that need *governed* sharing — "internal by default, external only if
+  an admin allows it," with roles, audit, custom domains, and instant revocation.
+
+## How it works (at a glance)
+
+```
+  shipped deploy ./dist  ─▶  Go API (system of record + authz)  ─▶  R2 (content-addressed blobs)
+                                       │ writes a rebuildable routing projection
+                                       ▼
+   browser ─▶ Cloudflare edge Worker (*.shippedusercontent.com) ─▶ streams your site
+              public = no login, cacheable · gated = host-scoped token from /authz
+```
+
+A **Next.js dashboard** (with Better Auth: Google / email / magic-link) is the control
+plane; a **Go API** is the system of record and the authorization boundary; a
+**Cloudflare Worker** serves content at the edge; **Postgres** (with row-level security
+per org) is the source of truth. The full design — domains, RLS data model, edge auth,
+deploy flow, billing — is in **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
+
+---
+
+## Run it locally
+
+You need **Docker** (with Compose). One command builds and starts the whole stack —
+the Go API, the Next.js dashboard, a bundled Postgres, a bundled MinIO (an R2/S3
+stand-in), and the schema migrations:
+
+```sh
+git clone https://github.com/your-org/shipped.git && cd shipped
+cp deploy/.env.example deploy/.env                  # safe local-dev defaults
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-| Service | URL | Notes |
-|---|---|---|
-| **dashboard** (Next.js + Better Auth) | http://localhost:3000 | built from `apps/dashboard/Dockerfile` |
-| **api** (Go control-plane) | http://localhost:8080 | OSS build (unlimited); `GET /healthz` |
-| **postgres** *(bundled, optional)* | `localhost:5432` | profile `local-db` |
-| **minio** *(bundled, optional)* | console http://localhost:9001 | profile `local-storage` |
-| **migrate** | one-shot | applies `db/migrations/app` + the `shipped_app` role |
+| Service | URL |
+|---|---|
+| **Dashboard** (sign up here) | http://localhost:3000 |
+| **API** (Go control-plane) | http://localhost:8080 — `GET /healthz` |
+| Postgres / MinIO (bundled) | `localhost:5432` / console http://localhost:9001 |
 
-**One-time, after the first `up`** — Better Auth owns the `auth` schema, so create
-its identity tables:
+**One time, after the first start** — Better Auth owns the identity tables, so create them:
 
 ```sh
 docker compose -f deploy/docker-compose.yml exec dashboard \
   pnpm exec @better-auth/cli migrate --yes
 ```
 
-Then open **http://localhost:3000**, sign up, create an org, and deploy with the CLI.
+Then open **http://localhost:3000**, sign up, create an org, create a site, and deploy
+your first folder. Self-host is **unlimited** — no caps, no Stripe, no account needed.
 
-### Bring your own backends (Supabase / R2)
+### Use your own Postgres / object store
 
-The bundled Postgres and MinIO are **optional Compose profiles** (`local-db`,
-`local-storage`), default-on via `COMPOSE_PROFILES` in `deploy/.env`. The **hosted
-Shipped SaaS runs on Supabase (managed Postgres) + Cloudflare R2** — for self-host
-you can do the same:
-
-- **Use Supabase / an external Postgres:** remove `local-db` from `COMPOSE_PROFILES`
-  and point `DATABASE_URL` + `DATABASE_OWNER_URL` at it. `api`/`dashboard` depend on
-  the bundled DB with `required: false`, so they run against the external one.
-- **Use Cloudflare R2 / external S3:** remove `local-storage` and set the `S3_*` vars.
+The bundled Postgres and MinIO are optional Compose profiles. To point at Supabase /
+an external Postgres or Cloudflare R2 / S3, drop the profile from `COMPOSE_PROFILES`
+and set the matching `DATABASE_URL` / `S3_*` vars in `deploy/.env`:
 
 ```sh
-# example: external Postgres + external object store, no bundled services
 COMPOSE_PROFILES= DATABASE_URL=postgres://… S3_ENDPOINT=https://… \
   docker compose -f deploy/docker-compose.yml up --build api dashboard migrate
 ```
 
-The **serving Worker** (`edge/serving-worker`) is a Cloudflare workerd runtime, not a
-container — run it alongside with `pnpm --filter @shipped/serving-worker dev` (Wrangler).
-
-## Dev without Docker
+### Develop without Docker
 
 ```sh
-# Data plane only (bundled Postgres + MinIO + migrations)
-cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up
-
-# Go API + CLI
-go build ./...                 # build the core        ·  go test ./...   (tests)
-go run ./services/api/cmd/api  # start the API (reads DATABASE_URL etc. from env)
-go run ./cli/cmd/shipped       # the deploy CLI
-
-# Dashboard + TS workspace
-corepack enable && pnpm install
-pnpm -r typecheck              # type-check all workspace packages
-pnpm dev                       # run the dashboard (apps/dashboard)
+go build ./... && go test ./...     # the Go core (API + CLI)
+go run ./services/api/cmd/api       # start the API
+corepack enable && pnpm install     # the TS workspace
+pnpm dev                            # run the dashboard
 ```
 
-Run migrations by hand with `goose -dir db/migrations/app postgres "<DATABASE_OWNER_URL>" up`.
-Full data-plane walkthrough: [`deploy/README.md`](deploy/README.md).
+Full local-dev reference (build flavors, the edge Worker, migrating by hand) lives in
+**[`status.md`](status.md)** and **[`deploy/README.md`](deploy/README.md)**.
 
-### Build flavors
+---
 
-- **OSS / self-host (default):** `go build ./...` — unlimited, no Stripe, no caps. The
-  api image defaults to this; the dashboard + bundled data plane are all you need.
-- **Cloud (internal):** `go build -tags cloud ./...` (or `--build-arg SHIPPED_BUILD_TAGS=cloud`
-  for the api image) — wires in `cloud/quota` + `cloud/billing` (needs the Stripe env).
+## Open source + hosted (open-core)
 
-## Contributing
+Shipped follows the **Supabase / PostHog** model: a source-available codebase anyone
+can self-host for free, plus an optional hosted SaaS for convenience and scale.
 
-Contributions to the FSL core are welcome under a lightweight **DCO sign-off** — see
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+- The **core** is under the **[Functional Source License (FSL-1.1-Apache-2.0)](LICENSE)** —
+  self-host, modify, and use it internally for free; you just can't resell it as a
+  competing hosted service. Each release **becomes Apache 2.0 after two years**.
+- The **`cloud/`** module (Stripe billing + usage quotas) is proprietary and **never
+  ships in the self-host build**, so self-host has no limits. **`ee/`** holds
+  license-gated enterprise features (SSO/SAML, audit export, custom domains).
+
+Pricing strategy for the hosted SaaS is in **[`docs/pricing.md`](docs/pricing.md)**.
+
+## Docs & status
+
+- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — the full system design.
+- **[`docs/pricing.md`](docs/pricing.md)** — pricing model + storage metering.
+- **[`status.md`](status.md)** — build status, monorepo map, and the complete local-run
+  reference.
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — contributions welcome under a DCO sign-off.
 
 ## License
 
-The core is licensed under [FSL-1.1-Apache-2.0](LICENSE). `cloud/` and `ee/` are governed
-by their own licenses (see [`cloud/LICENSE`](cloud/LICENSE) and [`ee/LICENSE`](ee/LICENSE)).
-The "Shipped" name and logo are reserved trademarks; forks must rename to redistribute.
+Core: **[FSL-1.1-Apache-2.0](LICENSE)** (→ Apache 2.0 after two years). `cloud/` and
+`ee/` are governed by their own licenses. The "Shipped" name and logo are reserved
+trademarks; forks must rename to redistribute.
