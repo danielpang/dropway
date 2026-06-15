@@ -12,6 +12,7 @@ package projection
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/danielpang/shipped/internal/edgerevoke"
@@ -100,7 +101,7 @@ func (v RouteValue) Validate() error {
 // from Postgres (the DR drill / drift reconciler — §13 row 8).
 type Writer interface {
 	// PutRoute upserts the route value for host (e.g.
-	// "<slug>.shippedusercontent.com").
+	// "<org>--<app>.shippedusercontent.com").
 	PutRoute(ctx context.Context, host string, val RouteValue) error
 	// DeleteRoute removes a host's route (unshare / delete).
 	DeleteRoute(ctx context.Context, host string) error
@@ -154,25 +155,38 @@ func OrgStatusKey(orgID string) string { return "org_status:" + orgID }
 // projected flag (the absence of a key is what the Worker treats as servable).
 const OrgStatusActive = "active"
 
-// HostForSlug returns the canonical Phase-1 content host for a site slug.
+// HostForSite returns the canonical content host for a site — the ORG-NAMESPACED
+// single DNS label under the content domain: `<orgSlug>--<appSlug>.<ContentDomain>`
+// (e.g. acme/blog → "acme--blog.shippedusercontent.com").
 //
-// SLUG SCHEME (documented decision): the site slug is the single DNS label under
-// the content domain — `<slug>.shippedusercontent.com`. The serving Worker's
-// `*.shippedusercontent.com` wildcard matches exactly one label, so a single-
-// label host is required. app.sites enforces (org_id, slug) uniqueness, so slugs
-// are unique WITHIN an org but not globally; the KV namespace is global, so the
-// publish path treats the route key as the global host registry and refuses to
-// overwrite a host already owned by a different org/site (see store.Store.Publish
-// and the reserved-slug list). This keeps Phase 1 self-contained; a future phase
-// can move to `<site>--<org>` two-token labels or a global slug reservation table
-// without changing the Worker contract.
-func HostForSlug(slug string) string {
-	return slug + "." + ContentDomain
+// HOST SCHEME (documented decision): putting the ORG in the host (org first, then
+// the app slug, separated by a DOUBLE dash) makes the global KV route namespace
+// unambiguous — app.sites is UNIQUE(org_id, slug), so two orgs may both publish a
+// site named "blog"; the org-namespaced host keeps each on its own origin and
+// off-limits to the other. It MUST remain a SINGLE DNS label before the domain:
+// the serving Worker's `*.<ContentDomain>` wildcard cert matches exactly one
+// label, so `--` (not `.`) separates the two slugs. `--` is collision-free because
+// slugify collapses dash runs, so neither slug can itself contain `--`. The
+// publish path still treats route:<host> as the global host registry and refuses
+// to overwrite a host owned by another org/site (see store.Store.Publish and the
+// reserved-slug list).
+func HostForSite(orgSlug, appSlug string) string {
+	return orgSlug + "--" + appSlug + "." + ContentDomain
 }
 
 // ContentDomain is the registrable, PSL-listed content domain (ARCHITECTURE.md
-// §3) under which every tenant site is served.
-const ContentDomain = "shippedusercontent.com"
+// §3) under which every tenant site is served. It is env-overridable via
+// CONTENT_DOMAIN (default "shippedusercontent.com") so a self-host/dev deployment
+// can serve under its own apex without recompiling.
+var ContentDomain = envOr("CONTENT_DOMAIN", "shippedusercontent.com")
+
+// envOr returns the environment value for key, or def when it's unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
 // RouteKey returns the KV key for a host ("route:<host>").
 func RouteKey(host string) string { return "route:" + host }

@@ -10,6 +10,7 @@ import (
 	"github.com/danielpang/shipped/internal/auth"
 	"github.com/danielpang/shipped/internal/httpx"
 	"github.com/danielpang/shipped/internal/middleware"
+	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/services/api/internal/store"
 )
@@ -40,8 +41,25 @@ type fakeStore struct {
 	versions  map[string]store.SiteVersion
 	createErr error
 
+	// orgSlug is the slug OrgSlug returns; defaults to "org" so the canonical host
+	// is "org--<slug>.shippedusercontent.com" in tests that don't override it.
+	orgSlug    string
+	orgSlugErr error
+
 	lastTenant  store.Tenant
 	provisioned bool
+}
+
+// OrgSlug returns the configured fake org slug (default "org"), mirroring the real
+// store's auth.organization read used to build the org-namespaced content host.
+func (f *fakeStore) OrgSlug(_ context.Context, t store.Tenant) (string, error) {
+	if f.orgSlugErr != nil {
+		return "", f.orgSlugErr
+	}
+	if f.orgSlug != "" {
+		return f.orgSlug, nil
+	}
+	return "org", nil
 }
 
 func newFakeStore() *fakeStore {
@@ -119,7 +137,7 @@ func (f *fakeStore) Publish(_ context.Context, t store.Tenant, siteID, versionID
 	}
 	s.CurrentVersionID = &versionID
 	f.sites[siteID] = s
-	host := s.Slug + ".shippedusercontent.com"
+	host := projection.HostForSite("org", s.Slug)
 	return store.PublishResult{
 		Host:  host,
 		Site:  s,
@@ -181,7 +199,7 @@ func TestCreateSite_Unlimited_201(t *testing.T) {
 	if body.OrgID != "org_1" || body.OwnerID != "user_1" || body.Slug != "my-site" {
 		t.Errorf("site = %+v", body)
 	}
-	if body.LiveURL != "https://my-site.shippedusercontent.com" {
+	if body.LiveURL != "https://org--my-site.shippedusercontent.com" {
 		t.Errorf("live_url = %q", body.LiveURL)
 	}
 	// RLS tenant was derived from the verified claims.

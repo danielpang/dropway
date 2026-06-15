@@ -76,6 +76,8 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 
 	mustExec(t, "INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ($1, true)", orgA)
 	mustExec(t, "INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ($1, true)", orgB)
+	seedAuthOrg(t, orgA, "orga")
+	seedAuthOrg(t, orgB, "orgb")
 	must(t, st.EnsureOrgProvisioned(ctx, tA))
 	must(t, st.EnsureOrgProvisioned(ctx, store.Tenant{OrgID: orgB, UserID: userOutsider}))
 
@@ -93,7 +95,7 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 	if _, err := st.Publish(ctx, tA, site.ID, ver); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	host := projection.HostForSlug("gated")
+	host := projection.HostForSite("orga", "gated")
 
 	// =========================================================================
 	// Admin-only gating: a MEMBER cannot change access (role re-checked live).
@@ -241,7 +243,7 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 		t.Fatalf("publish public site: %v", err)
 	}
 	must(t, proj.PutRoute(ctx, pubRes.Host, pubRes.Route))
-	pubHost := projection.HostForSlug("publicsite")
+	pubHost := projection.HostForSite("orga", "publicsite")
 	if rv, _ := proj.Get(pubHost); rv.AccessMode != projection.AccessPublic {
 		t.Fatalf("public site route not public before reconcile: %+v", rv)
 	}
@@ -333,7 +335,7 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 		t.Fatalf("publish dual: %v", err)
 	}
 	must(t, proj.PutRoute(ctx, dualRes.Host, dualRes.Route))
-	dualCanonical := projection.HostForSlug("dual")
+	dualCanonical := projection.HostForSite("orga", "dual")
 	dualCustom := "www.dualcorp.com"
 
 	// Verify a custom domain for the dual site → writes the custom host_route +

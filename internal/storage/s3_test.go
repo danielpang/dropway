@@ -64,8 +64,8 @@ const testSHA = "000000000000000000000000000000000000000000000000000000000000000
 func TestPresignPut_UsesPublicEndpoint(t *testing.T) {
 	s, err := NewS3Store(context.Background(), S3Config{
 		Bucket:          "shipped-blobs",
-		Endpoint:        "http://minio:9000",      // internal (server-side ops)
-		PublicEndpoint:  "http://localhost:9000",  // browser-reachable (presign)
+		Endpoint:        "http://minio:9000",     // internal (server-side ops)
+		PublicEndpoint:  "http://localhost:9000", // browser-reachable (presign)
 		AccessKeyID:     "akid",
 		SecretAccessKey: "secret",
 		UsePathStyle:    true,

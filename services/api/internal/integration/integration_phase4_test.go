@@ -68,6 +68,8 @@ func TestIntegration_Phase4(t *testing.T) {
 	// Both orgs allow external sharing so a default-public site is permitted.
 	mustExec(t, "INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ($1, true)", orgA)
 	mustExec(t, "INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ($1, true)", orgB)
+	seedAuthOrg(t, orgA, "orga")
+	seedAuthOrg(t, orgB, "orgb")
 	must(t, st.EnsureOrgProvisioned(ctx, tA))
 	must(t, st.EnsureOrgProvisioned(ctx, tB))
 
@@ -235,8 +237,8 @@ func TestIntegration_Phase4(t *testing.T) {
 	must(t, proj.PutRoute(ctx, resPub.Host, resPub.Route))
 
 	// H4: register a verified CUSTOM domain on siteA so the DR rebuild must restore
-	// it too — not just the canonical slug host. Before the fix, the rebuild emitted
-	// only HostForSlug(slug), so every custom domain stayed dark after a KV wipe.
+	// it too — not just the canonical org-namespaced host. Before the fix, the rebuild
+	// emitted only HostForSite(org,slug), so every custom domain stayed dark after a KV wipe.
 	customHost := "dr.phase4.example"
 	drDom, err := st.CreateDomain(ctx, tA, store.CreateDomainParams{
 		SiteID: siteA.ID, Hostname: customHost, CFHostnameID: "cf-fake-dr", DCVRecord: "_cf TXT dr",
@@ -246,8 +248,8 @@ func TestIntegration_Phase4(t *testing.T) {
 	must(t, err)
 	must(t, proj.PutRoute(ctx, drDomRes.Host, drDomRes.Route))
 
-	hostA := projection.HostForSlug("phase4a")
-	hostGC := projection.HostForSlug("phase4gc")
+	hostA := projection.HostForSite("orga", "phase4a")
+	hostGC := projection.HostForSite("orga", "phase4gc")
 
 	// Wipe the projection (simulate a KV/D1 loss).
 	must(t, proj.RebuildFromDB(ctx, map[string]projection.RouteValue{}))

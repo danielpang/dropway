@@ -60,6 +60,13 @@ func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 // context for t, committing on success and rolling back on any error. fn
 // receives a *db.Queries bound to the tx.
 func (s *Store) withTx(ctx context.Context, t Tenant, fn func(q *db.Queries) error) error {
+	return s.withTxRaw(ctx, t, func(_ pgx.Tx, q *db.Queries) error { return fn(q) })
+}
+
+// withTxRaw is withTx for callers that also need the raw pgx.Tx (e.g. to read the
+// auth schema, which sqlc doesn't type — see orgSlugTx). fn receives both the tx
+// and a *db.Queries bound to it, under the same RLS tenant context.
+func (s *Store) withTxRaw(ctx context.Context, t Tenant, fn func(tx pgx.Tx, q *db.Queries) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("store: begin tx: %w", err)
@@ -77,7 +84,7 @@ func (s *Store) withTx(ctx context.Context, t Tenant, fn func(q *db.Queries) err
 	}
 
 	q := db.New(tx)
-	if err := fn(q); err != nil {
+	if err := fn(tx, q); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -102,7 +109,7 @@ var (
 	// (the confused-deputy guard on publish).
 	ErrVersionMismatch = errors.New("store: version does not belong to site")
 	// ErrHostTaken is returned when publishing to a host already owned by a
-	// different site (the global host registry guard; see projection.HostForSlug).
+	// different site (the global host registry guard; see projection.HostForSite).
 	ErrHostTaken = errors.New("store: host already owned by another site")
 	// ErrExternalSharingDisabled is returned when an action would create external/
 	// public sharing while the org's allow_external_sharing policy is false — the

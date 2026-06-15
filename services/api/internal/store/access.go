@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/shipped/internal/projection"
@@ -85,7 +86,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 	}
 
 	var res PublishResult
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
+	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		site, err := q.GetSite(ctx, p.SiteID)
 		if err != nil {
 			if isNoRows(err) {
@@ -160,7 +161,11 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 			}
 			// Keep the canonical Host/Route populated for back-compat (the historical
 			// single-route shape); the handler now iterates Routes.
-			res.Host = projection.HostForSlug(site.Slug)
+			orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
+			if err != nil {
+				return err
+			}
+			res.Host = projection.HostForSite(orgSlug, site.Slug)
 			res.Route = projection.RouteValue{
 				OrgID:         t.OrgID,
 				SiteID:        p.SiteID,

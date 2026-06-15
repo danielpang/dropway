@@ -7,18 +7,24 @@ import (
 	"testing"
 )
 
-// TestHostForSlug asserts the Phase-1 single-label content host scheme:
-// <slug>.shippedusercontent.com (the Worker wildcard matches exactly one label).
-func TestHostForSlug(t *testing.T) {
-	if got := HostForSlug("acme"); got != "acme.shippedusercontent.com" {
-		t.Errorf("HostForSlug = %q", got)
+// TestHostForSite asserts the ORG-NAMESPACED single-label content host scheme:
+// <org>--<app>.shippedusercontent.com (the Worker wildcard matches exactly one
+// label, and the `--` separator keeps org+app on that single label).
+func TestHostForSite(t *testing.T) {
+	if got := HostForSite("acme", "blog"); got != "acme--blog.shippedusercontent.com" {
+		t.Errorf("HostForSite = %q", got)
 	}
-	if got := HostForSlug("my-cool-site"); got != "my-cool-site."+ContentDomain {
-		t.Errorf("HostForSlug = %q", got)
+	if got := HostForSite("acme", "my-cool-site"); got != "acme--my-cool-site."+ContentDomain {
+		t.Errorf("HostForSite = %q", got)
 	}
-	// RouteKey + HostForSlug compose to the global KV key.
-	if got := RouteKey(HostForSlug("acme")); got != "route:acme.shippedusercontent.com" {
-		t.Errorf("RouteKey(HostForSlug) = %q", got)
+	// The host is a SINGLE DNS label before the domain (one dot-segment ahead of
+	// ContentDomain): the wildcard cert matches exactly one label.
+	if got := HostForSite("acme", "blog"); got != "acme--blog."+ContentDomain {
+		t.Errorf("HostForSite single-label = %q", got)
+	}
+	// RouteKey + HostForSite compose to the global KV key.
+	if got := RouteKey(HostForSite("acme", "blog")); got != "route:acme--blog.shippedusercontent.com" {
+		t.Errorf("RouteKey(HostForSite) = %q", got)
 	}
 }
 

@@ -58,12 +58,13 @@ func (f *fakeStore) p2() *p2State {
 }
 
 // hostRoutesForSite returns the site's registered hosts, defaulting to just the
-// canonical <slug>.shippedusercontent.com host when none were explicitly seeded.
+// canonical org-namespaced <org>--<slug>.shippedusercontent.com host when none
+// were explicitly seeded.
 func (f *fakeStore) hostRoutesForSite(t store.Tenant, s store.Site) []store.HostRoute {
 	if hr, ok := f.p2().hostRoutes[s.ID]; ok {
 		return hr
 	}
-	return []store.HostRoute{{Host: s.Slug + ".shippedusercontent.com", OrgID: t.OrgID, SiteID: s.ID}}
+	return []store.HostRoute{{Host: projection.HostForSite("org", s.Slug), OrgID: t.OrgID, SiteID: s.ID}}
 }
 
 func (f *fakeStore) ListHostRoutesForSite(_ context.Context, t store.Tenant, siteID string) ([]store.HostRoute, error) {
@@ -101,7 +102,7 @@ func (f *fakeStore) SetSiteAccess(_ context.Context, t store.Tenant, p store.Set
 			}
 			res.Routes = append(res.Routes, store.RouteUpdate{Host: hr.Host, Route: rv})
 		}
-		res.Host = s.Slug + ".shippedusercontent.com"
+		res.Host = projection.HostForSite("org", s.Slug)
 		res.Route = projection.RouteValue{
 			OrgID: t.OrgID, SiteID: p.SiteID, VersionID: *s.CurrentVersionID,
 			AccessMode: p.Mode, SchemaVersion: projection.SchemaVersion, ExpiresAt: exp,

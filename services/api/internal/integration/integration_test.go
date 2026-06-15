@@ -89,6 +89,11 @@ func TestIntegration_Phase1(t *testing.T) {
 	mustExec(t, "INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ($1, true)", orgA)
 	mustExec(t, "INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ($1, true)", orgB)
 
+	// Seed each org's Better-Auth slug so CreateSite/Publish can form the canonical
+	// org-namespaced content host (<orgSlug>--<appSlug>.<domain>).
+	seedAuthOrg(t, orgA, "orga")
+	seedAuthOrg(t, orgB, "orgb")
+
 	// --- Provision both orgs through the Store (idempotent). ---
 	must(t, st.EnsureOrgProvisioned(ctx, tA))
 	must(t, st.EnsureOrgProvisioned(ctx, tB))
@@ -124,7 +129,7 @@ func TestIntegration_Phase1(t *testing.T) {
 	must(t, proj.PutRoute(ctx, resV1.Host, resV1.Route))
 
 	// The projection RouteValue was written and matches the contract.
-	host := projection.HostForSlug("alpha")
+	host := projection.HostForSite("orga", "alpha")
 	rv, ok := proj.Get(host)
 	if !ok {
 		t.Fatalf("no route projected for %s", host)
@@ -205,12 +210,16 @@ func TestIntegration_Phase1(t *testing.T) {
 		t.Fatalf("default access_mode = %q, want org_only", internalSite.AccessMode)
 	}
 
-	// --- Cross-tenant public-host hijack guard (FIX 1, global host registry). ---
-	// Org A creates + publishes slug 'acme'. Org B then tries the SAME slug: the
-	// global host_routes PRIMARY KEY makes the SECOND CreateSite fail with
-	// ErrHostTaken, the org-B site is NOT created (the reservation rolls the whole
-	// tx back), and org A's published route still points at org A afterwards.
-	acmeHost := projection.HostForSlug("acme")
+	// --- Org-namespaced hosts: same slug, two orgs, DISTINCT hosts (no collision). ---
+	// With the org in the host (<orgSlug>--<appSlug>), two orgs may both publish slug
+	// 'acme' — each lands on its OWN host, isolated from the other. The global
+	// host_routes PRIMARY KEY still guards against a genuine same-HOST collision, but a
+	// same-SLUG/different-ORG pair is now legal (the whole point of org-namespacing).
+	acmeHostA := projection.HostForSite("orga", "acme")
+	acmeHostB := projection.HostForSite("orgb", "acme")
+	if acmeHostA == acmeHostB {
+		t.Fatalf("org-namespacing broken: both orgs map slug acme to the same host %q", acmeHostA)
+	}
 
 	siteAcmeA, err := st.CreateSite(ctx, tA, "acme", projection.AccessPublic)
 	if err != nil {
@@ -224,36 +233,54 @@ func TestIntegration_Phase1(t *testing.T) {
 		t.Fatalf("org A publish acme: %v", err)
 	}
 	must(t, proj.PutRoute(ctx, resAcme.Host, resAcme.Route))
-
-	// Org B attempts the same slug → ErrHostTaken, no site created.
-	bSitesBefore, _ := st.ListSites(ctx, tB)
-	if _, err := st.CreateSite(ctx, tB, "acme", projection.AccessPublic); err != store.ErrHostTaken {
-		t.Fatalf("HIJACK: org B create acme should be ErrHostTaken, got %v", err)
-	}
-	bSitesAfter, _ := st.ListSites(ctx, tB)
-	if len(bSitesAfter) != len(bSitesBefore) {
-		t.Fatalf("HIJACK: org B site count changed after failed acme create: %d → %d (tx did not roll back)",
-			len(bSitesBefore), len(bSitesAfter))
+	if resAcme.Host != acmeHostA {
+		t.Fatalf("org A acme host = %q, want %q", resAcme.Host, acmeHostA)
 	}
 
-	// Org A's route for acme is untouched and still points at org A.
-	rvAcme, ok := proj.Get(acmeHost)
+	// Org B publishes the SAME slug → succeeds, on its OWN host (orgb--acme), and
+	// org A's route is completely untouched.
+	siteAcmeB, err := st.CreateSite(ctx, tB, "acme", projection.AccessPublic)
+	if err != nil {
+		t.Fatalf("org B create acme should succeed under org-namespacing, got %v", err)
+	}
+	vAcmeB := deployVersion(t, ctx, st, obj, tB, siteAcmeB.ID, map[string][]byte{
+		"index.html": []byte("<h1>org B acme</h1>"),
+	})
+	resAcmeB, err := st.Publish(ctx, tB, siteAcmeB.ID, vAcmeB)
+	if err != nil {
+		t.Fatalf("org B publish acme: %v", err)
+	}
+	must(t, proj.PutRoute(ctx, resAcmeB.Host, resAcmeB.Route))
+	if resAcmeB.Host != acmeHostB {
+		t.Fatalf("org B acme host = %q, want %q", resAcmeB.Host, acmeHostB)
+	}
+
+	// Org A's route for acme still points at org A (its own host, never overwritten).
+	rvAcme, ok := proj.Get(acmeHostA)
 	if !ok {
 		t.Fatalf("org A's acme route disappeared")
 	}
 	if rvAcme.OrgID != orgA || rvAcme.SiteID != siteAcmeA.ID || rvAcme.VersionID != vAcme {
-		t.Fatalf("HIJACK: acme route no longer points at org A: %+v", rvAcme)
+		t.Fatalf("ISOLATION: acme route no longer points at org A: %+v", rvAcme)
+	}
+	// Org B's route points at org B on its distinct host.
+	rvAcmeB, ok := proj.Get(acmeHostB)
+	if !ok || rvAcmeB.OrgID != orgB || rvAcmeB.SiteID != siteAcmeB.ID {
+		t.Fatalf("ISOLATION: org B's acme route wrong: %+v ok=%v", rvAcmeB, ok)
 	}
 
-	// And a rebuild from Postgres keeps acme owned by org A (the registry, not the
-	// per-org slug, drives the rebuild) — org B owning no acme row projects nothing.
+	// A rebuild from Postgres keeps each org's acme on its own host.
 	must(t, st.RebuildProjection(ctx, proj, []string{orgA, orgB}))
-	rvAcme2, ok := proj.Get(acmeHost)
+	rvAcme2, ok := proj.Get(acmeHostA)
 	if !ok || rvAcme2.OrgID != orgA || rvAcme2.SiteID != siteAcmeA.ID {
-		t.Fatalf("HIJACK: rebuild did not keep acme owned by org A: %+v ok=%v", rvAcme2, ok)
+		t.Fatalf("rebuild did not keep org A's acme: %+v ok=%v", rvAcme2, ok)
+	}
+	rvAcmeB2, ok := proj.Get(acmeHostB)
+	if !ok || rvAcmeB2.OrgID != orgB || rvAcmeB2.SiteID != siteAcmeB.ID {
+		t.Fatalf("rebuild did not keep org B's acme: %+v ok=%v", rvAcmeB2, ok)
 	}
 
-	t.Log("PASS: RLS isolation, deploy→finalize→publish on MinIO, KV rebuildable from Postgres, rollback, external-sharing default-deny, cross-tenant host-hijack guard")
+	t.Log("PASS: RLS isolation, deploy→finalize→publish on MinIO, KV rebuildable from Postgres, rollback, external-sharing default-deny, org-namespaced hosts (same slug, distinct orgs)")
 }
 
 // deployVersion runs the server-side half of the deploy loop against MinIO: it
@@ -390,6 +417,20 @@ func mustExec(t *testing.T, sql string, args ...string) {
 		final = strings.ReplaceAll(final, fmt.Sprintf("$%d", i+1), "'"+a+"'")
 	}
 	run(t, "docker", "exec", "shipped-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1", "-c", final)
+}
+
+// seedAuthOrg creates the minimal Better-Auth-owned `auth.organization` table (if
+// absent) and inserts an org row with the given slug, granting shipped_app SELECT
+// (the auth schema is outside app RLS). The Go API reads auth.organization.slug to
+// build the org-namespaced content host (projection.HostForSite); CreateSite /
+// Publish fail with store.ErrOrgSlugNotFound without this row.
+func seedAuthOrg(t *testing.T, orgID, slug string) {
+	t.Helper()
+	mustExec(t, `CREATE SCHEMA IF NOT EXISTS auth`)
+	mustExec(t, `CREATE TABLE IF NOT EXISTS auth.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text)`)
+	mustExec(t, `GRANT USAGE ON SCHEMA auth TO shipped_app`)
+	mustExec(t, `GRANT SELECT ON auth.organization TO shipped_app`)
+	mustExec(t, "INSERT INTO auth.organization (id, slug, name) VALUES ($1, $2, $2) ON CONFLICT (id) DO NOTHING", orgID, slug)
 }
 
 func run(t *testing.T, name string, args ...string) {

@@ -109,6 +109,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	// permitted by the 0004 trigger) — owner is non-BYPASSRLS-safe via tenant GUC.
 	cbExecOwner(t, "SET app.current_org_id = '"+orgID+"'; INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ('"+orgID+"', true);")
 	cbExecOwner(t, "SET app.current_org_id = '"+orgID+"'; INSERT INTO app.org_usage (org_id) VALUES ('"+orgID+"');")
+	cbSeedAuthOrg(t, orgID, "orga")
 	if err := st.EnsureOrgProvisioned(ctx, tenant); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
@@ -327,6 +328,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	concUser := "b0000000-0000-0000-0000-000000000002"
 	concTenant := store.Tenant{OrgID: concOrg, UserID: concUser}
 	cbExecOwner(t, "SET app.current_org_id = '"+concOrg+"'; INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ('"+concOrg+"', true);")
+	cbSeedAuthOrg(t, concOrg, "orgb")
 	cbExecOwner(t, "SET app.current_org_id = '"+concOrg+"'; INSERT INTO app.org_usage (org_id) VALUES ('"+concOrg+"');")
 	if err := st.EnsureOrgProvisioned(ctx, concTenant); err != nil {
 		t.Fatalf("provision conc org: %v", err)
@@ -493,6 +495,17 @@ func cbExecOwner(t *testing.T, sql string) {
 	cbRun(t, "docker", "exec", "shipped-cb-pg", "psql",
 		"postgres://postgres:postgres@127.0.0.1:5432/shipped?sslmode=disable",
 		"-v", "ON_ERROR_STOP=1", "-c", sql)
+}
+
+// cbSeedAuthOrg seeds the Better-Auth-owned auth.organization slug for an org so
+// store.CreateSite can form the org-namespaced content host (projection.HostForSite).
+func cbSeedAuthOrg(t *testing.T, orgID, slug string) {
+	t.Helper()
+	cbExecOwner(t, `CREATE SCHEMA IF NOT EXISTS auth;
+		CREATE TABLE IF NOT EXISTS auth.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text);
+		GRANT USAGE ON SCHEMA auth TO shipped_app;
+		GRANT SELECT ON auth.organization TO shipped_app;
+		INSERT INTO auth.organization (id, slug, name) VALUES ('`+orgID+`', '`+slug+`', '`+slug+`') ON CONFLICT (id) DO NOTHING;`)
 }
 
 func cbRun(t *testing.T, name string, args ...string) {

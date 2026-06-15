@@ -32,8 +32,8 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 				continue
 			}
 			// Project EVERY host registered for the site — the canonical
-			// <slug>.shippedusercontent.com host AND every verified custom-domain host
-			// — not just HostForSlug(slug). Omitting custom domains leaves them absent
+			// <org>--<slug>.shippedusercontent.com host AND every verified custom-domain
+			// host — not just HostForSite(org,slug). Omitting custom domains leaves them absent
 			// from the rebuilt projection, so they stop serving after a KV wipe and the
 			// reconciler can never repair a stale custom-domain route (H4).
 			//

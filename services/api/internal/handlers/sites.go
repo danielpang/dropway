@@ -30,7 +30,11 @@ type siteResponse struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-func toSiteResponse(s store.Site) siteResponse {
+// toSiteResponse renders a site for the API. orgSlug is the org half of the
+// canonical content host (projection.HostForSite); the display LiveURL is built
+// from the configured scheme/port (API.ContentURL). All sites in one request
+// share the active tenant's org, so the caller resolves orgSlug once.
+func (a *API) toSiteResponse(s store.Site, orgSlug string) siteResponse {
 	return siteResponse{
 		ID:               s.ID,
 		OrgID:            s.OrgID,
@@ -38,7 +42,7 @@ func toSiteResponse(s store.Site) siteResponse {
 		OwnerID:          s.OwnerUserID,
 		AccessMode:       s.AccessMode,
 		CurrentVersionID: s.CurrentVersionID,
-		LiveURL:          "https://" + projection.HostForSlug(s.Slug),
+		LiveURL:          a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
 		CreatedAt:        s.CreatedAt,
 	}
 }
@@ -102,12 +106,17 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	orgSlug, err := a.Store.OrgSlug(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	logger(r).Info("site created", "site_id", site.ID, "slug", site.Slug, "org_id", t.OrgID)
 	a.recordAudit(r, t, audit.ActionSiteCreate, "site:"+site.ID, map[string]any{
 		"slug":        site.Slug,
 		"access_mode": site.AccessMode,
 	})
-	httpx.WriteJSON(w, http.StatusCreated, toSiteResponse(site))
+	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug))
 }
 
 // ListSites returns the caller org's sites.
@@ -125,9 +134,14 @@ func (a *API) ListSites(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	orgSlug, err := a.Store.OrgSlug(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	out := make([]siteResponse, len(sites))
 	for i, s := range sites {
-		out[i] = toSiteResponse(s)
+		out[i] = a.toSiteResponse(s, orgSlug)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": out})
 }
@@ -148,7 +162,12 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, toSiteResponse(site))
+	orgSlug, err := a.Store.OrgSlug(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug))
 }
 
 // decodeJSON strictly decodes the request body into v (unknown fields rejected),
@@ -202,6 +221,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: this share link has expired", httpx.ErrForbidden))
 	case errors.Is(err, store.ErrHostNotFound):
 		httpx.WriteError(w, fmt.Errorf("%w: host not found", httpx.ErrNotFound))
+	case errors.Is(err, store.ErrOrgSlugNotFound):
+		// The org has no auth.organization row, so the canonical content host can't
+		// be formed. This is a provisioning gap, not a client error → opaque 500.
+		httpx.WriteError(w, fmt.Errorf("org is not fully provisioned (missing organization slug): %w", err))
 	case errors.Is(err, store.ErrNotOrgMember), errors.Is(err, store.ErrNotAllowlisted):
 		// Authorization failed for the gated site → 403 with a typed reason.
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrForbidden, err.Error()))

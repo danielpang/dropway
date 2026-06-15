@@ -101,6 +101,16 @@ type Config struct {
 	// DashboardURL is the dashboard origin (DASHBOARD_URL) used for Checkout
 	// success/cancel + Billing-Portal return URLs. Defaults to https://app.shipped.app.
 	DashboardURL string
+
+	// ContentScheme / ContentPort configure how the API renders the DISPLAY URLs it
+	// returns to clients (live_url / preview_url): scheme://host[:port]. They affect
+	// ONLY the displayed URL — the stored host_routes.host (and the route:<host> KV
+	// key) stays the bare host, since the serving server resolves by Host header and
+	// strips the port. ContentScheme defaults to "https" (CONTENT_SCHEME); ContentPort
+	// defaults to "" — no explicit port (CONTENT_PORT). A self-host/dev deployment can
+	// set CONTENT_SCHEME=http and CONTENT_PORT=8443 to point clients at a local edge.
+	ContentScheme string // CONTENT_SCHEME (default "https")
+	ContentPort   string // CONTENT_PORT (default "" → no explicit port)
 }
 
 // Load reads the environment and returns a validated Config. It returns an error
@@ -138,6 +148,9 @@ func Load() (Config, error) {
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
 		DashboardURL:          envOr("DASHBOARD_URL", "https://app.shipped.app"),
+
+		ContentScheme: envOr("CONTENT_SCHEME", "https"),
+		ContentPort:   os.Getenv("CONTENT_PORT"),
 	}
 
 	if p := os.Getenv("PORT"); p != "" {

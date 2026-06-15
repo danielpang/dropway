@@ -35,8 +35,8 @@ func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 // ReconcileResult reports the routes the caller must rewrite at the edge after a
 // policy change. Downgraded carries the new (org_only) route for EACH host of
 // every site whose access_mode was downgraded from public — the canonical
-// <slug>.shippedusercontent.com host AND every verified custom-domain host, each
-// of which has its own route:<host> KV entry. The caller PUTs each one (revoking
+// <org>--<slug>.shippedusercontent.com host AND every verified custom-domain host,
+// each of which has its own route:<host> KV entry. The caller PUTs each one (revoking
 // the public/external grant by flipping the projected mode on all hosts).
 type ReconcileResult struct {
 	AllowExternalSharing bool

@@ -283,12 +283,20 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		"size_bytes": totalSize,
 	})
 
-	// Preview URL enforces the SAME access tier as the live site (§7.1); in
-	// Phase 1 (public) it is the per-version host label.
+	// Preview URL enforces the SAME access tier as the live site (§7.1). It is the
+	// canonical org-namespaced host with the per-version short id PREPENDED as a
+	// further single label: <shortid>--<orgSlug>--<appSlug>.<ContentDomain>, rendered
+	// with the configured scheme/port.
+	orgSlug, err := a.Store.OrgSlug(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	previewHost := shortID(ver.ID) + "--" + projection.HostForSite(orgSlug, site.Slug)
 	httpx.WriteJSON(w, http.StatusCreated, finalizeResponse{
 		VersionID:  ver.ID,
 		VersionNo:  ver.VersionNo,
-		PreviewURL: fmt.Sprintf("https://%s--%s.%s", shortID(ver.ID), site.Slug, projection.ContentDomain),
+		PreviewURL: a.ContentURL(previewHost),
 	})
 }
 
@@ -389,7 +397,7 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		"host":       res.Host,
 	})
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
-		LiveURL:   "https://" + res.Host,
+		LiveURL:   a.ContentURL(res.Host),
 		VersionID: req.VersionID,
 	})
 }

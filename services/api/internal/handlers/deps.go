@@ -20,6 +20,9 @@ import (
 type SiteStore interface {
 	// Phase 1.
 	EnsureOrgProvisioned(ctx context.Context, t store.Tenant) error
+	// OrgSlug returns the org's slug (auth.organization), the org half of the
+	// canonical content host (projection.HostForSite) — used to render display URLs.
+	OrgSlug(ctx context.Context, t store.Tenant) (string, error)
 	CreateSite(ctx context.Context, t store.Tenant, slug, accessMode string) (store.Site, error)
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)

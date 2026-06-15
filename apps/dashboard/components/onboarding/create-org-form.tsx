@@ -89,8 +89,8 @@ export function CreateOrgForm({ suggestedName }: { suggestedName: string }) {
         </div>
         <CardTitle>Create your organization</CardTitle>
         <CardDescription>
-          Sites live inside an organization. You can invite teammates and create
-          more later.
+          Sites live inside an organization, and its slug becomes part of every
+          project&rsquo;s URL. You can invite teammates and create more later.
         </CardDescription>
       </CardHeader>
 
@@ -117,27 +117,32 @@ export function CreateOrgForm({ suggestedName }: { suggestedName: string }) {
 
           <div className="space-y-2">
             <Label htmlFor="org-slug">URL slug</Label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">shipped.app/</span>
-              <Input
-                id="org-slug"
-                name="org-slug"
-                placeholder="acme"
-                value={slug}
-                onChange={(e) => {
-                  setSlugEdited(true);
-                  setSlug(slugify(e.target.value));
-                }}
-                aria-invalid={touched && !slugValid}
-                className="font-mono"
-                disabled={pending}
-              />
-            </div>
+            <Input
+              id="org-slug"
+              name="org-slug"
+              placeholder="acme"
+              value={slug}
+              onChange={(e) => {
+                setSlugEdited(true);
+                setSlug(slugify(e.target.value));
+              }}
+              aria-invalid={touched && !slugValid}
+              className="font-mono"
+              disabled={pending}
+            />
             {touched && !slugValid && (
               <p className="text-xs text-destructive">
                 Use lowercase letters, numbers, and hyphens.
               </p>
             )}
+            <p className="text-xs text-muted-foreground">
+              Every project you deploy is served at{" "}
+              <span className="font-mono text-foreground">
+                {slug || "your-org"}--your-app.shippedusercontent.com
+              </span>
+              . Your org slug goes in all your project URLs, so pick it carefully
+              (it&rsquo;s hard to change later).
+            </p>
           </div>
 
           <Button

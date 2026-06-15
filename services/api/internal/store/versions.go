@@ -5,6 +5,8 @@ package store
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/danielpang/shipped/internal/projection"
 	"github.com/danielpang/shipped/internal/quota"
 	"github.com/danielpang/shipped/internal/storage"
@@ -225,7 +227,7 @@ func (s *Store) ListSiteVersions(ctx context.Context, t Tenant, siteID string) (
 // PublishResult is returned by Publish: the route value to project and the host.
 //
 // Routes, when populated (SetSiteAccess), carries the route update for EVERY host
-// of the site — the canonical <slug>.shippedusercontent.com host AND every
+// of the site — the canonical <org>--<slug>.shippedusercontent.com host AND every
 // verified custom-domain host, each with its own route:<host> KV entry. Callers
 // that change access (vs. a plain publish) MUST rewrite all of Routes, not just
 // Host/Route, or a custom host keeps serving at the old access_mode (FIX 1). Host/
@@ -247,7 +249,7 @@ type PublishResult struct {
 // leaves the DB inconsistent — the reconciler/rebuild backstops it).
 func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string) (PublishResult, error) {
 	var res PublishResult
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
+	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		site, err := q.GetSite(ctx, siteID)
 		if err != nil {
 			if isNoRows(err) {
@@ -277,7 +279,11 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		// host; a host owned by another org (or absent) is a no-rows miss → refuse.
 		// This stops a publish from ever overwriting another tenant's live route
 		// even if the CreateSite reservation were somehow bypassed.
-		host := projection.HostForSlug(site.Slug)
+		orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
+		if err != nil {
+			return err
+		}
+		host := projection.HostForSite(orgSlug, site.Slug)
 		hr, err := q.GetHostRoute(ctx, host)
 		if err != nil {
 			if isNoRows(err) {

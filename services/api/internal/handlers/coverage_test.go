@@ -70,9 +70,9 @@ func TestListSites_OK(t *testing.T) {
 	if len(body.Sites) != 2 {
 		t.Fatalf("want 2 sites, got %d", len(body.Sites))
 	}
-	// The live_url is derived from the slug for each site.
+	// The live_url is the org-namespaced canonical host (fake org slug "org").
 	for _, s := range body.Sites {
-		if s.LiveURL != "https://"+projection.HostForSlug(s.Slug) {
+		if s.LiveURL != "https://"+projection.HostForSite("org", s.Slug) {
 			t.Errorf("live_url = %q for slug %q", s.LiveURL, s.Slug)
 		}
 	}

@@ -155,6 +155,56 @@ type SiteVersion struct {
 	CreatedAt   time.Time
 }
 
+// ErrOrgSlugNotFound is returned when an org has no auth.organization row to read
+// a slug from — the canonical content host can't be formed, so the operation
+// fails rather than emitting a malformed host.
+var ErrOrgSlugNotFound = errors.New("store: org slug not found")
+
+// OrgSlug returns the org's slug from auth.organization (the Better-Auth-owned
+// identity table the dashboard writes; shipped_app has SELECT via migration 0012).
+// It is the org half of the canonical content host (projection.HostForSite). The
+// read runs inside the active tenant's tx context — auth.organization has no RLS,
+// so the row resolves by id directly. A missing row is surfaced as
+// ErrOrgSlugNotFound (the host can't be formed). It is raw pgx because the auth
+// schema is outside the sqlc-typed app schema (mirrors resolveHost in authz.go).
+func (s *Store) OrgSlug(ctx context.Context, t Tenant) (string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := setTenant(ctx, tx, t.UserID, t.OrgID); err != nil {
+		return "", err
+	}
+	slug, err := orgSlugTx(ctx, tx, t.OrgID)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return slug, nil
+}
+
+// orgSlugTx reads auth.organization.slug for orgID on an already-open tx, so the
+// canonical host can be formed inside the same tenant-context transaction a store
+// write already runs in (no extra round-trip / second connection). A missing row
+// → ErrOrgSlugNotFound.
+func orgSlugTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error) {
+	var slug string
+	err := tx.QueryRow(ctx, `SELECT slug FROM auth.organization WHERE id = $1`, orgID).Scan(&slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrOrgSlugNotFound
+		}
+		return "", err
+	}
+	if slug == "" {
+		return "", ErrOrgSlugNotFound
+	}
+	return slug, nil
+}
+
 // EnsureOrgProvisioned idempotently creates the org_meta + org_usage rows for the
 // active tenant (the ensure-org-provisioned middleware runs this after auth). It
 // is a no-op if the rows already exist. RLS scopes both upserts to the tenant.
@@ -181,10 +231,17 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 		return Site{}, ErrReservedSlug
 	}
 
-	host := projection.HostForSlug(slug)
-
 	var out Site
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
+	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
+		// The canonical content host is ORG-NAMESPACED: <orgSlug>--<slug>. Read the
+		// org slug under the active tenant context (auth.organization, outside RLS) so
+		// the global host registry reserves the org-scoped host, not a bare slug.
+		orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
+		if err != nil {
+			return err
+		}
+		host := projection.HostForSite(orgSlug, slug)
+
 		// Default a new site's visibility to the org's default_visibility (read under
 		// the tenant context). Falls back to org_only if the org_meta row somehow has
 		// no value — never public, so a fresh internal org can always create a site.
@@ -241,7 +298,7 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 		// even one this tenant can't see under RLS — raises 23505. We surface that
 		// as ErrHostTaken so the WHOLE tx rolls back and the site is never created;
 		// per-org slug uniqueness alone can't catch a cross-org collision because
-		// the edge route:<host> namespace is global (projection.HostForSlug).
+		// the edge route:<host> namespace is global (projection.HostForSite).
 		if err := q.InsertHostRoute(ctx, db.InsertHostRouteParams{
 			Host:   host,
 			OrgID:  t.OrgID,
@@ -264,8 +321,8 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 
 // HostRoute is one row of the GLOBAL host registry (app.host_routes): a content
 // host mapped to its owning (org, site). A site has at least its canonical
-// <slug>.shippedusercontent.com host and, once a custom domain verifies, one row
-// per verified custom hostname.
+// <org>--<slug>.shippedusercontent.com host and, once a custom domain verifies,
+// one row per verified custom hostname.
 type HostRoute struct {
 	Host   string
 	OrgID  string
@@ -273,8 +330,8 @@ type HostRoute struct {
 }
 
 // ListHostRoutesForSite returns EVERY host registered for a site in the global
-// registry — the canonical <slug>.shippedusercontent.com host AND any verified
-// custom-domain host. RLS scopes the read to the active org (a site the tenant
+// registry — the canonical <org>--<slug>.shippedusercontent.com host AND any
+// verified custom-domain host. RLS scopes the read to the active org (a site the tenant
 // doesn't own resolves to an empty list).
 //
 // Access-mode / policy changes MUST rewrite every one of these routes, not just

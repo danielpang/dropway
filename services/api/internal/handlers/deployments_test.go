@@ -166,12 +166,12 @@ func TestDeployFlow_PrepareFinalizePublish(t *testing.T) {
 	}
 	var pub publishResponse
 	mustJSON(t, rr, &pub)
-	if pub.LiveURL != "https://my-docs.shippedusercontent.com" {
+	if pub.LiveURL != "https://org--my-docs.shippedusercontent.com" {
 		t.Errorf("live_url = %q", pub.LiveURL)
 	}
 
 	// 6. Assert the projection RouteValue matches the contract.
-	rv, ok := proj.Get("my-docs.shippedusercontent.com")
+	rv, ok := proj.Get("org--my-docs.shippedusercontent.com")
 	if !ok {
 		t.Fatal("no route projected for docs host")
 	}
@@ -312,13 +312,13 @@ func TestRollback_PublishOlderVersion(t *testing.T) {
 	if rr := do(t, h, http.MethodPost, "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v2+`"}`); rr.Code != http.StatusOK {
 		t.Fatalf("publish v2: %d %s", rr.Code, rr.Body.String())
 	}
-	if rv, _ := proj.Get("my-app.shippedusercontent.com"); rv.VersionID != v2 {
+	if rv, _ := proj.Get("org--my-app.shippedusercontent.com"); rv.VersionID != v2 {
 		t.Fatalf("expected v2 live, got %q", rv.VersionID)
 	}
 	if rr := do(t, h, http.MethodPost, "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v1+`"}`); rr.Code != http.StatusOK {
 		t.Fatalf("rollback to v1: %d %s", rr.Code, rr.Body.String())
 	}
-	if rv, _ := proj.Get("my-app.shippedusercontent.com"); rv.VersionID != v1 {
+	if rv, _ := proj.Get("org--my-app.shippedusercontent.com"); rv.VersionID != v1 {
 		t.Fatalf("rollback failed: live = %q, want %q", rv.VersionID, v1)
 	}
 }

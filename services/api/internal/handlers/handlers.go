@@ -58,6 +58,30 @@ type API struct {
 	// live. A self-host pre-Better-Auth can opt in (ALLOW_JWT_ROLE_FALLBACK=true).
 	// See config.Config.AllowJWTRoleFallback / ARCHITECTURE.md §10 [LOW].
 	AllowJWTRoleFallback bool
+
+	// ContentScheme / ContentPort shape the DISPLAY URLs the API returns for a site
+	// (live_url / preview_url): scheme://host[:port]. They affect ONLY the rendered
+	// URL — host_routes.host (and route:<host>) stay the bare host. Wired from
+	// config.Config; ContentScheme defaults to "https" when empty (via ContentURL).
+	ContentScheme string
+	ContentPort   string
+}
+
+// ContentURL renders a content host as a client-facing display URL using the
+// configured scheme + optional port: scheme://host[:port]. The bare host is what
+// the serving server resolves by (Host header), so the scheme/port live only in
+// the displayed URL. An empty ContentScheme defaults to "https" so a zero-value
+// API (the bare unit-test constructor) still emits a well-formed https URL.
+func (a *API) ContentURL(host string) string {
+	scheme := a.ContentScheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	url := scheme + "://" + host
+	if a.ContentPort != "" {
+		url += ":" + a.ContentPort
+	}
+	return url
 }
 
 // New constructs an API with only the quota seam (back-compat for the unit tests
