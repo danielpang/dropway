@@ -119,8 +119,8 @@ services:
     entrypoint: >
       /bin/sh -c "
       set -e &&
-      go install github.com/pressly/goose/v3/cmd/goose@latest &&
-      /go/bin/goose -dir /repo/db/migrations/app postgres \"$$GOOSE_DBSTRING\" up &&
+      go install github.com/pressly/goose/v3/cmd/goose@v3.27.1 &&
+      /go/bin/goose -dir /repo/db/migrations/app up &&
       apt-get update >/dev/null && apt-get install -y --no-install-recommends postgresql-client >/dev/null &&
       psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE shipped_app WITH PASSWORD '$$SHIPPED_APP_DB_PASSWORD';\" &&
       echo 'app migrations applied + shipped_app password set'
