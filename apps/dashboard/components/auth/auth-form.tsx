@@ -43,9 +43,16 @@ function describeError(err: unknown): string {
 export function AuthForm({
   mode,
   callbackURL = DEFAULT_CALLBACK_URL,
+  requireEmailVerification = false,
 }: {
   mode: Mode;
   callbackURL?: string;
+  /**
+   * Whether the server requires email verification before sign-in (mirrors the
+   * Better Auth config). When false, sign-up signs the user in immediately, so we
+   * go straight to the app instead of a dead-end "check your inbox" screen.
+   */
+  requireEmailVerification?: boolean;
 }) {
   const isSignUp = mode === "sign-up";
 
@@ -101,10 +108,16 @@ export function AuthForm({
           callbackURL: callbackURL,
         });
         if (err) throw err;
-        // Email verification is required before sign-in completes.
-        setNotice(
-          "Check your inbox to verify your email, then sign in to continue.",
-        );
+        if (requireEmailVerification) {
+          // Verification on → no session yet; tell the user to verify, then sign in.
+          setNotice(
+            "Check your inbox to verify your email, then sign in to continue.",
+          );
+        } else {
+          // Verification off → Better Auth signed us in; go straight to the app
+          // (the (app) layout routes a new user to onboarding to create an org).
+          window.location.assign(callbackURL);
+        }
       } else {
         const { error: err } = await authClient.signIn.email({
           email,
