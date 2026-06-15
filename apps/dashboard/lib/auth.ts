@@ -4,7 +4,6 @@ import { betterAuth } from "better-auth";
 import { jwt, magicLink, organization } from "better-auth/plugins";
 import { Pool } from "pg";
 
-import { sendEmail } from "@/lib/email";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -15,6 +14,15 @@ import {
   jwtIssuer,
   requireEmailVerification,
 } from "@/lib/env";
+
+// NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
+// module top level. The `@better-auth/cli migrate` step loads THIS config under a
+// plain-Node (jiti) loader — not the Next.js bundler — and lib/email.ts starts with
+// `import "server-only"`, which only resolves under Next. A top-level import here
+// would make `Cannot find module 'server-only'` break the one-time auth migration
+// (CI + every fresh self-host). Deferring it keeps the config import graph free of
+// server-only/nodemailer; the dynamic import runs only at send time, in the real
+// Next runtime.
 
 /**
  * Better Auth server instance — the authoritative owner of the `auth` schema
@@ -57,6 +65,7 @@ export const auth = betterAuth({
     minPasswordLength: 8,
     // Password-reset link. sendEmail no-ops+logs when MAIL_SMTP_URL is unset (lib/email.ts).
     sendResetPassword: async ({ user, url }) => {
+      const { sendEmail } = await import("@/lib/email");
       await sendEmail({
         to: user.email,
         subject: "Reset your Shipped password",
@@ -73,6 +82,7 @@ export const auth = betterAuth({
   emailVerification: {
     sendOnSignUp: true,
     sendVerificationEmail: async ({ user, url }) => {
+      const { sendEmail } = await import("@/lib/email");
       await sendEmail({
         to: user.email,
         subject: "Verify your email for Shipped",
@@ -133,6 +143,7 @@ export const auth = betterAuth({
       sendMagicLink: async ({ email, url }) => {
         // sendEmail no-ops+logs when MAIL_SMTP_URL is unset (lib/email.ts), so a
         // no-email self-host can still sign in by copying the link from the logs.
+        const { sendEmail } = await import("@/lib/email");
         await sendEmail({
           to: email,
           subject: "Your Shipped sign-in link",
