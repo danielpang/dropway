@@ -23,17 +23,17 @@ import (
 
 // p2 holds the Phase-2 fake state for a fakeStore instance.
 type p2State struct {
-	policies   map[string]store.AccessPolicy
-	allowlist  map[string][]store.AllowlistEntry // siteID → entries
-	members      map[string]string // userID → role
+	policies     map[string]store.AccessPolicy
+	allowlist    map[string][]store.AllowlistEntry // siteID → entries
+	members      map[string]string                 // userID → role
 	memberErr    error
-	preflightErr error // injected by MembersPreflight (e.g. a *quota.ExceededError)
-	orgPolicy  bool                         // allow_external_sharing
-	domains    map[string]store.Domain      // domainID → domain
-	hostRoutes map[string][]store.HostRoute // siteID → registered hosts (canonical + custom)
-	mintFn     func(v store.MintViewer, host string) (store.MintDecision, error)
-	passwordFn func(host string) (store.PasswordDecision, string, error)
-	reconcile  store.ReconcileResult
+	preflightErr error                        // injected by MembersPreflight (e.g. a *quota.ExceededError)
+	orgPolicy    bool                         // allow_external_sharing
+	domains      map[string]store.Domain      // domainID → domain
+	hostRoutes   map[string][]store.HostRoute // siteID → registered hosts (canonical + custom)
+	mintFn       func(v store.MintViewer, host string) (store.MintDecision, error)
+	passwordFn   func(host string) (store.PasswordDecision, string, error)
+	reconcile    store.ReconcileResult
 
 	// Phase 4 — captured audit rows + an optional injected error.
 	audit    []store.AuditEntry
