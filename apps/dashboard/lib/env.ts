@@ -57,9 +57,18 @@ export function googleClientSecret(): string {
 }
 
 /**
- * Public base URL of the Go API (api.shipped.app). The dashboard calls this for
- * ALL business data, carrying a short-lived Better Auth EdDSA JWT — it never
- * opens a Postgres connection for business data.
+ * Base URL of the Go API (api.shipped.app) the dashboard calls for ALL business
+ * data, carrying a short-lived Better Auth EdDSA JWT — it never opens a Postgres
+ * connection for business data.
+ *
+ * SERVER-side (RSC / server actions) prefers the runtime, non-public `API_URL` env:
+ * in Docker that's the INTERNAL service URL (http://api:8080), because inside the
+ * dashboard container `localhost` is the container, not the api. The BROWSER can't
+ * see a non-public env, so it falls back to the baked NEXT_PUBLIC_API_URL
+ * (http://localhost:8080 → the host-published api). In production both resolve to the
+ * same public api URL, so NEXT_PUBLIC_API_URL alone suffices there.
  */
 export const API_URL: string =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+  process.env.API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8080";

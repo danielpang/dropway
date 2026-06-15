@@ -73,6 +73,12 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # SERVER-side (RSC / server actions) calls the Go API over the Docker network:
+      # inside this container `localhost` is the container, not the api, so use the
+      # service name. The BROWSER keeps NEXT_PUBLIC_API_URL (localhost:8080 → the
+      # host-published api). Override DASHBOARD_API_URL for an external api.
+      API_URL: ${DASHBOARD_API_URL:-http://api:8080}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     depends_on:
