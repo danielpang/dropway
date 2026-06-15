@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Shipped CI — proves the load-bearing invariants on every push/PR:
-#   go                  : the OSS core AND the cloud-tagged build both compile, vet, test.
-#   open-core-boundary  : the OSS core has ZERO references into cloud/ or ee/ (§11/§14).
-#   sql                 : goose app migrations apply on real Postgres + RLS isolation holds.
-#   web                 : the TS workspace type-checks (contracts + apps + edge).
+# Shipped CI — runs on every push to main AND every pull-request commit
+# (`pull_request` fires on synchronize, i.e. each new commit pushed to the PR).
+#
+# The three test suites:
+#   go-api          : the Go API + core — build · vet · `go test ./...` · cloud build.
+#   dashboard-unit  : the dashboard's vitest unit tests (incl. the deploy digest parity).
+#   e2e             : a real browser drives the full stack (Playwright).
+#
+# Plus the standing invariants:
+#   open-core-boundary : the OSS core has ZERO references into cloud/ or ee/ (§11/§14).
+#   sql                : goose app migrations apply on real Postgres + RLS isolation holds.
+#   typecheck          : the whole TS workspace type-checks (contracts + apps + edge).
 #
 # See docs/ARCHITECTURE.md §12/§13 — these jobs map to verification rows 2, 10, 11.
 
@@ -25,12 +32,13 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # (a) Go: build/vet/test the OSS core, then prove the cloud-tagged build also
-  #     compiles. The cloud build pulls in cloud/quota + cloud/billing via the
-  #     `cloud` build tag + DI; both must stay green.
+  # (a) Go API + core: build/vet/test the whole Go module — `go test ./...` covers
+  #     the API handler/store/auth tests (services/api/...) plus the CLI + internal
+  #     packages — then prove the cloud-tagged build also compiles. The cloud build
+  #     pulls in cloud/quota + cloud/billing via the `cloud` build tag + DI.
   # ---------------------------------------------------------------------------
-  go:
-    name: go (build · vet · test · cloud build)
+  go-api:
+    name: go-api (build · vet · test · cloud build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +48,7 @@ jobs:
           go-version: "1.25"
           check-latest: true
 
-      - name: go build / vet / test (OSS core)
+      - name: go build / vet / test (API + OSS core)
         run: |
           go build ./...
           go vet ./...
@@ -292,12 +300,12 @@ jobs:
           SQL
 
   # ---------------------------------------------------------------------------
-  # (d) Web: the TS workspace type-checks. `pnpm -r typecheck` runs the typecheck
-  #     script in every workspace package that defines one (contracts today; the
-  #     dashboard + worker as they land).
+  # (d) Typecheck: the whole TS workspace compiles. `pnpm -r typecheck` runs the
+  #     typecheck script in every workspace package that defines one (contracts,
+  #     the dashboard, the edge worker).
   # ---------------------------------------------------------------------------
-  web:
-    name: web (pnpm typecheck + unit tests)
+  typecheck:
+    name: typecheck (TS workspace)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -316,13 +324,33 @@ jobs:
       - name: typecheck all packages
         run: pnpm -r typecheck
 
-      - name: unit tests (vitest)
-        # Pure lib logic, incl. the deploy manifest digest's byte-exact parity with
-        # Go's internal/manifest.Digest (a drift there silently breaks finalize).
-        run: pnpm -r --if-present test
+  # ---------------------------------------------------------------------------
+  # (e) Dashboard unit tests: the dashboard's vitest suite — pure lib logic,
+  #     including the deploy manifest digest's byte-exact parity with Go's
+  #     internal/manifest.Digest (a drift there silently breaks finalize).
+  # ---------------------------------------------------------------------------
+  dashboard-unit:
+    name: dashboard (unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: vitest
+        run: pnpm --filter @shipped/dashboard test
 
   # ---------------------------------------------------------------------------
-  # (e) E2E: the full self-host stack in Docker + a real browser. Boots compose
+  # (f) E2E: the full self-host stack in Docker + a real browser. Boots compose
   #     (dashboard + Go API + Postgres + MinIO), runs Better Auth's one-time
   #     migration, then drives the browser folder drag-and-drop deploy through to
   #     a live site. The only job that exercises the browser DOM + React + the
