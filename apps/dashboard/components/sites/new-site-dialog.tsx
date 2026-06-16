@@ -20,17 +20,28 @@ import { Label } from "@/components/ui/label";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { QuotaExceeded } from "@/lib/api";
 
-/** A slug is a single DNS label: lowercase alphanumerics + hyphens. */
+/**
+ * A slug is a single DNS label: lowercase alphanumerics + hyphens. Used to
+ * normalize the field on EVERY keystroke, so it must keep a single TRAILING hyphen
+ * — otherwise typing "my-docs" loses the "-" the instant it's typed (it's trailing
+ * until the next char) and a hyphenated slug becomes impossible. Leading hyphens and
+ * runs are still collapsed; a stray trailing hyphen is caught by SLUG_RE on submit.
+ */
 function slugify(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-+/g, "")
     .slice(0, 63);
 }
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+// useLayoutEffect on the client (flicker-free caret restore), useEffect on the
+// server (avoids the "useLayoutEffect does nothing on the server" SSR warning).
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? React.useLayoutEffect : React.useEffect;
 
 /**
  * "New site" affordance: a trigger button + a dialog that POSTs to the Go API
@@ -55,6 +66,30 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
   const [quota, setQuota] = React.useState<QuotaExceeded | null>(null);
 
   const slugValid = SLUG_RE.test(slug);
+
+  // The slug field reformats its value (slugify) on every keystroke, and a controlled
+  // input resets the caret to the END whenever its value is set programmatically — so
+  // editing mid-string would fling the cursor to the end after each character. Capture
+  // the intended caret offset on change and restore it once the DOM has the new value.
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const caretRef = React.useRef<number | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    const pos = caretRef.current;
+    if (pos != null && inputRef.current) {
+      inputRef.current.setSelectionRange(pos, pos);
+      caretRef.current = null;
+    }
+  });
+
+  function onSlugChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value;
+    const caret = e.target.selectionStart ?? raw.length;
+    // The caret belongs just after the slugified text that preceded it, so an inserted
+    // or edited character keeps the cursor beside it instead of jumping to the end.
+    caretRef.current = slugify(raw.slice(0, caret)).length;
+    setSlug(slugify(raw));
+  }
 
   function reset() {
     setSlug("");
@@ -134,11 +169,12 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
               <Label htmlFor="site-slug">Slug</Label>
               <div className="flex items-center gap-2">
                 <Input
+                  ref={inputRef}
                   id="site-slug"
                   name="site-slug"
                   placeholder="my-docs"
                   value={slug}
-                  onChange={(e) => setSlug(slugify(e.target.value))}
+                  onChange={onSlugChange}
                   aria-invalid={touched && !slugValid}
                   aria-describedby="slug-help"
                   className="font-mono"

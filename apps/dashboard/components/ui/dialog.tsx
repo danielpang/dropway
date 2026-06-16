@@ -32,9 +32,23 @@ export function Dialog({ open, onOpenChange, children, label }: DialogProps) {
   const titleId = React.useId();
   const previouslyFocused = React.useRef<HTMLElement | null>(null);
 
+  // Keep the latest onOpenChange in a ref so the focus-management effect below can
+  // depend ONLY on `open`. Parents routinely pass an inline onOpenChange (a fresh
+  // function identity every render); if it were in that effect's deps, every parent
+  // re-render — e.g. each keystroke in a field INSIDE the dialog — would tear down
+  // and re-run the effect, which restores focus to the trigger and then moves it to
+  // the panel's first focusable, yanking focus out of the input on every character.
+  // Reading onOpenChange through a ref decouples the effect from its identity.
+  const onOpenChangeRef = React.useRef(onOpenChange);
+  React.useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
+
   React.useEffect(() => setMounted(true), []);
 
-  // Escape to close + body scroll lock + focus management while open.
+  // Escape to close + body scroll lock + focus management. Depends ONLY on `open`,
+  // so it runs when the dialog opens/closes — never on an unrelated re-render — and
+  // therefore never steals focus from a field the user is typing into.
   React.useEffect(() => {
     if (!open) return;
 
@@ -43,7 +57,7 @@ export function Dialog({ open, onOpenChange, children, label }: DialogProps) {
     document.body.style.overflow = "hidden";
 
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onOpenChange(false);
+      if (e.key === "Escape") onOpenChangeRef.current(false);
     }
     document.addEventListener("keydown", onKeyDown);
 
@@ -58,7 +72,7 @@ export function Dialog({ open, onOpenChange, children, label }: DialogProps) {
       document.body.style.overflow = overflow;
       previouslyFocused.current?.focus?.();
     };
-  }, [open, onOpenChange]);
+  }, [open]);
 
   if (!mounted || !open) return null;
 
