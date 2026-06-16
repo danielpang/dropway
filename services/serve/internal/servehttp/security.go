@@ -8,10 +8,18 @@ import (
 )
 
 // ContentCSP is the permissive tenant-content CSP (security.ts CONTENT_CSP),
-// copied verbatim.
+// kept in sync with it.
+//
+// script-src / style-src include `https:` so tenant sites can load external scripts
+// and stylesheets from a CDN or a web-font host (e.g. Three.js from jsDelivr, Google
+// Fonts) — the common case for a static host. The marginal cost is small: the policy
+// already allows 'unsafe-inline'/'unsafe-eval' for scripts and connect-src https: for
+// fetch, so blocking only external <script src> added little; and tenant ISOLATION is
+// enforced by per-origin/PSL separation, not CSP (ARCHITECTURE.md §10). object-src
+// stays 'none' and frame-ancestors 'none', so plugins and clickjacking are still shut.
 const ContentCSP = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
-	"style-src 'self' 'unsafe-inline'; " +
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; " +
+	"style-src 'self' 'unsafe-inline' https:; " +
 	"img-src 'self' data: blob: https:; " +
 	"font-src 'self' data: https:; " +
 	"media-src 'self' data: blob: https:; " +

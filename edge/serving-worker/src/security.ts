@@ -30,12 +30,15 @@
  *  - `default-src 'self'` — a site's resources load from its own origin by
  *    default; cross-origin loads must be explicit (we widen the obvious media
  *    classes below so typical static sites don't break).
- *  - `script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:` — static sites and
- *    client-side React bundles frequently inline a bootstrap script and (for dev
- *    or wasm-glue) use eval/blob workers. We ALLOW these: CSP is not the
- *    isolation boundary, so we optimize for "static sites just work" over a
- *    strict script policy. A per-site stricter CSP can be layered in later.
- *  - `style-src 'self' 'unsafe-inline'` — inline styles are ubiquitous.
+ *  - `script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:` — static sites
+ *    and client-side React bundles frequently inline a bootstrap script, use
+ *    eval/blob workers, AND pull libraries from a CDN (Three.js, htmx, etc.). We
+ *    ALLOW these: CSP is not the isolation boundary, so we optimize for "static
+ *    sites just work" over a strict script policy. A per-site stricter CSP can be
+ *    layered in later. (`https:` makes blocking only external <script src> moot,
+ *    given 'unsafe-inline' + connect-src https: are already permitted.)
+ *  - `style-src 'self' 'unsafe-inline' https:` — inline styles are ubiquitous and
+ *    web fonts / CDN stylesheets (Google Fonts, etc.) are the common case.
  *  - `img/font/media-src` widened to `data:`/`blob:`/`https:` — covers data-URI
  *    images, blob object URLs, and CDN-hosted assets.
  *  - `connect-src 'self' https:` — XHR/fetch/websocket to self + any https API.
@@ -52,8 +55,8 @@
  */
 export const CONTENT_CSP =
   "default-src 'self'; " +
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; " +
-  "style-src 'self' 'unsafe-inline'; " +
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; " +
+  "style-src 'self' 'unsafe-inline' https:; " +
   "img-src 'self' data: blob: https:; " +
   "font-src 'self' data: https:; " +
   "media-src 'self' data: blob: https:; " +
