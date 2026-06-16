@@ -270,12 +270,14 @@ controls.autoRotateSpeed = 0.18;
 /* =========================================================================
    LIGHTING
    ========================================================================= */
-scene.add(new THREE.AmbientLight(0x222a44, 1.1));
-const sunLight = new THREE.PointLight(0xfff0d0, 4.2, 0, 1.3);
+scene.add(new THREE.AmbientLight(0x2c3656, 1.4));
+// Lower decay (1.3 → 1.0) + more intensity so the OUTER planets still catch real
+// sunlight instead of fading to black at the edge of the system.
+const sunLight = new THREE.PointLight(0xfff0d0, 5.2, 0, 1.0);
 sunLight.position.set(0, 0, 0);
 scene.add(sunLight);
-// faint fill so the dark sides aren't pure black
-const fill = new THREE.DirectionalLight(0x4a5a8a, 0.35);
+// brighter blue fill so the shadowed sides keep their colour rather than going black
+const fill = new THREE.DirectionalLight(0x5a6aa6, 0.55);
 fill.position.set(-1, 0.5, -1);
 scene.add(fill);
 
@@ -424,17 +426,18 @@ for (const b of BODIES) {
   // orbit ring
   scene.add(buildOrbitRing(b.distance));
 
-  // planet mesh
+  // planet mesh — emissiveMap = the surface texture so each body SELF-ILLUMINATES
+  // with its own colours. Sunlight still adds a brighter lit side for depth, but the
+  // emissive floor keeps far / shadowed planets vivid instead of near-black.
   const tex = makeSurface(b);
   const mat = new THREE.MeshStandardMaterial({
     map: tex,
+    emissiveMap: tex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: b.surface === "gasBands" ? 0.4 : 0.48,
     roughness: b.surface === "gasBands" ? 0.85 : 0.95,
     metalness: 0.0,
   });
-  if (b.surface === "earth") {
-    mat.emissive = new THREE.Color(0x0a1a2a);
-    mat.emissiveIntensity = 0.25;
-  }
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(b.size, 48, 48), mat);
   mesh.position.x = b.distance;
   mesh.rotation.z = b.tilt;
@@ -448,15 +451,14 @@ for (const b of BODIES) {
   tiltHolder.add(mesh);
   pivot.add(tiltHolder);
 
-  // atmosphere rim for terrestrial/ice bodies
-  if (b.surface === "earth" || b.surface === "gasBands") {
-    const atmoColor = b.surface === "earth" ? 0x5fa3ff : b.color;
-    const atmo = new THREE.Mesh(
-      new THREE.SphereGeometry(b.size * 1.06, 32, 32),
-      new THREE.MeshBasicMaterial({ color: atmoColor, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, side: THREE.BackSide })
-    );
-    mesh.add(atmo);
-  }
+  // colored rim glow on EVERY body so it reads as a bright, distinct disc against
+  // the dark sky (terrestrial bodies get it too now, not just earth / gas giants).
+  const rimColor = b.surface === "earth" ? 0x7fb3ff : b.color;
+  const atmo = new THREE.Mesh(
+    new THREE.SphereGeometry(b.size * 1.08, 32, 32),
+    new THREE.MeshBasicMaterial({ color: rimColor, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, side: THREE.BackSide })
+  );
+  mesh.add(atmo);
 
   // Saturn's rings
   if (b.rings) {
@@ -524,6 +526,22 @@ let playing = true;
 let speedMul = 1;
 let focusedKey = null;
 
+// ----- Camera focus animation: fly to a clicked planet, then track its orbit -----
+const DEFAULT_CAM = new THREE.Vector3(0, 42, 96); // the opening overview position
+const ORIGIN = new THREE.Vector3(0, 0, 0);
+const FOCUS_DUR = reduceMotion ? 0 : 0.9; // seconds; instant when reduced-motion
+let camMode = "free"; // "free" | "flying" | "following" | "flyingOut"
+let flyStart = 0;
+let focusPlanet = null;
+let focusDist = 0;
+const focusDir = new THREE.Vector3(); // camera→target direction, preserved across the fly
+const flyFromCam = new THREE.Vector3();
+const flyFromTarget = new THREE.Vector3();
+const prevFocusPos = new THREE.Vector3(); // last frame's planet world pos (follow delta)
+const _wp = new THREE.Vector3();
+const _wp2 = new THREE.Vector3();
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+
 // Build legend
 for (const b of BODIES) {
   const li = document.createElement("li");
@@ -582,20 +600,39 @@ document.getElementById("card-close").addEventListener("click", () => {
   unfocus();
 });
 
-// Focus / unfocus a body (click from legend or canvas)
+// Focus / unfocus a body (click from legend or canvas). Focusing flies the camera
+// in to frame the planet and then follows it as it orbits; unfocusing flies back out.
 function focusBody(key) {
   const p = planets.find((pl) => pl.data.key === key);
   if (!p) return;
   focusedKey = key;
+  focusPlanet = p;
   showCard(p.data);
   legendButtons.forEach((el) => el.classList.toggle("is-active", el.dataset.key === key));
   controls.autoRotate = false;
+
+  // Keep the current view angle, just reframe on the planet at a close distance.
+  focusDir.subVectors(camera.position, controls.target);
+  if (focusDir.lengthSq() < 1e-6) focusDir.set(0, 0.5, 1);
+  focusDir.normalize();
+  focusDist = p.data.size * 4.5 + (p.data.rings ? 6 : 4);
+  flyFromCam.copy(camera.position);
+  flyFromTarget.copy(controls.target);
+  controls.minDistance = Math.max(p.data.size * 2.2, 2); // allow zooming in close
+  camMode = "flying";
+  flyStart = clock.elapsedTime;
 }
 function unfocus() {
+  if (!focusedKey) return;
   focusedKey = null;
+  focusPlanet = null;
   hideCard();
   legendButtons.forEach((el) => el.classList.remove("is-active"));
-  controls.autoRotate = playing && !reduceMotion;
+  controls.autoRotate = false; // restored once the fly-out completes
+  flyFromCam.copy(camera.position);
+  flyFromTarget.copy(controls.target);
+  camMode = "flyingOut";
+  flyStart = clock.elapsedTime;
 }
 
 /* ----- Raycasting for hover + click on the canvas ----- */
@@ -692,6 +729,35 @@ function animate() {
 
   // slow starfield drift for parallax
   if (!reduceMotion) starfield.rotation.y += 0.00006 * (dt * 60);
+
+  // Camera focus: fly toward a clicked planet, then follow it around its orbit. We
+  // set camera.position + controls.target BEFORE controls.update(), which re-derives
+  // its orbit from them — so user drag/zoom still works (around the planet once we're
+  // following, and is simply overridden during the brief fly).
+  if (camMode === "flyingOut") {
+    const e = FOCUS_DUR > 0 ? easeInOut(Math.min((t - flyStart) / FOCUS_DUR, 1)) : 1;
+    camera.position.lerpVectors(flyFromCam, DEFAULT_CAM, e);
+    controls.target.lerpVectors(flyFromTarget, ORIGIN, e);
+    if (e >= 1) {
+      camMode = "free";
+      controls.minDistance = 14;
+      controls.autoRotate = playing && !reduceMotion;
+    }
+  } else if (camMode !== "free" && focusPlanet) {
+    const pPos = focusPlanet.mesh.getWorldPosition(_wp); // current orbital position
+    if (camMode === "flying") {
+      const e = FOCUS_DUR > 0 ? easeInOut(Math.min((t - flyStart) / FOCUS_DUR, 1)) : 1;
+      const toCam = _wp2.copy(pPos).addScaledVector(focusDir, focusDist);
+      camera.position.lerpVectors(flyFromCam, toCam, e);
+      controls.target.lerpVectors(flyFromTarget, pPos, e);
+      if (e >= 1) { camMode = "following"; prevFocusPos.copy(pPos); }
+    } else { // following: translate camera + target by the planet's per-frame motion
+      const delta = _wp2.subVectors(pPos, prevFocusPos);
+      camera.position.add(delta);
+      controls.target.add(delta);
+      prevFocusPos.copy(pPos);
+    }
+  }
 
   controls.update();
   renderer.render(scene, camera);
