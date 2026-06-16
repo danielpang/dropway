@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgetoken"
 )
 
 const (
-	host   = "acme.shippedusercontent.com"
+	host   = "acme.dropwaycontent.com"
 	siteID = "22222222-2222-2222-2222-222222222222"
 	orgID  = "11111111-1111-1111-1111-111111111111"
 )
@@ -145,7 +145,7 @@ func TestVerify_RouteBindingsAndRevocation(t *testing.T) {
 	}
 
 	// wrong aud.
-	tok = mintTok(t, s, "other.shippedusercontent.com", siteID, edgetoken.ModeOrgOnly, time.Minute)
+	tok = mintTok(t, s, "other.dropwaycontent.com", siteID, edgetoken.ModeOrgOnly, time.Minute)
 	if _, ok := v.Verify(context.Background(), tok, host, siteID, edgetoken.ModeOrgOnly, orgID); ok {
 		t.Errorf("wrong aud should be rejected")
 	}

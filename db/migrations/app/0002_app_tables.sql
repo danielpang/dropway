@@ -127,7 +127,7 @@ CREATE TABLE app.site_access_policy (
 
 -- +goose StatementBegin
 -- allowlist_entries: pre-registration email grants for allowlist sites. A grant
--- is CLAIMED (claimed_at set) only when a verified Shipped account first matches
+-- is CLAIMED (claimed_at set) only when a verified Dropway account first matches
 -- it (ARCHITECTURE.md §10). is_external marks grants outside the org's domain.
 CREATE TABLE app.allowlist_entries (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),

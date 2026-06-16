@@ -41,7 +41,7 @@ export const dynamic = "force-dynamic";
  *      - 403 → a clear "you don't have access" page.
  *      - 404 → an "unknown link" page (also covers a forged custom host).
  *
- * This route is PLATFORM-controlled and lives on app.shipped.app, so the
+ * This route is PLATFORM-controlled and lives on app.dropway.dev, so the
  * password prompt and the minted token never touch hostile tenant JS.
  */
 export default async function AuthzPage({

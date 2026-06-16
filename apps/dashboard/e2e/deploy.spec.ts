@@ -59,7 +59,7 @@ test("new user: sign up → org → site → drag-and-drop deploy goes live", as
   // The site's live URL is now present (both in the dropzone success state and the
   // page's "Live URL" card, which router.refresh() repopulated) and points at the
   // site's content host. The badge also flips Live.
-  const liveHref = `https://${siteSlug}.shippedusercontent.com`;
+  const liveHref = `https://${siteSlug}.dropwaycontent.com`;
   await expect(
     page.locator(`a[href="${liveHref}"]`).first(),
   ).toBeVisible();

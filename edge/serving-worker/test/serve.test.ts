@@ -33,7 +33,7 @@ import {
 } from "../src/index";
 
 // --- Fixtures ---------------------------------------------------------------
-// The contract validator (`@shipped/contracts`) requires UUID identifiers, so
+// The contract validator (`@dropway/contracts`) requires UUID identifiers, so
 // the fixtures use real UUIDs (the old `org_1`/`v_abc` placeholders would now
 // fail closed — which is itself covered below).
 
@@ -158,7 +158,7 @@ function get(host: string, path: string): Request {
   return new Request(`https://${host}${path}`, { method: "GET" });
 }
 
-const HOST = "acme.shippedusercontent.com";
+const HOST = "acme.dropwaycontent.com";
 
 /** Serve with the Cache API disabled (the default for most assertions). */
 function serveNoCache(req: Request, env: Env) {
@@ -169,25 +169,25 @@ function serveNoCache(req: Request, env: Env) {
 
 describe("normalizeHost", () => {
   it("lowercases, strips port and trailing dot", () => {
-    expect(normalizeHost("Acme.ShippedUserContent.com")).toBe(
-      "acme.shippedusercontent.com",
+    expect(normalizeHost("Acme.DropwayContent.com")).toBe(
+      "acme.dropwaycontent.com",
     );
-    expect(normalizeHost("acme.shippedusercontent.com:8787")).toBe(
-      "acme.shippedusercontent.com",
+    expect(normalizeHost("acme.dropwaycontent.com:8787")).toBe(
+      "acme.dropwaycontent.com",
     );
-    expect(normalizeHost("acme.shippedusercontent.com.")).toBe(
-      "acme.shippedusercontent.com",
+    expect(normalizeHost("acme.dropwaycontent.com.")).toBe(
+      "acme.dropwaycontent.com",
     );
   });
 
   it("builds the route key", () => {
-    expect(routeKey("Acme.shippedusercontent.com")).toBe(
-      "route:acme.shippedusercontent.com",
+    expect(routeKey("Acme.dropwaycontent.com")).toBe(
+      "route:acme.dropwaycontent.com",
     );
   });
 });
 
-// --- parseRouteValue (delegates to @shipped/contracts) ----------------------
+// --- parseRouteValue (delegates to @dropway/contracts) ----------------------
 
 describe("parseRouteValue", () => {
   it("accepts a well-formed public route", () => {
@@ -490,7 +490,7 @@ describe("serve() public path — manifest resolution + content-addressed blobs"
       "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
     });
     const env = envFor(PUBLIC_ROUTE, HOST, objects);
-    const res = await serveNoCache(get("ghost.shippedusercontent.com", "/"), env);
+    const res = await serveNoCache(get("ghost.dropwaycontent.com", "/"), env);
     expect(res.status).toBe(404);
   });
 
@@ -684,10 +684,10 @@ import { isRouteExpired } from "../src/route";
 import { safeNextPath, readEdgeCookie, EDGE_COOKIE_NAME } from "../src/authz";
 import { __resetJwksCacheForTests, type FetchLike } from "../src/edgetoken";
 
-const GATED_HOST = "private.shippedusercontent.com";
-const EDGE_ISSUER = "https://api.shipped.app/edge";
+const GATED_HOST = "private.dropwaycontent.com";
+const EDGE_ISSUER = "https://api.dropway.dev/edge";
 const JWKS_URL = "https://api.test/.well-known/edge-jwks";
-const AUTHZ_URL = "https://app.shipped.app/authz";
+const AUTHZ_URL = "https://app.dropway.dev/authz";
 
 /** A test edge signer: an Ed25519 keypair + its JWKS, mirroring the Go signer. */
 async function makeEdgeSigner(kid = "edge-test-kid") {
@@ -881,7 +881,7 @@ describe("serve() gated path — edge-token verification", () => {
     const { objects } = gatedDeploy();
     const env = gatedEnv(route, GATED_HOST, objects);
     // Minted for a DIFFERENT host → must not be accepted here.
-    const token = await signer.mint({ host: "other.shippedusercontent.com", siteId: SITE_ID });
+    const token = await signer.mint({ host: "other.dropwaycontent.com", siteId: SITE_ID });
 
     const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
       cache: null,
@@ -1132,7 +1132,7 @@ describe("serve() /__authz/callback — cookie + safe redirect", () => {
     });
     const env = gatedEnv(route, GATED_HOST, objects);
     // Token for the wrong host → invalid at this callback.
-    const token = await signer.mint({ host: "other.shippedusercontent.com", siteId: SITE_ID });
+    const token = await signer.mint({ host: "other.dropwaycontent.com", siteId: SITE_ID });
 
     const res = await serve(
       get(GATED_HOST, `/__authz/callback?token=${encodeURIComponent(token)}&next=/x`),

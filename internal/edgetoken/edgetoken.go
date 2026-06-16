@@ -8,8 +8,8 @@
 // GET /.well-known/edge-jwks. The signer/verifier here is the Go side of that
 // contract; the Worker MUST follow the same claim set:
 //
-//	iss = "https://api.shipped.app/edge"
-//	aud = <content_host>            e.g. "acme.shippedusercontent.com"
+//	iss = "https://api.dropway.dev/edge"
+//	aud = <content_host>            e.g. "acme.dropwaycontent.com"
 //	sub = <viewer user_id>          (org_only/allowlist) OR "anon:<random>" (password)
 //	exp = now + 15m, iat, jti
 //	+ { "site_id": <uuid>, "mode": "password"|"allowlist"|"org_only" }
@@ -33,7 +33,7 @@ import (
 
 // Issuer is the fixed `iss` claim of every edge token (the Go API edge signer).
 // The Worker pins this exact value.
-const Issuer = "https://api.shipped.app/edge"
+const Issuer = "https://api.dropway.dev/edge"
 
 // DefaultTTL is the lifetime of a minted edge token (spec: now + 15m). Short so a
 // revoked Better Auth session can't keep re-minting for long.
@@ -61,7 +61,7 @@ type Claims struct {
 // MintParams are the inputs to Mint. Subject is the viewer user id for
 // org_only/allowlist, or any anon subject for password (use AnonSubject()).
 type MintParams struct {
-	ContentHost string        // aud — the exact content host (e.g. acme.shippedusercontent.com)
+	ContentHost string        // aud — the exact content host (e.g. acme.dropwaycontent.com)
 	Subject     string        // sub — viewer user id or "anon:<random>"
 	SiteID      string        // site_id claim
 	Mode        string        // mode claim (password|allowlist|org_only)

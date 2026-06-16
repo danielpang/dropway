@@ -39,7 +39,7 @@ export default async function OnboardingPage() {
           >
             S
           </span>
-          Shipped
+          Dropway
         </span>
         <ThemeToggle />
       </header>

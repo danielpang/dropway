@@ -27,7 +27,7 @@ export async function addDomainAction(input: {
     return { ok: false, message: "Enter a valid domain, e.g. docs.acme.com." };
   }
   // A bare apex with no subdomain label can't get a CNAME-based DCV; nudge users.
-  if (hostname.endsWith(".shippedusercontent.com")) {
+  if (hostname.endsWith(".dropwaycontent.com")) {
     return {
       ok: false,
       message: "That's a platform domain — add your own custom domain instead.",

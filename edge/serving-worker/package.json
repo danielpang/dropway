@@ -1,12 +1,12 @@
 {
-  "name": "@shipped/serving-worker",
+  "name": "@dropway/serving-worker",
   "version": "0.0.0",
   "private": true,
   "license": "FSL-1.1-Apache-2.0",
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@shipped/contracts": "workspace:*",
+    "@dropway/contracts": "workspace:*",
     "jose": "^5.10.0"
   },
   "scripts": {

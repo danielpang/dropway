@@ -82,7 +82,7 @@ tenant tables). Unit tests cover only the extractable pure logic.
 
 ## Excluded (no unit target)
 
-`services/api/cmd/api`, `cli/cmd/shipped` (process `main()`/wiring — exercised by
+`services/api/cmd/api`, `cli/cmd/dropway` (process `main()`/wiring — exercised by
 build + the integration suite), `services/api/internal/store/db` (sqlc-generated),
 `ee` (empty stub), and `apps/dashboard` React/RSC components (no DOM test runner;
 behavior covered by typecheck + the Go integration of the APIs they call).

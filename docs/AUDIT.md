@@ -38,7 +38,7 @@ follow-up).
 ## Invariants re-verified (held)
 
 The audit confirmed the load-bearing invariants are intact: every request DB path
-runs as the non-BYPASSRLS `shipped_app` role under a `SET LOCAL` tenant context
+runs as the non-BYPASSRLS `dropway_app` role under a `SET LOCAL` tenant context
 (no superuser/bypass on request paths); the public Worker path is JWT-free; the
 paid `plan_tier` is written **only** by the signature-verified Stripe webhook; the
 hard-revocation denylist **fails closed**; the OSS build links **zero**

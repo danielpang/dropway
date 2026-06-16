@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/serve/internal/edgeverify"
-	"github.com/danielpang/shipped/services/serve/internal/manifest"
-	"github.com/danielpang/shipped/services/serve/internal/ratelimit"
-	"github.com/danielpang/shipped/services/serve/internal/route"
-	"github.com/danielpang/shipped/services/serve/internal/servehttp"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/serve/internal/edgeverify"
+	"github.com/danielpang/dropway/services/serve/internal/manifest"
+	"github.com/danielpang/dropway/services/serve/internal/ratelimit"
+	"github.com/danielpang/dropway/services/serve/internal/route"
+	"github.com/danielpang/dropway/services/serve/internal/servehttp"
 )
 
 // authzCallbackPath is the post-mint callback the dashboard 302s to on the content
@@ -73,7 +73,7 @@ type Handler struct {
 func New(resolver RouteResolver, store storage.Store, verifier *edgeverify.Verifier,
 	limiter *ratelimit.Limiter, orgStatus OrgStatusReader, cfg Config) *Handler {
 	if cfg.AppAuthzURL == "" {
-		cfg.AppAuthzURL = "https://app.shipped.app/authz"
+		cfg.AppAuthzURL = "https://app.dropway.dev/authz"
 	}
 	return &Handler{
 		resolver:  resolver,

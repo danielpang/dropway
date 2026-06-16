@@ -20,8 +20,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/danielpang/shipped/internal/httpx"
-	"github.com/danielpang/shipped/internal/middleware"
+	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/middleware"
 )
 
 // CheckoutPortalStore is the persistence the handlers need: read the org's
@@ -58,7 +58,7 @@ type Handlers struct {
 	store          CheckoutPortalStore
 	stripe         StripeClient
 	prices         PriceMap
-	dashboardURL   string // e.g. https://app.shipped.app
+	dashboardURL   string // e.g. https://app.dropway.dev
 	roles          RoleChecker
 	allowJWTRoleFB bool // ALLOW_JWT_ROLE_FALLBACK: trust the JWT role only when auth.member is unavailable
 	log            *slog.Logger

@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/danielpang/shipped/services/api/ops"
+	"github.com/danielpang/dropway/services/api/ops"
 )
 
 // opsRunner is the operator surface the gc/dr commands need — the subset of *ops.Env
@@ -27,12 +27,12 @@ func defaultOpsFactory(ctx context.Context) (opsRunner, error) {
 	return ops.Open(ctx)
 }
 
-// newGCCmd builds `shipped gc`: the R2 version GC operator job. It deletes blobs no
+// newGCCmd builds `dropway gc`: the R2 version GC operator job. It deletes blobs no
 // longer referenced by any retained deployment manifest, honoring a retention policy
 // (keep current + last N versions per site), per ARCHITECTURE.md §12.
 //
 // It is an OPERATOR command (not the deploy-token API path): it reads the deployment
-// env (DATABASE_URL + S3_*), connecting to Postgres as the non-BYPASSRLS shipped_app
+// env (DATABASE_URL + S3_*), connecting to Postgres as the non-BYPASSRLS dropway_app
 // role, and scopes every blob list/delete to an org's prefix.
 func newGCCmd(factory func(context.Context) (opsRunner, error)) *cobra.Command {
 	var (

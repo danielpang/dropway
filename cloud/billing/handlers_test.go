@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/middleware"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/middleware"
 )
 
 // fakeVerifier drives middleware.Auth without a live JWKS — it returns canned
@@ -98,7 +98,7 @@ func newHandlersUnderAuth(t *testing.T, store CheckoutPortalStore, sc StripeClie
 // from the JWT claim role (to exercise the stale-claim re-check, FIX 2).
 func newHandlersUnderAuthLive(t *testing.T, store CheckoutPortalStore, sc StripeClient, c *auth.Claims, roles RoleChecker) http.Handler {
 	t.Helper()
-	h := NewHandlers(store, sc, NewPriceMap("price_biz", "price_ent"), "https://app.shipped.app", roles, false, nil)
+	h := NewHandlers(store, sc, NewPriceMap("price_biz", "price_ent"), "https://app.dropway.dev", roles, false, nil)
 	mux := http.NewServeMux()
 	auth := middleware.Auth(fakeVerifier{claims: c})
 	mux.Handle("POST /v1/billing/checkout", auth(http.HandlerFunc(h.Checkout)))

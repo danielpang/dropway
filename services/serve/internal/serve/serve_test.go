@@ -16,20 +16,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/serve/internal/edgeverify"
-	"github.com/danielpang/shipped/services/serve/internal/ratelimit"
-	"github.com/danielpang/shipped/services/serve/internal/serve"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/serve/internal/edgeverify"
+	"github.com/danielpang/dropway/services/serve/internal/ratelimit"
+	"github.com/danielpang/dropway/services/serve/internal/serve"
 )
 
 // --- Test fixtures ----------------------------------------------------------
 
 const (
-	testHost      = "acme.shippedusercontent.com"
-	otherHost     = "evil.shippedusercontent.com"
+	testHost      = "acme.dropwaycontent.com"
+	otherHost     = "evil.dropwaycontent.com"
 	testOrgID     = "11111111-1111-1111-1111-111111111111"
 	testSiteID    = "22222222-2222-2222-2222-222222222222"
 	otherSiteID   = "33333333-3333-3333-3333-333333333333"
@@ -149,7 +149,7 @@ func newHandler(resolver serve.RouteResolver, store storage.Store, s *edgetoken.
 	}
 	limiter := ratelimit.New(0, 0) // disabled (fail open) by default
 	return serve.New(resolver, store, verifier, limiter, nil, serve.Config{
-		AppAuthzURL: "https://app.shipped.app/authz",
+		AppAuthzURL: "https://app.dropway.dev/authz",
 	})
 }
 
@@ -330,7 +330,7 @@ func TestUnknownHost404(t *testing.T) {
 	store := storage.NewFake()
 	h := newHandler(fakeResolver{map[string]serve.Route{}}, store, nil, nil)
 
-	rec := doRequest(h, http.MethodGet, "nobody.shippedusercontent.com", "/", nil, "")
+	rec := doRequest(h, http.MethodGet, "nobody.dropwaycontent.com", "/", nil, "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}

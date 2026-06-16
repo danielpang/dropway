@@ -26,7 +26,7 @@ type Config struct {
 	InternalPort int
 
 	// DatabaseURL is the Postgres DSN (DATABASE_URL) — the SAME non-BYPASSRLS
-	// shipped_app role the API uses. Required to resolve hosts.
+	// dropway_app role the API uses. Required to resolve hosts.
 	DatabaseURL string
 
 	// S3 / R2 object storage for blobs + manifests (server-side reads only).
@@ -92,8 +92,8 @@ func Load() (Config, error) {
 		S3Bucket:          os.Getenv("S3_BUCKET"),
 		S3ForcePathStyle:  parseBool(os.Getenv("S3_FORCE_PATH_STYLE")),
 
-		EdgeJWKSURL: envOr("EDGE_JWKS_URL", "https://api.shipped.app/.well-known/edge-jwks"),
-		AppAuthzURL: envOr("APP_AUTHZ_URL", "https://app.shipped.app/authz"),
+		EdgeJWKSURL: envOr("EDGE_JWKS_URL", "https://api.dropway.dev/.well-known/edge-jwks"),
+		AppAuthzURL: envOr("APP_AUTHZ_URL", "https://app.dropway.dev/authz"),
 
 		ContentScheme: envOr("CONTENT_SCHEME", "https"),
 		ContentPort:   os.Getenv("CONTENT_PORT"),

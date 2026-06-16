@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
 
-# Shipped — system diagrams
+# Dropway — system diagrams
 
 Diagrams-as-code (Mermaid). The `.mmd` files are the source of truth; the `.png`
 files are pre-rendered for quick viewing. GitHub renders the fenced `mermaid`
@@ -21,13 +21,13 @@ flowchart LR
   subgraph edge["Content edge"]
     direction TB
     caddy["Caddy<br/>TLS · on-demand certs · cache"]
-    serve["serve (Go)<br/>*.shippedusercontent.com<br/>serve content + enforce access"]
+    serve["serve (Go)<br/>*.dropwaycontent.com<br/>serve content + enforce access"]
   end
 
   subgraph control["Control plane"]
     direction TB
-    dash["dashboard (Next.js)<br/>Better Auth · /authz<br/>app.shipped.app"]
-    api["api (Go)<br/>system of record + authz<br/>api.shipped.app"]
+    dash["dashboard (Next.js)<br/>Better Auth · /authz<br/>app.dropway.dev"]
+    api["api (Go)<br/>system of record + authz<br/>api.dropway.dev"]
   end
 
   subgraph datap["Data plane"]
@@ -46,7 +46,7 @@ flowchart LR
   dash -->|Bearer EdDSA JWT| api
   dash -->|auth schema| pg
   dash -. verify / magic link .-> smtp
-  api -->|app schema · shipped_app · RLS| pg
+  api -->|app schema · dropway_app · RLS| pg
   api -->|presign · write manifest| store
   api -->|write route + revocation| redis
   serve -->|resolve_host| pg
@@ -111,7 +111,7 @@ sequenceDiagram
 
   rect rgb(243,229,245)
     note over V,M: d) Another user opens a site shared with them (gated)
-    V->>S: GET https://slug.shippedusercontent.com/
+    V->>S: GET https://slug.dropwaycontent.com/
     S->>PG: resolve_host -> access_mode = allowlist / org_only
     S-->>V: 302 to dashboard /authz?host&next (no edge cookie)
     V->>D: GET /authz (has Better Auth session)

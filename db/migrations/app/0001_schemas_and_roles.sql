@@ -15,16 +15,16 @@
 --   * These migrations are applied by a privileged OWNER/admin role (the schema
 --     owner, e.g. the `postgres`/migration role from the migration DATABASE_URL).
 --     That owner role is the table owner.
---   * The Go API connects at RUNTIME as `shipped_app`, a NON-superuser,
+--   * The Go API connects at RUNTIME as `dropway_app`, a NON-superuser,
 --     NON-BYPASSRLS login role. Because every app.* tenant table is later put in
 --     `FORCE ROW LEVEL SECURITY` (0003), even the table owner is subject to RLS
---     during normal queries -- `shipped_app` is doubly so. This is the
+--     during normal queries -- `dropway_app` is doubly so. This is the
 --     tenant-isolation backstop underneath the Go API's primary authz layer.
 --
--- The `shipped_app` password is NOT set here -- secrets stay out of migrations.
+-- The `dropway_app` password is NOT set here -- secrets stay out of migrations.
 -- Provision it out-of-band, e.g.:
---     ALTER ROLE shipped_app WITH PASSWORD :'shipped_app_password';
--- (psql variable from the SHIPPED_APP_DB_PASSWORD env var; see deploy/.env.example),
+--     ALTER ROLE dropway_app WITH PASSWORD :'dropway_app_password';
+-- (psql variable from the DROPWAY_APP_DB_PASSWORD env var; see deploy/.env.example),
 -- or rely on the connection's auth method (IAM / scram from the secret store).
 
 -- +goose Up
@@ -45,8 +45,8 @@ CREATE SCHEMA IF NOT EXISTS auth;
 -- connection role. Password is intentionally omitted (set out-of-band).
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shipped_app') THEN
-        CREATE ROLE shipped_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dropway_app') THEN
+        CREATE ROLE dropway_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
     END IF;
 END
 $$;
@@ -56,27 +56,27 @@ $$;
 -- The runtime role must be able to enter the schemas to reach the tables.
 -- Table-level DML grants (SELECT/INSERT/UPDATE/DELETE) are issued per-table in
 -- 0003, alongside the RLS policies that constrain them.
-GRANT USAGE ON SCHEMA app TO shipped_app;
+GRANT USAGE ON SCHEMA app TO dropway_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 -- Read access to the Better-Auth-owned schema (membership/role lookups for
 -- authz). The Go API reads auth.* but never migrates it.
-GRANT USAGE ON SCHEMA auth TO shipped_app;
+GRANT USAGE ON SCHEMA auth TO dropway_app;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-REVOKE USAGE ON SCHEMA auth FROM shipped_app;
+REVOKE USAGE ON SCHEMA auth FROM dropway_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-REVOKE USAGE ON SCHEMA app FROM shipped_app;
+REVOKE USAGE ON SCHEMA app FROM dropway_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 -- Drop only the app schema we own. We never drop `auth` (Better Auth owns it),
--- and we leave the `shipped_app` role in place (it may be shared / externally
+-- and we leave the `dropway_app` role in place (it may be shared / externally
 -- provisioned, and roles are cluster-global). Operators can DROP ROLE manually.
 DROP SCHEMA IF EXISTS app CASCADE;
 -- +goose StatementEnd

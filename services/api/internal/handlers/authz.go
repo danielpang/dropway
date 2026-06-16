@@ -7,14 +7,14 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/httpx"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/pwhash"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/pwhash"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // EdgeJWKS serves the edge signer's public JWKS at GET /.well-known/edge-jwks

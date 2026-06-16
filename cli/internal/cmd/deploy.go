@@ -1,4 +1,4 @@
-// Package cmd assembles the `shipped` CLI (cobra). Phase 1 ships `deploy`, which
+// Package cmd assembles the `dropway` CLI (cobra). Phase 1 ships `deploy`, which
 // implements the full folder → live URL flow against the API
 // (docs/ARCHITECTURE.md §7.1): walk + hash → (create site) → prepare → upload
 // only-missing blobs to presigned URLs → finalize → publish. The dry run (no
@@ -13,14 +13,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/danielpang/shipped/cli/internal/api"
-	"github.com/danielpang/shipped/cli/internal/manifest"
+	"github.com/danielpang/dropway/cli/internal/api"
+	"github.com/danielpang/dropway/cli/internal/manifest"
 )
 
 // tokenEnv is the env var carrying the Bearer deploy token.
-const tokenEnv = "SHIPPED_TOKEN"
+const tokenEnv = "DROPWAY_TOKEN"
 
-// newDeployCmd builds the `shipped deploy <dir>` command. clientFactory is
+// newDeployCmd builds the `dropway deploy <dir>` command. clientFactory is
 // injected so tests can supply a fake api.Client; the default builds the real
 // HTTP client from flags + env.
 func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.Command {
@@ -122,7 +122,7 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 	cmd.Flags().StringVar(&site, "site", "", "site slug (with --new) to create")
 	cmd.Flags().StringVar(&siteID, "site-id", "", "existing site id to deploy to")
 	cmd.Flags().BoolVar(&createNew, "new", false, "create a new site (requires --site <slug>)")
-	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Shipped API base URL")
+	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Dropway API base URL")
 	cmd.Flags().BoolVar(&send, "send", false, "actually run the deploy (requires "+tokenEnv+")")
 	return cmd
 }
@@ -167,12 +167,12 @@ func printPlan(out interface{ Write([]byte) (int, error) }, files []api.Manifest
 	}
 }
 
-// defaultAPIBase resolves the API base from SHIPPED_API or the production default.
+// defaultAPIBase resolves the API base from DROPWAY_API or the production default.
 func defaultAPIBase() string {
-	if v := os.Getenv("SHIPPED_API"); v != "" {
+	if v := os.Getenv("DROPWAY_API"); v != "" {
 		return v
 	}
-	return "https://api.shipped.app"
+	return "https://api.dropway.dev"
 }
 
 // defaultClientFactory builds the real HTTP client.

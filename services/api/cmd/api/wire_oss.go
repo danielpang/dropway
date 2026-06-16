@@ -9,8 +9,8 @@ package main
 import (
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/config"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/config"
 )
 
 // cloudBuild reports whether this binary was built with the `cloud` tag. It's

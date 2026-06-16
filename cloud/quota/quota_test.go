@@ -5,11 +5,11 @@ package quota
 import (
 	"testing"
 
-	corequota "github.com/danielpang/shipped/internal/quota"
+	corequota "github.com/danielpang/dropway/internal/quota"
 )
 
 func newProvider() *Provider {
-	return NewProvider(DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"})
+	return NewProvider(DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"})
 }
 
 func TestFreeTier_SiteCap(t *testing.T) {

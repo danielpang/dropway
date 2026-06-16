@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/dropway/internal/auth"
 )
 
 // fakeTx records the statements executed against it so a test can assert the

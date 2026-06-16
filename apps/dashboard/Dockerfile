@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Multi-stage build for the Shipped dashboard (Next.js, apps/dashboard).
+# Multi-stage build for the Dropway dashboard (Next.js, apps/dashboard).
 # Build context is the REPO ROOT (it's a pnpm workspace):
-#   docker build -f apps/dashboard/Dockerfile -t shipped-dashboard .
+#   docker build -f apps/dashboard/Dockerfile -t dropway-dashboard .
 #
 # The dashboard talks to the Go API for all business data and to Postgres only
 # for Better Auth's own identity tables (DATABASE_URL). It runs `next start`.
@@ -21,7 +21,7 @@ COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 # Not --frozen: the self-host quickstart should build even if pnpm-lock.yaml drifts
 # slightly from package.json. (CI uses a frozen install for reproducibility.)
-RUN pnpm install --no-frozen-lockfile --filter @shipped/dashboard...
+RUN pnpm install --no-frozen-lockfile --filter @dropway/dashboard...
 
 # ---- build: next build -----------------------------------------------------
 FROM node:22-slim AS build
@@ -38,7 +38,7 @@ RUN DATABASE_URL=postgres://build:build@localhost:5432/build?sslmode=disable \
     BETTER_AUTH_SECRET=build-time-placeholder-not-used-at-runtime \
     BETTER_AUTH_URL=http://localhost:3000 \
     NEXT_PUBLIC_API_URL=http://localhost:8080 \
-    pnpm --filter @shipped/dashboard build
+    pnpm --filter @dropway/dashboard build
 
 # ---- run: next start -------------------------------------------------------
 FROM node:22-slim AS run

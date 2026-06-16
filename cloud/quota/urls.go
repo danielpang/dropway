@@ -5,7 +5,7 @@ package quota
 import "net/url"
 
 // DashboardURLBuilder is the default URLBuilder: it deep-links the dashboard's
-// billing routes. The base is the dashboard origin (e.g. https://app.shipped.app).
+// billing routes. The base is the dashboard origin (e.g. https://app.dropway.dev).
 type DashboardURLBuilder struct {
 	DashboardBaseURL string
 }

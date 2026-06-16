@@ -13,7 +13,7 @@ import { join, relative, sep } from "node:path";
 
 const DASH = "http://localhost:3000";
 const API = "http://localhost:8080";
-const ROOT = "/Users/d_pang/projects/shipped";
+const ROOT = "/Users/d_pang/projects/dropway";
 const FOLDER = join(ROOT, "examples/synthwave-sunset");
 const S = Date.now();
 const EMAIL = `gate-${S}@example.com`;
@@ -107,7 +107,7 @@ await browser.close();
 
 const onContentHost = finalUrl.startsWith(`http://${ORG}--${APP}.localhost:8090`);
 if (navErr) { console.error(`FAIL: navigation error — ${navErr.message}`); process.exit(1); }
-if (status === 200 && onContentHost && /shipped|synthwave|<!doctype|deploy/i.test(snippet + title)) {
+if (status === 200 && onContentHost && /dropway|synthwave|<!doctype|deploy/i.test(snippet + title)) {
   console.log("PASS: signed-in org member loaded the org_only site over http (gated flow completed)");
 } else {
   console.error(`FAIL: status=${status} onContentHost=${onContentHost} finalUrl=${finalUrl}`);

@@ -8,7 +8,7 @@ import (
 // environment can't leak into (or out of) a case.
 var allEnvKeys = []string{
 	"PORT", "DATABASE_URL", "JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE",
-	"SHIPPED_CLOUD", "ALLOW_JWT_ROLE_FALLBACK",
+	"DROPWAY_CLOUD", "ALLOW_JWT_ROLE_FALLBACK",
 	"S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY",
 	"S3_BUCKET", "S3_FORCE_PATH_STYLE",
 	"CF_ACCOUNT_ID", "CF_KV_NAMESPACE_ID", "CF_API_TOKEN", "CF_ZONE_ID",
@@ -37,8 +37,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Port != 8080 {
 		t.Errorf("default Port = %d, want 8080", cfg.Port)
 	}
-	if cfg.DashboardURL != "https://app.shipped.app" {
-		t.Errorf("default DashboardURL = %q, want https://app.shipped.app", cfg.DashboardURL)
+	if cfg.DashboardURL != "https://app.dropway.dev" {
+		t.Errorf("default DashboardURL = %q, want https://app.dropway.dev", cfg.DashboardURL)
 	}
 	// Bools default false (self-host posture).
 	if cfg.Cloud || cfg.AllowJWTRoleFallback || cfg.S3ForcePathStyle {
@@ -59,14 +59,14 @@ func TestLoad_EveryEnvVarParsed(t *testing.T) {
 		"DATABASE_URL":            "postgres://db",
 		"JWKS_URL":                "https://app/jwks",
 		"JWT_ISSUER":              "https://app",
-		"JWT_AUDIENCE":            "shipped-api",
-		"SHIPPED_CLOUD":           "true",
+		"JWT_AUDIENCE":            "dropway-api",
+		"DROPWAY_CLOUD":           "true",
 		"ALLOW_JWT_ROLE_FALLBACK": "yes",
 		"S3_ENDPOINT":             "http://minio:9000",
 		"S3_REGION":               "auto",
 		"S3_ACCESS_KEY_ID":        "akid",
 		"S3_SECRET_ACCESS_KEY":    "secret",
-		"S3_BUCKET":               "shipped-blobs",
+		"S3_BUCKET":               "dropway-blobs",
 		"S3_FORCE_PATH_STYLE":     "1",
 		"CF_ACCOUNT_ID":           "acct",
 		"CF_KV_NAMESPACE_ID":      "ns",
@@ -98,14 +98,14 @@ func TestLoad_EveryEnvVarParsed(t *testing.T) {
 		{"DatabaseURL", cfg.DatabaseURL, "postgres://db"},
 		{"JWKSURL", cfg.JWKSURL, "https://app/jwks"},
 		{"JWTIssuer", cfg.JWTIssuer, "https://app"},
-		{"JWTAudience", cfg.JWTAudience, "shipped-api"},
+		{"JWTAudience", cfg.JWTAudience, "dropway-api"},
 		{"Cloud", cfg.Cloud, true},
 		{"AllowJWTRoleFallback", cfg.AllowJWTRoleFallback, true},
 		{"S3Endpoint", cfg.S3Endpoint, "http://minio:9000"},
 		{"S3Region", cfg.S3Region, "auto"},
 		{"S3AccessKeyID", cfg.S3AccessKeyID, "akid"},
 		{"S3SecretAccessKey", cfg.S3SecretAccessKey, "secret"},
-		{"S3Bucket", cfg.S3Bucket, "shipped-blobs"},
+		{"S3Bucket", cfg.S3Bucket, "dropway-blobs"},
 		{"S3ForcePathStyle", cfg.S3ForcePathStyle, true},
 		{"CFAccountID", cfg.CFAccountID, "acct"},
 		{"CFKVNamespaceID", cfg.CFKVNamespaceID, "ns"},
@@ -201,7 +201,7 @@ func TestParseBool(t *testing.T) {
 // behavior end to end through Load.
 func TestLoad_BadBoolIsFalseNotError(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("SHIPPED_CLOUD", "definitely-not-a-bool")
+	t.Setenv("DROPWAY_CLOUD", "definitely-not-a-bool")
 	t.Setenv("S3_FORCE_PATH_STYLE", "maybe")
 	cfg, err := Load()
 	if err != nil {

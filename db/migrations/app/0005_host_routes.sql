@@ -8,7 +8,7 @@
 -- The problem: the edge projection key `route:<host>` is a GLOBAL KV namespace,
 -- but site slugs are UNIQUE only per (org_id, slug). Without a global guard, org
 -- B can create + publish slug 'acme' and overwrite org A's
--- `route:acme.shippedusercontent.com`, serving org B's content at org A's URL.
+-- `route:acme.dropwaycontent.com`, serving org B's content at org A's URL.
 --
 -- The fix: a GLOBAL registry keyed by `host`. The PRIMARY KEY on `host` enforces
 -- global uniqueness REGARDLESS of RLS visibility — a conflicting insert from
@@ -50,7 +50,7 @@ ALTER TABLE app.host_routes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.host_routes FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.host_routes TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.host_routes TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY host_routes_tenant_isolation ON app.host_routes
@@ -64,7 +64,7 @@ CREATE POLICY host_routes_tenant_isolation ON app.host_routes
 DROP POLICY IF EXISTS host_routes_tenant_isolation ON app.host_routes;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.host_routes FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.host_routes FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.host_routes NO FORCE ROW LEVEL SECURITY;

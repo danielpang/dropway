@@ -6,7 +6,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
  * Shell for the viewer authz exchange. Mirrors the auth route group's quiet,
  * theme-aware backdrop: this is a first-impression, platform-controlled surface
  * (the password prompt + access decisions) that hostile tenant JS can never
- * render or script — so it deliberately looks like Shipped, not the content.
+ * render or script — so it deliberately looks like Dropway, not the content.
  */
 export default function AuthzLayout({
   children,
@@ -24,7 +24,7 @@ export default function AuthzLayout({
           >
             S
           </span>
-          Shipped
+          Dropway
         </Link>
         <ThemeToggle />
       </header>

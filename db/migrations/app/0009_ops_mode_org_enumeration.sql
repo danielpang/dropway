@@ -5,12 +5,12 @@
 -- Tighten app.all_org_ids() (added in 0008). That function is SECURITY DEFINER and
 -- enumerates EVERY org id across all tenants — exactly what the cross-org system
 -- JOBS (the DR projection rebuild + the R2 version GC) need. But 0008 GRANTed
--- EXECUTE to the request-path `shipped_app` role outright, so ANY normal request,
+-- EXECUTE to the request-path `dropway_app` role outright, so ANY normal request,
 -- running as the same role, could call it and enumerate all org ids (a tenant-
 -- isolation leak: org ids are not tenant data a request should see across orgs).
 --
 -- FIX: keep EXECUTE on the role (the ops jobs run as the SAME non-BYPASSRLS
--- shipped_app role — introducing a separate ops DB role would be far more invasive),
+-- dropway_app role — introducing a separate ops DB role would be far more invasive),
 -- but GATE THE FUNCTION BODY on an explicit ops-mode GUC. The function now RAISES
 -- unless the caller has set `app.ops_mode = '1'` for the current transaction. The
 -- ops/DR/GC path sets `SET LOCAL app.ops_mode = '1'` before calling (see
@@ -66,5 +66,5 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-GRANT EXECUTE ON FUNCTION app.all_org_ids() TO shipped_app;
+GRANT EXECUTE ON FUNCTION app.all_org_ids() TO dropway_app;
 -- +goose StatementEnd

@@ -1,6 +1,6 @@
-// Package ee is the root of Shipped's Enterprise Edition.
+// Package ee is the root of Dropway's Enterprise Edition.
 //
-// It is source-visible but use-restricted under the Shipped Enterprise Edition
+// It is source-visible but use-restricted under the Dropway Enterprise Edition
 // License (see ee/LICENSE) — NOT the repository's FSL-1.1-Apache-2.0. The
 // open-source / self-host build does not depend on anything in this tree.
 //

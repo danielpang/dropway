@@ -7,11 +7,11 @@
 //	go test -tags integration ./services/api/internal/integration/...
 //
 // It stands up real Postgres 16 + MinIO containers via `docker run`, applies the
-// goose app migrations as the owner role, sets the shipped_app runtime password,
+// goose app migrations as the owner role, sets the dropway_app runtime password,
 // then drives the real Store (RLS tenant context), the real S3 storage against
 // MinIO, and a local projection writer through:
 //
-//   - provision two orgs as shipped_app, assert RLS isolation through the Store;
+//   - provision two orgs as dropway_app, assert RLS isolation through the Store;
 //   - the full deploy → finalize → publish flow against MinIO;
 //   - the KV projection RouteValue is written and is REBUILDABLE from Postgres;
 //   - publish of an older version (rollback) flips the pointer.
@@ -34,10 +34,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 const (
@@ -45,12 +45,12 @@ const (
 	minioPort   = "59000"
 	pgImage     = "postgres:16"
 	minioImage  = "minio/minio:latest"
-	ownerDSN    = "postgres://postgres:postgres@127.0.0.1:" + pgPort + "/shipped?sslmode=disable"
-	appPassword = "shipped_app_it_pw"
-	appDSN      = "postgres://shipped_app:" + appPassword + "@127.0.0.1:" + pgPort + "/shipped?sslmode=disable"
-	bucket      = "shipped-blobs"
-	minioUser   = "shipped"
-	minioPass   = "shipped-dev-secret"
+	ownerDSN    = "postgres://postgres:postgres@127.0.0.1:" + pgPort + "/dropway?sslmode=disable"
+	appPassword = "dropway_app_it_pw"
+	appDSN      = "postgres://dropway_app:" + appPassword + "@127.0.0.1:" + pgPort + "/dropway?sslmode=disable"
+	bucket      = "dropway-blobs"
+	minioUser   = "dropway"
+	minioPass   = "dropway-dev-secret"
 )
 
 func TestIntegration_Phase1(t *testing.T) {
@@ -64,7 +64,7 @@ func TestIntegration_Phase1(t *testing.T) {
 
 	pool, err := pgxpool.New(ctx, appDSN)
 	if err != nil {
-		t.Fatalf("connect as shipped_app: %v", err)
+		t.Fatalf("connect as dropway_app: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	st := store.New(pool, quota.Unlimited{})
@@ -354,14 +354,14 @@ func newMinioStore(t *testing.T, ctx context.Context) *storage.S3Store {
 
 func startPostgres(t *testing.T) {
 	t.Helper()
-	name := "shipped-it-pg"
+	name := "dropway-it-pg"
 	dockerRm(name)
 	run(t, "docker", "run", "-d", "--name", name,
-		"-e", "POSTGRES_USER=postgres", "-e", "POSTGRES_PASSWORD=postgres", "-e", "POSTGRES_DB=shipped",
+		"-e", "POSTGRES_USER=postgres", "-e", "POSTGRES_PASSWORD=postgres", "-e", "POSTGRES_DB=dropway",
 		"-p", pgPort+":5432", pgImage)
 	t.Cleanup(func() { dockerRm(name) })
 	waitFor(t, "postgres", func() bool {
-		return exec.Command("docker", "exec", name, "pg_isready", "-U", "postgres", "-d", "shipped").Run() == nil
+		return exec.Command("docker", "exec", name, "pg_isready", "-U", "postgres", "-d", "dropway").Run() == nil
 	})
 	// pg_isready can pass slightly before the server accepts TCP auth; small grace.
 	time.Sleep(1 * time.Second)
@@ -369,7 +369,7 @@ func startPostgres(t *testing.T) {
 
 func startMinio(t *testing.T) {
 	t.Helper()
-	name := "shipped-it-minio"
+	name := "dropway-it-minio"
 	dockerRm(name)
 	run(t, "docker", "run", "-d", "--name", name,
 		"-e", "MINIO_ROOT_USER="+minioUser, "-e", "MINIO_ROOT_PASSWORD="+minioPass,
@@ -396,14 +396,14 @@ func applyMigrations(t *testing.T, repoRoot string) {
 	if out, err := goose.CombinedOutput(); err != nil {
 		t.Fatalf("goose up: %v\n%s", err, out)
 	}
-	// Set the shipped_app runtime password via psql in the pg container.
-	run(t, "docker", "exec", "shipped-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1",
-		"-c", "ALTER ROLE shipped_app WITH PASSWORD '"+appPassword+"';")
+	// Set the dropway_app runtime password via psql in the pg container.
+	run(t, "docker", "exec", "dropway-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1",
+		"-c", "ALTER ROLE dropway_app WITH PASSWORD '"+appPassword+"';")
 }
 
 // ownerDSNLocal is the owner DSN as seen from inside the pg container.
 func ownerDSNLocal() string {
-	return "postgres://postgres:postgres@127.0.0.1:5432/shipped?sslmode=disable"
+	return "postgres://postgres:postgres@127.0.0.1:5432/dropway?sslmode=disable"
 }
 
 // mustExec runs a SQL statement as the owner (for seeding org_meta, which RLS
@@ -416,11 +416,11 @@ func mustExec(t *testing.T, sql string, args ...string) {
 	for i, a := range args {
 		final = strings.ReplaceAll(final, fmt.Sprintf("$%d", i+1), "'"+a+"'")
 	}
-	run(t, "docker", "exec", "shipped-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1", "-c", final)
+	run(t, "docker", "exec", "dropway-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1", "-c", final)
 }
 
 // seedAuthOrg creates the minimal Better-Auth-owned `auth.organization` table (if
-// absent) and inserts an org row with the given slug, granting shipped_app SELECT
+// absent) and inserts an org row with the given slug, granting dropway_app SELECT
 // (the auth schema is outside app RLS). The Go API reads auth.organization.slug to
 // build the org-namespaced content host (projection.HostForSite); CreateSite /
 // Publish fail with store.ErrOrgSlugNotFound without this row.
@@ -428,8 +428,8 @@ func seedAuthOrg(t *testing.T, orgID, slug string) {
 	t.Helper()
 	mustExec(t, `CREATE SCHEMA IF NOT EXISTS auth`)
 	mustExec(t, `CREATE TABLE IF NOT EXISTS auth.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text)`)
-	mustExec(t, `GRANT USAGE ON SCHEMA auth TO shipped_app`)
-	mustExec(t, `GRANT SELECT ON auth.organization TO shipped_app`)
+	mustExec(t, `GRANT USAGE ON SCHEMA auth TO dropway_app`)
+	mustExec(t, `GRANT SELECT ON auth.organization TO dropway_app`)
 	mustExec(t, "INSERT INTO auth.organization (id, slug, name) VALUES ($1, $2, $2) ON CONFLICT (id) DO NOTHING", orgID, slug)
 }
 

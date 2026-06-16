@@ -9,12 +9,12 @@ import (
 
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
-		"ACME.shippedusercontent.com":      "acme.shippedusercontent.com",
-		"  acme.shippedusercontent.com  ":  "acme.shippedusercontent.com",
-		"acme.shippedusercontent.com:8443": "acme.shippedusercontent.com",
-		"acme.shippedusercontent.com.":     "acme.shippedusercontent.com",
-		"ACME.shippedusercontent.com:443.": "acme.shippedusercontent.com", // port stripped, no trailing dot left
-		"Acme.ShippedUserContent.Com":      "acme.shippedusercontent.com",
+		"ACME.dropwaycontent.com":      "acme.dropwaycontent.com",
+		"  acme.dropwaycontent.com  ":  "acme.dropwaycontent.com",
+		"acme.dropwaycontent.com:8443": "acme.dropwaycontent.com",
+		"acme.dropwaycontent.com.":     "acme.dropwaycontent.com",
+		"ACME.dropwaycontent.com:443.": "acme.dropwaycontent.com", // port stripped, no trailing dot left
+		"Acme.DropwayContent.Com":      "acme.dropwaycontent.com",
 	}
 	for in, want := range cases {
 		if got := NormalizeHost(in); got != want {

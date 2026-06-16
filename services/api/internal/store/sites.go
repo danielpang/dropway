@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // PreflightMembers is the server-side members_per_org cap check the dashboard's
@@ -161,7 +161,7 @@ type SiteVersion struct {
 var ErrOrgSlugNotFound = errors.New("store: org slug not found")
 
 // OrgSlug returns the org's slug from auth.organization (the Better-Auth-owned
-// identity table the dashboard writes; shipped_app has SELECT via migration 0012).
+// identity table the dashboard writes; dropway_app has SELECT via migration 0012).
 // It is the org half of the canonical content host (projection.HostForSite). The
 // read runs inside the active tenant's tx context — auth.organization has no RLS,
 // so the row resolves by id directly. A missing row is surfaced as
@@ -321,7 +321,7 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 
 // HostRoute is one row of the GLOBAL host registry (app.host_routes): a content
 // host mapped to its owning (org, site). A site has at least its canonical
-// <org>--<slug>.shippedusercontent.com host and, once a custom domain verifies,
+// <org>--<slug>.dropwaycontent.com host and, once a custom domain verifies,
 // one row per verified custom hostname.
 type HostRoute struct {
 	Host   string
@@ -330,7 +330,7 @@ type HostRoute struct {
 }
 
 // ListHostRoutesForSite returns EVERY host registered for a site in the global
-// registry — the canonical <org>--<slug>.shippedusercontent.com host AND any
+// registry — the canonical <org>--<slug>.dropwaycontent.com host AND any
 // verified custom-domain host. RLS scopes the read to the active org (a site the tenant
 // doesn't own resolves to an empty list).
 //

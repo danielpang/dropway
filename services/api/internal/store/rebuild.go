@@ -5,8 +5,8 @@ package store
 import (
 	"context"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // CollectRoutesForOrg returns every live (published) route for one org as a
@@ -32,7 +32,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 				continue
 			}
 			// Project EVERY host registered for the site — the canonical
-			// <org>--<slug>.shippedusercontent.com host AND every verified custom-domain
+			// <org>--<slug>.dropwaycontent.com host AND every verified custom-domain
 			// host — not just HostForSite(org,slug). Omitting custom domains leaves them absent
 			// from the rebuilt projection, so they stop serving after a KV wipe and the
 			// reconciler can never repair a stale custom-domain route (H4).

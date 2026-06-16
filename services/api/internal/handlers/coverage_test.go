@@ -13,13 +13,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/customdomains"
-	"github.com/danielpang/shipped/internal/httpx"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/customdomains"
+	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // mountAccessWithSites is mountAccess plus the GET /v1/sites/{id} route so the
@@ -430,7 +430,7 @@ func TestWriteStoreError_QuotaExceeded_402(t *testing.T) {
 	ex := &quota.ExceededError{
 		Limit: quota.ResourceSitePerUser, Current: 10, Max: 10,
 		PlanTier: "free", NextTier: "business",
-		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
+		UpgradeURL: "https://app.dropway.dev/billing/upgrade?tier=business",
 	}
 	rr := httptest.NewRecorder()
 	writeStoreError(rr, ex)
@@ -548,7 +548,7 @@ func TestLooksLikeID(t *testing.T) {
 
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
-		"  ACME.ShippedUserContent.COM ": "acme.shippedusercontent.com",
+		"  ACME.DropwayContent.COM ": "acme.dropwaycontent.com",
 		"a\tb\nc\rd":                     "abcd", // whitespace runes are stripped
 		"already.lower.com":              "already.lower.com",
 		"":                               "",

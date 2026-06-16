@@ -163,7 +163,7 @@ export function AuthForm({
         <CardDescription>
           {isSignUp
             ? "Ship a folder to a live URL in one command."
-            : "Sign in to your Shipped dashboard."}
+            : "Sign in to your Dropway dashboard."}
         </CardDescription>
       </CardHeader>
 
@@ -318,7 +318,7 @@ export function AuthForm({
 
       <CardFooter className="justify-center">
         <p className="text-sm text-muted-foreground">
-          {isSignUp ? "Already have an account? " : "New to Shipped? "}
+          {isSignUp ? "Already have an account? " : "New to Dropway? "}
           <a
             href={isSignUp ? "/sign-in" : "/sign-up"}
             className="font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"

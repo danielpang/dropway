@@ -15,7 +15,7 @@
 -- This cannot be a plain CHECK constraint because the predicate spans tables
 -- (the row being written vs. app.org_meta). We therefore use BEFORE
 -- INSERT/UPDATE triggers. The trigger functions are SECURITY DEFINER so they can
--- read app.org_meta even though the runtime `shipped_app` role's RLS would
+-- read app.org_meta even though the runtime `dropway_app` role's RLS would
 -- otherwise scope the lookup -- the check must be authoritative regardless of the
 -- caller's tenant context. A fixed search_path closes the SECURITY DEFINER
 -- injection footgun.

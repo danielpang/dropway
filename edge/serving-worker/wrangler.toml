@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Shipped serving Worker — *.shippedusercontent.com (Cloudflare).
+# Dropway serving Worker — *.dropwaycontent.com (Cloudflare).
 # Phase 1: PUBLIC serve path only (JWT-free, cacheable). See README.md and
 # docs/ARCHITECTURE.md §3/§6.
 #
@@ -9,7 +9,7 @@
 # placeholders — the infra agent fills them in (or supplies them via the
 # Cloudflare dashboard / `wrangler ... create`) per environment.
 
-name = "shipped-serving-worker"
+name = "dropway-serving-worker"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
 
@@ -29,9 +29,9 @@ enabled = true
 [vars]
 # Edge signer public keys (OKP/Ed25519). The gated path fetches + caches this to
 # verify the __Host-edge token (alg pinned EdDSA, iss + aud + exp + site_id).
-EDGE_JWKS_URL = "https://api.shipped.app/.well-known/edge-jwks"
+EDGE_JWKS_URL = "https://api.dropway.dev/.well-known/edge-jwks"
 # Dashboard /authz exchange a gated request with no/invalid edge token 302s to.
-APP_AUTHZ_URL = "https://app.shipped.app/authz"
+APP_AUTHZ_URL = "https://app.dropway.dev/authz"
 
 # --- Phase 4 hardening (edge rate limiting / denial-of-wallet) ---------------
 # Rate limit applied per client IP (else host) BEFORE the route lookup. The
@@ -69,8 +69,8 @@ preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
 # `wrangler dev` so local runs don't touch the production bucket.
 [[r2_buckets]]
 binding = "BUCKET"
-bucket_name = "shipped-content"
-preview_bucket_name = "shipped-content-preview"
+bucket_name = "dropway-content"
+preview_bucket_name = "dropway-content-preview"
 
 # --- Phase 4 hardening bindings (OPTIONAL) -----------------------------------
 # LIMITS: KV for the edge rate-limiter counters (`rl:*`) AND the per-org
@@ -100,8 +100,8 @@ preview_bucket_name = "shipped-content-preview"
 # --- Routing (production) ----------------------------------------------------
 # The Worker answers for every tenant subdomain on the PSL content domain.
 # Commented out so `wrangler deploy` doesn't fail before the zone/route exist;
-# the infra agent enables this once `shippedusercontent.com` is on Cloudflare.
+# the infra agent enables this once `dropwaycontent.com` is on Cloudflare.
 #
 # [[routes]]
-# pattern = "*.shippedusercontent.com/*"
-# zone_name = "shippedusercontent.com"
+# pattern = "*.dropwaycontent.com/*"
+# zone_name = "dropwaycontent.com"

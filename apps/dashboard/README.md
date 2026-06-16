@@ -1,10 +1,10 @@
-# @shipped/dashboard
+# @dropway/dashboard
 
-The Shipped control-plane dashboard — a Next.js (App Router, TypeScript) app that
-runs on `app.shipped.app` (Vercel in cloud; a container for self-host). It hosts
+The Dropway control-plane dashboard — a Next.js (App Router, TypeScript) app that
+runs on `app.dropway.dev` (Vercel in cloud; a container for self-host). It hosts
 **Better Auth** (`/api/auth/*`, the only TS↔Postgres path, for its own identity
 tables) and renders the management UI. For **all business data** it calls the Go
-API (`api.shipped.app`) via a typed client carrying a short-lived Better Auth
+API (`api.dropway.dev`) via a typed client carrying a short-lived Better Auth
 EdDSA JWT — it never opens a Postgres connection for business data.
 
 > License: FSL-1.1-Apache-2.0 (part of the OSS core). No `cloud/`/`ee/` imports.
@@ -64,17 +64,17 @@ repo root — do not run it inside this package).
 
 ```bash
 cp apps/dashboard/.env.example apps/dashboard/.env.local   # then fill in
-pnpm --filter @shipped/dashboard dev                       # http://localhost:3000
-pnpm --filter @shipped/dashboard typecheck
-pnpm --filter @shipped/dashboard lint
-pnpm --filter @shipped/dashboard build
+pnpm --filter @dropway/dashboard dev                       # http://localhost:3000
+pnpm --filter @dropway/dashboard typecheck
+pnpm --filter @dropway/dashboard lint
+pnpm --filter @dropway/dashboard build
 ```
 
 Better Auth migrates its own `auth` schema. With `DATABASE_URL` set, generate /
 apply its tables with the Better Auth CLI, e.g.:
 
 ```bash
-pnpm --filter @shipped/dashboard exec better-auth migrate
+pnpm --filter @dropway/dashboard exec better-auth migrate
 ```
 
 ## Environment

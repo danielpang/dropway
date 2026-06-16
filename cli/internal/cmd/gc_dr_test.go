@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielpang/shipped/services/api/ops"
+	"github.com/danielpang/dropway/services/api/ops"
 )
 
 // fakeOps is an in-memory opsRunner for the gc/dr command tests (no live DB/R2).

@@ -16,21 +16,21 @@ import type { Env } from "./index";
  * on verify (mirrors internal/edgetoken.Issuer on the Go side). A token with any
  * other issuer is rejected.
  */
-export const EDGE_TOKEN_ISSUER = "https://api.shipped.app/edge" as const;
+export const EDGE_TOKEN_ISSUER = "https://api.dropway.dev/edge" as const;
 
 /**
  * The host-only cookie that carries the edge token on the CONTENT host. The
  * `__Host-` prefix forces host-only + Secure + no `Domain=`, so a sibling tenant
- * on `*.shippedusercontent.com` can never set/overwrite it (cookie tossing) —
+ * on `*.dropwaycontent.com` can never set/overwrite it (cookie tossing) —
  * the PSL separation is the load-bearing isolation, this is defense in depth.
  */
 export const EDGE_COOKIE_NAME = "__Host-edge" as const;
 
 /** Default dashboard authz origin used when APP_AUTHZ_URL is unset. */
-const DEFAULT_APP_AUTHZ_URL = "https://app.shipped.app/authz";
+const DEFAULT_APP_AUTHZ_URL = "https://app.dropway.dev/authz";
 
 /** Default edge JWKS endpoint used when EDGE_JWKS_URL is unset. */
-const DEFAULT_EDGE_JWKS_URL = "https://api.shipped.app/.well-known/edge-jwks";
+const DEFAULT_EDGE_JWKS_URL = "https://api.dropway.dev/.well-known/edge-jwks";
 
 /**
  * Resolved, validated gated-path configuration. Built once per request from the

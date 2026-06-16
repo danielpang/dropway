@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/shipped/internal/audit"
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/httpx"
+	"github.com/danielpang/dropway/internal/audit"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/httpx"
 )
 
 // ---------------------------------------------------------------------------

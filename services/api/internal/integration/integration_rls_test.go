@@ -1,7 +1,7 @@
 //go:build integration
 
 // RLS policy test suite (Phase 4, ARCHITECTURE.md §5/§10/§13 row 2): for EVERY
-// app.* tenant table, assert tenant isolation as the non-BYPASSRLS shipped_app role:
+// app.* tenant table, assert tenant isolation as the non-BYPASSRLS dropway_app role:
 //
 //   - SELECT  : under org A's GUC, org B's rows are invisible (0 rows).
 //   - UPDATE  : under org A's GUC, an UPDATE targeting org B's rows affects 0 rows
@@ -13,7 +13,7 @@
 //
 // Table-driven over the full tenant-table set. It runs against real Postgres 16 with
 // the goose app migrations applied as the owner; the assertions run on a dedicated
-// shipped_app pgx connection (FORCE RLS applies to it). org_meta is special-cased
+// dropway_app pgx connection (FORCE RLS applies to it). org_meta is special-cased
 // (its PK *is* the org id, so its policy compares `id`, and it has no separate
 // org_id column to forge on INSERT).
 //
@@ -52,7 +52,7 @@ type rlsTable struct {
 	// given org, run as the OWNER with that org's tenant context. It returns the SQL
 	// and args.
 	seed func(org string) (sql string, args []any)
-	// forgeInsert returns an INSERT the suite runs as shipped_app UNDER org A's GUC
+	// forgeInsert returns an INSERT the suite runs as dropway_app UNDER org A's GUC
 	// but carrying org B's tenant id, to prove WITH CHECK rejects it. nil skips the
 	// INSERT check (e.g. org_meta, where forging a different id is the same as the
 	// generic check and is covered by org_usage et al.).
@@ -87,10 +87,10 @@ func TestIntegration_RLSPolicySuite(t *testing.T) {
 		}
 	}
 
-	// Connect as the non-BYPASSRLS shipped_app role for the assertions.
+	// Connect as the non-BYPASSRLS dropway_app role for the assertions.
 	conn, err := pgx.Connect(ctx, appDSN)
 	if err != nil {
-		t.Fatalf("connect as shipped_app: %v", err)
+		t.Fatalf("connect as dropway_app: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close(ctx) })
 
@@ -101,8 +101,8 @@ func TestIntegration_RLSPolicySuite(t *testing.T) {
 		`SELECT current_user, rolbypassrls FROM pg_roles WHERE rolname = current_user`).Scan(&role, &bypass); err != nil {
 		t.Fatal(err)
 	}
-	if role != "shipped_app" || bypass {
-		t.Fatalf("expected non-BYPASSRLS shipped_app, got %s (bypassrls=%v)", role, bypass)
+	if role != "dropway_app" || bypass {
+		t.Fatalf("expected non-BYPASSRLS dropway_app, got %s (bypassrls=%v)", role, bypass)
 	}
 
 	for _, tbl := range tables {
@@ -152,7 +152,7 @@ func TestIntegration_RLSPolicySuite(t *testing.T) {
 
 	// =======================================================================
 	// app.all_org_ids() is OPS-ONLY (migration 0009): a normal request running as
-	// shipped_app must NOT be able to enumerate every org id, even though the role
+	// dropway_app must NOT be able to enumerate every org id, even though the role
 	// holds EXECUTE — the body is gated on the app.ops_mode GUC the DR/GC path sets.
 	// =======================================================================
 	t.Run("all_org_ids ops-mode gate", func(t *testing.T) {
@@ -317,11 +317,11 @@ func rlsTables() []rlsTable {
 			seed: func(org string) (string, []any) {
 				return `INSERT INTO app.host_routes (host, org_id, site_id)
 						VALUES ($1, $2, $3)`,
-					[]any{"route-" + org[:4] + ".shippedusercontent.com", org, siteID(org)}
+					[]any{"route-" + org[:4] + ".dropwaycontent.com", org, siteID(org)}
 			},
 			forgeInsert: func(other string) (string, []any) {
 				return `INSERT INTO app.host_routes (host, org_id, site_id)
-						VALUES ('sneaky.shippedusercontent.com', $1, $2)`,
+						VALUES ('sneaky.dropwaycontent.com', $1, $2)`,
 					[]any{other, siteID(other)}
 			},
 		},
@@ -351,7 +351,7 @@ func ownerUser(org string) string {
 }
 
 // ---------------------------------------------------------------------------
-// helpers (shipped_app conn)
+// helpers (dropway_app conn)
 // ---------------------------------------------------------------------------
 
 func setGUC(t *testing.T, ctx context.Context, conn *pgx.Conn, org string) {

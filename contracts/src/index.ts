@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// @shipped/contracts — the single cross-language data contract.
+// @dropway/contracts — the single cross-language data contract.
 //
 // The KV route value is written ONLY by the Go API (on publish) and read by the
 // Cloudflare serving Worker. This module is the TypeScript side of that contract;

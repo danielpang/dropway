@@ -1,4 +1,4 @@
-// Package api is the CLI's client for the Shipped control plane (api.shipped.app).
+// Package api is the CLI's client for the Dropway control plane (api.dropway.dev).
 // The network calls are behind the Client interface so the deploy command's
 // plan/dry-run path runs without a live server and tests inject a fake
 // (docs/ARCHITECTURE.md §7.1).
@@ -12,7 +12,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/danielpang/shipped/cli/internal/manifest"
+	"github.com/danielpang/dropway/cli/internal/manifest"
 )
 
 // ManifestFile is one file in a deploy: request-path → content hash (+ size +
@@ -83,7 +83,7 @@ type Client interface {
 	Publish(ctx context.Context, siteID string, req PublishRequest) (*PublishResponse, error)
 }
 
-// HTTPClient is the real Client. Token is the Bearer credential (SHIPPED_TOKEN).
+// HTTPClient is the real Client. Token is the Bearer credential (DROPWAY_TOKEN).
 type HTTPClient struct {
 	BaseURL string
 	Token   string

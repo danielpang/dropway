@@ -43,7 +43,7 @@ sequenceDiagram
 
   rect rgb(243,229,245)
     note over V,M: d) Another user opens a site shared with them (gated)
-    V->>S: GET https://slug.shippedusercontent.com/
+    V->>S: GET https://slug.dropwaycontent.com/
     S->>PG: resolve_host -> access_mode = allowlist / org_only
     S-->>V: 302 to dashboard /authz?host&next (no edge cookie)
     V->>D: GET /authz (has Better Auth session)

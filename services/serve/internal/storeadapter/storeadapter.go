@@ -5,7 +5,7 @@ package storeadapter
 import (
 	"context"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgerevoke"
 )
 
 // RevocationReader adapts an edgerevoke denylist reader (Cloudflare KV or the

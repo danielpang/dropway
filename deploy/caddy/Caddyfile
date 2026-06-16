@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Shipped self-host edge — Caddy reverse proxy in front of the `serve` content
+# Dropway self-host edge — Caddy reverse proxy in front of the `serve` content
 # server. This is the open-source replacement for Cloudflare-for-SaaS (per-tenant
 # custom-hostname TLS) + the Cloudflare edge cache:
 #
-#   * Automatic HTTPS for the content domain (*.shippedusercontent.com) AND for
+#   * Automatic HTTPS for the content domain (*.dropwaycontent.com) AND for
 #     arbitrary tenant CUSTOM domains. Because custom hostnames are not known ahead
 #     of time, certs are issued via ON-DEMAND TLS for everything.
 #   * On-demand TLS is GATED by serve's ask endpoint
@@ -25,7 +25,7 @@
 # For purely-local testing, skip this edge entirely and hit `serve` directly on its
 # published HTTP port (8090), faking the Host header:
 #
-#     curl -H 'Host: <slug>.shippedusercontent.com' http://localhost:8090/
+#     curl -H 'Host: <slug>.dropwaycontent.com' http://localhost:8090/
 #
 # The `caddy` service is behind the compose profile `edge-tls` and is intended to run
 # ONLY when the box is internet-facing with DNS (the content domain + each tenant
@@ -58,7 +58,7 @@
 
 # ── Content edge ─────────────────────────────────────────────────────────────────
 # Catch-all site block: hostnames are dynamic (every tenant custom domain plus
-# *.shippedusercontent.com), so we match all incoming Hosts here and let the
+# *.dropwaycontent.com), so we match all incoming Hosts here and let the
 # on-demand-TLS ask endpoint decide which ones actually get a certificate.
 :443 {
 	# Issue/renew certs on demand (gated by the global `ask` endpoint above).

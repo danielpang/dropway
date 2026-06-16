@@ -1,4 +1,4 @@
-// Command api is the Shipped control-plane HTTP server (api.shipped.app): the
+// Command api is the Dropway control-plane HTTP server (api.dropway.dev): the
 // system of record and the authz boundary (docs/ARCHITECTURE.md §3).
 //
 // It loads config from the environment, builds the chi router, wires an
@@ -20,16 +20,16 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/customdomains"
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/config"
-	"github.com/danielpang/shipped/services/api/internal/handlers"
-	"github.com/danielpang/shipped/services/api/internal/router"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/customdomains"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/config"
+	"github.com/danielpang/dropway/services/api/internal/handlers"
+	"github.com/danielpang/dropway/services/api/internal/router"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // cloudDeps carries the dependencies the build-tag-selected mountCloud needs to
@@ -78,7 +78,7 @@ func run(baseLogger *slog.Logger) error {
 	qp := newQuotaProvider(cfg)
 	slog.Info("quota provider wired", "cloud_build", cloudBuild, "provider", quotaProviderName())
 
-	// ---- Data layer: pgx pool (non-BYPASSRLS shipped_app role) → Store. ----
+	// ---- Data layer: pgx pool (non-BYPASSRLS dropway_app role) → Store. ----
 	// The pool is hoisted to the run() scope so the cloud build's mountCloud can
 	// build the BillingStore over the SAME non-BYPASSRLS pool (the per-event SET
 	// LOCAL app.current_org_id is the isolation, §9). It stays nil when there's no

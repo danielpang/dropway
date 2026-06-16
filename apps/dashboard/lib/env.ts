@@ -15,7 +15,7 @@ function requireServer(): void {
  * Postgres connection string Better Auth uses for its identity tables. Better Auth
  * OWNS + migrates the `auth` schema, so it connects with a PRIVILEGED role (DDL +
  * DML on the auth schema) — distinct from the Go API's restricted, non-BYPASSRLS
- * `shipped_app` DATABASE_URL, which only needs SELECT on auth.* for authz reads.
+ * `dropway_app` DATABASE_URL, which only needs SELECT on auth.* for authz reads.
  *
  * Prefers BETTER_AUTH_DATABASE_URL; falls back to DATABASE_URL for a single-role
  * setup. (lib/auth.ts also pins the connection's search_path to `auth` so the
@@ -36,7 +36,7 @@ export function betterAuthSecret(): string {
   return v;
 }
 
-/** Canonical base URL of the dashboard (e.g. https://app.shipped.app). */
+/** Canonical base URL of the dashboard (e.g. https://app.dropway.dev). */
 export function betterAuthUrl(): string {
   // Available on both sides; Better Auth's client reads it for the base path.
   return (
@@ -93,7 +93,7 @@ export function mailSmtpUrl(): string | undefined {
 /** From address on outgoing mail. Defaults to a local dev sender. */
 export function mailFrom(): string {
   requireServer();
-  return process.env.MAIL_FROM ?? "Shipped <no-reply@localhost>";
+  return process.env.MAIL_FROM ?? "Dropway <no-reply@localhost>";
 }
 
 export function googleClientId(): string {
@@ -107,7 +107,7 @@ export function googleClientSecret(): string {
 }
 
 /**
- * Base URL of the Go API (api.shipped.app) the dashboard calls for ALL business
+ * Base URL of the Go API (api.dropway.dev) the dashboard calls for ALL business
  * data, carrying a short-lived Better Auth EdDSA JWT — it never opens a Postgres
  * connection for business data.
  *

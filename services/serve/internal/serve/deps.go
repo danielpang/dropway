@@ -11,7 +11,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/danielpang/shipped/services/serve/internal/route"
+	"github.com/danielpang/dropway/services/serve/internal/route"
 )
 
 // Route is the resolved routing identity for a host: the Worker's RouteValue
@@ -47,7 +47,7 @@ func (r Route) RouteValue() route.RouteValue {
 // ErrHostNotFound for an unknown host OR a host with no live version (fail closed
 // ⇒ 404). Any other error is a backend failure (the handler 404s, never leaks a
 // 5xx that exposes structure). Implemented over Postgres app.resolve_host by the
-// store adapter (non-BYPASSRLS shipped_app role).
+// store adapter (non-BYPASSRLS dropway_app role).
 type RouteResolver interface {
 	Resolve(ctx context.Context, normalizedHost string) (Route, error)
 }

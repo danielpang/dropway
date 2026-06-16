@@ -209,11 +209,11 @@ describe("isServiceWorkerScript (more conventional names + negatives)", () => {
 
 describe("isServiceWorkerRequest + applyHeaders", () => {
   it("flags a SW-script fetch (Service-Worker: script) regardless of path", () => {
-    const sw = new Request("https://acme.shippedusercontent.com/assets/app-worker.js", {
+    const sw = new Request("https://acme.dropwaycontent.com/assets/app-worker.js", {
       headers: { "Service-Worker": "script" },
     });
     expect(isServiceWorkerRequest(sw)).toBe(true);
-    const normal = new Request("https://acme.shippedusercontent.com/assets/app-worker.js");
+    const normal = new Request("https://acme.dropwaycontent.com/assets/app-worker.js");
     expect(isServiceWorkerRequest(normal)).toBe(false);
   });
 
@@ -610,8 +610,8 @@ describe("gatedConfig (env-var resolution)", () => {
 
   it("falls back to the production defaults when both vars are unset", () => {
     const cfg = gatedConfig(baseEnv);
-    expect(cfg.jwksUrl).toBe("https://api.shipped.app/.well-known/edge-jwks");
-    expect(cfg.appAuthzUrl).toBe("https://app.shipped.app/authz");
+    expect(cfg.jwksUrl).toBe("https://api.dropway.dev/.well-known/edge-jwks");
+    expect(cfg.appAuthzUrl).toBe("https://app.dropway.dev/authz");
     expect(cfg.issuer).toBe(EDGE_TOKEN_ISSUER);
   });
 
@@ -629,8 +629,8 @@ describe("gatedConfig (env-var resolution)", () => {
       EDGE_JWKS_URL: "   ",
       APP_AUTHZ_URL: "",
     } as Parameters<typeof gatedConfig>[0]);
-    expect(cfg.jwksUrl).toBe("https://api.shipped.app/.well-known/edge-jwks");
-    expect(cfg.appAuthzUrl).toBe("https://app.shipped.app/authz");
+    expect(cfg.jwksUrl).toBe("https://api.dropway.dev/.well-known/edge-jwks");
+    expect(cfg.appAuthzUrl).toBe("https://app.dropway.dev/authz");
   });
 
   it("the edge cookie name is the host-locked __Host- prefix", () => {
@@ -642,7 +642,7 @@ describe("gatedConfig (env-var resolution)", () => {
 // edgetoken: verifyEdgeToken claim-level validation, called directly (unit)
 // ============================================================================
 
-const GATED_HOST = "private.shippedusercontent.com";
+const GATED_HOST = "private.dropwaycontent.com";
 const JWKS_URL = "https://api.test/.well-known/edge-jwks";
 
 async function makeSigner(kid = "edge-kid") {

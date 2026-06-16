@@ -1,4 +1,4 @@
-// Package audit defines the small, dependency-light vocabulary for Shipped's
+// Package audit defines the small, dependency-light vocabulary for Dropway's
 // audit trail: the canonical Action constants for sensitive mutations and a
 // request-provenance Context the Go API attaches to every audit row
 // (docs/ARCHITECTURE.md §10 audit logging, §2.3 observability).

@@ -22,7 +22,7 @@ package billing
 // the cloud-only mirror), so the dedupe ledger + subscriptions table are written
 // directly; only the cross-schema org_meta write needs the GUC.
 //
-// We connect as the SAME non-BYPASSRLS shipped_app pool the rest of the API uses
+// We connect as the SAME non-BYPASSRLS dropway_app pool the rest of the API uses
 // (the GUC scoping — not a privileged role — is the isolation, §9).
 
 import (
@@ -34,7 +34,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/projection"
+	"github.com/danielpang/dropway/internal/projection"
 )
 
 // Free-tier caps mirrored from §9 (the cloud quota bands). A read-only downgrade
@@ -58,7 +58,7 @@ type BillingStore struct {
 	status projection.OrgStatusWriter
 }
 
-// NewStore wraps the shared shipped_app pool. The pool MUST be the non-BYPASSRLS
+// NewStore wraps the shared dropway_app pool. The pool MUST be the non-BYPASSRLS
 // runtime pool; the per-event SET LOCAL app.current_org_id is what authorizes and
 // scopes the single cross-schema org_meta write.
 func NewStore(pool *pgxpool.Pool) *BillingStore {

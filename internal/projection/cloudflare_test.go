@@ -28,14 +28,14 @@ func TestCloudflareKV_PutRoute(t *testing.T) {
 	c.BaseURL = srv.URL
 
 	val := validRoute("v1")
-	if err := c.PutRoute(context.Background(), "site.shippedusercontent.com", val); err != nil {
+	if err := c.PutRoute(context.Background(), "site.dropwaycontent.com", val); err != nil {
 		t.Fatal(err)
 	}
 
 	if gotMethod != http.MethodPut {
 		t.Errorf("method = %s", gotMethod)
 	}
-	wantPath := "/accounts/acct-1/storage/kv/namespaces/ns-1/values/route:site.shippedusercontent.com"
+	wantPath := "/accounts/acct-1/storage/kv/namespaces/ns-1/values/route:site.dropwaycontent.com"
 	if gotPath != wantPath {
 		t.Errorf("path = %q, want %q", gotPath, wantPath)
 	}
@@ -57,10 +57,10 @@ func TestCloudflareKV_DeleteRoute(t *testing.T) {
 
 	c := NewCloudflareKV("a", "n", "t")
 	c.BaseURL = srv.URL
-	if err := c.DeleteRoute(context.Background(), "h.shippedusercontent.com"); err != nil {
+	if err := c.DeleteRoute(context.Background(), "h.dropwaycontent.com"); err != nil {
 		t.Fatal(err)
 	}
-	if gotMethod != http.MethodDelete || !strings.HasSuffix(gotPath, "route:h.shippedusercontent.com") {
+	if gotMethod != http.MethodDelete || !strings.HasSuffix(gotPath, "route:h.dropwaycontent.com") {
 		t.Errorf("delete %s %s", gotMethod, gotPath)
 	}
 }

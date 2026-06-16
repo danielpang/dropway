@@ -7,12 +7,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/httpx"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // authed wraps a handler with the real Auth middleware in front (a fake verifier
@@ -42,7 +42,7 @@ type fakeStore struct {
 	createErr error
 
 	// orgSlug is the slug OrgSlug returns; defaults to "org" so the canonical host
-	// is "org--<slug>.shippedusercontent.com" in tests that don't override it.
+	// is "org--<slug>.dropwaycontent.com" in tests that don't override it.
 	orgSlug    string
 	orgSlugErr error
 
@@ -199,7 +199,7 @@ func TestCreateSite_Unlimited_201(t *testing.T) {
 	if body.OrgID != "org_1" || body.OwnerID != "user_1" || body.Slug != "my-site" {
 		t.Errorf("site = %+v", body)
 	}
-	if body.LiveURL != "https://org--my-site.shippedusercontent.com" {
+	if body.LiveURL != "https://org--my-site.dropwaycontent.com" {
 		t.Errorf("live_url = %q", body.LiveURL)
 	}
 	// RLS tenant was derived from the verified claims.
@@ -232,7 +232,7 @@ func TestCreateSite_QuotaExceeded_402(t *testing.T) {
 		Max:        10,
 		PlanTier:   "free",
 		NextTier:   "business",
-		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
+		UpgradeURL: "https://app.dropway.dev/billing/upgrade?tier=business",
 	}
 	fs := newFakeStore()
 	fs.createErr = ex
@@ -286,7 +286,7 @@ func TestMembersPreflight_AtCap_402(t *testing.T) {
 	fs.p2().preflightErr = &quota.ExceededError{
 		Limit: quota.ResourceMemberPerOrg, Current: 5, Max: 5,
 		PlanTier: "free", NextTier: "business",
-		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
+		UpgradeURL: "https://app.dropway.dev/billing/upgrade?tier=business",
 	}
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	h := authed(a.MembersPreflight, claims("u", "org_1", "admin"))

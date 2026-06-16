@@ -10,7 +10,7 @@
 //   GET https://<host>/<path>  (access_mode != public)
 //     ├─ __Host-edge cookie present + valid (aud==host, site_id matches, EdDSA,
 //     │    iss, exp)  →  serve the content (caller streams the blob)            ✅
-//     └─ absent / invalid  → 302 https://app.shipped.app/authz?host=<host>&next=<path>
+//     └─ absent / invalid  → 302 https://app.dropway.dev/authz?host=<host>&next=<path>
 //
 //   GET https://<host>/__authz/callback?token=<edge-token>&next=<path>
 //     (the dashboard 302s here AFTER minting the token)

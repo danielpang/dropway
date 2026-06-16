@@ -23,7 +23,7 @@ type PGOrgStatusReader struct {
 	pool *pgxpool.Pool
 }
 
-// NewOrgStatusReader builds a PGOrgStatusReader over the shipped_app pgxpool.
+// NewOrgStatusReader builds a PGOrgStatusReader over the dropway_app pgxpool.
 func NewOrgStatusReader(pool *pgxpool.Pool) *PGOrgStatusReader {
 	return &PGOrgStatusReader{pool: pool}
 }

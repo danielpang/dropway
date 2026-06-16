@@ -742,7 +742,7 @@ ORDER BY host
 `
 
 // Every host registered for a site in the GLOBAL registry — the canonical
-// <slug>.shippedusercontent.com host AND every verified custom-domain host. RLS
+// <slug>.dropwaycontent.com host AND every verified custom-domain host. RLS
 // scopes the rows to the active org, so a caller only ever sees its own site's
 // hosts. An access-mode / policy change must rewrite EVERY one of these routes
 // (not just the canonical one), or a verified custom host keeps serving at the
@@ -1099,7 +1099,7 @@ type ResolveSiteByHostRouteRow struct {
 // ===========================================================================
 // host resolution (Phase 2) — resolve a content host → owning site (for /authz)
 // ===========================================================================
-// Resolve a content host (the *.shippedusercontent.com label OR a verified custom
+// Resolve a content host (the *.dropwaycontent.com label OR a verified custom
 // host) to its owning site via the global host registry, returning the site's
 // access fields. Runs under RLS so only the active org's hosts resolve — the
 // /authz mint sets the tenant from the resolved org first (see store.AuthzContext).

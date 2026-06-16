@@ -12,8 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/danielpang/shipped/internal/audit"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/audit"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // AuditEntry is the API-facing view of one app.audit_log row (GET /v1/audit).

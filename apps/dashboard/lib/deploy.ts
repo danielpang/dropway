@@ -1,5 +1,5 @@
 /**
- * Browser-side folder deploy — the drag-and-drop equivalent of `shipped deploy`.
+ * Browser-side folder deploy — the drag-and-drop equivalent of `dropway deploy`.
  *
  * Runs ENTIRELY in the browser (it reads the dropped files, which only exist
  * client-side) and mirrors the CLI's contract so the Go API accepts it unchanged:

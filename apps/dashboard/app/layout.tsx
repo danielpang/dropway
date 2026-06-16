@@ -8,8 +8,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Shipped",
-    template: "%s · Shipped",
+    default: "Dropway",
+    template: "%s · Dropway",
   },
   description:
     "A folder of files to a live, access-controlled URL in one command.",

@@ -170,7 +170,7 @@ export interface paths {
         put?: never;
         /**
          * Create a site
-         * @description Reserved slugs are rejected (400). A slug whose content host (`<slug>.shippedusercontent.com`) is already taken by another org/site returns 409 Conflict — the host registry is global even though site slugs are unique only per org. On the cloud build, exceeding the per-user site cap returns 402 with the quota body so the dashboard can open the upgrade modal.
+         * @description Reserved slugs are rejected (400). A slug whose content host (`<slug>.dropwaycontent.com`) is already taken by another org/site returns 409 Conflict — the host registry is global even though site slugs are unique only per org. On the cloud build, exceeding the per-user site cap returns 402 with the quota body so the dashboard can open the upgrade modal.
          */
         post: operations["createSite"];
         delete?: never;
@@ -679,7 +679,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description Content host (e.g. acme.shippedusercontent.com or a verified custom host) */
+                    /** @description Content host (e.g. acme.dropwaycontent.com or a verified custom host) */
                     host: string;
                     /** @description Path the dashboard redirects back to (NOT used for authz) */
                     next?: string;
@@ -868,7 +868,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /**
-                     * @description Subdomain label under shippedusercontent.com (unique per org).
+                     * @description Subdomain label under dropwaycontent.com (unique per org).
                      * @example my-docs
                      */
                     slug: string;

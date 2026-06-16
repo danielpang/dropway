@@ -55,7 +55,7 @@ func TestVerify_EmptyHost(t *testing.T) {
 // TestVerify_MissingSiteIDClaim asserts a token with a valid signature/iss/aud/exp
 // but an empty site_id is rejected by the defensive claim check.
 func TestVerify_MissingSiteIDClaim(t *testing.T) {
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	c := baseClaims(host)
 	c.SiteID = "" // strip the required edge claim
 	tok, v := signRaw(t, "edge-test", c)
@@ -67,7 +67,7 @@ func TestVerify_MissingSiteIDClaim(t *testing.T) {
 // TestVerify_BadModeClaim asserts a token carrying an unrecognized mode is rejected
 // (the mode drives the Worker's gate; a bogus value must not slip through).
 func TestVerify_BadModeClaim(t *testing.T) {
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	c := baseClaims(host)
 	c.Mode = "superuser" // not password/allowlist/org_only
 	tok, v := signRaw(t, "edge-test", c)
@@ -79,7 +79,7 @@ func TestVerify_BadModeClaim(t *testing.T) {
 // TestVerify_WrongIssuer asserts a token whose iss is not the fixed edge issuer is
 // rejected (anti-cross-issuer confusion).
 func TestVerify_WrongIssuer(t *testing.T) {
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	c := baseClaims(host)
 	c.Issuer = "https://evil.example/edge"
 	tok, v := signRaw(t, "edge-test", c)
@@ -91,7 +91,7 @@ func TestVerify_WrongIssuer(t *testing.T) {
 // TestVerify_MissingExp asserts a token without exp is rejected (exp is required;
 // a non-expiring edge token would defeat the short-TTL revocation window).
 func TestVerify_MissingExp(t *testing.T) {
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	c := baseClaims(host)
 	c.ExpiresAt = nil // no exp
 	tok, v := signRaw(t, "edge-test", c)
@@ -105,7 +105,7 @@ func TestVerify_MissingExp(t *testing.T) {
 func TestVerify_MalformedToken(t *testing.T) {
 	v := VerifierForSigner(newTestSigner(t))
 	for _, garbage := range []string{"", "not.a.jwt", "a.b", "....", "header.payload.sig.extra"} {
-		if _, err := v.Verify(garbage, "acme.shippedusercontent.com"); err == nil {
+		if _, err := v.Verify(garbage, "acme.dropwaycontent.com"); err == nil {
 			t.Errorf("malformed token %q should be rejected", garbage)
 		}
 	}

@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 
 /**
  * The PLATFORM-controlled password form for a password-protected site. It is
- * rendered on app.shipped.app (NOT inside tenant content), so tenant JS can
+ * rendered on app.dropway.dev (NOT inside tenant content), so tenant JS can
  * never observe or script the password (architecture §6/§10 anti-phishing).
  *
  * On submit it calls the server action, which mints an ANONYMOUS edge token via
@@ -37,7 +37,7 @@ export function PasswordGate({ host, next }: { host: string; next: string }) {
 
     if (result.ok) {
       // Cross-origin redirect to the content host's Worker callback. A full
-      // navigation (not router.push) is required to leave app.shipped.app.
+      // navigation (not router.push) is required to leave app.dropway.dev.
       window.location.assign(result.redirectTo);
       return;
     }

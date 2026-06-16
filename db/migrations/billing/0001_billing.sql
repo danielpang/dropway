@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: LicenseRef-Shipped-Proprietary
+-- SPDX-License-Identifier: LicenseRef-Dropway-Proprietary
 --
 -- =============================================================================
 -- CLOUD-ONLY / PROPRIETARY MIGRATION -- NOT part of the FSL open-core build.
@@ -63,7 +63,7 @@ CREATE TABLE billing.processed_stripe_events (
 
 -- ---------------------------------------------------------------------------
 -- Runtime grants. The cloud BillingStore (cloud/billing/store.go) connects as the
--- SAME non-BYPASSRLS `shipped_app` runtime role as the rest of the API (the
+-- SAME non-BYPASSRLS `dropway_app` runtime role as the rest of the API (the
 -- per-event SET LOCAL app.current_org_id is the isolation, NOT a privileged role
 -- -- §9). billing.* tables have NO RLS (they are the cloud-only Stripe mirror), so
 -- the runtime role just needs schema USAGE + table DML here; the ONE cross-schema
@@ -71,13 +71,13 @@ CREATE TABLE billing.processed_stripe_events (
 -- the app migrations (0003). The role is created by the app migrations (0001), so
 -- the app schema must be migrated before this (documented run-ordering above).
 -- +goose StatementBegin
-GRANT USAGE ON SCHEMA billing TO shipped_app;
+GRANT USAGE ON SCHEMA billing TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON billing.subscriptions TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON billing.subscriptions TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON billing.processed_stripe_events TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON billing.processed_stripe_events TO dropway_app;
 -- +goose StatementEnd
 
 -- +goose Down
@@ -85,13 +85,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON billing.processed_stripe_events TO shipp
 -- Grants are dropped implicitly when the objects/schema are dropped below; the
 -- explicit REVOKEs keep the rollback tidy if the role outlives the schema.
 -- +goose StatementBegin
-REVOKE ALL ON billing.processed_stripe_events FROM shipped_app;
+REVOKE ALL ON billing.processed_stripe_events FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE ALL ON billing.subscriptions FROM shipped_app;
+REVOKE ALL ON billing.subscriptions FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE USAGE ON SCHEMA billing FROM shipped_app;
+REVOKE USAGE ON SCHEMA billing FROM dropway_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin

@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/danielpang/shipped/internal/projection"
+	"github.com/danielpang/dropway/internal/projection"
 )
 
 // RouteValue is the in-process route type. It reuses the cross-language contract

@@ -6,7 +6,7 @@
  * Both values are therefore open-redirect / token-exfiltration vectors and MUST
  * be validated before they are trusted:
  *
- *  - `host` must be the platform content suffix `*.shippedusercontent.com` OR a
+ *  - `host` must be the platform content suffix `*.dropwaycontent.com` OR a
  *    custom domain the Go API recognizes. We accept the structural form here;
  *    the Go API is the authoritative resolver (an unknown host → 404 on mint),
  *    so a forged custom host never yields a token. We still reject obviously
@@ -18,7 +18,7 @@
  */
 
 /** The platform's content PSL domain. Sites serve from `<slug>.<this>`. */
-export const CONTENT_SUFFIX = ".shippedusercontent.com";
+export const CONTENT_SUFFIX = ".dropwaycontent.com";
 
 /** A single DNS hostname: labels of [a-z0-9-] separated by dots, no trailing dot. */
 const HOSTNAME_RE =
@@ -47,7 +47,7 @@ export function normalizeContentHost(raw: string | null | undefined): string | n
   return host;
 }
 
-/** True when the host is a platform content host (`<label>.shippedusercontent.com`). */
+/** True when the host is a platform content host (`<label>.dropwaycontent.com`). */
 export function isPlatformContentHost(host: string): boolean {
   return host.endsWith(CONTENT_SUFFIX) && host.length > CONTENT_SUFFIX.length;
 }

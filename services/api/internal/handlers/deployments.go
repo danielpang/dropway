@@ -12,12 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/shipped/internal/audit"
-	"github.com/danielpang/shipped/internal/httpx"
-	"github.com/danielpang/shipped/internal/manifest"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/audit"
+	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/manifest"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // ---------------------------------------------------------------------------

@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // ResolvedHost is the routing identity of a content host, resolved across orgs by

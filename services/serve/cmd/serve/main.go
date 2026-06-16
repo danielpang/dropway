@@ -1,11 +1,11 @@
-// Command serve is the Shipped self-host content server — a plain Go HTTP server
+// Command serve is the Dropway self-host content server — a plain Go HTTP server
 // that is a full-parity alternative to the Cloudflare serving Worker
 // (edge/serving-worker). It serves tenant static content on
-// *.shippedusercontent.com + custom domains and enforces all four access modes
+// *.dropwaycontent.com + custom domains and enforces all four access modes
 // (public/password/allowlist/org_only). The request lifecycle, every access-mode
 // enforcement path, and the headers/CSP are a faithful Go port of the Worker.
 //
-// SECURITY: the DB connection is the non-BYPASSRLS shipped_app role (the same
+// SECURITY: the DB connection is the non-BYPASSRLS dropway_app role (the same
 // DATABASE_URL the API uses); cross-org host resolution is the narrow SECURITY
 // DEFINER app.resolve_host. The server NEVER signs edge tokens (verify-only) and
 // NEVER reads the operator Better Auth JWT.
@@ -24,14 +24,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/serve/internal/config"
-	"github.com/danielpang/shipped/services/serve/internal/edgeverify"
-	"github.com/danielpang/shipped/services/serve/internal/ratelimit"
-	"github.com/danielpang/shipped/services/serve/internal/route"
-	"github.com/danielpang/shipped/services/serve/internal/serve"
-	"github.com/danielpang/shipped/services/serve/internal/storeadapter"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/serve/internal/config"
+	"github.com/danielpang/dropway/services/serve/internal/edgeverify"
+	"github.com/danielpang/dropway/services/serve/internal/ratelimit"
+	"github.com/danielpang/dropway/services/serve/internal/route"
+	"github.com/danielpang/dropway/services/serve/internal/serve"
+	"github.com/danielpang/dropway/services/serve/internal/storeadapter"
 )
 
 func main() {
@@ -49,9 +49,9 @@ func run() error {
 	}
 	ctx := context.Background()
 
-	// ---- Data layer: pgx pool as the non-BYPASSRLS shipped_app role → Store. ----
+	// ---- Data layer: pgx pool as the non-BYPASSRLS dropway_app role → Store. ----
 	if cfg.DatabaseURL == "" {
-		return errors.New("serve: DATABASE_URL is required (the shipped_app role) to resolve hosts")
+		return errors.New("serve: DATABASE_URL is required (the dropway_app role) to resolve hosts")
 	}
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -59,7 +59,7 @@ func run() error {
 	}
 	defer pool.Close()
 	resolver := storeadapter.NewRouteResolver(pool)
-	slog.Info("route resolver wired (app.resolve_host, non-BYPASSRLS shipped_app)")
+	slog.Info("route resolver wired (app.resolve_host, non-BYPASSRLS dropway_app)")
 
 	// ---- Object storage: S3/R2 (MinIO locally), server-side reads only. ----
 	if cfg.S3Bucket == "" {
