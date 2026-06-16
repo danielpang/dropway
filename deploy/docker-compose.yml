@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Shipped — one-command self-host stack (ARCHITECTURE.md §13 row 13, §14.4).
+# Dropway — one-command self-host stack (ARCHITECTURE.md §13 row 13, §14.4).
 #
 # `docker compose -f deploy/docker-compose.yml up --build` builds and starts the
 # WHOLE local stack:
@@ -12,13 +12,13 @@
 #   * minio      — bundled R2/S3-compatible    [profile: local-storage] (OPTIONAL)
 #   * mailpit    — bundled SMTP + web inbox     [profile: local-mail]    (OPTIONAL)
 #   * caddy      — internet-facing TLS edge     [profile: edge-tls]      (OPTIONAL)
-#   * migrate    — one-shot goose runner for the `app` schema + shipped_app role
+#   * migrate    — one-shot goose runner for the `app` schema + dropway_app role
 #
-# OSS / self-host: SHIPPED_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ no
+# OSS / self-host: DROPWAY_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ no
 # Stripe, no caps, no cloud/ee. The api image defaults to the OSS build.
 #
 # OPTIONAL bundled data services (the open-core promise: bring your own backends):
-#   * The hosted Shipped SaaS runs on Supabase (managed Postgres) + Cloudflare R2.
+#   * The hosted Dropway SaaS runs on Supabase (managed Postgres) + Cloudflare R2.
 #   * Self-host DEFAULTS to the bundled postgres + minio (the `local-db` /
 #     `local-storage` profiles, enabled via COMPOSE_PROFILES in deploy/.env).
 #   * To use Supabase / an external Postgres instead: drop `local-db` from
@@ -30,7 +30,7 @@
 # Quickstart:  cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up --build
 # See deploy/README.md for the full walkthrough (incl. the one-time Better Auth migration).
 
-name: shipped
+name: dropway
 
 services:
   # ===========================================================================
@@ -39,14 +39,14 @@ services:
 
   # ---------------------------------------------------------------------------
   # api — the Go control-plane (system of record + authz boundary). OSS build
-  # (unlimited). Connects to Postgres as the non-BYPASSRLS shipped_app role and to
+  # (unlimited). Connects to Postgres as the non-BYPASSRLS dropway_app role and to
   # the object store for blobs/manifests. Waits for migrations to finish.
   # ---------------------------------------------------------------------------
   api:
     build:
       context: ..
       dockerfile: services/api/Dockerfile
-      # For the hosted-cloud (Stripe) build: args: { SHIPPED_BUILD_TAGS: cloud }
+      # For the hosted-cloud (Stripe) build: args: { DROPWAY_BUILD_TAGS: cloud }
     restart: unless-stopped
     env_file:
       - .env
@@ -95,18 +95,18 @@ services:
   # ---------------------------------------------------------------------------
   # serve — the self-host CONTENT server (the plain Go alternative to the
   # Cloudflare serving Worker). Serves published tenant sites on
-  # *.shippedusercontent.com + custom domains, enforcing all four access modes.
+  # *.dropwaycontent.com + custom domains, enforcing all four access modes.
   # This is what closes the loop: after a deploy is published, serve actually
   # streams the bytes — no Cloudflare needed.
   #
-  # Connects to Postgres as the non-BYPASSRLS shipped_app role (DATABASE_URL) and
+  # Connects to Postgres as the non-BYPASSRLS dropway_app role (DATABASE_URL) and
   # reads blobs/manifests from the object store (S3_* → minio:9000, server-side).
   # It VERIFIES gated edge tokens against the API's JWKS (EDGE_JWKS_URL, internal)
   # and 302s unauthenticated gated requests to the dashboard /authz (APP_AUTHZ_URL,
   # which is BROWSER-facing, so the host-published dashboard URL).
   #
   # Local testing has no wildcard DNS, so hit it by Host header on the published
-  # content port:  curl -H 'Host: <slug>.shippedusercontent.com' http://localhost:8090/
+  # content port:  curl -H 'Host: <slug>.dropwaycontent.com' http://localhost:8090/
   # Internet-facing self-host: put the `caddy` service (profile: edge-tls) in front
   # for automatic HTTPS + on-demand TLS for custom domains.
   # ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ services:
   # ---------------------------------------------------------------------------
   # migrate — one-shot goose runner. Applies the Go-owned `app` schema migrations
   # as the privileged OWNER role (DATABASE_OWNER_URL), then sets the runtime
-  # `shipped_app` role's password (the role is created NOSUPERUSER / NOBYPASSRLS by
+  # `dropway_app` role's password (the role is created NOSUPERUSER / NOBYPASSRLS by
   # migration 0001), then exits. It does NOT apply the cloud-only
   # db/migrations/billing — that schema only exists in the hosted deployment.
   #
@@ -159,7 +159,7 @@ services:
   #   docker compose -f deploy/docker-compose.yml exec dashboard \
   #     pnpm dlx @better-auth/cli@1.3.4 migrate --yes
   # (See deploy/README.md.) The app migrations create an EMPTY `auth` schema as a
-  # namespace + grant shipped_app SELECT on the auth tables (0012); app rows attach
+  # namespace + grant dropway_app SELECT on the auth tables (0012); app rows attach
   # via app.org_meta (PK = Better Auth organization.id).
   #
   # `required: false` on postgres so this also works against an external/Supabase
@@ -173,8 +173,8 @@ services:
         required: false
     environment:
       GOOSE_DRIVER: postgres
-      GOOSE_DBSTRING: ${DATABASE_OWNER_URL:-postgres://postgres:postgres@postgres:5432/shipped?sslmode=disable}
-      SHIPPED_APP_DB_PASSWORD: ${SHIPPED_APP_DB_PASSWORD:-shipped-app-dev-secret}
+      GOOSE_DBSTRING: ${DATABASE_OWNER_URL:-postgres://postgres:postgres@postgres:5432/dropway?sslmode=disable}
+      DROPWAY_APP_DB_PASSWORD: ${DROPWAY_APP_DB_PASSWORD:-dropway-app-dev-secret}
     working_dir: /repo
     volumes:
       - ../db:/repo/db:ro
@@ -184,8 +184,8 @@ services:
       go install github.com/pressly/goose/v3/cmd/goose@v3.27.1 &&
       /go/bin/goose -dir /repo/db/migrations/app up &&
       apt-get update >/dev/null && apt-get install -y --no-install-recommends postgresql-client >/dev/null &&
-      psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE shipped_app WITH PASSWORD '$$SHIPPED_APP_DB_PASSWORD';\" &&
-      echo 'app migrations applied + shipped_app password set'
+      psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE dropway_app WITH PASSWORD '$$DROPWAY_APP_DB_PASSWORD';\" &&
+      echo 'app migrations applied + dropway_app password set'
       "
     restart: "no"
 
@@ -196,7 +196,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # postgres — bundled system of record. [profile: local-db]
-  # Hosted Shipped uses Supabase instead; disable this profile + set DATABASE_URL.
+  # Hosted Dropway uses Supabase instead; disable this profile + set DATABASE_URL.
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16
@@ -205,13 +205,13 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-shipped}
+      POSTGRES_DB: ${POSTGRES_DB:-dropway}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-shipped}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-dropway}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -219,7 +219,7 @@ services:
   # ---------------------------------------------------------------------------
   # minio — bundled R2/S3-compatible object store. [profile: local-storage]
   # Holds per-org blobs/<org>/<sha256> + immutable deploy manifests. Console :9001.
-  # Hosted Shipped uses Cloudflare R2 instead; disable + set the S3_* vars.
+  # Hosted Dropway uses Cloudflare R2 instead; disable + set the S3_* vars.
   # ---------------------------------------------------------------------------
   minio:
     image: minio/minio:latest
@@ -227,8 +227,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shipped}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shipped-dev-secret}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dropway}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dropway-dev-secret}
       # CORS for browser folder drag-and-drop deploy: the dashboard hashes files
       # and PUTs blobs DIRECTLY to presigned URLs on this store, a cross-origin
       # request from the dashboard origin. Allow it (the presigned URL is itself the
@@ -257,9 +257,9 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-shipped} ${MINIO_ROOT_PASSWORD:-shipped-dev-secret} &&
-      mc mb --ignore-existing local/${MINIO_BUCKET:-shipped-blobs} &&
-      echo 'bucket ${MINIO_BUCKET:-shipped-blobs} ready'
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-dropway} ${MINIO_ROOT_PASSWORD:-dropway-dev-secret} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET:-dropway-blobs} &&
+      echo 'bucket ${MINIO_BUCKET:-dropway-blobs} ready'
       "
     restart: "no"
 

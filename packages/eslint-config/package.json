@@ -1,9 +1,9 @@
 {
-  "name": "@shipped/eslint-config",
+  "name": "@dropway/eslint-config",
   "version": "0.0.0",
   "private": true,
   "license": "FSL-1.1-Apache-2.0",
-  "description": "Shared ESLint flat config for the Shipped workspace.",
+  "description": "Shared ESLint flat config for the Dropway workspace.",
   "type": "module",
   "main": "./index.js",
   "exports": {

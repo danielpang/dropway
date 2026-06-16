@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielpang/shipped/cli/internal/api"
+	"github.com/danielpang/dropway/cli/internal/api"
 )
 
 // fakeClient records the calls it received and returns canned responses,
@@ -31,7 +31,7 @@ func newFakeClient(missing []string) *fakeClient {
 
 func (f *fakeClient) CreateSite(_ context.Context, req api.CreateSiteRequest) (*api.Site, error) {
 	f.createdSlug = req.Slug
-	return &api.Site{ID: "site_" + req.Slug, Slug: req.Slug, LiveURL: "https://" + req.Slug + ".shippedusercontent.com"}, nil
+	return &api.Site{ID: "site_" + req.Slug, Slug: req.Slug, LiveURL: "https://" + req.Slug + ".dropwaycontent.com"}, nil
 }
 
 func (f *fakeClient) PrepareDeployment(_ context.Context, siteID string, req api.PrepareRequest) (*api.PrepareResponse, error) {
@@ -55,7 +55,7 @@ func (f *fakeClient) FinalizeDeployment(_ context.Context, siteID string, req ap
 
 func (f *fakeClient) Publish(_ context.Context, siteID string, req api.PublishRequest) (*api.PublishResponse, error) {
 	f.published = req
-	return &api.PublishResponse{LiveURL: "https://" + strings.TrimPrefix(siteID, "site_") + ".shippedusercontent.com", VersionID: req.VersionID}, nil
+	return &api.PublishResponse{LiveURL: "https://" + strings.TrimPrefix(siteID, "site_") + ".dropwaycontent.com", VersionID: req.VersionID}, nil
 }
 
 func tempSite(t *testing.T) string {
@@ -106,7 +106,7 @@ func TestDeploy_DryRun_PrintsManifest_NoNetwork(t *testing.T) {
 // data and the live URL is printed.
 func TestDeploy_FullFlow_NewSite(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("SHIPPED_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_TOKEN", "shpd_test")
 
 	// The single file's sha is reported missing so the upload step runs.
 	idxSHA := sha256Hex(t, filepath.Join(dir, "index.html"))
@@ -139,7 +139,7 @@ func TestDeploy_FullFlow_NewSite(t *testing.T) {
 	if fc.published.VersionID != "ver_1" {
 		t.Errorf("published version = %q", fc.published.VersionID)
 	}
-	if !strings.Contains(out, "Live at https://mysite.shippedusercontent.com") {
+	if !strings.Contains(out, "Live at https://mysite.dropwaycontent.com") {
 		t.Errorf("missing live URL in output:\n%s", out)
 	}
 }
@@ -147,7 +147,7 @@ func TestDeploy_FullFlow_NewSite(t *testing.T) {
 // TestDeploy_SkipsAlreadyUploadedBlobs proves only-missing blobs are uploaded.
 func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("SHIPPED_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_TOKEN", "shpd_test")
 
 	fc := newFakeClient(nil) // nothing missing → no uploads
 	factory := func(string, string) api.Client { return fc }
@@ -166,18 +166,18 @@ func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
 
 func TestDeploy_Send_RequiresToken(t *testing.T) {
 	dir := tempSite(t)
-	os.Unsetenv("SHIPPED_TOKEN")
+	os.Unsetenv("DROPWAY_TOKEN")
 
 	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "x")
-	if err == nil || !strings.Contains(err.Error(), "SHIPPED_TOKEN") {
-		t.Fatalf("err = %v, want a SHIPPED_TOKEN requirement error", err)
+	if err == nil || !strings.Contains(err.Error(), "DROPWAY_TOKEN") {
+		t.Fatalf("err = %v, want a DROPWAY_TOKEN requirement error", err)
 	}
 }
 
 func TestDeploy_Send_RequiresTarget(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("SHIPPED_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_TOKEN", "shpd_test")
 	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	_, err := runDeploy(t, factory, dir, "--send")
 	if err == nil || !strings.Contains(err.Error(), "site-id") {

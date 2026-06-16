@@ -12,14 +12,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // This file exercises the error/edge BRANCHES of the deploy-flow, authz, and
@@ -221,7 +221,7 @@ func TestAuthzMint_PasswordModeRedirect_400(t *testing.T) {
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, claims("u", "o", "member"))
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (password sites use /authz/password)", rr.Code)
 	}
@@ -232,7 +232,7 @@ func TestAuthzMint_HostNotFound_404(t *testing.T) {
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, claims("u", "o", "member"))
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"ghost.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"ghost.dropwaycontent.com"}`)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (host not found)", rr.Code)
 	}
@@ -277,7 +277,7 @@ func TestAuthzMint_RevokedSubjectBeforeJWT_403(t *testing.T) {
 	c := claims("u", "o", "member")
 	c.IssuedAt = jwt.NewNumericDate(time.Unix(1000, 0)) // JWT predates the revocation
 	h := mountAccess(a, c)
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 (revoked-before-JWT re-mint blocked): %s", rr.Code, rr.Body.String())
 	}
@@ -295,7 +295,7 @@ func TestAuthzMint_RevokedButReauthed_200(t *testing.T) {
 	c := claims("u", "o", "member")
 	c.IssuedAt = jwt.NewNumericDate(time.Unix(2000, 0)) // re-authed AFTER the revocation
 	h := mountAccess(a, c)
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (re-authed after revocation): %s", rr.Code, rr.Body.String())
 	}
@@ -310,7 +310,7 @@ func TestAuthzMint_RevocationReadError_FailsClosed_403(t *testing.T) {
 	c := claims("u", "o", "member")
 	c.IssuedAt = jwt.NewNumericDate(time.Unix(1000, 0))
 	h := mountAccess(a, c)
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 (fail-closed on denylist read error)", rr.Code)
 	}
@@ -325,7 +325,7 @@ func TestAuthzPassword_NoSigner_503(t *testing.T) {
 	fs := newFakeStore()
 	a := NewFull(quota.Unlimited{}, fs, nil, nil) // no signer
 	h := mountAccess(a, nil)
-	rr := postJSON(h, "/v1/authz/password", `{"host":"x.shippedusercontent.com","password":"p"}`)
+	rr := postJSON(h, "/v1/authz/password", `{"host":"x.dropwaycontent.com","password":"p"}`)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 (no signer)", rr.Code)
 	}
@@ -336,7 +336,7 @@ func TestAuthzPassword_MissingFields_400(t *testing.T) {
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, nil)
-	rr := postJSON(h, "/v1/authz/password", `{"host":"x.shippedusercontent.com"}`) // no password
+	rr := postJSON(h, "/v1/authz/password", `{"host":"x.dropwaycontent.com"}`) // no password
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (host+password required)", rr.Code)
 	}
@@ -350,7 +350,7 @@ func TestAuthzPassword_Expired_403(t *testing.T) {
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, nil)
-	rr := postJSON(h, "/v1/authz/password", `{"host":"x.shippedusercontent.com","password":"p"}`)
+	rr := postJSON(h, "/v1/authz/password", `{"host":"x.dropwaycontent.com","password":"p"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 (expired link)", rr.Code)
 	}
@@ -363,7 +363,7 @@ func TestAuthzPassword_UnknownHost_Generic401(t *testing.T) {
 	h := mountAccess(a, nil)
 	// An unknown host must NOT be distinguishable from a wrong password — both 401,
 	// so the password gate isn't an existence oracle.
-	rr := postJSON(h, "/v1/authz/password", `{"host":"ghost.shippedusercontent.com","password":"p"}`)
+	rr := postJSON(h, "/v1/authz/password", `{"host":"ghost.dropwaycontent.com","password":"p"}`)
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401 (no existence oracle)", rr.Code)
 	}

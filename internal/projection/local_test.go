@@ -16,7 +16,7 @@ func validRoute(ver string) RouteValue {
 func TestLocal_PutGetDelete(t *testing.T) {
 	ctx := context.Background()
 	l := NewLocal()
-	host := "site.shippedusercontent.com"
+	host := "site.dropwaycontent.com"
 
 	if err := l.PutRoute(ctx, host, validRoute("v1")); err != nil {
 		t.Fatal(err)
@@ -51,8 +51,8 @@ func TestLocal_RebuildReplacesAll(t *testing.T) {
 	_ = l.PutRoute(ctx, "old.host", validRoute("v0"))
 
 	routes := map[string]RouteValue{
-		"a.shippedusercontent.com": validRoute("va"),
-		"b.shippedusercontent.com": validRoute("vb"),
+		"a.dropwaycontent.com": validRoute("va"),
+		"b.dropwaycontent.com": validRoute("vb"),
 	}
 	if err := l.RebuildFromDB(ctx, routes); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestLocal_FileMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := l.PutRoute(ctx, "x.shippedusercontent.com", validRoute("v9")); err != nil {
+	if err := l.PutRoute(ctx, "x.dropwaycontent.com", validRoute("v9")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestLocal_FileMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rv, ok := l2.Get("x.shippedusercontent.com"); !ok || rv.VersionID != "v9" {
+	if rv, ok := l2.Get("x.dropwaycontent.com"); !ok || rv.VersionID != "v9" {
 		t.Fatalf("reload = %+v %v", rv, ok)
 	}
 }

@@ -20,7 +20,7 @@
 package quota
 
 import (
-	corequota "github.com/danielpang/shipped/internal/quota"
+	corequota "github.com/danielpang/dropway/internal/quota"
 )
 
 // PlanTier identifies the billing band an org is on. Mirrors

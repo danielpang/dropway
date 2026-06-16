@@ -5,7 +5,7 @@
 -- Phase 4 (ops): a narrow, read-only system enumeration of org ids for the
 -- cross-org system JOBS — the DR projection rebuild (wipe KV/D1, replay from
 -- Postgres) and the R2 version GC. Both must iterate EVERY org, but the runtime
--- `shipped_app` role is non-BYPASSRLS, so a plain `SELECT id FROM app.org_meta`
+-- `dropway_app` role is non-BYPASSRLS, so a plain `SELECT id FROM app.org_meta`
 -- returns only the rows of whatever tenant context is set (or nothing with none).
 --
 -- Rather than require a separate BYPASSRLS/superuser pool on these operator tools
@@ -34,13 +34,13 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-GRANT EXECUTE ON FUNCTION app.all_org_ids() TO shipped_app;
+GRANT EXECUTE ON FUNCTION app.all_org_ids() TO dropway_app;
 -- +goose StatementEnd
 
 -- +goose Down
 
 -- +goose StatementBegin
-REVOKE EXECUTE ON FUNCTION app.all_org_ids() FROM shipped_app;
+REVOKE EXECUTE ON FUNCTION app.all_org_ids() FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP FUNCTION IF EXISTS app.all_org_ids();

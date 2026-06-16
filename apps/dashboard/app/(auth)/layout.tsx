@@ -23,7 +23,7 @@ export default function AuthLayout({
           >
             S
           </span>
-          Shipped
+          Dropway
         </Link>
         <ThemeToggle />
       </header>

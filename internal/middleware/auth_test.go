@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/dropway/internal/auth"
 )
 
 // fakeVerifier lets us drive Auth without a live JWKS endpoint.

@@ -4,7 +4,7 @@
 //
 // Postgres is authoritative; this projection is a REBUILDABLE cache. The Go API
 // is the ONLY writer (the Worker is read-only). RouteValue mirrors the single
-// cross-language data contract in contracts/kv-route.schema.json (@shipped/
+// cross-language data contract in contracts/kv-route.schema.json (@dropway/
 // contracts, SCHEMA_VERSION=1); a round-trip test asserts the Go shape matches
 // the schema and the TS parser.
 package projection
@@ -15,11 +15,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgerevoke"
 )
 
 // SchemaVersion is the version of THIS contract shape. It MUST equal
-// SCHEMA_VERSION in @shipped/contracts (contracts/src/index.ts) and the
+// SCHEMA_VERSION in @dropway/contracts (contracts/src/index.ts) and the
 // `schema_version` enforced by kv-route.schema.json. Bump in lock-step on any
 // breaking change. (ARCHITECTURE.md §8, §13 row 11.)
 //
@@ -101,7 +101,7 @@ func (v RouteValue) Validate() error {
 // from Postgres (the DR drill / drift reconciler — §13 row 8).
 type Writer interface {
 	// PutRoute upserts the route value for host (e.g.
-	// "<org>--<app>.shippedusercontent.com").
+	// "<org>--<app>.dropwaycontent.com").
 	PutRoute(ctx context.Context, host string, val RouteValue) error
 	// DeleteRoute removes a host's route (unshare / delete).
 	DeleteRoute(ctx context.Context, host string) error
@@ -157,7 +157,7 @@ const OrgStatusActive = "active"
 
 // HostForSite returns the canonical content host for a site — the ORG-NAMESPACED
 // single DNS label under the content domain: `<orgSlug>--<appSlug>.<ContentDomain>`
-// (e.g. acme/blog → "acme--blog.shippedusercontent.com").
+// (e.g. acme/blog → "acme--blog.dropwaycontent.com").
 //
 // HOST SCHEME (documented decision): putting the ORG in the host (org first, then
 // the app slug, separated by a DOUBLE dash) makes the global KV route namespace
@@ -176,9 +176,9 @@ func HostForSite(orgSlug, appSlug string) string {
 
 // ContentDomain is the registrable, PSL-listed content domain (ARCHITECTURE.md
 // §3) under which every tenant site is served. It is env-overridable via
-// CONTENT_DOMAIN (default "shippedusercontent.com") so a self-host/dev deployment
+// CONTENT_DOMAIN (default "dropwaycontent.com") so a self-host/dev deployment
 // can serve under its own apex without recompiling.
-var ContentDomain = envOr("CONTENT_DOMAIN", "shippedusercontent.com")
+var ContentDomain = envOr("CONTENT_DOMAIN", "dropwaycontent.com")
 
 // envOr returns the environment value for key, or def when it's unset/empty.
 func envOr(key, def string) string {

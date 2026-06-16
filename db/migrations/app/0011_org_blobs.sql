@@ -41,7 +41,7 @@ ALTER TABLE app.org_blobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.org_blobs FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.org_blobs TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.org_blobs TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY org_blobs_tenant_isolation ON app.org_blobs

@@ -18,11 +18,11 @@ import {
 
 describe("normalizeContentHost", () => {
   it("accepts and lowercases a valid platform content host", () => {
-    expect(normalizeContentHost("Acme.ShippedUserContent.com")).toBe(
-      "acme.shippedusercontent.com",
+    expect(normalizeContentHost("Acme.DropwayContent.com")).toBe(
+      "acme.dropwaycontent.com",
     );
-    expect(normalizeContentHost("  deep.sub.shippedusercontent.com  ")).toBe(
-      "deep.sub.shippedusercontent.com",
+    expect(normalizeContentHost("  deep.sub.dropwaycontent.com  ")).toBe(
+      "deep.sub.dropwaycontent.com",
     );
   });
 
@@ -39,15 +39,15 @@ describe("normalizeContentHost", () => {
 
   it("rejects hosts carrying scheme / port / userinfo / path / wildcard / spaces", () => {
     for (const bad of [
-      "https://acme.shippedusercontent.com",
-      "acme.shippedusercontent.com:8443",
-      "user@acme.shippedusercontent.com",
-      "acme.shippedusercontent.com/evil",
-      "acme.shippedusercontent.com\\evil",
-      "*.shippedusercontent.com",
-      "ac me.shippedusercontent.com",
-      "acme.shippedusercontent.com?x=1",
-      "acme.shippedusercontent.com#frag",
+      "https://acme.dropwaycontent.com",
+      "acme.dropwaycontent.com:8443",
+      "user@acme.dropwaycontent.com",
+      "acme.dropwaycontent.com/evil",
+      "acme.dropwaycontent.com\\evil",
+      "*.dropwaycontent.com",
+      "ac me.dropwaycontent.com",
+      "acme.dropwaycontent.com?x=1",
+      "acme.dropwaycontent.com#frag",
       "[::1]",
     ]) {
       expect(normalizeContentHost(bad)).toBeNull();
@@ -56,29 +56,29 @@ describe("normalizeContentHost", () => {
 
   it("rejects a single-label host and a leading/trailing-dot / double-dot host", () => {
     expect(normalizeContentHost("localhost")).toBeNull(); // no dot → not multi-label
-    expect(normalizeContentHost(".shippedusercontent.com")).toBeNull();
-    expect(normalizeContentHost("acme.shippedusercontent.com.")).toBeNull(); // trailing dot
+    expect(normalizeContentHost(".dropwaycontent.com")).toBeNull();
+    expect(normalizeContentHost("acme.dropwaycontent.com.")).toBeNull(); // trailing dot
     expect(normalizeContentHost("acme..com")).toBeNull(); // empty label
-    expect(normalizeContentHost("-acme.shippedusercontent.com")).toBeNull(); // label starts with -
+    expect(normalizeContentHost("-acme.dropwaycontent.com")).toBeNull(); // label starts with -
   });
 
   it("rejects the bare apex of the content suffix (needs a label in front)", () => {
-    // CONTENT_SUFFIX is ".shippedusercontent.com"; its apex must not be a valid host.
+    // CONTENT_SUFFIX is ".dropwaycontent.com"; its apex must not be a valid host.
     expect(normalizeContentHost(CONTENT_SUFFIX.slice(1))).toBeNull();
   });
 });
 
 describe("isPlatformContentHost", () => {
   it("is true for a labelled host under the content suffix", () => {
-    expect(isPlatformContentHost("acme.shippedusercontent.com")).toBe(true);
-    expect(isPlatformContentHost("a.b.shippedusercontent.com")).toBe(true);
+    expect(isPlatformContentHost("acme.dropwaycontent.com")).toBe(true);
+    expect(isPlatformContentHost("a.b.dropwaycontent.com")).toBe(true);
   });
 
   it("is false for the bare suffix and for off-suffix hosts", () => {
     // The apex (suffix with no label) is not a content host.
-    expect(isPlatformContentHost("shippedusercontent.com")).toBe(false);
+    expect(isPlatformContentHost("dropwaycontent.com")).toBe(false);
     expect(isPlatformContentHost("acme.example.com")).toBe(false);
-    expect(isPlatformContentHost("evil-shippedusercontent.com")).toBe(false);
+    expect(isPlatformContentHost("evil-dropwaycontent.com")).toBe(false);
   });
 });
 
@@ -112,8 +112,8 @@ describe("safeNextPath (same-site path only)", () => {
 
 describe("callbackUrl", () => {
   it("builds the content-host callback with token + next as encoded query params", () => {
-    const u = new URL(callbackUrl("acme.shippedusercontent.com", "tok.en", "/docs?x=1"));
-    expect(u.origin).toBe("https://acme.shippedusercontent.com");
+    const u = new URL(callbackUrl("acme.dropwaycontent.com", "tok.en", "/docs?x=1"));
+    expect(u.origin).toBe("https://acme.dropwaycontent.com");
     expect(u.pathname).toBe("/__authz/callback");
     expect(u.searchParams.get("token")).toBe("tok.en");
     // URL encoding round-trips the next param (incl. its own query).
@@ -121,7 +121,7 @@ describe("callbackUrl", () => {
   });
 
   it("encodes special characters in the token safely", () => {
-    const u = new URL(callbackUrl("h.shippedusercontent.com", "a/b+c=d", "/"));
+    const u = new URL(callbackUrl("h.dropwaycontent.com", "a/b+c=d", "/"));
     expect(u.searchParams.get("token")).toBe("a/b+c=d");
     expect(u.searchParams.get("next")).toBe("/");
   });

@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	sharedmanifest "github.com/danielpang/shipped/internal/manifest"
+	sharedmanifest "github.com/danielpang/dropway/internal/manifest"
 )
 
 // Entry is one file in the manifest.

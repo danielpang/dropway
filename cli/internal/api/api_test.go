@@ -37,7 +37,7 @@ func TestHTTPClient_FullFlow(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v1/sites" && r.Method == http.MethodPost:
-			_ = json.NewEncoder(w).Encode(Site{ID: "site_1", Slug: "demo", LiveURL: "https://demo.shippedusercontent.com"})
+			_ = json.NewEncoder(w).Encode(Site{ID: "site_1", Slug: "demo", LiveURL: "https://demo.dropwaycontent.com"})
 		case strings.HasSuffix(r.URL.Path, "/deployments/prepare"):
 			// Report the one referenced blob missing, pointing the upload at the
 			// store server (a distinct origin).
@@ -51,7 +51,7 @@ func TestHTTPClient_FullFlow(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/deployments"):
 			_ = json.NewEncoder(w).Encode(FinalizeResponse{VersionID: "ver_1", VersionNo: 1})
 		case strings.HasSuffix(r.URL.Path, "/publish"):
-			_ = json.NewEncoder(w).Encode(PublishResponse{LiveURL: "https://demo.shippedusercontent.com", VersionID: "ver_1"})
+			_ = json.NewEncoder(w).Encode(PublishResponse{LiveURL: "https://demo.dropwaycontent.com", VersionID: "ver_1"})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

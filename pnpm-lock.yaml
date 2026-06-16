@@ -101,7 +101,7 @@ importers:
 
   edge/serving-worker:
     dependencies:
-      '@shipped/contracts':
+      '@dropway/contracts':
         specifier: workspace:*
         version: link:../../contracts
       jose:

@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newDRCmd builds `shipped dr` with the `rebuild` subcommand — the documented
+// newDRCmd builds `dropway dr` with the `rebuild` subcommand — the documented
 // disaster-recovery drill (ARCHITECTURE.md §13 row 8): rebuild the ENTIRE KV/D1
 // routing projection from Postgres across every org and push it to the edge writer,
 // restoring serving after a KV/D1 wipe. Postgres is authoritative; the projection is
@@ -27,7 +27,7 @@ func newDRCmd(factory func(context.Context) (opsRunner, error)) *cobra.Command {
 	return cmd
 }
 
-// newDRRebuildCmd builds `shipped dr rebuild`.
+// newDRRebuildCmd builds `dropway dr rebuild`.
 func newDRRebuildCmd(factory func(context.Context) (opsRunner, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rebuild",

@@ -45,7 +45,7 @@ func TestCloudflareProvider_CreateAndStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewCloudflareProvider("zone1", "token1", "shippedusercontent.com")
+	p := NewCloudflareProvider("zone1", "token1", "dropwaycontent.com")
 	p.BaseURL = srv.URL
 
 	created, err := p.CreateCustomHostname(context.Background(), "docs.acme.com")
@@ -61,7 +61,7 @@ func TestCloudflareProvider_CreateAndStatus(t *testing.T) {
 	if createBody["hostname"] != "docs.acme.com" {
 		t.Fatalf("create body hostname = %v", createBody["hostname"])
 	}
-	if createBody["custom_origin_server"] != "shippedusercontent.com" {
+	if createBody["custom_origin_server"] != "dropwaycontent.com" {
 		t.Fatalf("create body origin = %v", createBody["custom_origin_server"])
 	}
 

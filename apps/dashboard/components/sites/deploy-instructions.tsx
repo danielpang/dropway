@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * "Deploy via CLI" panel. Phase 1's publish loop is driven by the CLI
- * (`shipped deploy`), which prepares → finalizes → publishes against the Go API
+ * (`dropway deploy`), which prepares → finalizes → publishes against the Go API
  * with the site's slug. This shows the exact commands with copy-to-clipboard.
  */
 export function DeployInstructions({ slug }: { slug: string }) {
@@ -15,15 +15,15 @@ export function DeployInstructions({ slug }: { slug: string }) {
     () => [
       {
         label: "Install the CLI",
-        command: "brew install shipped",
+        command: "brew install dropway",
       },
       {
         label: "Authenticate (opens your browser)",
-        command: "shipped login",
+        command: "dropway login",
       },
       {
         label: `Deploy a folder to ${slug}`,
-        command: `shipped deploy ./dist --site ${slug}`,
+        command: `dropway deploy ./dist --site ${slug}`,
       },
     ],
     [slug],

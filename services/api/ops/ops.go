@@ -1,12 +1,12 @@
-// Package ops exposes the operator entrypoints for Shipped's Phase-4 maintenance
-// jobs — the R2 version GC and the DR projection rebuild — wrapped so the `shipped`
+// Package ops exposes the operator entrypoints for Dropway's Phase-4 maintenance
+// jobs — the R2 version GC and the DR projection rebuild — wrapped so the `dropway`
 // CLI (rooted at cli/, which cannot import services/api/internal/*) can drive them
 // (docs/ARCHITECTURE.md §12 R2 version GC, §13 row 8 KV/D1 rebuild-from-Postgres DR
 // drill).
 //
 // It builds the SAME non-BYPASSRLS store, S3/R2 storage, and KV/local projection
 // writers the API server uses from the SAME environment variables (config.Load),
-// so an operator runs `shipped gc` / `shipped dr rebuild` with the deployment's
+// so an operator runs `dropway gc` / `dropway dr rebuild` with the deployment's
 // existing env and gets behavior identical to the running server. It imports only
 // core packages (no cloud/ee), keeping the open-core boundary clean.
 package ops
@@ -19,11 +19,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/config"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/config"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // Env is the resolved operator environment: a DB pool + store, optional object
@@ -40,7 +40,7 @@ type Env struct {
 }
 
 // Open loads config from the environment and builds the operator Env: a pgx pool as
-// the non-BYPASSRLS shipped_app role, the store, object storage (if configured), and
+// the non-BYPASSRLS dropway_app role, the store, object storage (if configured), and
 // the projection writer. The caller MUST Close it.
 func Open(ctx context.Context) (*Env, error) {
 	cfg, err := config.Load()

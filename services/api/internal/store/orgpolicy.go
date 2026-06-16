@@ -5,8 +5,8 @@ package store
 import (
 	"context"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // OrgPolicy is the API-facing view of an org's sharing policy.
@@ -35,7 +35,7 @@ func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 // ReconcileResult reports the routes the caller must rewrite at the edge after a
 // policy change. Downgraded carries the new (org_only) route for EACH host of
 // every site whose access_mode was downgraded from public — the canonical
-// <org>--<slug>.shippedusercontent.com host AND every verified custom-domain host,
+// <org>--<slug>.dropwaycontent.com host AND every verified custom-domain host,
 // each of which has its own route:<host> KV entry. The caller PUTs each one (revoking
 // the public/external grant by flipping the projected mode on all hosts).
 type ReconcileResult struct {

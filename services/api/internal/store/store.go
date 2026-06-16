@@ -8,7 +8,7 @@
 // Why tx-per-call: RLS is the isolation backstop and depends entirely on the
 // per-tx GUCs. SET LOCAL is transaction-scoped, so it is safe under Supavisor
 // transaction-mode pooling — the GUCs cannot leak across pooled connections. The
-// Go API connects as the non-BYPASSRLS `shipped_app` role; every tenant table is
+// Go API connects as the non-BYPASSRLS `dropway_app` role; every tenant table is
 // FORCE RLS. The Go API is the PRIMARY authz layer and RLS is the backstop, so
 // sensitive writes here also re-derive a resource's org and assert it matches the
 // active tenant (the confused-deputy guard, §5/§10).
@@ -22,9 +22,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // Tenant carries the verified identifiers a request is scoped to. Constructed
@@ -41,7 +41,7 @@ type Store struct {
 }
 
 // New wraps a pgx pool with the open-core quota policy. The pool MUST connect as
-// the non-BYPASSRLS shipped_app role (the runtime DATABASE_URL), never a
+// the non-BYPASSRLS dropway_app role (the runtime DATABASE_URL), never a
 // superuser/bypass connection on a request path (§8 CI lint). quota is the pure
 // policy (Unlimited in OSS, the cloud hard-caps under -tags cloud); the Store
 // owns the race-safe mechanics (advisory lock + COUNT inside the create tx).

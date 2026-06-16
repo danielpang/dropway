@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/services/api/internal/config"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/services/api/internal/config"
 )
 
 // The DB/R2-bound operator entrypoints (Open, GC, RebuildProjection) are exercised

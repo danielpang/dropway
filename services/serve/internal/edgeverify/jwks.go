@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/danielpang/shipped/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/edgetoken"
 )
 
 // Default cache policy, mirroring edgetoken.ts JWKS_TTL_MS / JWKS_STALE_GRACE_MS.

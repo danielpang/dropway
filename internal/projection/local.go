@@ -11,7 +11,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgerevoke"
 )
 
 // Local is a Writer that keeps the projection in-memory and, optionally, mirrors

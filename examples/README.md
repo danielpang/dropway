@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
 
-# Shipped Examples
+# Dropway Examples
 
-A gallery of **self-contained static sites** — the kind of thing Shipped exists to
+A gallery of **self-contained static sites** — the kind of thing Dropway exists to
 put on a live URL in one command. Each folder is pure HTML/CSS/client-side JS with
 **no build step, no server, and no runtime API calls**: every dataset is embedded
 inline and every visual is generated in code. The only external requests are pinned
@@ -28,7 +28,7 @@ They double as deploy fixtures: each folder is a ready-to-ship `dist/`.
 ## Viewing one locally
 
 Each example works by opening `index.html` directly, but a tiny static server
-avoids browser file-URL quirks (and is closer to how Shipped serves them):
+avoids browser file-URL quirks (and is closer to how Dropway serves them):
 
 ```bash
 cd examples/solar-system
@@ -41,5 +41,5 @@ python3 -m http.server 8000
 Each folder is already a deployable static bundle:
 
 ```bash
-shipped deploy ./examples/solar-system
+dropway deploy ./examples/solar-system
 ```

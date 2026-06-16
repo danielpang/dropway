@@ -19,7 +19,7 @@ export default function AcceptInvitationLayout({
           >
             S
           </span>
-          Shipped
+          Dropway
         </Link>
         <ThemeToggle />
       </header>

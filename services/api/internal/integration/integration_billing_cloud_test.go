@@ -16,7 +16,7 @@
 //   - the cloud quota provider (Free 10 sites/user) on the FSL store.CreateSite —
 //     11th site → 402 (cloud cap), proving the hard cap;
 //   - a SIGNED checkout.session.completed webhook (real RealSignatureVerifier +
-//     real *billing.Handler over the SAME non-BYPASSRLS shipped_app pool) sets
+//     real *billing.Handler over the SAME non-BYPASSRLS dropway_app pool) sets
 //     plan_tier=business → asserts billing.subscriptions.plan_tier='business' AND
 //     app.org_meta.plan_tier='business' (the org_meta write is RLS-permitted only
 //     because the BillingStore sets app.current_org_id to the EVENT'S org);
@@ -54,19 +54,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stripe/stripe-go/v84/webhook"
 
-	cloudbilling "github.com/danielpang/shipped/cloud/billing"
-	cloudquota "github.com/danielpang/shipped/cloud/quota"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	cloudbilling "github.com/danielpang/dropway/cloud/billing"
+	cloudquota "github.com/danielpang/dropway/cloud/quota"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 const (
 	cbPort     = "55433" // distinct from the FSL integration test's 55432
 	cbPgImage  = "postgres:16"
-	cbOwnerDSN = "postgres://postgres:postgres@127.0.0.1:" + cbPort + "/shipped?sslmode=disable"
-	cbAppPw    = "shipped_app_cb_pw"
-	cbAppDSN   = "postgres://shipped_app:" + cbAppPw + "@127.0.0.1:" + cbPort + "/shipped?sslmode=disable"
+	cbOwnerDSN = "postgres://postgres:postgres@127.0.0.1:" + cbPort + "/dropway?sslmode=disable"
+	cbAppPw    = "dropway_app_cb_pw"
+	cbAppDSN   = "postgres://dropway_app:" + cbAppPw + "@127.0.0.1:" + cbPort + "/dropway?sslmode=disable"
 	cbWhSecret = "whsec_integration_secret"
 	cbPriceBiz = "price_business_test"
 	cbPriceEnt = "price_enterprise_test"
@@ -82,13 +82,13 @@ func TestIntegration_CloudBilling(t *testing.T) {
 
 	pool, err := pgxpool.New(ctx, cbAppDSN)
 	if err != nil {
-		t.Fatalf("connect as shipped_app: %v", err)
+		t.Fatalf("connect as dropway_app: %v", err)
 	}
 	t.Cleanup(pool.Close)
 
 	// The cloud quota provider gives the FSL store its hard-cap bands; the store
 	// owns the race-safe advisory-lock mechanics.
-	qp := cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.shipped.app"})
+	qp := cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"})
 	st := store.New(pool, qp)
 
 	// The production billing persistence + webhook handler over the SAME pool. The
@@ -413,7 +413,7 @@ func cbScanInt(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) int64 
 
 // cbScanIntOrg reads an app (RLS-protected) table for orgID by establishing the
 // tenant GUC inside a tx first — the same SET LOCAL app.current_org_id the runtime
-// uses. Without it, a plain shipped_app read of app.org_meta/app.sites is filtered
+// uses. Without it, a plain dropway_app read of app.org_meta/app.sites is filtered
 // out by RLS (default-deny). This makes the test's assertions read under the right
 // tenant context, mirroring production.
 func cbScanIntOrg(t *testing.T, pool *pgxpool.Pool, orgID, sql string, args ...any) int64 {
@@ -436,20 +436,20 @@ func cbScanIntOrg(t *testing.T, pool *pgxpool.Pool, orgID, sql string, args ...a
 
 func cbStartPostgres(t *testing.T) {
 	t.Helper()
-	name := "shipped-cb-pg"
+	name := "dropway-cb-pg"
 	cbDockerRm(name)
 	cbRun(t, "docker", "run", "-d", "--name", name,
-		"-e", "POSTGRES_USER=postgres", "-e", "POSTGRES_PASSWORD=postgres", "-e", "POSTGRES_DB=shipped",
+		"-e", "POSTGRES_USER=postgres", "-e", "POSTGRES_PASSWORD=postgres", "-e", "POSTGRES_DB=dropway",
 		"-p", cbPort+":5432", cbPgImage)
 	t.Cleanup(func() { cbDockerRm(name) })
 	cbWaitFor(t, "postgres", func() bool {
-		return exec.Command("docker", "exec", name, "pg_isready", "-U", "postgres", "-d", "shipped").Run() == nil
+		return exec.Command("docker", "exec", name, "pg_isready", "-U", "postgres", "-d", "dropway").Run() == nil
 	})
 	time.Sleep(1 * time.Second)
 }
 
 // cbApplyMigrations applies BOTH the app migrations AND the cloud billing migration
-// (the task requires both), then sets the shipped_app runtime password.
+// (the task requires both), then sets the dropway_app runtime password.
 //
 // Each migration dir gets its OWN goose version table (-table). The app and billing
 // dirs both start at version 0001; with the default shared goose_db_version table,
@@ -470,9 +470,9 @@ func cbApplyMigrations(t *testing.T, root string) {
 			t.Fatalf("goose up %s: %v\n%s", m.dir, err, out)
 		}
 	}
-	cbRun(t, "docker", "exec", "shipped-cb-pg", "psql",
-		"postgres://postgres:postgres@127.0.0.1:5432/shipped?sslmode=disable",
-		"-v", "ON_ERROR_STOP=1", "-c", "ALTER ROLE shipped_app WITH PASSWORD '"+cbAppPw+"';")
+	cbRun(t, "docker", "exec", "dropway-cb-pg", "psql",
+		"postgres://postgres:postgres@127.0.0.1:5432/dropway?sslmode=disable",
+		"-v", "ON_ERROR_STOP=1", "-c", "ALTER ROLE dropway_app WITH PASSWORD '"+cbAppPw+"';")
 }
 
 // cbSeedAuthMember creates the minimal Better Auth auth.member table the over-limit
@@ -485,15 +485,15 @@ func cbSeedAuthMember(t *testing.T) {
 			"organizationId" uuid NOT NULL,
 			"userId" uuid NOT NULL,
 			"role" text NOT NULL);
-		GRANT USAGE ON SCHEMA auth TO shipped_app;
-		GRANT SELECT ON auth.member TO shipped_app;`)
+		GRANT USAGE ON SCHEMA auth TO dropway_app;
+		GRANT SELECT ON auth.member TO dropway_app;`)
 }
 
 // cbExecOwner runs SQL as the owner (postgres) inside the pg container.
 func cbExecOwner(t *testing.T, sql string) {
 	t.Helper()
-	cbRun(t, "docker", "exec", "shipped-cb-pg", "psql",
-		"postgres://postgres:postgres@127.0.0.1:5432/shipped?sslmode=disable",
+	cbRun(t, "docker", "exec", "dropway-cb-pg", "psql",
+		"postgres://postgres:postgres@127.0.0.1:5432/dropway?sslmode=disable",
 		"-v", "ON_ERROR_STOP=1", "-c", sql)
 }
 
@@ -503,8 +503,8 @@ func cbSeedAuthOrg(t *testing.T, orgID, slug string) {
 	t.Helper()
 	cbExecOwner(t, `CREATE SCHEMA IF NOT EXISTS auth;
 		CREATE TABLE IF NOT EXISTS auth.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text);
-		GRANT USAGE ON SCHEMA auth TO shipped_app;
-		GRANT SELECT ON auth.organization TO shipped_app;
+		GRANT USAGE ON SCHEMA auth TO dropway_app;
+		GRANT SELECT ON auth.organization TO dropway_app;
 		INSERT INTO auth.organization (id, slug, name) VALUES ('`+orgID+`', '`+slug+`', '`+slug+`') ON CONFLICT (id) DO NOTHING;`)
 }
 

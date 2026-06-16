@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
 
-# Contributing to Shipped
+# Contributing to Dropway
 
-Thanks for your interest in Shipped! This guide covers how to contribute to the
+Thanks for your interest in Dropway! This guide covers how to contribute to the
 **FSL-licensed core**. Please read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first —
 it is the approved design and the source of truth for how the pieces fit together.
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Shipped CI — runs on every push to main AND every pull-request commit
+# Dropway CI — runs on every push to main AND every pull-request commit
 # (`pull_request` fires on synchronize, i.e. each new commit pushed to the PR).
 #
 # The three test suites:
@@ -71,7 +71,7 @@ jobs:
   #          cloud-only seam. We assert that graph contains no cloud/ or ee/ pkg.
   #       2. Non-Go (grep): apps/ + edge/ TS/JS must not *statically* import a
   #          cloud/ or ee/ path. The cloud wiring there is a runtime dynamic
-  #          import gated on process.env.SHIPPED_CLOUD, never a top-level import.
+  #          import gated on process.env.DROPWAY_CLOUD, never a top-level import.
   #          The grep skips files marked with a build-tag style opt-out comment.
   # ---------------------------------------------------------------------------
   open-core-boundary:
@@ -106,7 +106,7 @@ jobs:
           # NO -tags here: this is exactly what the self-host binary compiles.
           # Any cloud/ or ee/ package in the transitive deps is a real violation.
           if VIOL=$(go list -deps "${PATTERNS[@]}" 2>/dev/null \
-              | grep -E 'github\.com/danielpang/shipped/(cloud|ee)(/|$)' || true); then
+              | grep -E 'github\.com/danielpang/dropway/(cloud|ee)(/|$)' || true); then
             if [ -n "$VIOL" ]; then
               echo "::error::OSS Go build depends on proprietary cloud/ or ee/ packages:"
               echo "$VIOL"
@@ -137,10 +137,10 @@ jobs:
           echo "Scanning ${DIRS[*]} for static cloud/ee imports"
 
           # Match a static import/require/from of a cloud or ee path: the
-          # @shipped/cloud|ee workspace alias, or a relative path ending in
+          # @dropway/cloud|ee workspace alias, or a relative path ending in
           # /cloud/ or /ee/. A leading slash/quote + trailing slash boundary
           # prevents false hits on "cloudflare", "fee", "tree", etc.
-          PATTERN='(from|import|require)[^;]*["'"'"'](@shipped/(cloud|ee)|[^"'"'"']*/(cloud|ee)/)'
+          PATTERN='(from|import|require)[^;]*["'"'"'](@dropway/(cloud|ee)|[^"'"'"']*/(cloud|ee)/)'
 
           if MATCHES=$(grep -RInE \
                 --include='*.ts' --include='*.tsx' \
@@ -155,7 +155,7 @@ jobs:
               echo "$MATCHES"
               echo
               echo "Cloud features must be loaded via a runtime dynamic import gated on"
-              echo "process.env.SHIPPED_CLOUD, never a top-level import. See §14.3."
+              echo "process.env.DROPWAY_CLOUD, never a top-level import. See §14.3."
               exit 1
             fi
           fi
@@ -164,7 +164,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # (c) SQL: apply the app migrations against a real Postgres 16, then assert RLS
   #     tenant isolation — set app.current_org_id to org A and confirm org B rows
-  #     are invisible to the non-BYPASSRLS shipped_app role (§13 row 2).
+  #     are invisible to the non-BYPASSRLS dropway_app role (§13 row 2).
   # ---------------------------------------------------------------------------
   sql:
     name: sql (goose migrate + RLS isolation)
@@ -176,20 +176,20 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: shipped
+          POSTGRES_DB: dropway
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d shipped"
+          --health-cmd "pg_isready -U postgres -d dropway"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
 
     env:
-      # Owner connection: applies migrations + creates the shipped_app role.
-      OWNER_DSN: postgres://postgres:postgres@localhost:5432/shipped?sslmode=disable
-      # Runtime password we assign to shipped_app for the isolation assertion.
-      APP_PW: shipped_app_ci_pw
+      # Owner connection: applies migrations + creates the dropway_app role.
+      OWNER_DSN: postgres://postgres:postgres@localhost:5432/dropway?sslmode=disable
+      # Runtime password we assign to dropway_app for the isolation assertion.
+      APP_PW: dropway_app_ci_pw
 
     steps:
       - uses: actions/checkout@v4
@@ -210,8 +210,8 @@ jobs:
       - name: apply app migrations
         run: goose -dir db/migrations/app postgres "$OWNER_DSN" up
 
-      - name: set shipped_app runtime password
-        run: psql "$OWNER_DSN" -v ON_ERROR_STOP=1 -c "ALTER ROLE shipped_app WITH PASSWORD '$APP_PW';"
+      - name: set dropway_app runtime password
+        run: psql "$OWNER_DSN" -v ON_ERROR_STOP=1 -c "ALTER ROLE dropway_app WITH PASSWORD '$APP_PW';"
 
       - name: seed two orgs (as owner, with tenant context)
         run: |
@@ -237,20 +237,20 @@ jobs:
                     'b0000000-0000-0000-0000-000000000001', 'org_only');
           SQL
 
-      - name: RLS isolation assertion (as shipped_app, NON-BYPASSRLS)
+      - name: RLS isolation assertion (as dropway_app, NON-BYPASSRLS)
         env:
           PGPASSWORD: ${{ env.APP_PW }}
         run: |
           # Connect as the runtime role; org A context must NOT see org B rows.
-          psql "postgres://shipped_app@localhost:5432/shipped?sslmode=disable" \
+          psql "postgres://dropway_app@localhost:5432/dropway?sslmode=disable" \
             -v ON_ERROR_STOP=1 <<'SQL'
           -- Confirm we really are the non-BYPASSRLS runtime role.
           DO $$
           DECLARE bypass boolean;
           BEGIN
             SELECT rolbypassrls INTO bypass FROM pg_roles WHERE rolname = current_user;
-            IF current_user <> 'shipped_app' OR bypass THEN
-              RAISE EXCEPTION 'FAIL: expected non-BYPASSRLS shipped_app, got % (bypassrls=%)', current_user, bypass;
+            IF current_user <> 'dropway_app' OR bypass THEN
+              RAISE EXCEPTION 'FAIL: expected non-BYPASSRLS dropway_app, got % (bypassrls=%)', current_user, bypass;
             END IF;
           END $$;
 
@@ -296,7 +296,7 @@ jobs:
             IF n <> 0 THEN RAISE EXCEPTION 'FAIL: rows visible with no tenant context (%)', n; END IF;
           END $$;
 
-          \echo 'PASS: RLS tenant isolation holds for shipped_app'
+          \echo 'PASS: RLS tenant isolation holds for dropway_app'
           SQL
 
   # ---------------------------------------------------------------------------
@@ -347,7 +347,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: vitest
-        run: pnpm --filter @shipped/dashboard test
+        run: pnpm --filter @dropway/dashboard test
 
   # ---------------------------------------------------------------------------
   # (f) E2E: the full self-host stack in Docker + a real browser. Boots compose
@@ -400,10 +400,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: install Playwright chromium
-        run: pnpm --filter @shipped/dashboard exec playwright install --with-deps chromium
+        run: pnpm --filter @dropway/dashboard exec playwright install --with-deps chromium
 
       - name: run deploy e2e
-        run: pnpm --filter @shipped/dashboard test:e2e
+        run: pnpm --filter @dropway/dashboard test:e2e
 
       - name: stack logs on failure
         if: failure()

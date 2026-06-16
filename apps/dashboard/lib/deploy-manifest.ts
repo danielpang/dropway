@@ -122,7 +122,7 @@ export async function buildManifest(
  * Walk the items from a drop event. Uses webkitGetAsEntry to recurse the dropped
  * directory tree. When a SINGLE folder is dropped, its CONTENTS become the site
  * root (so dropping `mysite/` yields "index.html", not "mysite/index.html") —
- * matching `shipped deploy ./dist`, which walks inside the folder.
+ * matching `dropway deploy ./dist`, which walks inside the folder.
  */
 export async function collectDataTransferItems(
   items: DataTransferItemList,

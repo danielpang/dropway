@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgerevoke"
 )
 
 // CloudflareKV is a Writer backed by the Cloudflare Workers KV REST API. It is
@@ -70,7 +70,7 @@ func (c *CloudflareKV) PutRoute(ctx context.Context, host string, val RouteValue
 		return err
 	}
 	// The KV REST API stores the raw request body as the value; we send the
-	// canonical JSON the Worker parses with @shipped/contracts.parseKVRouteValue.
+	// canonical JSON the Worker parses with @dropway/contracts.parseKVRouteValue.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
 		c.kvValueURL(RouteKey(host)), bytes.NewReader(body))
 	if err != nil {

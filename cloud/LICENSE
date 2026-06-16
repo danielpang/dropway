@@ -1,5 +1,5 @@
-Shipped Cloud — Proprietary License
-Copyright (c) 2026 Daniel Pang ("Shipped"). All rights reserved.
+Dropway Cloud — Proprietary License
+Copyright (c) 2026 Daniel Pang ("Dropway"). All rights reserved.
 
 This directory (cloud/) and all of its contents are PROPRIETARY and are NOT
 covered by the repository's Functional Source License (FSL-1.1-Apache-2.0) that
@@ -9,9 +9,9 @@ The code in cloud/ holds the hosted-service-only quota enforcement and Stripe
 billing integration. It is made source-visible for transparency only. No license,
 express or implied, is granted to use, copy, modify, distribute, sublicense, or
 host this code, in whole or in part, except by the copyright holder's own hosted
-deployment of Shipped.
+deployment of Dropway.
 
-The open-source / self-host build of Shipped does NOT compile or ship this
+The open-source / self-host build of Dropway does NOT compile or ship this
 directory (it is selected only by the Go `cloud` build tag), and the self-host
 build is fully functional and unlimited without it.
 

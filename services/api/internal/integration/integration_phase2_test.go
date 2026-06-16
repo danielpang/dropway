@@ -2,7 +2,7 @@
 
 // Phase-2 integration test (ARCHITECTURE.md §5/§6/§9): access control & domains,
 // exercised against real Postgres 16 + the goose app migrations as the
-// non-BYPASSRLS shipped_app role, plus a synthetic Better Auth `auth.member` table
+// non-BYPASSRLS dropway_app role, plus a synthetic Better Auth `auth.member` table
 // the Go API reads for role re-checks.
 //
 // Run with:
@@ -31,11 +31,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/pwhash"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/pwhash"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 func TestIntegration_Phase2_AccessControl(t *testing.T) {
@@ -49,7 +49,7 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 
 	pool, err := pgxpool.New(ctx, appDSN)
 	if err != nil {
-		t.Fatalf("connect as shipped_app: %v", err)
+		t.Fatalf("connect as dropway_app: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	st := store.New(pool, quota.Unlimited{})
@@ -135,7 +135,7 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 		t.Fatalf("verify org_only token: %v", err)
 	}
 	// Replay at a different host fails (aud binding).
-	if _, err := verifier.Verify(tok, "other.shippedusercontent.com"); err == nil {
+	if _, err := verifier.Verify(tok, "other.dropwaycontent.com"); err == nil {
 		t.Fatal("token verified at the wrong host (aud not bound)")
 	}
 	// Outsider (org B) → denied.
@@ -488,8 +488,8 @@ func seedAuthMemberTable(t *testing.T) {
 		"userId" uuid NOT NULL,
 		"role" text NOT NULL
 	);`)
-	mustExecRaw(t, `GRANT USAGE ON SCHEMA auth TO shipped_app;`)
-	mustExecRaw(t, `GRANT SELECT ON auth.member TO shipped_app;`)
+	mustExecRaw(t, `GRANT USAGE ON SCHEMA auth TO dropway_app;`)
+	mustExecRaw(t, `GRANT SELECT ON auth.member TO dropway_app;`)
 }
 
 func insertMember(t *testing.T, orgID, userID, role string) {
@@ -507,5 +507,5 @@ func deleteMember(t *testing.T, orgID, userID string) {
 // mustExecRaw runs a raw SQL statement (no positional substitution) as the owner.
 func mustExecRaw(t *testing.T, sql string) {
 	t.Helper()
-	run(t, "docker", "exec", "shipped-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1", "-c", sql)
+	run(t, "docker", "exec", "dropway-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1", "-c", sql)
 }

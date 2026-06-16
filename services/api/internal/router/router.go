@@ -8,9 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
-	"github.com/danielpang/shipped/internal/logx"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/services/api/internal/handlers"
+	"github.com/danielpang/dropway/internal/logx"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/services/api/internal/handlers"
 )
 
 // New builds the HTTP router. `verifier` verifies the Bearer EdDSA JWT for the

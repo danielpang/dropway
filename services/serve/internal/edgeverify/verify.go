@@ -6,8 +6,8 @@ import (
 	"context"
 	"crypto/ed25519"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgetoken"
 )
 
 // keySource supplies the trusted kid→key map for a verification (remote JWKS or a

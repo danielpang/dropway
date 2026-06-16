@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/quota"
+	"github.com/danielpang/dropway/internal/quota"
 )
 
 // CreateSite's access_mode handling (the default-visibility fix): omit → the org

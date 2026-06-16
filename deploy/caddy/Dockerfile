@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Caddy edge for the Shipped self-host stack — the open-source replacement for
+# Caddy edge for the Dropway self-host stack — the open-source replacement for
 # Cloudflare-for-SaaS (per-tenant custom-hostname TLS) + the edge cache. This image
 # is stock Caddy 2 plus the Souin response-cache module (cache-handler) built in via
 # xcaddy. It fronts the `serve` content server with automatic HTTPS, ON-DEMAND TLS
@@ -10,7 +10,7 @@
 # The Caddyfile is BIND-MOUNTED via docker-compose (so operators can edit it without
 # rebuilding), so it is deliberately NOT copied into the image here.
 #
-# Build:  docker build -f deploy/caddy/Dockerfile -t shipped-caddy deploy/caddy
+# Build:  docker build -f deploy/caddy/Dockerfile -t dropway-caddy deploy/caddy
 
 # ---- Stage 1: build a custom caddy binary with the cache-handler module. --------
 FROM caddy:2-builder AS builder

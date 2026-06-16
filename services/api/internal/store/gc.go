@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // DefaultGCMinAge is the default minimum age an orphan blob must reach before the

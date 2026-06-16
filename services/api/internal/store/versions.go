@@ -7,10 +7,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/store/db"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
 // BlobSize is one content-addressed blob's identity + server-observed size, used to
@@ -227,7 +227,7 @@ func (s *Store) ListSiteVersions(ctx context.Context, t Tenant, siteID string) (
 // PublishResult is returned by Publish: the route value to project and the host.
 //
 // Routes, when populated (SetSiteAccess), carries the route update for EVERY host
-// of the site — the canonical <org>--<slug>.shippedusercontent.com host AND every
+// of the site — the canonical <org>--<slug>.dropwaycontent.com host AND every
 // verified custom-domain host, each with its own route:<host> KV entry. Callers
 // that change access (vs. a plain publish) MUST rewrite all of Routes, not just
 // Host/Route, or a custom host keeps serving at the old access_mode (FIX 1). Host/

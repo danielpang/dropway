@@ -2,7 +2,7 @@
 //
 // Package storeadapter bridges Postgres + the revocation denylist to the serving
 // plane's interfaces. The host resolver issues the SECURITY DEFINER
-// app.resolve_host directly over a non-BYPASSRLS shipped_app pgxpool — the exact
+// app.resolve_host directly over a non-BYPASSRLS dropway_app pgxpool — the exact
 // raw-pgx pattern used by services/api/internal/store/authz.go resolveHost (which
 // is internal to services/api and so cannot be imported here). The spec explicitly
 // permits issuing this SQL directly from services/serve.
@@ -16,11 +16,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/services/serve/internal/serve"
+	"github.com/danielpang/dropway/services/serve/internal/serve"
 )
 
 // RouteResolver resolves a content host to its routing identity via Postgres. It
-// connects as the non-BYPASSRLS shipped_app role and uses ONLY the narrow,
+// connects as the non-BYPASSRLS dropway_app role and uses ONLY the narrow,
 // read-only, secret-free SECURITY DEFINER app.resolve_host for the cross-org
 // lookup; the public/unlisted link-expiry is read from app.site_access_policy
 // under the resolved org's own RLS tenant context.
@@ -28,7 +28,7 @@ type RouteResolver struct {
 	pool *pgxpool.Pool
 }
 
-// NewRouteResolver builds a RouteResolver over a shipped_app pgxpool.
+// NewRouteResolver builds a RouteResolver over a dropway_app pgxpool.
 func NewRouteResolver(pool *pgxpool.Pool) *RouteResolver {
 	return &RouteResolver{pool: pool}
 }

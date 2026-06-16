@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/danielpang/shipped/internal/auth"
+	"github.com/danielpang/dropway/internal/auth"
 )
 
 // The RLS tenant-context helper (docs/ARCHITECTURE.md §5, §8).
 //
-// The Go API connects to Postgres as the non-BYPASSRLS `shipped_app` role, with
+// The Go API connects to Postgres as the non-BYPASSRLS `dropway_app` role, with
 // every tenant table under FORCE ROW LEVEL SECURITY. Isolation therefore depends
 // on each request running inside a transaction that first sets the tenant GUCs:
 //

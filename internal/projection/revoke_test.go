@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgerevoke"
 )
 
 // TestLocal_Revoke_Idempotent asserts the Local denylist writer records an entry,

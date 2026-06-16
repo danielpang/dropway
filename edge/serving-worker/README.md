@@ -1,15 +1,15 @@
 <!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
 
-# @shipped/serving-worker
+# @dropway/serving-worker
 
-Cloudflare Worker that serves tenant static sites on `*.shippedusercontent.com`
+Cloudflare Worker that serves tenant static sites on `*.dropwaycontent.com`
 (the PSL-listed content domain — never a subdomain of the app/auth domain). It
 serves both the **PUBLIC** path (the 95% case: **JWT-free and cacheable**) and
 the **Phase-2 GATED** path (`password` | `allowlist` | `org_only`) via the
 host-scoped **edge token** + `/authz` exchange (see `docs/ARCHITECTURE.md` §3/§6).
 
 The Worker is a **thin router and a read-only consumer** of its bindings. The
-Go API (`api.shipped.app`) is the real authz boundary and the **sole writer** of
+Go API (`api.dropway.dev`) is the real authz boundary and the **sole writer** of
 the KV/R2 projections this Worker reads; everything here is fully rebuildable
 from Postgres.
 
@@ -36,7 +36,7 @@ GET https://<host>/<path>
           exp + site_id==route.site_id)
         valid  → serve the SAME manifest→blob bytes, but PRIVATE
                    (Cache-Control: private, no-store; never the public Cache API)
-        absent/invalid → 302 https://app.shipped.app/authz?host=<host>&next=<path>
+        absent/invalid → 302 https://app.dropway.dev/authz?host=<host>&next=<path>
                             (APP_AUTHZ_URL; the dashboard runs the exchange)
 
   → expires_at (v2 RouteValue) in the past → 410 platform "link expired" page
@@ -49,7 +49,7 @@ ignored.
 ### The `/authz` exchange (gated tiers, Phase 2)
 
 ```
-Worker (no/invalid __Host-edge)  ──302──►  app.shipped.app/authz?host=&next=
+Worker (no/invalid __Host-edge)  ──302──►  app.dropway.dev/authz?host=&next=
    dashboard: require Better Auth session, then
      org_only/allowlist → POST api /v1/authz/mint {host,next}      → {token} | 403
      password           → platform password form → POST /v1/authz/password → {token}
@@ -62,7 +62,7 @@ Worker GET /__authz/callback:
 
 **Edge token** (mirrors the Go `internal/edgetoken` signer): a compact **EdDSA**
 JWT, a **separate keypair** from Better Auth's user JWT.
-`iss=https://api.shipped.app/edge`, `aud=<content host>`,
+`iss=https://api.dropway.dev/edge`, `aud=<content host>`,
 `sub=<user_id>` (org_only/allowlist) or `anon:<random>` (password),
 `exp=now+15m`, plus `{ site_id, mode }`. The Worker pins `alg=EdDSA` (rejects
 `none`/HS\*), checks `iss`, `aud==request host`, `exp`, and that `site_id`
@@ -196,7 +196,7 @@ interface RouteValue {
 parses both v1 and v2 (a v1 value has no `expires_at` and never expires).
 
 It is owned by the repo-root `contracts/` package (JSON Schema → Go struct + TS
-type + CI round-trip test) and published as **`@shipped/contracts`**.
+type + CI round-trip test) and published as **`@dropway/contracts`**.
 `src/route.ts` imports `KVRouteValue` / `SCHEMA_VERSION` / `safeParseKVRouteValue`
 from it and re-exports them under the Worker's local `RouteValue` /
 `SUPPORTED_SCHEMA_VERSION` names. Untrusted KV values are validated by
@@ -218,8 +218,8 @@ type-check and tests resolve it without a build step.
 
 | Var             | Purpose                                                                 | Default                                          |
 | --------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
-| `EDGE_JWKS_URL` | Edge signer public JWKS (OKP/Ed25519) — fetched + cached to verify tokens. | `https://api.shipped.app/.well-known/edge-jwks` |
-| `APP_AUTHZ_URL` | Dashboard `/authz` exchange a gated request 302s to.                    | `https://app.shipped.app/authz`                  |
+| `EDGE_JWKS_URL` | Edge signer public JWKS (OKP/Ed25519) — fetched + cached to verify tokens. | `https://api.dropway.dev/.well-known/edge-jwks` |
+| `APP_AUTHZ_URL` | Dashboard `/authz` exchange a gated request 302s to.                    | `https://app.dropway.dev/authz`                  |
 | `RATE_LIMIT_MAX` | **(Phase 4)** max requests per window per identity.                    | `600`                                            |
 | `RATE_LIMIT_WINDOW_SECONDS` | **(Phase 4)** rate-limit window length (seconds).          | `60`                                             |
 
@@ -231,7 +231,7 @@ JWKS; the edge signing key lives in the Go API (`EDGE_SIGNING_KEY`, see
 The namespace/bucket IDs in `wrangler.toml` are **placeholders** — the infra
 agent fills them in per environment (or via `wrangler kv namespace create` /
 `wrangler r2 bucket create`). The production `[[routes]]` block is committed but
-commented out until `shippedusercontent.com` is live on Cloudflare.
+commented out until `dropwaycontent.com` is live on Cloudflare.
 
 ## Layout
 
@@ -239,7 +239,7 @@ commented out until `shippedusercontent.com` is live on Cloudflare.
 edge/serving-worker/
 ├── src/
 │   ├── index.ts     # fetch handler + serve(): rate limit, KV lookup, expiry, org-status, dispatch, blob stream, Cache API, 404/410/429/503 + SW block
-│   ├── route.ts     # PURE host normalize + route parse (via @shipped/contracts) + path sanitize + isRouteExpired
+│   ├── route.ts     # PURE host normalize + route parse (via @dropway/contracts) + path sanitize + isRouteExpired
 │   ├── manifest.ts  # PURE manifest model + parse + path→entry resolution; manifest/blob R2 keys
 │   ├── http.ts      # PURE Content-Type + Cache-Control; re-exports content security headers
 │   ├── security.ts  # PURE content/platform CSP + COOP/CORP/nosniff/no-referrer/frame + service-worker-script block (Phase 4)
@@ -252,9 +252,9 @@ edge/serving-worker/
 ├── test/
 │   └── serve.test.ts  # vitest: public + gated + platform headers, SW block, rate limit/429, org suspension, revocation min_iat (mocked KV/R2/JWKS/clock)
 ├── wrangler.toml
-├── vitest.config.ts   # node pool; aliases @shipped/contracts → source
-├── tsconfig.json      # extends ../../tsconfig.base.json + workers types; @shipped/contracts path
-├── package.json       # @shipped/serving-worker
+├── vitest.config.ts   # node pool; aliases @dropway/contracts → source
+├── tsconfig.json      # extends ../../tsconfig.base.json + workers types; @dropway/contracts path
+├── package.json       # @dropway/serving-worker
 └── README.md
 ```
 
@@ -268,10 +268,10 @@ injected `ROUTES`/`BUCKET` bindings to those functions.
 > on its own). Commands below assume deps are present.
 
 ```sh
-pnpm --filter @shipped/serving-worker test       # vitest (mocked KV + R2)
-pnpm --filter @shipped/serving-worker typecheck  # tsc --noEmit
-pnpm --filter @shipped/serving-worker dev         # wrangler dev (needs binding IDs)
-pnpm --filter @shipped/serving-worker deploy      # wrangler deploy
+pnpm --filter @dropway/serving-worker test       # vitest (mocked KV + R2)
+pnpm --filter @dropway/serving-worker typecheck  # tsc --noEmit
+pnpm --filter @dropway/serving-worker dev         # wrangler dev (needs binding IDs)
+pnpm --filter @dropway/serving-worker deploy      # wrangler deploy
 ```
 
 For `wrangler dev`, point the bindings at preview resources and seed a route, a
@@ -291,18 +291,18 @@ wrangler kv key put --binding=ROUTES --preview \
 # Manifest: request path → { sha256, content_type }
 echo "{\"schema_version\":1,\"files\":{\"index.html\":{\"sha256\":\"$SHA\",\"content_type\":\"text/html; charset=utf-8\"}}}" \
   | wrangler r2 object put --preview \
-      "shipped-content-preview/manifests/$ORG/$SITE/$VER.json" --pipe
+      "dropway-content-preview/manifests/$ORG/$SITE/$VER.json" --pipe
 
 # Content-addressed blob
 wrangler r2 object put --preview \
-  "shipped-content-preview/blobs/$ORG/$SHA" --file=./index.html
+  "dropway-content-preview/blobs/$ORG/$SHA" --file=./index.html
 ```
 
 ## Phase boundaries
 
 - **Phase 1:** `public` only. JWT-free, cacheable.
 - **Phase 2:** `password` (host-scoped cookie, anon identity) and
-  `allowlist` / `org_only` (302 → `app.shipped.app/authz` host-scoped token
+  `allowlist` / `org_only` (302 → `app.dropway.dev/authz` host-scoped token
   exchange; the Worker verifies *that* edge token, never the operator JWT) plus
   **edge link-expiry** (`expires_at` in the v2 `RouteValue` → `410`). Gated
   responses are always `private, no-store` and never enter the public Cache API.

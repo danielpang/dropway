@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // This file extends the unit-test fakeStore (handlers_test.go) with the Phase-4

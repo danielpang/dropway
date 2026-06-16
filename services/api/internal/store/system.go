@@ -6,7 +6,7 @@ import "context"
 
 // ListAllOrgIDs enumerates EVERY org id for the cross-org system jobs — the DR
 // projection rebuild and the R2 version GC (ARCHITECTURE.md §12/§13). The runtime
-// shipped_app role is non-BYPASSRLS, so a plain SELECT over app.org_meta would be
+// dropway_app role is non-BYPASSRLS, so a plain SELECT over app.org_meta would be
 // tenant-scoped to nothing; we call the narrow SECURITY DEFINER app.all_org_ids()
 // (migrations 0008/0009), which returns ONLY ids (no secrets), mirroring the
 // resolve_host escalation pattern. The per-org route/blob reads driven from this
@@ -15,7 +15,7 @@ import "context"
 //
 // OPS-MODE GATE (migration 0009): app.all_org_ids() RAISES unless the caller has set
 // app.ops_mode='1' — so a normal request (which never sets it) can't enumerate all
-// org ids even though it shares the shipped_app role's EXECUTE grant. This is the
+// org ids even though it shares the dropway_app role's EXECUTE grant. This is the
 // DEDICATED ops/DR escalation path: we open a tx, SET LOCAL app.ops_mode='1' (binds
 // for this tx only, via set_config so the value is a bound parameter), then call the
 // function. Only these operator maintenance jobs ever flip ops mode.

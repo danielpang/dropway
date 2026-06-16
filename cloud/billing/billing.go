@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/danielpang/shipped/internal/httpx"
+	"github.com/danielpang/dropway/internal/httpx"
 )
 
 // PlanTier mirrors billing.subscriptions.plan_tier.

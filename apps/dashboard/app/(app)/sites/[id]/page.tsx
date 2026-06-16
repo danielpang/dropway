@@ -54,7 +54,7 @@ export default async function SiteDetailPage({
   }
 
   const isLive = Boolean(site.current_version_id);
-  const liveUrl = site.live_url ?? `https://${site.slug}.shippedusercontent.com`;
+  const liveUrl = site.live_url ?? `https://${site.slug}.dropwaycontent.com`;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

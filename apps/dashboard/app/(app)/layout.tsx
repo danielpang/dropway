@@ -56,7 +56,7 @@ export default async function AppLayout({
             >
               S
             </span>
-            Shipped
+            Dropway
           </Link>
           <div className="flex items-center gap-2">
             <MainNav admin={isAdmin} />

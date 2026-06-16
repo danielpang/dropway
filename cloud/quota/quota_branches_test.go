@@ -10,7 +10,7 @@ package quota
 import (
 	"testing"
 
-	corequota "github.com/danielpang/shipped/internal/quota"
+	corequota "github.com/danielpang/dropway/internal/quota"
 )
 
 // Business per-user site cap: 100 sites → 101st rejected, upgrade to enterprise.

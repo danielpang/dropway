@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/serve/internal/serve"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/serve/internal/serve"
 )
 
 // gatedHandler builds a handler for a gated route with a working signer + a
@@ -46,7 +46,7 @@ func TestGated_NoCookieRedirectsToAuthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bad Location %q: %v", loc, err)
 	}
-	if !strings.HasPrefix(loc, "https://app.shipped.app/authz") {
+	if !strings.HasPrefix(loc, "https://app.dropway.dev/authz") {
 		t.Errorf("Location = %q, want /authz exchange", loc)
 	}
 	if u.Query().Get("host") != testHost {
@@ -287,7 +287,7 @@ func TestGated_CallbackBadTokenRedirectsToAuthz(t *testing.T) {
 	if rec.Header().Get("Set-Cookie") != "" {
 		t.Errorf("bad callback token must NOT set a cookie")
 	}
-	if !strings.HasPrefix(rec.Header().Get("Location"), "https://app.shipped.app/authz") {
+	if !strings.HasPrefix(rec.Header().Get("Location"), "https://app.dropway.dev/authz") {
 		t.Errorf("bad callback should bounce to /authz, got %q", rec.Header().Get("Location"))
 	}
 }

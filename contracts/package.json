@@ -1,9 +1,9 @@
 {
-  "name": "@shipped/contracts",
+  "name": "@dropway/contracts",
   "version": "0.0.0",
   "private": true,
   "license": "FSL-1.1-Apache-2.0",
-  "description": "Cross-language data contracts for Shipped. The KV route value shape (Go API ⇄ Cloudflare Worker), defined once.",
+  "description": "Cross-language data contracts for Dropway. The KV route value shape (Go API ⇄ Cloudflare Worker), defined once.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

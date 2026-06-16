@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielpang/shipped/cli/internal/manifest"
+	"github.com/danielpang/dropway/cli/internal/manifest"
 )
 
 // fakeManifest builds a minimal one-file *manifest.Manifest for the uploadMissing
@@ -31,8 +31,8 @@ func TestNewRootCmd_WiresSubcommands(t *testing.T) {
 			t.Errorf("root command is missing the %q subcommand", name)
 		}
 	}
-	if root.Use != "shipped" {
-		t.Errorf("root Use = %q, want shipped", root.Use)
+	if root.Use != "dropway" {
+		t.Errorf("root Use = %q, want dropway", root.Use)
 	}
 	// Errors/usage are silenced (main prints them itself).
 	if !root.SilenceUsage || !root.SilenceErrors {
@@ -52,16 +52,16 @@ func TestExecute_RootHasHelp(t *testing.T) {
 }
 
 func TestDefaultAPIBase(t *testing.T) {
-	// With SHIPPED_API set, it is used.
-	t.Setenv("SHIPPED_API", "http://localhost:8080")
+	// With DROPWAY_API set, it is used.
+	t.Setenv("DROPWAY_API", "http://localhost:8080")
 	if got := defaultAPIBase(); got != "http://localhost:8080" {
 		t.Errorf("defaultAPIBase with env = %q, want the override", got)
 	}
 }
 
 func TestDefaultAPIBase_FallsBackToProd(t *testing.T) {
-	t.Setenv("SHIPPED_API", "")
-	if got := defaultAPIBase(); got != "https://api.shipped.app" {
+	t.Setenv("DROPWAY_API", "")
+	if got := defaultAPIBase(); got != "https://api.dropway.dev" {
 		t.Errorf("defaultAPIBase without env = %q, want the production default", got)
 	}
 }

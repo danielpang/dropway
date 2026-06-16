@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/quota"
+	"github.com/danielpang/dropway/internal/quota"
 )
 
 // TestWriteError_QuotaExceeded402 is the required unit test for the 402 path: a
@@ -20,7 +20,7 @@ func TestWriteError_QuotaExceeded402(t *testing.T) {
 		Max:        10,
 		PlanTier:   "free",
 		NextTier:   "business",
-		UpgradeURL: "https://app.shipped.app/billing/upgrade?tier=business",
+		UpgradeURL: "https://app.dropway.dev/billing/upgrade?tier=business",
 	}
 
 	rr := httptest.NewRecorder()

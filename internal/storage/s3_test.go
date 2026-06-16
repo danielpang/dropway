@@ -25,7 +25,7 @@ func TestNewS3Store_BucketRequired(t *testing.T) {
 // (no network call happens at construction time).
 func TestNewS3Store_DefaultsRegionAndBuilds(t *testing.T) {
 	s, err := NewS3Store(context.Background(), S3Config{
-		Bucket:          "shipped-blobs",
+		Bucket:          "dropway-blobs",
 		Endpoint:        "http://127.0.0.1:9000",
 		AccessKeyID:     "akid",
 		SecretAccessKey: "secret",
@@ -38,7 +38,7 @@ func TestNewS3Store_DefaultsRegionAndBuilds(t *testing.T) {
 	if s == nil || s.client == nil || s.presign == nil {
 		t.Fatalf("store not fully constructed: %+v", s)
 	}
-	if s.bucket != "shipped-blobs" {
+	if s.bucket != "dropway-blobs" {
 		t.Errorf("bucket = %q", s.bucket)
 	}
 }
@@ -63,7 +63,7 @@ const testSHA = "000000000000000000000000000000000000000000000000000000000000000
 // minio:9000 the API uses for its own reads/writes). Presigning is local, no network.
 func TestPresignPut_UsesPublicEndpoint(t *testing.T) {
 	s, err := NewS3Store(context.Background(), S3Config{
-		Bucket:          "shipped-blobs",
+		Bucket:          "dropway-blobs",
 		Endpoint:        "http://minio:9000",     // internal (server-side ops)
 		PublicEndpoint:  "http://localhost:9000", // browser-reachable (presign)
 		AccessKeyID:     "akid",
@@ -86,7 +86,7 @@ func TestPresignPut_UsesPublicEndpoint(t *testing.T) {
 		t.Errorf("presigned host = %q, want localhost:9000 (the public endpoint); a browser can't resolve the internal one", u.Host)
 	}
 	// Path-style key derived server-side from org + sha (never a client path).
-	if want := "/shipped-blobs/blobs/org1/" + testSHA; u.Path != want {
+	if want := "/dropway-blobs/blobs/org1/" + testSHA; u.Path != want {
 		t.Errorf("presigned path = %q, want %q", u.Path, want)
 	}
 	// SigV4 signs the host, so the signature must be present for the public host.
@@ -100,7 +100,7 @@ func TestPresignPut_UsesPublicEndpoint(t *testing.T) {
 // public host (e.g. real R2), so prod needs no separate public endpoint.
 func TestPresignPut_FallsBackToInternalEndpoint(t *testing.T) {
 	s, err := NewS3Store(context.Background(), S3Config{
-		Bucket:          "shipped-blobs",
+		Bucket:          "dropway-blobs",
 		Endpoint:        "http://r2.example.com",
 		AccessKeyID:     "akid",
 		SecretAccessKey: "secret",

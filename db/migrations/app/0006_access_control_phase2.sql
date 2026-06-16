@@ -9,7 +9,7 @@
 --      so the Worker can treat unlisted public sites the same as public for
 --      serving but the dashboard can hide them from any listing.
 --
---   2. app.allowlist_entries.claimed_by_user_id — records WHICH verified Shipped
+--   2. app.allowlist_entries.claimed_by_user_id — records WHICH verified Dropway
 --      account claimed a pending allowlist grant on first match (the claim_at
 --      timestamp already exists). Surfaced as "claimed by" in the audit log
 --      (ARCHITECTURE.md §10 [HIGH] allowlist grants).
@@ -112,13 +112,13 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-GRANT EXECUTE ON FUNCTION app.resolve_host(text) TO shipped_app;
+GRANT EXECUTE ON FUNCTION app.resolve_host(text) TO dropway_app;
 -- +goose StatementEnd
 
 -- +goose Down
 
 -- +goose StatementBegin
-REVOKE EXECUTE ON FUNCTION app.resolve_host(text) FROM shipped_app;
+REVOKE EXECUTE ON FUNCTION app.resolve_host(text) FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP FUNCTION IF EXISTS app.resolve_host(text);

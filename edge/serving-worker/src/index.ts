@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// Shipped serving Worker — *.shippedusercontent.com (Cloudflare Workers, Module
+// Dropway serving Worker — *.dropwaycontent.com (Cloudflare Workers, Module
 // syntax). Phase 1 implements the PUBLIC serve path only: the 95% case that is
 // JWT-free and cacheable (docs/ARCHITECTURE.md §3/§6).
 //
@@ -17,7 +17,7 @@
 // The public path NEVER reads a JWT. Identity-gated modes
 // (password|allowlist|org_only) are Phase-2 stubs that return a clearly-marked
 // 501 (see `gatedStub`) and DO NOT exchange identity here — that is the
-// host-scoped `/authz` exchange on app.shipped.app, built in Phase 2.
+// host-scoped `/authz` exchange on app.dropway.dev, built in Phase 2.
 
 import {
   type RouteValue,

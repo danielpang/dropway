@@ -60,7 +60,7 @@ export default async function DashboardPage() {
 
       {loadError ? (
         <Card className="border-dashed p-10 text-center text-sm text-muted-foreground">
-          {loadError} Start the API (api.shipped.app) and reload.
+          {loadError} Start the API (api.dropway.dev) and reload.
         </Card>
       ) : sites && sites.length > 0 ? (
         <ul className="grid gap-3 sm:grid-cols-2">
@@ -96,7 +96,7 @@ function SiteRow({ site }: { site: Site }) {
             </span>
           </div>
           <p className="truncate font-mono text-xs text-muted-foreground">
-            {site.live_url ?? `${site.slug}.shippedusercontent.com`}
+            {site.live_url ?? `${site.slug}.dropwaycontent.com`}
           </p>
         </div>
         <ArrowRight
@@ -135,7 +135,7 @@ function EmptyState({ readOnly }: { readOnly: boolean }) {
         <p className="text-sm text-muted-foreground">
           Create a site, then run{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">
-            shipped deploy ./dist
+            dropway deploy ./dist
           </code>{" "}
           to push your first deploy.
         </p>

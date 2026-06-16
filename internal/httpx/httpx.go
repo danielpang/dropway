@@ -14,7 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/danielpang/shipped/internal/quota"
+	"github.com/danielpang/dropway/internal/quota"
 )
 
 // ErrorBody is the standard error envelope returned for non-quota failures.

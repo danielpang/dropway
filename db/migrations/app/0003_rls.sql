@@ -7,7 +7,7 @@
 --
 -- Operating model:
 --   * These migrations run as a privileged OWNER/admin role (the table owner).
---   * The Go API connects at RUNTIME as `shipped_app` -- a NON-superuser,
+--   * The Go API connects at RUNTIME as `dropway_app` -- a NON-superuser,
 --     NON-BYPASSRLS login role (created in 0001).
 --   * Every app.* tenant table here is `ENABLE` *and* `FORCE ROW LEVEL SECURITY`.
 --     FORCE makes the policies apply even to the TABLE OWNER, so isolation cannot
@@ -51,7 +51,7 @@ ALTER TABLE app.org_meta ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.org_meta FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.org_meta TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.org_meta TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY org_meta_tenant_isolation ON app.org_meta
@@ -69,7 +69,7 @@ ALTER TABLE app.org_usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.org_usage FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.org_usage TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.org_usage TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY org_usage_tenant_isolation ON app.org_usage
@@ -87,7 +87,7 @@ ALTER TABLE app.sites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.sites FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.sites TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.sites TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY sites_tenant_isolation ON app.sites
@@ -105,7 +105,7 @@ ALTER TABLE app.site_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.site_versions FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.site_versions TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.site_versions TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY site_versions_tenant_isolation ON app.site_versions
@@ -123,7 +123,7 @@ ALTER TABLE app.domains ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.domains FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.domains TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.domains TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY domains_tenant_isolation ON app.domains
@@ -141,7 +141,7 @@ ALTER TABLE app.site_access_policy ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.site_access_policy FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.site_access_policy TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.site_access_policy TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY site_access_policy_tenant_isolation ON app.site_access_policy
@@ -159,7 +159,7 @@ ALTER TABLE app.allowlist_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.allowlist_entries FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.allowlist_entries TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.allowlist_entries TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY allowlist_entries_tenant_isolation ON app.allowlist_entries
@@ -177,7 +177,7 @@ ALTER TABLE app.deploy_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.deploy_tokens FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.deploy_tokens TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.deploy_tokens TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY deploy_tokens_tenant_isolation ON app.deploy_tokens
@@ -195,7 +195,7 @@ ALTER TABLE app.audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app.audit_log FORCE ROW LEVEL SECURITY;
 -- +goose StatementEnd
 -- +goose StatementBegin
-GRANT SELECT, INSERT, UPDATE, DELETE ON app.audit_log TO shipped_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON app.audit_log TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE POLICY audit_log_tenant_isolation ON app.audit_log
@@ -209,7 +209,7 @@ CREATE POLICY audit_log_tenant_isolation ON app.audit_log
 DROP POLICY IF EXISTS audit_log_tenant_isolation ON app.audit_log;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.audit_log FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.audit_log FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.audit_log NO FORCE ROW LEVEL SECURITY;
@@ -222,7 +222,7 @@ ALTER TABLE app.audit_log DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS deploy_tokens_tenant_isolation ON app.deploy_tokens;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.deploy_tokens FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.deploy_tokens FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.deploy_tokens NO FORCE ROW LEVEL SECURITY;
@@ -235,7 +235,7 @@ ALTER TABLE app.deploy_tokens DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS allowlist_entries_tenant_isolation ON app.allowlist_entries;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.allowlist_entries FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.allowlist_entries FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.allowlist_entries NO FORCE ROW LEVEL SECURITY;
@@ -248,7 +248,7 @@ ALTER TABLE app.allowlist_entries DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS site_access_policy_tenant_isolation ON app.site_access_policy;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.site_access_policy FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.site_access_policy FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.site_access_policy NO FORCE ROW LEVEL SECURITY;
@@ -261,7 +261,7 @@ ALTER TABLE app.site_access_policy DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS domains_tenant_isolation ON app.domains;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.domains FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.domains FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.domains NO FORCE ROW LEVEL SECURITY;
@@ -274,7 +274,7 @@ ALTER TABLE app.domains DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS site_versions_tenant_isolation ON app.site_versions;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.site_versions FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.site_versions FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.site_versions NO FORCE ROW LEVEL SECURITY;
@@ -287,7 +287,7 @@ ALTER TABLE app.site_versions DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS sites_tenant_isolation ON app.sites;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.sites FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.sites FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.sites NO FORCE ROW LEVEL SECURITY;
@@ -300,7 +300,7 @@ ALTER TABLE app.sites DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_usage_tenant_isolation ON app.org_usage;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.org_usage FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.org_usage FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.org_usage NO FORCE ROW LEVEL SECURITY;
@@ -313,7 +313,7 @@ ALTER TABLE app.org_usage DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_meta_tenant_isolation ON app.org_meta;
 -- +goose StatementEnd
 -- +goose StatementBegin
-REVOKE SELECT, INSERT, UPDATE, DELETE ON app.org_meta FROM shipped_app;
+REVOKE SELECT, INSERT, UPDATE, DELETE ON app.org_meta FROM dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.org_meta NO FORCE ROW LEVEL SECURITY;

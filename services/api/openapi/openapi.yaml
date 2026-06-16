@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Shipped control-plane API (api.shipped.app) — the system of record and authz
+# Dropway control-plane API (api.dropway.dev) — the system of record and authz
 # boundary (docs/ARCHITECTURE.md §3). The dashboard generates its typed TS client
 # from THIS spec; the frontend's contract is the API, never the DB (§8). Keep this
 # accurate: every path/shape here is implemented in services/api/internal/handlers.
@@ -12,10 +12,10 @@
 openapi: 3.1.0
 
 info:
-  title: Shipped API
+  title: Dropway API
   version: "1.0.0-phase2"
   description: >
-    The Shipped control plane. Most /v1 routes require a Bearer EdDSA JWT
+    The Dropway control plane. Most /v1 routes require a Bearer EdDSA JWT
     (issued by Better Auth) which the Go API verifies itself (the authz boundary).
     Every request runs under a Postgres RLS tenant context derived from the
     verified org_id/user_id claims.
@@ -30,7 +30,7 @@ info:
     name: FSL-1.1-Apache-2.0
 
 servers:
-  - url: https://api.shipped.app
+  - url: https://api.dropway.dev
     description: Production
   - url: http://localhost:8080
     description: Local / self-host
@@ -90,7 +90,7 @@ paths:
               type: object
               required: [host]
               properties:
-                host: { type: string, description: Content host (e.g. acme.shippedusercontent.com or a verified custom host) }
+                host: { type: string, description: Content host (e.g. acme.dropwaycontent.com or a verified custom host) }
                 next: { type: string, description: Path the dashboard redirects back to (NOT used for authz) }
       responses:
         "200":
@@ -228,7 +228,7 @@ paths:
       summary: Create a site
       description: >
         Reserved slugs are rejected (400). A slug whose content host
-        (`<slug>.shippedusercontent.com`) is already taken by another org/site
+        (`<slug>.dropwaycontent.com`) is already taken by another org/site
         returns 409 Conflict — the host registry is global even though site slugs
         are unique only per org. On the cloud build, exceeding the per-user site
         cap returns 402 with the quota body so the dashboard can open the upgrade
@@ -244,7 +244,7 @@ paths:
               properties:
                 slug:
                   type: string
-                  description: Subdomain label under shippedusercontent.com (unique per org).
+                  description: Subdomain label under dropwaycontent.com (unique per org).
                   example: my-docs
       responses:
         "201":

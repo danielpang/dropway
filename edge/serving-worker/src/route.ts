@@ -12,7 +12,7 @@
 // request path; the manifest does the rest.
 
 // The KV route value is the one cross-language data contract. It is owned by the
-// shared `@shipped/contracts` package (JSON Schema → Go struct + TS type with a
+// shared `@dropway/contracts` package (JSON Schema → Go struct + TS type with a
 // CI round-trip test) and is the ONLY writer→reader contract between the Go API
 // (the sole KV writer) and this Worker (a read-only consumer). We re-export it
 // under the Worker's local vocabulary (`RouteValue`/`SUPPORTED_SCHEMA_VERSION`)
@@ -24,7 +24,7 @@ import {
   SCHEMA_VERSION,
   isRouteExpired as contractsIsRouteExpired,
   safeParseKVRouteValue,
-} from "@shipped/contracts";
+} from "@dropway/contracts";
 
 /** The KV route value, named locally for the Worker. */
 export type RouteValue = KVRouteValue;
@@ -46,7 +46,7 @@ export function isRouteExpired(value: RouteValue, now?: Date): boolean {
 
 /**
  * The KV key under which the Go API publishes a host's route value.
- * One key per content host (e.g. `route:acme.shippedusercontent.com`).
+ * One key per content host (e.g. `route:acme.dropwaycontent.com`).
  */
 export function routeKey(host: string): string {
   return `route:${normalizeHost(host)}`;

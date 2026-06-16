@@ -7,8 +7,8 @@
 // on content origins").
 //
 // IMPORTANT framing (§10): CSP is NOT the tenant-isolation control here — the
-// separate PSL content domain (`*.shippedusercontent.com`) is. Hostile tenant JS
-// is already firewalled from the `app.shipped.app` session by domain separation;
+// separate PSL content domain (`*.dropwaycontent.com`) is. Hostile tenant JS
+// is already firewalled from the `app.dropway.dev` session by domain separation;
 // these headers are DEFENSE IN DEPTH that (a) stop MIME-confusion and referrer
 // leaks, (b) keep a tenant page from being framed by a sibling, (c) block a
 // tenant from installing a service worker that could persist on the content

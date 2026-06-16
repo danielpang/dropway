@@ -15,13 +15,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	cloudbilling "github.com/danielpang/shipped/cloud/billing"
-	cloudquota "github.com/danielpang/shipped/cloud/quota"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/config"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	cloudbilling "github.com/danielpang/dropway/cloud/billing"
+	cloudquota "github.com/danielpang/dropway/cloud/quota"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/config"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // storeRoleChecker adapts the core *store.Store to cloud/billing's store-free
@@ -61,7 +61,7 @@ func newQuotaProvider(cfg config.Config) quota.Provider {
 func quotaProviderName() string { return "cloud hard-cap (free/business/enterprise)" }
 
 // mountCloud wires cloud/billing onto the shared chi mux. It builds:
-//   - the Postgres BillingStore over the SAME non-BYPASSRLS shipped_app pool (the
+//   - the Postgres BillingStore over the SAME non-BYPASSRLS dropway_app pool (the
 //     per-event SET LOCAL app.current_org_id is the isolation, §9);
 //   - the RealSignatureVerifier (Stripe-Signature → parsed Event, price→tier via
 //     the configured price ids) + the webhook Handler;

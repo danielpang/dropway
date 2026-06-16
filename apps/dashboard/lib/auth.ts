@@ -47,7 +47,7 @@ const authPool = new Pool({
 });
 
 export const auth = betterAuth({
-  appName: "Shipped",
+  appName: "Dropway",
   baseURL: betterAuthUrl(),
   secret: betterAuthSecret(),
 
@@ -102,9 +102,9 @@ export const auth = betterAuth({
       const { sendEmail } = await import("@/lib/email");
       await sendEmail({
         to: user.email,
-        subject: "Reset your Shipped password",
+        subject: "Reset your Dropway password",
         text:
-          `Reset your Shipped password by opening this link:\n\n${url}\n\n` +
+          `Reset your Dropway password by opening this link:\n\n${url}\n\n` +
           `If you didn't request this, you can safely ignore this email.`,
       });
     },
@@ -119,10 +119,10 @@ export const auth = betterAuth({
       const { sendEmail } = await import("@/lib/email");
       await sendEmail({
         to: user.email,
-        subject: "Verify your email for Shipped",
+        subject: "Verify your email for Dropway",
         text:
-          `Welcome to Shipped! Confirm your email by opening this link:\n\n${url}\n\n` +
-          `If you didn't create a Shipped account, you can ignore this email.`,
+          `Welcome to Dropway! Confirm your email by opening this link:\n\n${url}\n\n` +
+          `If you didn't create a Dropway account, you can ignore this email.`,
       });
     },
   },
@@ -134,10 +134,10 @@ export const auth = betterAuth({
     },
   },
 
-  // Cookie hardening for the dashboard origin (app.shipped.app). The session
+  // Cookie hardening for the dashboard origin (app.dropway.dev). The session
   // cookie is host-only (no Domain=) so it never reaches the content domain.
   advanced: {
-    cookiePrefix: "shipped",
+    cookiePrefix: "dropway",
     // Secure cookies (and the `__Secure-` name prefix Better Auth adds with them)
     // require an HTTPS origin — browsers REJECT them over http://. Drive this off
     // the deployment's actual scheme, not NODE_ENV: a self-host served over plain
@@ -180,9 +180,9 @@ export const auth = betterAuth({
         const { sendEmail } = await import("@/lib/email");
         await sendEmail({
           to: email,
-          subject: "Your Shipped sign-in link",
+          subject: "Your Dropway sign-in link",
           text:
-            `Sign in to Shipped by opening this link:\n\n${url}\n\n` +
+            `Sign in to Dropway by opening this link:\n\n${url}\n\n` +
             `This link expires shortly. If you didn't request it, ignore this email.`,
         });
       },

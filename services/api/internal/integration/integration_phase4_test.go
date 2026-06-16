@@ -2,7 +2,7 @@
 
 // Phase-4 integration test (ARCHITECTURE.md §6/§10/§12/§13): audit logging, hard
 // revocation denylist, R2 version GC, and the DR projection rebuild — exercised
-// against real Postgres 16 (goose migrations as non-BYPASSRLS shipped_app) + MinIO.
+// against real Postgres 16 (goose migrations as non-BYPASSRLS dropway_app) + MinIO.
 //
 // Run with:
 //
@@ -30,12 +30,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/danielpang/shipped/internal/audit"
-	"github.com/danielpang/shipped/internal/edgerevoke"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/audit"
+	"github.com/danielpang/dropway/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 func TestIntegration_Phase4(t *testing.T) {
@@ -48,7 +48,7 @@ func TestIntegration_Phase4(t *testing.T) {
 
 	pool, err := pgxpool.New(ctx, appDSN)
 	if err != nil {
-		t.Fatalf("connect as shipped_app: %v", err)
+		t.Fatalf("connect as dropway_app: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	st := store.New(pool, quota.Unlimited{})

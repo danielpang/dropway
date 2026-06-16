@@ -8,14 +8,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/customdomains"
-	"github.com/danielpang/shipped/internal/edgetoken"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/internal/pwhash"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/customdomains"
+	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/pwhash"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 func testSigner(t *testing.T) *edgetoken.Signer {
@@ -132,7 +132,7 @@ func TestAuthzMint_OrgOnly_AllowsMember(t *testing.T) {
 	a.EdgeSigner = signer
 	h := mountAccess(a, claims("user_1", "org_1", "member"))
 
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com","next":"/"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com","next":"/"}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
@@ -142,7 +142,7 @@ func TestAuthzMint_OrgOnly_AllowsMember(t *testing.T) {
 		t.Fatalf("mint response = %+v", body)
 	}
 	// The minted token verifies against the signer for the bound host.
-	claims, err := edgetoken.VerifierForSigner(signer).Verify(body.Token, "acme.shippedusercontent.com")
+	claims, err := edgetoken.VerifierForSigner(signer).Verify(body.Token, "acme.dropwaycontent.com")
 	if err != nil {
 		t.Fatalf("verify minted token: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestAuthzMint_OrgOnly_DeniesNonMember_403(t *testing.T) {
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, claims("user_2", "org_2", "member"))
 
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", rr.Code, rr.Body.String())
 	}
@@ -174,7 +174,7 @@ func TestAuthzMint_Expired_403(t *testing.T) {
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, claims("u", "o", "member"))
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 (expired)", rr.Code)
 	}
@@ -184,7 +184,7 @@ func TestAuthzMint_NoSigner_503(t *testing.T) {
 	fs := newFakeStore()
 	a := NewFull(quota.Unlimited{}, fs, nil, nil) // no signer
 	h := mountAccess(a, claims("u", "o", "member"))
-	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.shippedusercontent.com"}`)
+	rr := postJSON(h, "/v1/authz/mint", `{"host":"acme.dropwaycontent.com"}`)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rr.Code)
 	}
@@ -204,13 +204,13 @@ func TestAuthzPassword_Correct_Mints(t *testing.T) {
 	a.EdgeSigner = signer
 	h := mountAccess(a, nil)
 
-	rr := postJSON(h, "/v1/authz/password", `{"host":"acme.shippedusercontent.com","password":"swordfish"}`)
+	rr := postJSON(h, "/v1/authz/password", `{"host":"acme.dropwaycontent.com","password":"swordfish"}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
 	var body mintResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &body)
-	claims, err := edgetoken.VerifierForSigner(signer).Verify(body.Token, "acme.shippedusercontent.com")
+	claims, err := edgetoken.VerifierForSigner(signer).Verify(body.Token, "acme.dropwaycontent.com")
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestAuthzPassword_Wrong_401(t *testing.T) {
 	a.EdgeSigner = testSigner(t)
 	h := mountAccess(a, nil)
 
-	rr := postJSON(h, "/v1/authz/password", `{"host":"acme.shippedusercontent.com","password":"nope"}`)
+	rr := postJSON(h, "/v1/authz/password", `{"host":"acme.dropwaycontent.com","password":"nope"}`)
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
 	}
@@ -267,7 +267,7 @@ func TestSetSiteAccess_Admin_OK(t *testing.T) {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
 	// The route was rewritten to org_only (org-namespaced canonical host).
-	rv, ok := proj.Get("org--s.shippedusercontent.com")
+	rv, ok := proj.Get("org--s.dropwaycontent.com")
 	if !ok || rv.AccessMode != projection.AccessOrgOnly {
 		t.Fatalf("route not rewritten: %+v ok=%v", rv, ok)
 	}
@@ -336,7 +336,7 @@ func TestAllowExternalSharing_Admin_Reconciles(t *testing.T) {
 	ver := "33333333-3333-3333-3333-333333333333"
 	fs.p2().reconcile = store.ReconcileResult{
 		Downgraded: []store.DowngradedRoute{{
-			Host: "s.shippedusercontent.com",
+			Host: "s.dropwaycontent.com",
 			Route: projection.RouteValue{
 				OrgID: "org_1", SiteID: "site_1", VersionID: ver,
 				AccessMode: projection.AccessOrgOnly, SchemaVersion: projection.SchemaVersion,
@@ -344,7 +344,7 @@ func TestAllowExternalSharing_Admin_Reconciles(t *testing.T) {
 		}},
 	}
 	proj := projection.NewLocal()
-	_ = proj.PutRoute(nil, "s.shippedusercontent.com", projection.RouteValue{
+	_ = proj.PutRoute(nil, "s.dropwaycontent.com", projection.RouteValue{
 		OrgID: "org_1", SiteID: "site_1", VersionID: ver, AccessMode: projection.AccessPublic, SchemaVersion: projection.SchemaVersion,
 	})
 	a := NewFull(quota.Unlimited{}, fs, nil, proj)
@@ -355,7 +355,7 @@ func TestAllowExternalSharing_Admin_Reconciles(t *testing.T) {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
 	// The downgraded route was rewritten to org_only at the edge.
-	rv, _ := proj.Get("s.shippedusercontent.com")
+	rv, _ := proj.Get("s.dropwaycontent.com")
 	if rv.AccessMode != projection.AccessOrgOnly {
 		t.Fatalf("reconcile did not rewrite route: %+v", rv)
 	}

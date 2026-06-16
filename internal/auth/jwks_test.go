@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	testIssuer = "https://app.shipped.test"
-	testAud    = "https://api.shipped.test"
+	testIssuer = "https://app.dropway.test"
+	testAud    = "https://api.dropway.test"
 )
 
 // jwksServer serves a JWKS for a set of Ed25519 keys and counts hits so tests

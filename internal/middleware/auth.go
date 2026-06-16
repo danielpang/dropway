@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/danielpang/shipped/internal/auth"
-	"github.com/danielpang/shipped/internal/httpx"
+	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/httpx"
 )
 
 // claimsKey is the unexported context key under which verified claims are
@@ -32,7 +32,7 @@ type Verifier interface {
 // renders a 401 and does NOT call the next handler.
 //
 // The public serve path carries no JWT and must never be wrapped by this — only
-// the control-plane (api.shipped.app) routes are.
+// the control-plane (api.dropway.dev) routes are.
 func Auth(v Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

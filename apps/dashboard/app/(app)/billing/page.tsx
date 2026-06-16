@@ -86,7 +86,7 @@ export default async function BillingPage({
     return (
       <Shell>
         <Card className="border-dashed p-10 text-center text-sm text-muted-foreground">
-          Billing isn&rsquo;t available on this deployment. Self-hosted Shipped is
+          Billing isn&rsquo;t available on this deployment. Self-hosted Dropway is
           unlimited and has no plans to manage.
         </Card>
       </Shell>
@@ -207,7 +207,7 @@ export default async function BillingPage({
         <p className="text-xs text-muted-foreground">
           Need more than Enterprise?{" "}
           <Button asChild variant="link" className="h-auto p-0 text-xs">
-            <Link href="mailto:sales@shipped.app">Talk to sales</Link>
+            <Link href="mailto:sales@dropway.com">Talk to sales</Link>
           </Button>
           .
         </p>

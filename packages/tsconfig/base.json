@@ -1,5 +1,5 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "//": "Re-exports the repo-root tsconfig.base.json so workspace packages can `extends: @shipped/tsconfig/base.json`. The root file (owned outside packages/) is the single source of truth for compiler options.",
+  "//": "Re-exports the repo-root tsconfig.base.json so workspace packages can `extends: @dropway/tsconfig/base.json`. The root file (owned outside packages/) is the single source of truth for compiler options.",
   "extends": "../../tsconfig.base.json"
 }

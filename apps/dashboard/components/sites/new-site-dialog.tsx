@@ -182,7 +182,7 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
                   disabled={pending}
                 />
                 <span className="whitespace-nowrap text-sm text-muted-foreground">
-                  .shippedusercontent.com
+                  .dropwaycontent.com
                 </span>
               </div>
               <p id="slug-help" className="text-xs text-muted-foreground">

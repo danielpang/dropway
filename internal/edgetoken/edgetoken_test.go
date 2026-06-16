@@ -28,7 +28,7 @@ func TestMintVerify_RoundTrip(t *testing.T) {
 	s := newTestSigner(t)
 	v := VerifierForSigner(s)
 
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	tok, err := s.Mint(MintParams{
 		ContentHost: host,
 		Subject:     "user-123",
@@ -70,7 +70,7 @@ func TestVerify_AudBinding(t *testing.T) {
 	v := VerifierForSigner(s)
 
 	tok, err := s.Mint(MintParams{
-		ContentHost: "a.shippedusercontent.com",
+		ContentHost: "a.dropwaycontent.com",
 		Subject:     "user-1",
 		SiteID:      "11111111-1111-1111-1111-111111111111",
 		Mode:        ModeAllowlist,
@@ -78,11 +78,11 @@ func TestVerify_AudBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := v.Verify(tok, "b.shippedusercontent.com"); err == nil {
+	if _, err := v.Verify(tok, "b.dropwaycontent.com"); err == nil {
 		t.Fatal("token for host A wrongly verified at host B (aud not bound)")
 	}
 	// Sanity: it DOES verify at its own host.
-	if _, err := v.Verify(tok, "a.shippedusercontent.com"); err != nil {
+	if _, err := v.Verify(tok, "a.dropwaycontent.com"); err != nil {
 		t.Fatalf("token rejected at its own host: %v", err)
 	}
 }
@@ -90,7 +90,7 @@ func TestVerify_AudBinding(t *testing.T) {
 func TestVerify_Expired(t *testing.T) {
 	s := newTestSigner(t)
 	v := VerifierForSigner(s)
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	tok, err := s.Mint(MintParams{
 		ContentHost: host, Subject: "u", SiteID: "11111111-1111-1111-1111-111111111111",
 		Mode: ModePassword, TTL: -time.Minute, // already expired
@@ -109,7 +109,7 @@ func TestVerify_Expired(t *testing.T) {
 func TestVerify_RejectsAlgNoneAndHS(t *testing.T) {
 	s := newTestSigner(t)
 	v := VerifierForSigner(s)
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -150,7 +150,7 @@ func TestVerify_UnknownKid(t *testing.T) {
 	other := newTestSigner(t)
 	// Verifier trusts only `other`, not `signer`.
 	v := VerifierForSigner(other)
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	tok, _ := signer.Mint(MintParams{
 		ContentHost: host, Subject: "u", SiteID: "11111111-1111-1111-1111-111111111111", Mode: ModeOrgOnly,
 	})
@@ -184,7 +184,7 @@ func TestJWKS_RoundTripsPublicKey(t *testing.T) {
 	// proves the JWKS the Worker fetches is sufficient to verify.
 	pub := ed25519.PublicKey(raw)
 	v := NewVerifier(map[string]ed25519.PublicKey{k.Kid: pub})
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	tok, _ := s.Mint(MintParams{ContentHost: host, Subject: "u", SiteID: "11111111-1111-1111-1111-111111111111", Mode: ModeOrgOnly})
 	if _, err := v.Verify(tok, host); err != nil {
 		t.Fatalf("token rejected by JWKS-derived verifier: %v", err)
@@ -213,7 +213,7 @@ func TestLoadOrGenerateSigner(t *testing.T) {
 	if s1.Kid() != s2.Kid() {
 		t.Fatalf("kid not stable across reload: %q != %q", s1.Kid(), s2.Kid())
 	}
-	const host = "acme.shippedusercontent.com"
+	const host = "acme.dropwaycontent.com"
 	tok, _ := s1.Mint(MintParams{ContentHost: host, Subject: "u", SiteID: "11111111-1111-1111-1111-111111111111", Mode: ModeOrgOnly})
 	if _, err := VerifierForSigner(s2).Verify(tok, host); err != nil {
 		t.Fatalf("seed-reloaded signer can't verify first signer's token: %v", err)

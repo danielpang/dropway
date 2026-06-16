@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/danielpang/shipped/internal/edgerevoke"
+	"github.com/danielpang/dropway/internal/edgerevoke"
 )
 
 // kvServer is a minimal in-memory stand-in for the CF Workers KV REST API used by
@@ -121,17 +121,17 @@ func TestCloudflareKV_PutDeleteRoute(t *testing.T) {
 	ctx := context.Background()
 
 	val := RouteValue{OrgID: "o", SiteID: "s", VersionID: "v", AccessMode: AccessPublic, SchemaVersion: SchemaVersion}
-	if err := c.PutRoute(ctx, "acme.shippedusercontent.com", val); err != nil {
+	if err := c.PutRoute(ctx, "acme.dropwaycontent.com", val); err != nil {
 		t.Fatal(err)
 	}
-	if got := k.lastCall(); got.method != http.MethodPut || got.key != "route:acme.shippedusercontent.com" {
+	if got := k.lastCall(); got.method != http.MethodPut || got.key != "route:acme.dropwaycontent.com" {
 		t.Fatalf("put call = %+v", got)
 	}
 
-	if err := c.DeleteRoute(ctx, "acme.shippedusercontent.com"); err != nil {
+	if err := c.DeleteRoute(ctx, "acme.dropwaycontent.com"); err != nil {
 		t.Fatal(err)
 	}
-	if got := k.lastCall(); got.method != http.MethodDelete || got.key != "route:acme.shippedusercontent.com" {
+	if got := k.lastCall(); got.method != http.MethodDelete || got.key != "route:acme.dropwaycontent.com" {
 		t.Fatalf("delete call = %+v", got)
 	}
 }
@@ -200,25 +200,25 @@ func TestCloudflareKV_RebuildFromDB(t *testing.T) {
 	c := newKV(srv.URL)
 
 	// Seed a stale route (a deleted/reassigned host) and an unrelated denylist key.
-	k.store["route:stale.shippedusercontent.com"] = `{"org_id":"old"}`
+	k.store["route:stale.dropwaycontent.com"] = `{"org_id":"old"}`
 	k.store["revoked:user:u1"] = `{"min_iat":1}`
 
 	routes := map[string]RouteValue{
-		"a.shippedusercontent.com": {OrgID: "o", SiteID: "s", VersionID: "va", AccessMode: AccessPublic, SchemaVersion: SchemaVersion},
-		"b.shippedusercontent.com": {OrgID: "o", SiteID: "s", VersionID: "vb", AccessMode: AccessPublic, SchemaVersion: SchemaVersion},
+		"a.dropwaycontent.com": {OrgID: "o", SiteID: "s", VersionID: "va", AccessMode: AccessPublic, SchemaVersion: SchemaVersion},
+		"b.dropwaycontent.com": {OrgID: "o", SiteID: "s", VersionID: "vb", AccessMode: AccessPublic, SchemaVersion: SchemaVersion},
 	}
 	if err := c.RebuildFromDB(context.Background(), routes); err != nil {
 		t.Fatal(err)
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if _, ok := k.store["route:a.shippedusercontent.com"]; !ok {
+	if _, ok := k.store["route:a.dropwaycontent.com"]; !ok {
 		t.Error("rebuild did not write route a")
 	}
-	if _, ok := k.store["route:b.shippedusercontent.com"]; !ok {
+	if _, ok := k.store["route:b.dropwaycontent.com"]; !ok {
 		t.Error("rebuild did not write route b")
 	}
-	if _, ok := k.store["route:stale.shippedusercontent.com"]; ok {
+	if _, ok := k.store["route:stale.dropwaycontent.com"]; ok {
 		t.Error("rebuild did not prune the stale route key")
 	}
 	if _, ok := k.store["revoked:user:u1"]; !ok {
@@ -247,10 +247,10 @@ func TestCloudflareKV_Non2xxError(t *testing.T) {
 	ctx := context.Background()
 
 	val := RouteValue{OrgID: "o", SiteID: "s", VersionID: "v", AccessMode: AccessPublic, SchemaVersion: SchemaVersion}
-	if err := c.PutRoute(ctx, "h.shippedusercontent.com", val); err == nil {
+	if err := c.PutRoute(ctx, "h.dropwaycontent.com", val); err == nil {
 		t.Error("PutRoute should error on a 500")
 	}
-	if err := c.DeleteRoute(ctx, "h.shippedusercontent.com"); err == nil {
+	if err := c.DeleteRoute(ctx, "h.dropwaycontent.com"); err == nil {
 		t.Error("DeleteRoute should error on a 500")
 	}
 	if err := c.SetOrgStatus(ctx, "o", "suspended"); err == nil {

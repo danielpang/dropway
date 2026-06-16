@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/danielpang/shipped/internal/storage"
-	"github.com/danielpang/shipped/services/serve/internal/manifest"
-	"github.com/danielpang/shipped/services/serve/internal/servehttp"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/serve/internal/manifest"
+	"github.com/danielpang/dropway/services/serve/internal/servehttp"
 )
 
 // writePage writes a platform-owned HTML page with the strict platform CSP. Used

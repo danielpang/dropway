@@ -1,12 +1,12 @@
 <!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
 
-# Shipped
+# Dropway
 
 ### A folder of files → a live, access-controlled URL in one command.
 
-Shipped turns any static site — an HTML/CSS report, a data dashboard, a React or
+Dropway turns any static site — an HTML/CSS report, a data dashboard, a React or
 Vite build, a docs site, an AI-generated page — into a **live, versioned, shareable
-URL** in seconds. Drag a folder into the dashboard, or run `shipped deploy ./dist`,
+URL** in seconds. Drag a folder into the dashboard, or run `dropway deploy ./dist`,
 and you get a real URL you control: share it with the whole internet, your whole
 company, a few specific people, or behind a password — and change your mind anytime.
 
@@ -14,8 +14,8 @@ It's **open source and self-hostable**, with an optional hosted SaaS. Think
 "Netlify-meets-access-control," built multi-tenant from the ground up.
 
 ```sh
-shipped deploy ./dist
-# → https://quarterly-report.shippedusercontent.com  (org-only, versioned, rollback-able)
+dropway deploy ./dist
+# → https://quarterly-report.dropwaycontent.com  (org-only, versioned, rollback-able)
 ```
 
 ---
@@ -37,7 +37,7 @@ None of these let you say *"share this with **these three people**,"* or *"anyon
 my company,"* or *"public, but password-protected,"* — and then **revoke it**, **roll
 back** a bad version, or put it on a **custom domain**.
 
-Shipped is that missing layer: **one command to publish, with sharing and access
+Dropway is that missing layer: **one command to publish, with sharing and access
 control as first-class features.**
 
 ## What you get
@@ -74,10 +74,10 @@ control as first-class features.**
 ## How it works (at a glance)
 
 ```
-  shipped deploy ./dist  ─▶  Go API (system of record + authz)  ─▶  R2 (content-addressed blobs)
+  dropway deploy ./dist  ─▶  Go API (system of record + authz)  ─▶  R2 (content-addressed blobs)
                                        │ writes a rebuildable routing projection
                                        ▼
-   browser ─▶ Cloudflare edge Worker (*.shippedusercontent.com) ─▶ streams your site
+   browser ─▶ Cloudflare edge Worker (*.dropwaycontent.com) ─▶ streams your site
               public = no login, cacheable · gated = host-scoped token from /authz
 ```
 
@@ -97,7 +97,7 @@ the Go API, the Next.js dashboard, a bundled Postgres, a bundled MinIO (an R2/S3
 stand-in), and the schema migrations:
 
 ```sh
-git clone https://github.com/your-org/shipped.git && cd shipped
+git clone https://github.com/your-org/dropway.git && cd dropway
 cp deploy/.env.example deploy/.env                  # safe local-dev defaults
 docker compose -f deploy/docker-compose.yml up --build
 ```
@@ -137,7 +137,7 @@ so two orgs can both have an app named `blog` without colliding. Three vars in
 
 | Var | Local default | Production |
 |---|---|---|
-| `CONTENT_DOMAIN` | `localhost` | your domain, e.g. `shippedusercontent.com` |
+| `CONTENT_DOMAIN` | `localhost` | your domain, e.g. `dropwaycontent.com` |
 | `CONTENT_SCHEME` | `http` | `https` |
 | `CONTENT_PORT` | `8090` | *(empty — standard `:443`)* |
 
@@ -173,7 +173,7 @@ Full local-dev reference (build flavors, the edge Worker, migrating by hand) liv
 
 ## Open source + hosted (open-core)
 
-Shipped follows the **Supabase / PostHog** model: a source-available codebase anyone
+Dropway follows the **Supabase / PostHog** model: a source-available codebase anyone
 can self-host for free, plus an optional hosted SaaS for convenience and scale.
 
 - The **core** is under the **[Functional Source License (FSL-1.1-Apache-2.0)](LICENSE)** —
@@ -198,5 +198,5 @@ Pricing strategy for the hosted SaaS is in **[`docs/pricing.md`](docs/pricing.md
 ## License
 
 Core: **[FSL-1.1-Apache-2.0](LICENSE)** (→ Apache 2.0 after two years). `cloud/` and
-`ee/` are governed by their own licenses. The "Shipped" name and logo are reserved
+`ee/` are governed by their own licenses. The "Dropway" name and logo are reserved
 trademarks; forks must rename to redistribute.

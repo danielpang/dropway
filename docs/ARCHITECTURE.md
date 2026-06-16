@@ -1,4 +1,4 @@
-# Shipped — Architecture Plan (Quick-style multi-tenant share platform)
+# Dropway — Architecture Plan (Quick-style multi-tenant share platform)
 
 > *A folder of files → a live, access-controlled URL in one command. Static now, dynamic-ready. Built on Cloudflare (R2 + Workers), a Next.js control plane, a Go deploy/runtime backend, and Supabase Postgres.*
 
@@ -12,7 +12,7 @@ This plan was produced after reading Shopify's "Quick" writeup (https://shopify.
 
 Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder than building them.* Quick collapsed "a folder of files" into "a live secure URL" with one command — no pipeline, no config. But Quick is **single-tenant, internal, single-access-model**: every site is open to every Shopify employee, with no per-site permissions or ownership.
 
-**Shipped takes that ergonomic promise external and multi-tenant.** The hard problems Quick never had to solve are now first-class:
+**Dropway takes that ergonomic promise external and multi-tenant.** The hard problems Quick never had to solve are now first-class:
 
 - **Three sharing tiers per site** — (a) explicit email allowlist, (b) anyone in the org, (c) public (listed / unlisted-signed / password-protected).
 - **Orgs/enterprise as first-class tenants** — sites shared by default within an org; membership via verified-domain auto-join *and* invites/links.
@@ -22,7 +22,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 
 **The single load-bearing decision that makes this safe:** serve all tenant content from a **separate registrable domain on the Public Suffix List**, never a subdomain of the app/auth domain. Everything else layers on top.
 
-**Business model — open-core (Supabase/PostHog-style):** Shipped is **open source + hosted SaaS**. The full app is source-available under the **Functional Source License (FSL-1.1-Apache-2.0)** — anyone may self-host and use it internally for free, but may **not** offer it as a competing paid service; it converts to Apache 2.0 after 2 years. The **quota + billing engine (the 10-sites-per-user / 5-members-per-org free limits + Stripe) is a cloud-only module** that does not ship in the self-host build — self-host is unlimited, the *license* is what prevents resale. Enterprise-only features live in a separately-licensed `ee/` directory. Full model + licensing in **§14**.
+**Business model — open-core (Supabase/PostHog-style):** Dropway is **open source + hosted SaaS**. The full app is source-available under the **Functional Source License (FSL-1.1-Apache-2.0)** — anyone may self-host and use it internally for free, but may **not** offer it as a competing paid service; it converts to Apache 2.0 after 2 years. The **quota + billing engine (the 10-sites-per-user / 5-members-per-org free limits + Stripe) is a cloud-only module** that does not ship in the self-host build — self-host is unlimited, the *license* is what prevents resale. Enterprise-only features live in a separately-licensed `ee/` directory. Full model + licensing in **§14**.
 
 ---
 
@@ -57,9 +57,9 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 - **Orgs & membership** — **Better Auth Organization plugin**: create org (creator = `owner`); solo users get a default single-member org. Roles `owner`/`admin`/`member` **[MVP]**; **only an existing admin/owner promotes a member to admin** **[MVP]**. Sites default to **Tier (b) org-visible**. Invite + invite-link **[MVP]**; verified-domain auto-join **[v1]**; SSO/SAML keyed on user UUID, not email **[Enterprise]**.
 - **Auth & identity** — **Better Auth** (self-hosted in the Next.js app) **[MVP]**: **Google sign-in/up is a core, first-class method** alongside email/password + magic link; **email verification required**. Cookie sessions for the dashboard; the **JWT plugin** issues short-lived (5–15 min) **EdDSA** JWTs + a **JWKS endpoint**. **The Go API is the JWT verifier and the authz boundary** (pins EdDSA, rejects `alg:none`/`HS256`, JWKS-by-`kid` with rate-limited refresh). The **public serve path carries no JWT** (cacheable); identity-gated tiers use a host-scoped edge token exchange **[Phase 2]**. No anonymous access to identity-gated tiers (see Sharing).
 - **Org sharing policy & roles** **[MVP]** — Org-level **`allow_external_sharing`** flag (default **false**): when false, **no site may be shared outside the org** — the public tier and any external-email allowlist grant are rejected at both the control plane and the edge. When true, public + external allowlist are permitted. **Only org admins/owners** may toggle this policy and assign/revoke the `admin` role. Flipping it back to false **reconciles existing sites** (revokes external grants + public visibility, writes edge deny-list).
-- **Deploy/upload** — `shipped deploy` CLI: folder → live URL, no config required **[MVP]**; **folder drag-and-drop in the dashboard [MVP]** (see §7.2 — explicit user requirement, shares the CLI's backend contract); immutable atomic content-addressed deploys, only-changed-blob upload, pointer-flip cutover **[MVP]**; per-deploy preview URL + stable site URL **[MVP]**; versioning + rollback **[MVP]**; presigned direct-to-R2 upload **[MVP]**; Git push-to-deploy + optional managed build **[v1]**.
-- **Sharing (3 tiers)** — Per-site visibility settable by the **site owner (member) or an org admin**, but **only within the org sharing policy above**; allowlist supports pre-registration emails; **default-deny [MVP]**; **allowlist requires the invitee to create a Shipped account first**, and a grant is matched only on a **verified** email/sub **[MVP]**; edge enforcement per request; password mode; unlisted/signed **[MVP]**; expiration TTL **[v1]**; share-event audit **[v1]**.
-- **Serving** — Dispatch Worker on `*.shippedusercontent.com`; resolve host → org/site/deploy via KV; auth; stream from R2 **[MVP]**; Cache API for public only, never cache private **[MVP]**; per-site security headers **[MVP]**; custom domains via Cloudflare for SaaS **[Enterprise]**.
+- **Deploy/upload** — `dropway deploy` CLI: folder → live URL, no config required **[MVP]**; **folder drag-and-drop in the dashboard [MVP]** (see §7.2 — explicit user requirement, shares the CLI's backend contract); immutable atomic content-addressed deploys, only-changed-blob upload, pointer-flip cutover **[MVP]**; per-deploy preview URL + stable site URL **[MVP]**; versioning + rollback **[MVP]**; presigned direct-to-R2 upload **[MVP]**; Git push-to-deploy + optional managed build **[v1]**.
+- **Sharing (3 tiers)** — Per-site visibility settable by the **site owner (member) or an org admin**, but **only within the org sharing policy above**; allowlist supports pre-registration emails; **default-deny [MVP]**; **allowlist requires the invitee to create a Dropway account first**, and a grant is matched only on a **verified** email/sub **[MVP]**; edge enforcement per request; password mode; unlisted/signed **[MVP]**; expiration TTL **[v1]**; share-event audit **[v1]**.
+- **Serving** — Dispatch Worker on `*.dropwaycontent.com`; resolve host → org/site/deploy via KV; auth; stream from R2 **[MVP]**; Cache API for public only, never cache private **[MVP]**; per-site security headers **[MVP]**; custom domains via Cloudflare for SaaS **[Enterprise]**.
 - **Runtime (architected now, built later)** — Identity API, rate limiting, collection-DB CRUD **[v1]**; realtime, file uploads, LLM/image proxy **[v1/later]**; WebSockets/DOs, SSR via Workers-for-Platforms **[later]**. Static→dynamic adds a user-Worker behind the same Host; **no rewrite**.
 - **Billing & limits (cloud-only)** — Member-count bands with **hard caps**: **Free ≤5 members & ≤10 sites/user → Business 6–99 → Enterprise 100–1,000 → Contact Sales >1,000** **[MVP]**. Exceeding a cap **blocks the action and opens the Stripe subscription modal** (or sales CTA at the top). Stripe, one Customer per org; **the paid `plan_tier` is persisted to the DB by a signature-verified webhook** (not the browser redirect); seats from Better Auth `member` rows; metered egress + runtime **[plans MVP, metering v1]**. **All limits/billing run only in the hosted-cloud build; self-host is unlimited (see §14).**
 - **Open source + SaaS (open-core)** **[MVP]** — Repo is public under **FSL-1.1-Apache-2.0** (self-host free, no resale; → Apache 2.0 in 2 yrs); a `cloud/` module (quotas + Stripe + subscription modal) and an `ee/` module (enterprise features) are separately licensed and excluded from the self-host build. One-command self-host (Docker Compose / Helm). Details in §14.
@@ -83,20 +83,20 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 
 | Domain | Host | PSL? | Role | Cookies |
 |---|---|---|---|---|
-| `app.shipped.app` | **Vercel** | No | Next.js dashboard + **Better Auth** (`/api/auth/*`) + `/authz` exchange (P2) + JWKS | `__Host-` host-only Better Auth session; never `Domain=` |
-| `api.shipped.app` | Go service (Cloud Run/Fly/container) | No | Go control-plane + runtime API | Bearer tokens only (Better Auth JWT or deploy token), no cookies |
-| **`*.shippedusercontent.com`** | **Cloudflare** (Worker + R2 + KV/D1) | **Yes (submit to PSL before launch)** | All served tenant content + serving Worker | None on public path; short-lived host-scoped token only on gated sites (P2) |
+| `app.dropway.dev` | **Vercel** | No | Next.js dashboard + **Better Auth** (`/api/auth/*`) + `/authz` exchange (P2) + JWKS | `__Host-` host-only Better Auth session; never `Domain=` |
+| `api.dropway.dev` | Go service (Cloud Run/Fly/container) | No | Go control-plane + runtime API | Bearer tokens only (Better Auth JWT or deploy token), no cookies |
+| **`*.dropwaycontent.com`** | **Cloudflare** (Worker + R2 + KV/D1) | **Yes (submit to PSL before launch)** | All served tenant content + serving Worker | None on public path; short-lived host-scoped token only on gated sites (P2) |
 
 ```
                               ┌────────────────────────────────────────────────┐
                               │                   DEVELOPER                      │
-                              │   shipped deploy ./dist        browser (dash)    │
+                              │   dropway deploy ./dist        browser (dash)    │
                               └───────┬───────────────────────────────┬─────────┘
                                       │ Bearer deploy-token           │ Better Auth session
                                       ▼                               ▼
    ┌───────────────────────┐   ┌──────────────────────────┐   ┌──────────────────────────────┐
-   │  STRIPE (cloud-only)  │◄─►│  GO API (api.shipped.app) │◄──│  NEXT.JS DASHBOARD (Vercel)  │
-   │  Customer per org,    │   │  = SYSTEM OF RECORD       │ ↑ │  app.shipped.app             │
+   │  STRIPE (cloud-only)  │◄─►│  GO API (api.dropway.dev) │◄──│  NEXT.JS DASHBOARD (Vercel)  │
+   │  Customer per org,    │   │  = SYSTEM OF RECORD       │ ↑ │  app.dropway.dev             │
    │  meters, webhooks     │   │  chi; verifies EdDSA JWT  │ │ │  - BETTER AUTH (/api/auth/*) │
    └───────────┬───────────┘   │  (iss/aud/exp · kid·alg)  │ │ │    Google/email/magic + Org  │
                │ webhooks      │  - deploy orchestration   │ │ │    OWNS its identity tables  │
@@ -112,7 +112,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
    │   auth schema:    Better Auth tables (Better-Auth-migrated; Go reads, never migrates)│
    │   app schema:     org_meta + sites/versions/domains/policy/org_usage (Go·goose·sqlc) │
    │   billing schema: subscriptions… (cloud-only; FK → app.org_meta; app NEVER → billing)│
-   │   Go connects as non-BYPASSRLS `shipped_app`; SET LOCAL app.current_org_id per tx     │
+   │   Go connects as non-BYPASSRLS `dropway_app`; SET LOCAL app.current_org_id per tx     │
    └───────────────────────────────────┬───────────────────────────────────────────────┘
                                         │ Go publishes a REBUILDABLE projection (contracts/ shape)
                                         ▼
@@ -121,10 +121,10 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
    │  KV  route:<host> → {org_id, site_id, version_id, access_mode, schema_version}     │
    │  D1  allowlist projection (large lists)      Cache API (PUBLIC responses only)      │
    │   ┌────────────────────────────────────────────────────────────────────────────┐ │
-   │   │  SERVING WORKER  *.shippedusercontent.com / custom domains  (R2 + KV + D1)   │ │
+   │   │  SERVING WORKER  *.dropwaycontent.com / custom domains  (R2 + KV + D1)   │ │
    │   │   PUBLIC: KV host→version → stream R2   (NO JWT · cacheable · 95% path)      │ │
    │   │   password: Worker checks pw → host-scoped signed cookie (no identity)       │ │
-   │   │   allowlist/org-only [Phase 2]: 302 → app.shipped.app/authz → host-scoped    │ │
+   │   │   allowlist/org-only [Phase 2]: 302 → app.dropway.dev/authz → host-scoped    │ │
    │   │     token; Worker verifies THAT token, never the operator JWT                │ │
    │   └───────────────────────────────────┬────────────────────────────────────────┘ │
    └───────────────────────────────────────┼──────────────────────────────────────────┘
@@ -140,7 +140,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 
 **Request lifecycle — public site (the 95% path):** browser → PoP → Serving Worker resolves `route:<host>` from KV → streams the version's bytes from R2 (Cache API). **No JWT, no broker, fully cacheable.**
 
-**Request lifecycle — gated site [Phase 2]:** `password` → Worker prompts, verifies, sets a host-scoped signed cookie (no identity needed). `allowlist`/`org-only` → no valid host-scoped cookie → 302 → `app.shipped.app/authz?return=<host>` → Better Auth confirms identity + checks allowlist/membership → issues a **short-lived, host-scoped** signed token (cookie on the *site* host, or a one-time `?token=` the Worker exchanges) → the Worker verifies **that host-scoped token** (its own secret/JWKS), *never* the operator dashboard JWT. This cross-domain exchange is the genuinely hard piece and is deliberately deferred out of Phase 0/1.
+**Request lifecycle — gated site [Phase 2]:** `password` → Worker prompts, verifies, sets a host-scoped signed cookie (no identity needed). `allowlist`/`org-only` → no valid host-scoped cookie → 302 → `app.dropway.dev/authz?return=<host>` → Better Auth confirms identity + checks allowlist/membership → issues a **short-lived, host-scoped** signed token (cookie on the *site* host, or a one-time `?token=` the Worker exchanges) → the Worker verifies **that host-scoped token** (its own secret/JWKS), *never* the operator dashboard JWT. This cross-domain exchange is the genuinely hard piece and is deliberately deferred out of Phase 0/1.
 
 ---
 
@@ -172,7 +172,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 | **Vercel** ✅ | Best Next.js App Router DX, preview deploys, zero-config; the dashboard is low-traffic so egress cost is negligible | Second vendor alongside Cloudflare |
 | Cloudflare (OpenNext) | Single vendor w/ R2/KV/Workers | OpenNext full-App-Router less turnkey |
 
-**Recommended (chosen): Vercel for the dashboard** (`app.shipped.app` — Next.js + Better Auth + the `/authz` exchange). **Cloudflare keeps the whole content plane: R2 object store, the serving Worker on `*.shippedusercontent.com`, and KV/D1.** This split is natural here — the dashboard and content already live on different domains, and the heavy, cost-sensitive traffic (served tenant sites, free R2 egress) stays on Cloudflare while only the light management UI runs on Vercel. The **public serve path never touches Vercel or carries a JWT**; only the gated-site `/authz` exchange (Phase 2) does. Self-host swaps Vercel for a container (the dashboard is just a Next.js app).
+**Recommended (chosen): Vercel for the dashboard** (`app.dropway.dev` — Next.js + Better Auth + the `/authz` exchange). **Cloudflare keeps the whole content plane: R2 object store, the serving Worker on `*.dropwaycontent.com`, and KV/D1.** This split is natural here — the dashboard and content already live on different domains, and the heavy, cost-sensitive traffic (served tenant sites, free R2 egress) stays on Cloudflare while only the light management UI runs on Vercel. The **public serve path never touches Vercel or carries a JWT**; only the gated-site `/authz` exchange (Phase 2) does. Self-host swaps Vercel for a container (the dashboard is just a Next.js app).
 
 ### Backend API
 | Option | Pros | Cons |
@@ -215,14 +215,14 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 ### Edge auth mechanism
 | Option | Pros | Cons |
 |---|---|---|
-| **Thin Worker + `/authz` exchange (gated only)** ✅ | Public path is JWT-free + cacheable; gated tiers get a host-scoped token from `app.shipped.app/authz` that the Worker verifies (never the operator JWT) | You own the host-scoped-token hardening; introduce only in Phase 2 |
+| **Thin Worker + `/authz` exchange (gated only)** ✅ | Public path is JWT-free + cacheable; gated tiers get a host-scoped token from `app.dropway.dev/authz` that the Worker verifies (never the operator JWT) | You own the host-scoped-token hardening; introduce only in Phase 2 |
 | Cloudflare Access | Managed SSO at the network edge | Can't gate the Vercel-hosted dashboard; not for end-user per-object authz — **not used here** |
 | Signed-URL only | Simple; great for bulk public download | URL secrecy ≠ boundary; can't model tiers/revoke |
 
-**Recommended: keep the public serve path JWT-free** (Worker = thin router: KV host→version → R2, cacheable — the 95% case). **Gated tiers [Phase 2] use a host-scoped token exchange** at `app.shipped.app/authz` (the Worker verifies that token, not the operator JWT — §6). **The real authz boundary is the Go API origin** (it verifies every JWT). **Better Auth login + a platform-staff role** gate the dashboard and internal admin (no Cloudflare Access); signed URLs narrowly for upload/bulk download.
+**Recommended: keep the public serve path JWT-free** (Worker = thin router: KV host→version → R2, cacheable — the 95% case). **Gated tiers [Phase 2] use a host-scoped token exchange** at `app.dropway.dev/authz` (the Worker verifies that token, not the operator JWT — §6). **The real authz boundary is the Go API origin** (it verifies every JWT). **Better Auth login + a platform-staff role** gate the dashboard and internal admin (no Cloudflare Access); signed URLs narrowly for upload/bulk download.
 
 ### CLI distribution
-**Recommended: Go single static binary** (GoReleaser → Homebrew/Scoop/`curl|sh`), reusing backend deploy code; optional thin `npx shipped` wrapper that downloads the binary.
+**Recommended: Go single static binary** (GoReleaser → Homebrew/Scoop/`curl|sh`), reusing backend deploy code; optional thin `npx dropway` wrapper that downloads the binary.
 
 ### Billing
 | Option | Pros | Cons |
@@ -269,7 +269,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
      │  │  └──────────────► domains (org_id, hostname GLOBALLY UNIQUE, verify status, TLS state)
      │  └─────────► site_access_policy + allowlist_entries
      │               (org_id, site_id, mode, email/email-domain, is_external,
-     │                claimed_at -- grant CLAIMED only when a verified Shipped account signs in)
+     │                claimed_at -- grant CLAIMED only when a verified Dropway account signs in)
      ▼
    deploy_tokens / api_keys (org_id, kind, token_hash, scopes, site_id?)
    audit_log (org_id, actor_user, actor_token, action, target, metadata, ip)
@@ -289,7 +289,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 `sites.current_version_id → site_versions.id` is `DEFERRABLE INITIALLY DEFERRED` (breaks the insert-time cycle). Every tenant-scoped table carries a **denormalized `org_id`** with composite indexes leading on `org_id`.
 
 **RLS as a tenant-isolation backstop via `SET LOCAL` (refined).** There is no Supabase `authenticated` role or `auth.uid()`, and the Go API uses a **pooled** connection — so naïve Supabase RLS would be a no-op. The fix:
-- A dedicated **`shipped_app` login role that is NOT `BYPASSRLS`** and is not `postgres`/`service_role`. Every tenant table is `ENABLE` **and `FORCE ROW LEVEL SECURITY`** so even the table owner is subject; migrations run as a separate owner/admin role.
+- A dedicated **`dropway_app` login role that is NOT `BYPASSRLS`** and is not `postgres`/`service_role`. Every tenant table is `ENABLE` **and `FORCE ROW LEVEL SECURITY`** so even the table owner is subject; migrations run as a separate owner/admin role.
 - On every request the Go API opens a tx and runs `SET LOCAL app.current_user_id = $1; SET LOCAL app.current_org_id = $2;` from the **verified** JWT. `SET LOCAL` is transaction-scoped → **safe under Supavisor transaction-mode pooling** (validate in the Phase-0 spike that GUCs don't leak across pooled txns).
 - **Policies are simple and subquery-free:** `USING (org_id = current_setting('app.current_org_id', true)::uuid)` — no joins/helper-function lookups on the hot path. RLS is the isolation *backstop*; the **Go API is the primary authz layer**.
 - **Confused-deputy guard:** never authorize from the `org_id`/`role` *claim* alone — for sensitive writes the API re-checks that the target resource belongs to the active org and that membership/role is current. Claims are a fast hint, not a grant.
@@ -319,7 +319,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 
 ## 6. Edge Auth & Sharing Tiers
 
-**The edge applies auth *narrowly*, by access mode — not a JWT check on every request.** The serving Worker is a thin router; the Go API origin is the real authz layer (§3). Content is served from the **separate PSL domain `*.shippedusercontent.com`** (+ custom domains) so hostile tenant JS can never reach the `app.shipped.app` session — the load-bearing isolation decision.
+**The edge applies auth *narrowly*, by access mode — not a JWT check on every request.** The serving Worker is a thin router; the Go API origin is the real authz layer (§3). Content is served from the **separate PSL domain `*.dropwaycontent.com`** (+ custom domains) so hostile tenant JS can never reach the `app.dropway.dev` session — the load-bearing isolation decision.
 
 | Access mode | Who enforces | Identity / token at edge | Phase |
 |---|---|---|---|
@@ -329,20 +329,20 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 | `org-only` | viewer must be an org member | host-scoped token from the authz exchange | **2** |
 
 **Cookie/domain topology**
-- **App session** (`app.shipped.app`): **Better Auth** session cookie, `__Host-` prefix → host-only, `Secure; HttpOnly; SameSite=Lax`, **no `Domain=`**. Never sent to the content domain.
-- **Host-scoped content token** (gated sites, Phase 2): issued by `app.shipped.app/authz`, scoped to the exact content host, short TTL. The Worker verifies *this* token (its own secret/JWKS) — **never the operator dashboard JWT**.
-- **`shippedusercontent.com` on the PSL** stops `evil.…` from setting a `Domain=…` cookie landing on a sibling (cookie tossing/fixation).
+- **App session** (`app.dropway.dev`): **Better Auth** session cookie, `__Host-` prefix → host-only, `Secure; HttpOnly; SameSite=Lax`, **no `Domain=`**. Never sent to the content domain.
+- **Host-scoped content token** (gated sites, Phase 2): issued by `app.dropway.dev/authz`, scoped to the exact content host, short TTL. The Worker verifies *this* token (its own secret/JWKS) — **never the operator dashboard JWT**.
+- **`dropwaycontent.com` on the PSL** stops `evil.…` from setting a `Domain=…` cookie landing on a sibling (cookie tossing/fixation).
 
 **Decision flow**
 ```
-Request → host.shippedusercontent.com/path  (Serving Worker)
+Request → host.dropwaycontent.com/path  (Serving Worker)
   ├─ KV route:<host> → {org_id, site_id, version_id, access_mode}   (miss → Go cold path, warm KV)
   ├─ access_mode=public   → Cache API → stream R2          ✅  (NO JWT — the 95% path)
   ├─ access_mode=password → valid host-scoped cookie? serve : prompt → verify → Set-Cookie  [P2]
   └─ access_mode=allowlist | org-only:                                                       [P2]
         valid host-scoped token (sig + exp + bound to THIS host)?
           yes → serve   (private: Cache-Control: private, no-store; NEVER caches.default)
-          no  → 302 → app.shipped.app/authz?return=<host>
+          no  → 302 → app.dropway.dev/authz?return=<host>
                        Better Auth session? (else Google/email sign-up — ACCOUNT REQUIRED) →
                        AUTHORIZE against LIVE tables (Go API):
                          org-only → viewer ∈ member(site.org_id) (re-check)
@@ -363,7 +363,7 @@ Password gate is served from a **platform-controlled origin tenant JS cannot ren
 
 ## 7. Deploy UX, CLI & Runtime APIs
 
-### 7.1 `shipped deploy` sequence
+### 7.1 `dropway deploy` sequence
 ```
 DEV            CLI                         GO API                    R2
  │  deploy ./dist                            │                        │
@@ -382,10 +382,10 @@ DEV            CLI                         GO API                    R2
 Content-addressing is computed client-side; only missing blobs upload; presigned keys are **derived from the authenticated token's org + the server-validated sha256** (never request-body identifiers); server **re-verifies stored bytes hash == key** before `ready`; publish (pointer flip) requires a stricter scope than upload; pointer flip is Postgres-authoritative, KV is a reconcilable cache.
 
 ### 7.2 Folder drag-and-drop (first-class, MVP — explicit user requirement)
-The dashboard accepts a **dropped folder** of HTML/CSS/assets, not just individual files: the browser walks the directory tree via the `DataTransferItem`/`webkitGetAsEntry()` (drag-drop) and `<input webkitdirectory>` (picker) APIs, computes per-file SHA-256 in a Web Worker, and hits the **same `/deployments/prepare` → presigned-upload → `/deployments` → publish contract** as the CLI. Difference: authenticated with the **user's Better Auth session/JWT** (RLS-enforced via `SET LOCAL app.*`), uploading blobs directly to R2 (CORS allow-listed for `app.shipped.app`). MVP requires a pre-built `dist/` (matches static-now + Quick's no-build ethos); a per-site `spa:true` toggle enables index.html fallback.
+The dashboard accepts a **dropped folder** of HTML/CSS/assets, not just individual files: the browser walks the directory tree via the `DataTransferItem`/`webkitGetAsEntry()` (drag-drop) and `<input webkitdirectory>` (picker) APIs, computes per-file SHA-256 in a Web Worker, and hits the **same `/deployments/prepare` → presigned-upload → `/deployments` → publish contract** as the CLI. Difference: authenticated with the **user's Better Auth session/JWT** (RLS-enforced via `SET LOCAL app.*`), uploading blobs directly to R2 (CORS allow-listed for `app.dropway.dev`). MVP requires a pre-built `dist/` (matches static-now + Quick's no-build ethos); a per-site `spa:true` toggle enables index.html fallback.
 
 ### 7.3 Runtime APIs (one auth model, phased)
-Every runtime call hits `api.shipped.app` with a **site-runtime token** (issued by the `app.shipped.app/authz` exchange, claims `{org_id, site_id, viewer_sub, access_mode, scopes}`, `aud=api.shipped.app`). Go verifies and forces all access through `org_id`/`site_id` via RLS (`SET LOCAL`). **Off by default, opt-in per site.**
+Every runtime call hits `api.dropway.dev` with a **site-runtime token** (issued by the `app.dropway.dev/authz` exchange, claims `{org_id, site_id, viewer_sub, access_mode, scopes}`, `aud=api.dropway.dev`). Go verifies and forces all access through `org_id`/`site_id` via RLS (`SET LOCAL`). **Off by default, opt-in per site.**
 
 | API | Scoping | Phase |
 |---|---|---|
@@ -412,7 +412,7 @@ Static→dynamic is **additive**: same manifest, routing, auth, RLS; dynamic jus
 - **Migration order** (CI-gated invariant): Better Auth (`auth`) before app migrations that FK to `organization.id`. Namespaced schemas avoid collisions.
 
 **Identity → DB, the security crux (no Supabase `authenticated` role):**
-- **Default (RLS-enforced):** the Go API verifies the **EdDSA JWT via JWKS**, then per request in a tx: `SET LOCAL app.current_user_id = …; SET LOCAL app.current_org_id = …`. Policies read these GUCs. Transaction-scoped → safe under **Supavisor transaction-mode pooling**. Connect as the **non-`BYPASSRLS` `shipped_app` role** with `FORCE ROW LEVEL SECURITY` so RLS is never silently skipped.
+- **Default (RLS-enforced):** the Go API verifies the **EdDSA JWT via JWKS**, then per request in a tx: `SET LOCAL app.current_user_id = …; SET LOCAL app.current_org_id = …`. Policies read these GUCs. Transaction-scoped → safe under **Supavisor transaction-mode pooling**. Connect as the **non-`BYPASSRLS` `dropway_app` role** with `FORCE ROW LEVEL SECURITY` so RLS is never silently skipped.
 - **Deploy path:** **not** blanket service-role. Derive `app.current_*` from the verified deploy token (`org_id` + service-principal), run with `SET LOCAL` so **RLS still constrains every deploy write to the token's org**. Re-derive `site_id→org_id` from the DB and assert == token org before every mutation; never trust request-body identifiers.
 - **True `BYPASSRLS`:** only cross-tenant system jobs (GC, projection rebuild, usage rollups, and the cloud-only billing reconciler), a **separate pool/role**, explicit `org_id` filters.
 - **CI lint:** fail any request-scoped handler that opens a `BYPASSRLS`/service-role connection; integration test that org A cannot read/deploy to org B.
@@ -504,7 +504,7 @@ The strongest controls are at the serving edge; the two highest-risk surfaces ro
 
 - **[CRITICAL] Deploy path keeps RLS in force.** No blanket service-role on deploy/runtime. Derive `app.*` GUCs from the verified deploy token; `SET LOCAL app.org_id/user_id/role`; re-derive `site_id→org_id` and assert == token org before any mutation; never trust request-body identifiers. Connect as a non-`BYPASSRLS` role. CI lint blocks service-role on request handlers; test org A ✗ deploy to org B.
 - **[CRITICAL] External-sharing policy is enforced in depth, not just UI.** The `allow_external_sharing=false` rule is enforced at (1) the Go API (authz on access-mode + grant writes), (2) the DB (CHECK/trigger rejecting `access_mode='public'`/`is_external` grants under the policy), and (3) the edge `/authz` exchange (re-checks the projected org policy before authorizing any external/public viewer; routes revoked when an admin disables it). UI-only enforcement is insufficient — assume a malicious member calls the API directly.
-- **[HIGH] Allowlist grants require a verified Shipped account (req 2).** A grant for `alice@x.com` is honored only for a signed-in user whose email is **verified** on their Better Auth account (`emailVerified=true`; Google is verified, email/password must confirm). Never match an unverified email — otherwise an attacker self-registers a victim's address to claim a grant. Pre-registration grants stay `pending` until claimed; surface "claimed by" in the audit log.
+- **[HIGH] Allowlist grants require a verified Dropway account (req 2).** A grant for `alice@x.com` is honored only for a signed-in user whose email is **verified** on their Better Auth account (`emailVerified=true`; Google is verified, email/password must confirm). Never match an unverified email — otherwise an attacker self-registers a victim's address to claim a grant. Pre-registration grants stay `pending` until claimed; surface "claimed by" in the audit log.
 - **[HIGH] Only admins mutate org policy & roles (req 4).** Role-promotion and `allow_external_sharing` writes are gated by `has_org_role(org,'admin')` at the API and via Better Auth Organization access-control; never client-trusted. The creator is seeded as `owner` server-side, not from any client field.
 - **[CRITICAL] Anonymous runtime tokens must not drive paid endpoints.** LLM/image proxy **off by default for public sites**; opt-in with mandatory low per-site daily $ cap + **hard per-site rate limit in a Durable Object** (anon `viewer_sub` is rotatable); require **Turnstile/PoW** before issuing anon tokens with expensive scopes; never echo provider error bodies.
 - **[HIGH] Per-org blob storage — no cross-tenant dedup.** Key = `blobs/<org_id>/<sha256>`; dedup scoped to caller's org (global existence check = content-confirmation oracle). Worker builds the R2 key from the resolved org_id of the host, never client-supplied path. Makes GDPR hard-delete safe.
@@ -520,28 +520,28 @@ The strongest controls are at the serving edge; the two highest-risk surfaces ro
 
 Monorepo (Turborepo or plain workspaces + Go modules). **License boundary baked into the directory layout** (so the self-host build trivially excludes non-OSS code — see §14):
 ```
-shipped/
+dropway/
 ├── LICENSE                # FSL-1.1-Apache-2.0 — governs everything EXCEPT cloud/ and ee/
 ├── apps/
-│   ├── dashboard/         # [FSL] Next.js App Router (app.shipped.app): Better Auth (/api/auth/*, Org+JWT+SSO)
+│   ├── dashboard/         # [FSL] Next.js App Router (app.dropway.dev): Better Auth (/api/auth/*, Org+JWT+SSO)
 │   │                      #   owns identity tables; /authz exchange (P2); UI calls Go API via generated
 │   │                      #   OpenAPI client — NO direct Postgres for business data
 │   └── docs/              # marketing/docs (optional)
 ├── services/
-│   └── api/               # [FSL] Go: chi (api.shipped.app) = SYSTEM OF RECORD; verifies EdDSA JWT;
+│   └── api/               # [FSL] Go: chi (api.dropway.dev) = SYSTEM OF RECORD; verifies EdDSA JWT;
 │       │                  #   deploy orchestration, KV/D1 projection writer, authz. cloud/ via interfaces.
 │       ├── internal/{deploy,edge,db(sqlc),authz,quota(QuotaProvider iface; no-op default)}
 │       └── openapi/        #   OpenAPI spec → dashboard TS client
 ├── edge/
-│   └── serving-worker/    # [FSL] Cloudflare Worker (*.shippedusercontent.com): R2+KV+D1; public=no-JWT router,
+│   └── serving-worker/    # [FSL] Cloudflare Worker (*.dropwaycontent.com): R2+KV+D1; public=no-JWT router,
 │                          #   gated=host-scoped-token verify (P2)
-├── cli/                   # [FSL] Go: `shipped` binary (GoReleaser), shares services/api deploy code
+├── cli/                   # [FSL] Go: `dropway` binary (GoReleaser), shares services/api deploy code
 ├── contracts/            # [FSL] cross-language data contracts (KV value shape): JSON Schema → Go + TS,
 │                          #   schema_version + CI round-trip test
 ├── cloud/                 # [PROPRIETARY, cloud-only — NOT in self-host build]
 │   ├── billing/           #   Stripe integration + webhooks, subscription modal backend, BillingProvider impl
 │   └── quota/             #   real QuotaProvider: hard-cap gate (Free 5u/10s · Business · Enterprise) + 402
-├── ee/                    # [SHIPPED ENTERPRISE EDITION LICENSE] SSO/SAML, audit export, advanced RBAC, custom domains
+├── ee/                    # [DROPWAY ENTERPRISE EDITION LICENSE] SSO/SAML, audit export, advanced RBAC, custom domains
 ├── db/
 │   ├── migrations/app/    # [FSL] Go-owned app schema — goose migrations + hand-written RLS/GRANT/trigger
 │   ├── auth-schema/       #   Better-Auth-generated SQL (generate-only; Better Auth migrates the auth schema)
@@ -551,9 +551,9 @@ shipped/
     ├── auth/              # shared Better Auth config (providers, org access-control rules, JWKS)
     └── tsconfig/eslint    # shared config
 ```
-The OSS core depends on `cloud/`/`ee/` only through **interfaces with no-op/unlimited default implementations** (e.g. `QuotaProvider`); the self-host build compiles those defaults, the cloud build wires in the real ones (Go build tags / DI; TS dynamic import behind `SHIPPED_CLOUD`). **CI asserts the core has zero references into `cloud/`/`ee/`/`billing` schema.**
+The OSS core depends on `cloud/`/`ee/` only through **interfaces with no-op/unlimited default implementations** (e.g. `QuotaProvider`); the self-host build compiles those defaults, the cloud build wires in the real ones (Go build tags / DI; TS dynamic import behind `DROPWAY_CLOUD`). **CI asserts the core has zero references into `cloud/`/`ee/`/`billing` schema.**
 
-**Cloud deployment targets:** `apps/dashboard` → **Vercel** (`app.shipped.app`); `edge/serving-worker` → **Cloudflare** Workers on `*.shippedusercontent.com` with R2 + KV/D1 bindings; `services/api` → a container runtime (Cloud Run / Fly / Railway) on `api.shipped.app`; Postgres → Supabase. (Self-host runs the dashboard + API as containers via `deploy/` and substitutes MinIO + a self-host serving path for R2/Workers.)
+**Cloud deployment targets:** `apps/dashboard` → **Vercel** (`app.dropway.dev`); `edge/serving-worker` → **Cloudflare** Workers on `*.dropwaycontent.com` with R2 + KV/D1 bindings; `services/api` → a container runtime (Cloud Run / Fly / Railway) on `api.dropway.dev`; Postgres → Supabase. (Self-host runs the dashboard + API as containers via `deploy/` and substitutes MinIO + a self-host serving path for R2/Workers.)
 
 ---
 
@@ -561,9 +561,9 @@ The OSS core depends on `cloud/`/`ee/` only through **interfaces with no-op/unli
 
 Front-load the irreversible decisions (RLS tenant context, open-core boundary, schema-ownership seams); do **not** gate core development on Stripe or on cross-domain viewer-auth.
 
-- **Phase 0 — Foundations & contracts (de-risk the seams).** Monorepo + FSL headers + open-core boundary (`billing` as a separate schema/module the OSS build excludes). Postgres + **goose** migrations; **`shipped_app` non-BYPASSRLS role** + `FORCE RLS`. Better Auth installed (Google OAuth, Organization + JWT/**EdDSA** plugins, live JWKS). Wire **sqlc + OpenAPI codegen** and the **`contracts/` KV shape**. Define the **`QuotaProvider` interface** (core ships a no-op/unlimited impl). **Spike the one risky integration: Go verifies a Better Auth EdDSA JWT via cached JWKS with `kid` refresh + alg pinning** (reject `alg:none`/`HS256`). Validate **Supavisor transaction-mode pooling + `SET LOCAL`** doesn't leak GUCs.
-- **Phase 1 — Core publish/serve loop (the heart, no billing).** Upload bundle → Go API → R2 → immutable `site_version` → Go writes KV/D1 projection. Worker serves `*.shippedusercontent.com/<slug>` from R2 via KV — **public only, no edge JWT**. Dashboard: Google login → create org → create site → deploy → live URL (UI via the OpenAPI client; no direct PG), with **polished sign-up/sign-in and system light/dark** (Tailwind + shadcn/ui + `next-themes`, §4). **RLS enabled with `SET LOCAL` tenant context from day one** (don't retrofit isolation). Hold the **"KV is rebuildable from Postgres"** invariant. Versioning + rollback (free from immutable versions). Reserved-slug list; structured logs w/ correlated `request_id`.
-- **Phase 2 — Access control & domains.** Access modes: `public` → `password` (host-scoped cookie, no identity) → `allowlist`/`org-only` (the **cross-domain `/authz` viewer exchange** from §1/§6 — the sleeper-hard piece; **allowlist requires a verified Shipped account**; external/public gated in depth by `allow_external_sharing`). Org roles/invitations via Better Auth org plugin + member-management UI; creator=`owner`, admin-only policy/role changes. Custom domains via **Cloudflare for SaaS** (DNS-TXT + TLS). Unlisted + expiration TTL.
+- **Phase 0 — Foundations & contracts (de-risk the seams).** Monorepo + FSL headers + open-core boundary (`billing` as a separate schema/module the OSS build excludes). Postgres + **goose** migrations; **`dropway_app` non-BYPASSRLS role** + `FORCE RLS`. Better Auth installed (Google OAuth, Organization + JWT/**EdDSA** plugins, live JWKS). Wire **sqlc + OpenAPI codegen** and the **`contracts/` KV shape**. Define the **`QuotaProvider` interface** (core ships a no-op/unlimited impl). **Spike the one risky integration: Go verifies a Better Auth EdDSA JWT via cached JWKS with `kid` refresh + alg pinning** (reject `alg:none`/`HS256`). Validate **Supavisor transaction-mode pooling + `SET LOCAL`** doesn't leak GUCs.
+- **Phase 1 — Core publish/serve loop (the heart, no billing).** Upload bundle → Go API → R2 → immutable `site_version` → Go writes KV/D1 projection. Worker serves `*.dropwaycontent.com/<slug>` from R2 via KV — **public only, no edge JWT**. Dashboard: Google login → create org → create site → deploy → live URL (UI via the OpenAPI client; no direct PG), with **polished sign-up/sign-in and system light/dark** (Tailwind + shadcn/ui + `next-themes`, §4). **RLS enabled with `SET LOCAL` tenant context from day one** (don't retrofit isolation). Hold the **"KV is rebuildable from Postgres"** invariant. Versioning + rollback (free from immutable versions). Reserved-slug list; structured logs w/ correlated `request_id`.
+- **Phase 2 — Access control & domains.** Access modes: `public` → `password` (host-scoped cookie, no identity) → `allowlist`/`org-only` (the **cross-domain `/authz` viewer exchange** from §1/§6 — the sleeper-hard piece; **allowlist requires a verified Dropway account**; external/public gated in depth by `allow_external_sharing`). Org roles/invitations via Better Auth org plugin + member-management UI; creator=`owner`, admin-only policy/role changes. Custom domains via **Cloudflare for SaaS** (DNS-TXT + TLS). Unlisted + expiration TTL.
 - **Phase 3 — Cloud billing & quotas (proprietary, cloud-only).** Stripe subscriptions + webhook lifecycle (**entitlement persisted by signed webhook**, §9); map tiers to the Phase-0 `QuotaProvider`; transactional **`org_usage` FOR UPDATE** hard-cap enforcement (Free 5u/10s → Business <100 → Enterprise 100–1,000 → Contact Sales); over-limit/downgrade → **read-only, not destructive**; 402 → subscription modal. OSS core still runs with the no-op provider.
 - **Phase 4 — Hardening & scale.** KV **denylist / `min_iat`** hard-revocation; audit logs; end-to-end tracing (Vercel→Worker→Go→PG); edge rate limiting + denial-of-wallet caps; upload abuse/malware scanning + takedown/quarantine; R2 version GC; **RLS policy test suite**; SSO/SAML (Better Auth, UUID-keyed) + SCIM; runtime APIs (Identity, rate-limit, collection-DB, LLM proxy with §10 guardrails); security review; **backup/restore + KV/D1 rebuild-from-Postgres DR drill**.
 
@@ -575,21 +575,21 @@ Stand up and prove each layer end-to-end before building atop it. Each row is a 
 
 | # | Layer | Bootstrap | Proof |
 |---|---|---|---|
-| 1 | Domains/PSL | Register `shippedusercontent.com`, submit to PSL; wildcard DNS + cert | Browser refuses a `Domain=shippedusercontent.com` cookie set from `a.…` reaching `b.…` |
+| 1 | Domains/PSL | Register `dropwaycontent.com`, submit to PSL; wildcard DNS + cert | Browser refuses a `Domain=dropwaycontent.com` cookie set from `a.…` reaching `b.…` |
 | 1b | JWKS/JWT spike (P0) | Mint a Better Auth **EdDSA** JWT; point the Go verifier at JWKS | Go **accepts** the EdDSA JWT, **rejects `alg:none` and `HS256`**, and refreshes JWKS on `kid` rotation (rate-limited) |
-| 2 | DB + RLS | `goose` app migrations as `shipped_app` (non-BYPASSRLS) + `FORCE RLS`; Better Auth migrates `auth` schema | As `shipped_app` with `SET LOCAL app.current_org_id=A`: org B rows invisible for select/update/delete; **`FORCE RLS` blocks the owner path too**; deploy-token for A can't write B; a member can't write `org_meta`/`member.role` |
+| 2 | DB + RLS | `goose` app migrations as `dropway_app` (non-BYPASSRLS) + `FORCE RLS`; Better Auth migrates `auth` schema | As `dropway_app` with `SET LOCAL app.current_org_id=A`: org B rows invisible for select/update/delete; **`FORCE RLS` blocks the owner path too**; deploy-token for A can't write B; a member can't write `org_meta`/`member.role` |
 | 2b | Pooling + `SET LOCAL` | Supavisor transaction-mode pool | Tenant GUCs don't leak across pooled transactions (interleave two orgs' txns) |
 | 3 | Auth + roles | Better Auth (Google + email/magic, email-verify) + Organization + JWT/EdDSA | Google sign-up works; JWT shows `user_id`/`org_id`/`role`; member can't toggle `allow_external_sharing` or promote admins (403); with policy=false the **API** rejects public/external grants (not just UI) |
-| 4 | Storage + deploy | R2 + Go prepare/publish + CLI | `shipped deploy ./fixture` → only-changed-blob upload; server rejects blob whose bytes ≠ claimed hash; rollback in seconds |
-| 5 | Public serve (P1) | Serving Worker (R2+KV) on `*.shippedusercontent.com` | Public site loads with **no JWT**; cache hit < 20ms |
-| 6 | Gated viewer-auth (P2) | `/authz` exchange on `app.shipped.app` | Allowlist: an **un-registered** invited email is forced to sign up first, then (verified) sees the site, non-listed 403; org member sees, non-member 403; password gate from platform origin; host-scoped token bound to one host (replay at host B fails) |
+| 4 | Storage + deploy | R2 + Go prepare/publish + CLI | `dropway deploy ./fixture` → only-changed-blob upload; server rejects blob whose bytes ≠ claimed hash; rollback in seconds |
+| 5 | Public serve (P1) | Serving Worker (R2+KV) on `*.dropwaycontent.com` | Public site loads with **no JWT**; cache hit < 20ms |
+| 6 | Gated viewer-auth (P2) | `/authz` exchange on `app.dropway.dev` | Allowlist: an **un-registered** invited email is forced to sign up first, then (verified) sees the site, non-listed 403; org member sees, non-member 403; password gate from platform origin; host-scoped token bound to one host (replay at host B fails) |
 | 7 | Revocation (P4) | Short token TTL + KV denylist/`min_iat` | Remove a member → re-auth at `/authz` fails; revoked Better Auth session can't re-mint; denylist propagates < 60s |
 | 8 | Projection rebuild | Go is the only KV/D1 writer | Publish reflects at edge; **wipe KV/D1 and rebuild the routing projection from Postgres → serving recovers** (DR drill) |
 | 9 | Stripe payment + entitlement (P3) | `cloud/billing`: Checkout Session + `/webhooks/stripe` (Stripe CLI `stripe trigger`) | `POST /billing/checkout` returns a Checkout URL (only owner/admin); `checkout.session.completed` webhook **writes `billing.subscriptions.plan_tier`** + pushes KV; **success redirect alone does NOT entitle** (forged redirect → still Free); replayed `event.id` ignored; `subscription.deleted` → Free + `org_status=over_limit`, no data loss |
 | 9b | Hard-cap bands (P3) | `cloud/quota` `QuotaProvider` on `POST /sites` + member-add, `org_usage` `FOR UPDATE` | Free: 11th site / 6th member → `402{next_tier:business}` → modal; Business: 100th member → `402{next_tier:enterprise}`; Enterprise: 1001st → `402{next_tier:contact_sales}` (no checkout); **N concurrent creates at a cap-10 org → exactly 10 succeed** |
 | 10 | Open-core build | Build core **without** `cloud/`+`ee/`+`billing` schema | Phase-1 e2e (login → create site → deploy → public serve) passes; **CI proves zero core→cloud refs**; LICENSE files present per directory |
 | 11 | Contract round-trip | `contracts/` KV shape (Go ↔ TS) | Go writes a KV value, Worker (TS) parses it against the schema and back; CI fails on drift; `schema_version` honored |
-| 12 | Local dev | `supabase start` (Postgres) + Better Auth + Wrangler `--local` + `*.shipped.test` | Public serve works offline; the P2 `/authz` cross-domain handoff (Google → host-scoped token) reproducible offline |
+| 12 | Local dev | `supabase start` (Postgres) + Better Auth + Wrangler `--local` + `*.dropway.test` | Public serve works offline; the P2 `/authz` cross-domain handoff (Google → host-scoped token) reproducible offline |
 | 13 | Self-host stack | `docker compose up` from `deploy/` (Postgres + dashboard + Go API + **MinIO** for R2) | Whole stack boots offline; login → create site → deploy → **public serve** works with **no Stripe, no limits** |
 
 **Highest-leverage first actions (Phase 0):** (1) the **JWKS/JWT spike** (#1b) + **Supavisor `SET LOCAL` pooling check** (#2b) — the two integrations that, if wrong, invalidate the auth and isolation models; (2) the **schema-ownership seams** (`contracts/` round-trip #11, migration order, `org_meta` keyed by `organization.id`) — expensive to retrofit; (3) the **open-core boundary** (#10) — CI proving zero core→`cloud/` references keeps the OSS build honest from commit one.
@@ -598,31 +598,31 @@ Stand up and prove each layer end-to-end before building atop it. Each row is a 
 
 ## 14. Open-Source & SaaS (Open-Core) Model + Licensing
 
-Shipped follows the **Supabase/PostHog open-core playbook**: a public, source-available codebase that anyone can self-host, with revenue from the hosted cloud + enterprise features — *not* from selling licenses to self-hosters.
+Dropway follows the **Supabase/PostHog open-core playbook**: a public, source-available codebase that anyone can self-host, with revenue from the hosted cloud + enterprise features — *not* from selling licenses to self-hosters.
 
 ### 14.1 Licensing (chosen: FSL → Apache)
-- **Core repo → `FSL-1.1-Apache-2.0`** (Functional Source License, Sentry's). Grants **everything except "Competing Use"** — you may self-host, modify, and use Shipped internally (including at a for-profit company), but you **may not offer Shipped (or a derivative) to third parties as a commercial/hosted service**. Each release **auto-converts to Apache 2.0 two years later**, so the project still becomes truly open over time. This is the practical, adoption-friendly reading of "self-host but can't make money off it."
+- **Core repo → `FSL-1.1-Apache-2.0`** (Functional Source License, Sentry's). Grants **everything except "Competing Use"** — you may self-host, modify, and use Dropway internally (including at a for-profit company), but you **may not offer Dropway (or a derivative) to third parties as a commercial/hosted service**. Each release **auto-converts to Apache 2.0 two years later**, so the project still becomes truly open over time. This is the practical, adoption-friendly reading of "self-host but can't make money off it."
   - *Note on terminology:* FSL is **source-available**, not an OSI-"Open Source" license — by definition no OSI license can forbid commercial/SaaS use. If a real OSI badge is required later, the fallback is **AGPLv3** (allows competition but forces source-sharing of networked forks); we deliberately chose FSL over AGPL to actually block resale.
 - **`cloud/` → proprietary, all-rights-reserved**, never published in a runnable self-host build. Holds Stripe billing + the quota gate (the only place the 10/5 limits exist).
-- **`ee/` → "Shipped Enterprise Edition License"** (PostHog-style, source-visible but use-restricted, license-key-gated): SSO/SAML, audit-log export, advanced RBAC, custom domains.
-- **Contributions: DCO sign-off** (lightweight) on the FSL core; a **CLA** only if/when we want to keep dual-licensing rights. Trademark "Shipped" reserved (forks must rename to redistribute), per the Supabase/PostHog norm.
+- **`ee/` → "Dropway Enterprise Edition License"** (PostHog-style, source-visible but use-restricted, license-key-gated): SSO/SAML, audit-log export, advanced RBAC, custom domains.
+- **Contributions: DCO sign-off** (lightweight) on the FSL core; a **CLA** only if/when we want to keep dual-licensing rights. Trademark "Dropway" reserved (forks must rename to redistribute), per the Supabase/PostHog norm.
 
 ### 14.2 Why this satisfies both goals
 | Goal | Mechanism |
 |---|---|
 | Anyone can self-host | FSL grants self-host + internal use for free; `deploy/` ships Docker Compose + Helm |
-| They can't "make money" off Shipped | FSL's **Competing-Use** ban (can't resell it as a service); trademark stops rebranded clones |
+| They can't "make money" off Dropway | FSL's **Competing-Use** ban (can't resell it as a service); trademark stops rebranded clones |
 | We run a paid SaaS | `cloud/` (proprietary) adds quotas + Stripe on our hosted deployment only |
 | We sell to enterprises | `ee/` license-keyed features (SSO, audit, RBAC, custom domains) |
 | Community trust / eventual openness | FSL converts to Apache 2.0 after 2 years per release |
 
 ### 14.3 How the build split actually works (so limits can't be patched out of *our* cloud, and self-host stays clean)
-- The OSS core calls billing/quota through a Go **`Quota`/`Billing` interface** (and a TS boundary behind `process.env.SHIPPED_CLOUD`). The **default OSS implementation is "unlimited / no-op."**
+- The OSS core calls billing/quota through a Go **`Quota`/`Billing` interface** (and a TS boundary behind `process.env.DROPWAY_CLOUD`). The **default OSS implementation is "unlimited / no-op."**
 - The **cloud build** compiles `cloud/quota` + `cloud/billing` (via Go build tags + DI / Next.js dynamic import) to supply the real 10-sites-per-user, 5-members-per-org gate and Stripe. This code lives in the private `cloud/` tree and is built only in our deploy pipeline — a self-hoster never receives it, so there is nothing to patch out, and our cloud isn't relying on a client-side check.
 - **The free-tier limits are therefore a cloud-pricing concern, enforced server-side in `cloud/quota` (Go), surfaced as `402 quota_exceeded` → Stripe subscription modal** (see §9). Self-host = the no-op impl = unlimited.
 
 ### 14.4 Open-source operational must-haves (MVP)
-Public mono-repo with clear `LICENSE` per directory + SPDX headers; `CONTRIBUTING.md` + DCO bot; reproducible **one-command self-host** (`docker compose up` / Helm) that boots Postgres + dashboard + Go API + a local object store (MinIO as an R2/S3-compatible stand-in for self-host) + a self-host serving path; `.env.example` with `SHIPPED_CLOUD=false`; security policy + responsible-disclosure; and CI that builds **both** the OSS-only image (asserts `cloud/`+`ee/` absent) and the cloud image.
+Public mono-repo with clear `LICENSE` per directory + SPDX headers; `CONTRIBUTING.md` + DCO bot; reproducible **one-command self-host** (`docker compose up` / Helm) that boots Postgres + dashboard + Go API + a local object store (MinIO as an R2/S3-compatible stand-in for self-host) + a self-host serving path; `.env.example` with `DROPWAY_CLOUD=false`; security policy + responsible-disclosure; and CI that builds **both** the OSS-only image (asserts `cloud/`+`ee/` absent) and the cloud image.
 
 ---
 
@@ -630,14 +630,14 @@ Public mono-repo with clear `LICENSE` per directory + SPDX headers; `CONTRIBUTIN
 
 Phase 4 deliberately scoped down to the **security/ops hardening** that is achievable and testable inside the repo with no new external accounts or vendor contracts. The items below were on the original §12 Phase-4 wish-list but are **intentionally NOT yet built** — each needs external services, paid runtime infrastructure, or a vendor relationship, so they are post-launch (mostly enterprise) work rather than launch-blocking. They are listed here so the omission is a documented decision, not a gap.
 
-### 15.1 What Phase 4 *shipped* (the hardening core)
+### 15.1 What Phase 4 *dropway* (the hardening core)
 For reference, so the backlog is read against what exists. Phase 4 delivered, with tests, and kept all Phase 0–3 tests green:
 
 - **Audit logging.** Writes to the existing `app.audit_log` table (`org_id, actor_user, actor_token, action, target, metadata jsonb, ip, created_at`) on security-relevant mutations (member add/remove, role change, policy/access-mode change, publish/unshare, billing lifecycle), correlated by `request_id`, read back through an org-scoped, RLS-enforced audit API.
 - **Hard revocation / denylist.** The Go API (via the projection / Cloudflare-KV writer) writes `revoked:user:<id>` / `revoked:site:<id>` / `revoked:org:<id>` → `{ min_iat }` keys on the **three** real token-revocation triggers: **member removal**, **site unshare / access-tightening**, and **`allow_external_sharing` disable**. Writes are **idempotent** (`max(existing, new)` min_iat) and **rebuildable** — a stale denylist only fails **closed** (extra re-auth), never opens access. Both the **serving Worker** (gated path) and the **`/authz` exchange** reject an edge token whose `iat` predates any matching `min_iat` (302 → `/authz` re-auth). Short edge-token TTL (15m) is the backstop; the denylist makes revocation immediate. **Billing suspension / over_limit is NOT a token revocation** — it would hard-cut existing viewers, contradicting the §9 read-only `over_limit` model. Instead, billing writes the per-org **`org_status:<org_id>` KV flag** (via the same projection writer, `OrgStatusWriter`); the edge then serves a **platform block page** (read-only) for a suspended/over-limit org while the org keeps all its data and existing tokens stay valid.
 - **Edge rate-limiting + denial-of-wallet caps.** Per-subject/per-site limits and hard caps fail closed before any expensive work.
 - **Content security headers** on served content (CSP as defense-in-depth — *not* the isolation control, which remains domain/PSL/origin separation per §10 — plus `Referrer-Policy: no-referrer`, frame/`nosniff`/permissions controls, and `Cache-Control: private, no-store` on gated responses).
-- **RLS policy test suite** — a table-driven integration suite asserting the `FORCE RLS`, subquery-free, `org_id`-keyed policies (org A cannot read/write org B; `shipped_app` is non-`BYPASSRLS`; GUC isolation across pooled transactions).
+- **RLS policy test suite** — a table-driven integration suite asserting the `FORCE RLS`, subquery-free, `org_id`-keyed policies (org A cannot read/write org B; `dropway_app` is non-`BYPASSRLS`; GUC isolation across pooled transactions).
 - **R2 version GC** — reaps blobs/versions unreferenced by any live deployment pointer (per-org keyspace, GDPR-hard-delete-safe).
 - **DR rebuild** — a CLI/ops path over the existing `store.RebuildProjection` that wipes and rebuilds the KV/D1 routing + denylist projection from authoritative Postgres (the §13 #8 DR drill).
 
@@ -649,7 +649,7 @@ For reference, so the backlog is read against what exists. Phase 4 delivered, wi
 | **SCIM** — directory-driven user/group provisioning + deprovisioning | Pairs with SSO; needs an IdP SCIM connector and a long-lived provisioning token surface | `ee/`, post-launch |
 | **Runtime APIs — collection DB + realtime** (rows tagged org+site+collection under RLS; Supabase Broadcast-from-DB keyed by site) | A whole stateful data product (write APIs, realtime fan-out, quotas) beyond static serving; large surface, separate hardening pass | runtime APIs, §7.3 `later` |
 | **Runtime APIs — file uploads** (presigned R2 `uploads/<org>/<site>/…`, quota-checked) | Per-site upload quota accounting + abuse controls not yet in place | runtime APIs, §7.3 `later` |
-| **Runtime APIs — LLM / image proxy** with the §10 **denial-of-wallet** guardrails (server-side keys; off-by-default on public; hard per-site $ cap + DO rate limit; Turnstile/PoW; never echo provider error bodies) | Needs paid provider keys + spend-cap billing plumbing + Turnstile; the §4 edge rate-limit/DoW caps shipped in Phase 4 are the *substrate*, but the metered proxy itself is post-launch | runtime APIs, §7.3 `later` |
+| **Runtime APIs — LLM / image proxy** with the §10 **denial-of-wallet** guardrails (server-side keys; off-by-default on public; hard per-site $ cap + DO rate limit; Turnstile/PoW; never echo provider error bodies) | Needs paid provider keys + spend-cap billing plumbing + Turnstile; the §4 edge rate-limit/DoW caps dropway in Phase 4 are the *substrate*, but the metered proxy itself is post-launch | runtime APIs, §7.3 `later` |
 | **WebSockets / Durable Objects / Workers-for-Platforms dynamic runtime** (untrusted user-Workers behind the same Host, per-tenant CPU cap) | Real dynamic-compute isolation + per-tenant resource accounting; substantial new trust boundary | runtime APIs, §7.3 `later` |
 | **Third-party malware / abuse scanning vendor + automated takedown / quarantine** | Requires a scanning-vendor contract/API and a takedown workflow; the serving plane (PSL isolation, no-service-worker on content origins, per-org keyspace) already contains hostile content, so this is an abuse-ops add-on, not a launch blocker | abuse-ops, post-launch |
 | **Per-site configurable CSP UI** | CSP ships as a sane fixed default in Phase 4 (defense-in-depth); a per-site policy editor is a product-surface enhancement, not a security control | product, post-launch |

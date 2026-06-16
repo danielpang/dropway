@@ -25,7 +25,7 @@ type Config struct {
 	JWTAudience string
 
 	// Cloud selects the hosted build's quota/billing enforcement at runtime
-	// (SHIPPED_CLOUD). The OSS binary ignores this — the cloud provider is only
+	// (DROPWAY_CLOUD). The OSS binary ignores this — the cloud provider is only
 	// linked in under the `cloud` build tag — but it's surfaced here so the
 	// cloud build can read it and the OSS build can warn if it's set.
 	Cloud bool
@@ -99,7 +99,7 @@ type Config struct {
 	StripePriceEnterprise string
 
 	// DashboardURL is the dashboard origin (DASHBOARD_URL) used for Checkout
-	// success/cancel + Billing-Portal return URLs. Defaults to https://app.shipped.app.
+	// success/cancel + Billing-Portal return URLs. Defaults to https://app.dropway.dev.
 	DashboardURL string
 
 	// ContentScheme / ContentPort configure how the API renders the DISPLAY URLs it
@@ -123,7 +123,7 @@ func Load() (Config, error) {
 		JWKSURL:              os.Getenv("JWKS_URL"),
 		JWTIssuer:            os.Getenv("JWT_ISSUER"),
 		JWTAudience:          os.Getenv("JWT_AUDIENCE"),
-		Cloud:                parseBool(os.Getenv("SHIPPED_CLOUD")),
+		Cloud:                parseBool(os.Getenv("DROPWAY_CLOUD")),
 		AllowJWTRoleFallback: parseBool(os.Getenv("ALLOW_JWT_ROLE_FALLBACK")),
 
 		S3Endpoint:        os.Getenv("S3_ENDPOINT"),
@@ -147,7 +147,7 @@ func Load() (Config, error) {
 		StripeWebhookSecret:   os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
-		DashboardURL:          envOr("DASHBOARD_URL", "https://app.shipped.app"),
+		DashboardURL:          envOr("DASHBOARD_URL", "https://app.dropway.dev"),
 
 		ContentScheme: envOr("CONTENT_SCHEME", "https"),
 		ContentPort:   os.Getenv("CONTENT_PORT"),

@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/danielpang/shipped/internal/projection"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // This file extends the unit-test fakeStore (handlers_test.go) with the Phase-2
@@ -58,7 +58,7 @@ func (f *fakeStore) p2() *p2State {
 }
 
 // hostRoutesForSite returns the site's registered hosts, defaulting to just the
-// canonical org-namespaced <org>--<slug>.shippedusercontent.com host when none
+// canonical org-namespaced <org>--<slug>.dropwaycontent.com host when none
 // were explicitly seeded.
 func (f *fakeStore) hostRoutesForSite(t store.Tenant, s store.Site) []store.HostRoute {
 	if hr, ok := f.p2().hostRoutes[s.ID]; ok {

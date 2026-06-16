@@ -14,11 +14,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/danielpang/shipped/internal/httpx"
-	"github.com/danielpang/shipped/internal/logx"
-	"github.com/danielpang/shipped/internal/middleware"
-	"github.com/danielpang/shipped/internal/quota"
-	"github.com/danielpang/shipped/services/api/internal/store"
+	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/logx"
+	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
 // presignTTL bounds how long a direct-to-store upload URL is valid.

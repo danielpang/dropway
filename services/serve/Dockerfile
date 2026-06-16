@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Multi-stage build for the Shipped self-host content server (services/serve/cmd/serve).
+# Multi-stage build for the Dropway self-host content server (services/serve/cmd/serve).
 # Build context is the REPO ROOT (the Go module spans the whole repo):
-#   docker build -f services/serve/Dockerfile -t shipped-serve .
+#   docker build -f services/serve/Dockerfile -t dropway-serve .
 #
 # This is the plain Go alternative to the Cloudflare serving Worker: it serves
-# tenant static content on *.shippedusercontent.com + custom domains with no
+# tenant static content on *.dropwaycontent.com + custom domains with no
 # Cloudflare. OSS/self-host only (no build tags). Front it with Caddy (deploy/caddy)
 # for automatic HTTPS + on-demand TLS for custom domains.
 

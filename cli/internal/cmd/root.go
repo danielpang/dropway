@@ -4,12 +4,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewRootCmd builds the `shipped` root command with all subcommands wired in.
+// NewRootCmd builds the `dropway` root command with all subcommands wired in.
 // Exported so main.go and tests can construct and execute it.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "shipped",
-		Short:         "Shipped — a folder of files → a live, access-controlled URL",
+		Use:           "dropway",
+		Short:         "Dropway — a folder of files → a live, access-controlled URL",
 		SilenceUsage:  true, // don't dump usage on a runtime error
 		SilenceErrors: true, // we print errors ourselves in main
 	}

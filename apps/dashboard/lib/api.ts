@@ -7,7 +7,7 @@ import { API_URL } from "@/lib/env";
 import type { components, operations } from "@/lib/api-generated/schema";
 
 /**
- * Typed client for the Go control-plane API (api.shipped.app).
+ * Typed client for the Go control-plane API (api.dropway.dev).
  *
  * The dashboard's contract is the API, NEVER the database (architecture §8): it
  * calls the Go API for ALL business data, carrying a short-lived Better Auth

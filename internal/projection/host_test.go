@@ -8,10 +8,10 @@ import (
 )
 
 // TestHostForSite asserts the ORG-NAMESPACED single-label content host scheme:
-// <org>--<app>.shippedusercontent.com (the Worker wildcard matches exactly one
+// <org>--<app>.dropwaycontent.com (the Worker wildcard matches exactly one
 // label, and the `--` separator keeps org+app on that single label).
 func TestHostForSite(t *testing.T) {
-	if got := HostForSite("acme", "blog"); got != "acme--blog.shippedusercontent.com" {
+	if got := HostForSite("acme", "blog"); got != "acme--blog.dropwaycontent.com" {
 		t.Errorf("HostForSite = %q", got)
 	}
 	if got := HostForSite("acme", "my-cool-site"); got != "acme--my-cool-site."+ContentDomain {
@@ -23,7 +23,7 @@ func TestHostForSite(t *testing.T) {
 		t.Errorf("HostForSite single-label = %q", got)
 	}
 	// RouteKey + HostForSite compose to the global KV key.
-	if got := RouteKey(HostForSite("acme", "blog")); got != "route:acme--blog.shippedusercontent.com" {
+	if got := RouteKey(HostForSite("acme", "blog")); got != "route:acme--blog.dropwaycontent.com" {
 		t.Errorf("RouteKey(HostForSite) = %q", got)
 	}
 }
@@ -37,7 +37,7 @@ func TestOrgStatusKey_And_Constants(t *testing.T) {
 	if OrgStatusActive != "active" {
 		t.Errorf("OrgStatusActive = %q, want active", OrgStatusActive)
 	}
-	if ContentDomain != "shippedusercontent.com" {
+	if ContentDomain != "dropwaycontent.com" {
 		t.Errorf("ContentDomain = %q", ContentDomain)
 	}
 }
@@ -97,7 +97,7 @@ func TestLocal_FlushError(t *testing.T) {
 		revoked:   nil,
 		orgStatus: nil,
 	}
-	err := l.PutRoute(context.Background(), "h.shippedusercontent.com", RouteValue{
+	err := l.PutRoute(context.Background(), "h.dropwaycontent.com", RouteValue{
 		OrgID: "o", SiteID: "s", VersionID: "v", AccessMode: AccessPublic, SchemaVersion: SchemaVersion,
 	})
 	if err == nil {
@@ -110,7 +110,7 @@ func TestLocal_FlushError(t *testing.T) {
 // half-replace the projection).
 func TestLocal_RebuildRejectsInvalid(t *testing.T) {
 	l := NewLocal()
-	_ = l.PutRoute(context.Background(), "keep.shippedusercontent.com", RouteValue{
+	_ = l.PutRoute(context.Background(), "keep.dropwaycontent.com", RouteValue{
 		OrgID: "o", SiteID: "s", VersionID: "v", AccessMode: AccessPublic, SchemaVersion: SchemaVersion,
 	})
 	bad := map[string]RouteValue{
@@ -121,7 +121,7 @@ func TestLocal_RebuildRejectsInvalid(t *testing.T) {
 		t.Fatal("rebuild with a malformed route should error")
 	}
 	// The pre-existing projection is untouched (rebuild rejected before replacing).
-	if _, ok := l.Get("keep.shippedusercontent.com"); !ok {
+	if _, ok := l.Get("keep.dropwaycontent.com"); !ok {
 		t.Error("a rejected rebuild must not wipe the existing projection")
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielpang/shipped/cli/internal/manifest"
+	"github.com/danielpang/dropway/cli/internal/manifest"
 )
 
 // TestManifestFromBuild proves the build-manifest → wire-shape conversion fills in

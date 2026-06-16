@@ -1,4 +1,4 @@
-module github.com/danielpang/shipped
+module github.com/danielpang/dropway
 
 go 1.25.0
 
