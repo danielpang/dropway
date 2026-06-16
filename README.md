@@ -129,6 +129,34 @@ COMPOSE_PROFILES= DATABASE_URL=postgres://… S3_ENDPOINT=https://… \
   docker compose -f deploy/docker-compose.yml up --build api dashboard migrate
 ```
 
+### Where your sites are served (the content domain)
+
+Published sites are served at `<org-slug>--<app-slug>.<CONTENT_DOMAIN>` — org-namespaced,
+so two orgs can both have an app named `blog` without colliding. Three vars in
+`deploy/.env` control the URL the dashboard and CLI hand back:
+
+| Var | Local default | Production |
+|---|---|---|
+| `CONTENT_DOMAIN` | `localhost` | your domain, e.g. `shippedusercontent.com` |
+| `CONTENT_SCHEME` | `http` | `https` |
+| `CONTENT_PORT` | `8090` | *(empty — standard `:443`)* |
+
+The local defaults make every deploy a clickable **`http://<org>--<app>.localhost:8090/`** —
+`*.localhost` resolves to `127.0.0.1` in every browser with **zero DNS setup**. To serve
+on your own domain, point a **wildcard DNS record + TLS cert** (`*.your-domain`) at the
+content server and set:
+
+```sh
+CONTENT_DOMAIN=apps.example.com   # a domain you control
+CONTENT_SCHEME=https
+CONTENT_PORT=                      # empty → standard :443
+```
+
+These vars affect only the *displayed* URL — `serve` matches the `Host` header and strips
+the port, so the stored route stays the bare host. Full details (wildcard DNS/cert, the
+Public-Suffix-List isolation rule, and the `https` requirement for gated sites) are in
+**[`deploy/README.md`](deploy/README.md#serving-sites-the-content-domain)**.
+
 ### Develop without Docker
 
 ```sh

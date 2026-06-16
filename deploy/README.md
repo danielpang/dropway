@@ -45,6 +45,58 @@ env contract documented in [`.env.example`](./.env.example) (`DATABASE_URL`, the
 `S3_*` block, and the `JWKS_URL` / `JWT_ISSUER` / `JWT_AUDIENCE` trio the Go verifier
 uses).
 
+## Serving sites: the content domain
+
+Published sites are served by the **content server** (`services/serve` — the
+Cloudflare-free serving plane) at an **org-namespaced host**:
+
+```
+<org-slug>--<app-slug>.<CONTENT_DOMAIN>
+```
+
+Putting the org slug in the host keeps the global route namespace unambiguous: two
+orgs can both deploy an app named `blog` and each still gets its own origin. The double
+dash (`--`) keeps it a **single DNS label**, so one wildcard cert (`*.<CONTENT_DOMAIN>`)
+covers every site.
+
+Three vars in [`.env`](./.env.example) decide the URL the dashboard and CLI hand back:
+
+| Var | What it sets | Local default | Production |
+|---|---|---|---|
+| `CONTENT_DOMAIN` | registrable domain sites are served under | `localhost` | e.g. `shippedusercontent.com` |
+| `CONTENT_SCHEME` | scheme in the displayed live URL | `http` | `https` |
+| `CONTENT_PORT`   | explicit port in the displayed live URL | `8090` | *(empty → none)* |
+
+**Why `localhost` locally:** `*.localhost` resolves to `127.0.0.1` in every browser with
+**zero DNS setup**, so a deploy's live URL is a clickable
+`http://<org>--<app>.localhost:8090/` out of the box — nothing to add to `/etc/hosts`.
+
+**Pointing it at your own domain:** set `CONTENT_DOMAIN` to a domain you control, give it
+a **wildcard DNS record + TLS cert** (`*.your-domain` → the content server), and switch
+to `https`:
+
+```sh
+CONTENT_DOMAIN=apps.example.com
+CONTENT_SCHEME=https
+CONTENT_PORT=                  # empty → standard :443
+```
+
+For per-tenant **origin isolation** (so one tenant's JS can never reach another tenant's
+— or your dashboard's — cookies), serve content from a **separate registrable domain on
+the [Public Suffix List](https://publicsuffix.org/)**, never a subdomain of your
+dashboard. See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §3.
+
+Two things to know:
+
+- **These vars affect only the *displayed* URL.** The stored route key
+  (`app.host_routes.host`) is always the bare host; `serve` resolves by the request's
+  `Host` header and strips any `:port`, so the displayed port never has to match the
+  stored host.
+- **Gated sites need `https`.** `org_only` / `allowlist` / `password` sites set a
+  `__Host-edge` cookie, which browsers accept only over `https`. With the local `http`
+  default, view a **public** site in the browser; gated tiers need a real TLS origin
+  (`CONTENT_SCHEME=https`).
+
 ## Two database roles (why there are two URLs)
 
 Migrations and runtime use **different roles**, on purpose (ARCHITECTURE.md §5):
