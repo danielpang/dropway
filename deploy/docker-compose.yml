@@ -122,6 +122,13 @@ services:
       EDGE_JWKS_URL: ${SERVE_EDGE_JWKS_URL:-http://api:8080/.well-known/edge-jwks}
       # The gated 302 target is sent to the BROWSER → host-published dashboard origin.
       APP_AUTHZ_URL: ${SERVE_APP_AUTHZ_URL:-http://localhost:3000/authz}
+      # Hard-revocation denylist reader. Self-host has no Cloudflare KV, so without
+      # this serve has NO denylist reader and FAILS CLOSED — every gated request 302s
+      # (an infinite authz loop). Point it at a local projection-file path: an absent
+      # file loads as an EMPTY denylist (nothing revoked → gated members are served),
+      # and revocations are in-memory per-process anyway (see internal/projection/
+      # local.go). serve only READS it, so the file need not exist.
+      PROJECTION_FILE: ${SERVE_PROJECTION_FILE:-/tmp/serve-projection.json}
     ports:
       - "${SERVE_PORT:-8090}:8090" # content (Host-routed); 8091 is internal-only
     depends_on:

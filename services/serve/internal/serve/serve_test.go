@@ -172,6 +172,59 @@ func publicRoute() serve.Route {
 	return serve.Route{OrgID: testOrgID, SiteID: testSiteID, VersionID: testVersionID, AccessMode: projection.AccessPublic}
 }
 
+// TestGated_HTTPContentUsesInsecureCookie asserts that over a LOCAL http content origin
+// (CONTENT_SCHEME=http) the gated callback sets the UNPREFIXED, non-Secure `edge`
+// cookie and redirects to http://host:port — a __Host-/Secure cookie is rejected by
+// browsers over http, so emitting one loops the viewer back to /authz forever
+// (ERR_TOO_MANY_REDIRECTS). The read side must then accept that `edge` cookie and serve.
+func TestGated_HTTPContentUsesInsecureCookie(t *testing.T) {
+	store := storage.NewFake()
+	stageGatedIndex(t, store)
+	s := testSigner(t)
+	revoked := fakeRevoked{minIATs: map[string]int64{}, errOn: map[string]bool{}}
+	h := serve.New(
+		fakeResolver{map[string]serve.Route{testHost: gatedRoute(edgetoken.ModeOrgOnly)}},
+		store, edgeverify.NewForSigner(s, revoked), ratelimit.New(0, 0), nil,
+		serve.Config{AppAuthzURL: "http://localhost:3000/authz", ContentScheme: "http", ContentPort: "8090"},
+	)
+
+	tok := mint(t, s, testHost, testSiteID, edgetoken.ModeOrgOnly, time.Minute)
+
+	// 1) Callback → unprefixed `edge` cookie WITHOUT Secure + an http://host:8090/ redirect.
+	rec := doRequest(h, http.MethodGet, testHost, "/__authz/callback?token="+tok+"&next=%2F", nil, "")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("callback should 302, got %d", rec.Code)
+	}
+	sc := rec.Header().Get("Set-Cookie")
+	if !strings.Contains(sc, "edge="+tok) || strings.Contains(sc, "__Host-edge=") {
+		t.Errorf("want unprefixed edge cookie over http, got %q", sc)
+	}
+	if strings.Contains(sc, "Secure") {
+		t.Errorf("http origin must NOT set Secure (browsers reject it over http); got %q", sc)
+	}
+	for _, want := range []string{"Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=900"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("Set-Cookie missing %q; got %q", want, sc)
+		}
+	}
+	if got := rec.Header().Get("Location"); got != "http://"+testHost+":8090/" {
+		t.Errorf("callback Location = %q, want http://%s:8090/", got, testHost)
+	}
+
+	// 2) Read side accepts the insecure `edge` cookie → serves 200 (no redirect loop).
+	req := httptest.NewRequest(http.MethodGet, "http://"+testHost+"/", nil)
+	req.Host = testHost
+	req.Header.Set("Cookie", "edge="+tok)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("valid edge cookie should serve 200, got %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "secret") {
+		t.Errorf("expected served content, got %q", rec2.Body.String())
+	}
+}
+
 func gatedRoute(mode string) serve.Route {
 	return serve.Route{OrgID: testOrgID, SiteID: testSiteID, VersionID: testVersionID, AccessMode: mode}
 }

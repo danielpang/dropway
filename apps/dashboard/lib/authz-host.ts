@@ -82,9 +82,20 @@ export function safeNextPath(raw: string | null | undefined): string {
  * Build the content-host callback URL the browser is redirected to after a
  * successful mint. The Worker's `/__authz/callback` verifies the token
  * (aud == host), sets the `__Host-edge` cookie, and 302s to `next`.
+ *
+ * The scheme + optional port come from the PUBLIC content config (CONTENT_SCHEME /
+ * CONTENT_PORT), NOT the host param — `host` is deliberately port-less (ports are
+ * rejected as an open-redirect guard), so a non-default content port (e.g. a local
+ * http self-host on :8090) must be supplied from trusted server config. Production
+ * is https on the default port (both env vars unset → `https://<host>/…`); a local
+ * self-host sets CONTENT_SCHEME=http + CONTENT_PORT=8090 → `http://<host>:8090/…`.
+ * Server-only (server action / RSC), so reading process.env at runtime is safe.
  */
 export function callbackUrl(host: string, token: string, next: string): string {
-  const u = new URL(`https://${host}/__authz/callback`);
+  const scheme = process.env.CONTENT_SCHEME || "https";
+  const port = process.env.CONTENT_PORT || "";
+  const origin = `${scheme}://${host}${port ? `:${port}` : ""}`;
+  const u = new URL(`${origin}/__authz/callback`);
   u.searchParams.set("token", token);
   u.searchParams.set("next", next);
   return u.toString();

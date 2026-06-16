@@ -46,6 +46,18 @@ type Config struct {
 	// edge token 302s to (APP_AUTHZ_URL). Defaults to config.ts DEFAULT_APP_AUTHZ_URL.
 	AppAuthzURL string
 
+	// ContentScheme / ContentPort are the PUBLIC scheme + optional port serve uses
+	// when it builds an absolute URL back to a content host — the post-mint
+	// /__authz/callback redirect and its follow-on to the site. The bare host carries
+	// NO port (serve routes by Host header and strips it), so the externally-visible
+	// scheme/port come from config, not the request: production is https on the default
+	// port (CONTENT_SCHEME=https, CONTENT_PORT=""); a local http self-host is
+	// CONTENT_SCHEME=http + CONTENT_PORT=8090. These MUST match the API's CONTENT_* vars
+	// so the live_url the dashboard shows and the URL serve redirects to agree —
+	// otherwise the gated callback bounces the browser to a scheme/port nothing serves.
+	ContentScheme string // CONTENT_SCHEME (default "https")
+	ContentPort   string // CONTENT_PORT (default "" → no explicit port)
+
 	// Cloudflare KV credentials for the hard-revocation denylist reader (CF_ACCOUNT_ID
 	// / CF_KV_NAMESPACE_ID / CF_API_TOKEN). When set, gated revocation reads the same
 	// "revoked:" prefix the API writes. When unset, a local projection file
@@ -82,6 +94,9 @@ func Load() (Config, error) {
 
 		EdgeJWKSURL: envOr("EDGE_JWKS_URL", "https://api.shipped.app/.well-known/edge-jwks"),
 		AppAuthzURL: envOr("APP_AUTHZ_URL", "https://app.shipped.app/authz"),
+
+		ContentScheme: envOr("CONTENT_SCHEME", "https"),
+		ContentPort:   os.Getenv("CONTENT_PORT"),
 
 		CFAccountID:     os.Getenv("CF_ACCOUNT_ID"),
 		CFKVNamespaceID: os.Getenv("CF_KV_NAMESPACE_ID"),

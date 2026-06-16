@@ -102,7 +102,9 @@ func run() error {
 	orgStatus := storeadapter.NewOrgStatusReader(pool)
 
 	handler := serve.New(resolver, objStore, verifier, limiter, orgStatus, serve.Config{
-		AppAuthzURL: cfg.AppAuthzURL,
+		AppAuthzURL:   cfg.AppAuthzURL,
+		ContentScheme: cfg.ContentScheme,
+		ContentPort:   cfg.ContentPort,
 	})
 
 	srv := &http.Server{

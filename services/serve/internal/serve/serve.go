@@ -23,8 +23,19 @@ import (
 // host (authz.ts AUTHZ_CALLBACK_PATH).
 const authzCallbackPath = "/__authz/callback"
 
-// edgeCookieName is the host-only cookie carrying the edge token (config.ts).
-const edgeCookieName = "__Host-edge"
+// edgeCookieNameSecure is the production host-only cookie carrying the edge token:
+// the __Host- prefix forces browser-enforced Secure + Path=/ + no Domain (config.ts).
+const edgeCookieNameSecure = "__Host-edge"
+
+// edgeCookieNameInsecure is used ONLY when the content origin is plain http
+// (CONTENT_SCHEME=http — a local/dev self-host). The __Host- prefix REQUIRES Secure,
+// and browsers REJECT a Secure cookie over http, so a local http origin must use an
+// unprefixed, non-Secure cookie — otherwise the callback's Set-Cookie is silently
+// dropped and the viewer loops back to /authz forever (ERR_TOO_MANY_REDIRECTS). It
+// stays HttpOnly + host-only (no Domain), so tenant JS still can't read it and it
+// can't leak to a sibling host; only the Secure-transport guarantee is dropped, which
+// is moot over loopback http. Mirrors the dashboard's scheme-derived useSecureCookies.
+const edgeCookieNameInsecure = "edge"
 
 // edgeCookieMaxAge matches the edge-token TTL (15m), per authz.ts EDGE_COOKIE_MAX_AGE.
 const edgeCookieMaxAge = 15 * 60
@@ -34,6 +45,14 @@ type Config struct {
 	// AppAuthzURL is the dashboard /authz exchange origin a gated request with no /
 	// invalid edge token 302s to (config.ts DEFAULT_APP_AUTHZ_URL).
 	AppAuthzURL string
+
+	// ContentScheme / ContentPort are the PUBLIC scheme + optional port serve uses to
+	// build absolute URLs back to a content host (the post-mint callback redirect and
+	// its follow-on to the site). The bare host has no port (serve routes by Host
+	// header), so these come from config: production https on the default port; a local
+	// http self-host uses http + :8090. Empty ContentScheme defaults to https.
+	ContentScheme string
+	ContentPort   string
 }
 
 // Handler is the content-serving HTTP handler — the full serve() lifecycle.
@@ -255,7 +274,7 @@ func (h *Handler) serveGated(w http.ResponseWriter, r *http.Request, rt *Route, 
 	}
 
 	// Read + verify the __Host-edge cookie against THIS route.
-	token := readEdgeCookie(r)
+	token := h.readEdgeCookie(r)
 	if token == "" || h.verifier == nil {
 		h.redirectToAuthz(w, r, host)
 		return
@@ -320,9 +339,28 @@ func (h *Handler) handleAuthzCallback(w http.ResponseWriter, r *http.Request, rt
 	servehttp.ApplyHeaders(hd, servehttp.ContentSecurityHeaders())
 	hd.Set("Cache-Control", "private, no-store, max-age=0, must-revalidate")
 	hd.Set("Vary", "Cookie")
-	hd.Set("Set-Cookie", edgeCookie(token))
-	hd.Set("Location", "https://"+host+nextPath)
+	hd.Set("Set-Cookie", h.edgeCookie(token))
+	hd.Set("Location", h.contentURL(host, nextPath))
 	w.WriteHeader(http.StatusFound)
+}
+
+// contentURL builds an absolute URL on the content host using the configured PUBLIC
+// scheme + optional port (CONTENT_SCHEME / CONTENT_PORT). The bare host carries no
+// port — serve routes by the Host header and strips it — so the externally-visible
+// scheme/port come from config, not the request: production is https on the default
+// port; a local http self-host is http://<host>:8090. pathAndQuery is appended as-is
+// (already a safe, percent-encoded same-host path). Without this the gated callback
+// would hardcode https on the default port and bounce a local browser to :443.
+func (h *Handler) contentURL(host, pathAndQuery string) string {
+	scheme := h.cfg.ContentScheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	u := scheme + "://" + host
+	if h.cfg.ContentPort != "" {
+		u += ":" + h.cfg.ContentPort
+	}
+	return u + pathAndQuery
 }
 
 // redirectToAuthz 302s an unauthenticated / invalid-token gated request to the
@@ -349,21 +387,36 @@ func (h *Handler) redirectToAuthz(w http.ResponseWriter, r *http.Request, host s
 	w.WriteHeader(http.StatusFound)
 }
 
-// readEdgeCookie parses the __Host-edge cookie value, or "" when absent/empty.
-func readEdgeCookie(r *http.Request) string {
-	c, err := r.Cookie(edgeCookieName)
+// edgeCookieName is the edge-token cookie name for the configured content scheme:
+// the secure __Host- cookie over https, the plain unprefixed cookie over local http.
+func (h *Handler) edgeCookieName() string {
+	if h.cfg.ContentScheme == "http" {
+		return edgeCookieNameInsecure
+	}
+	return edgeCookieNameSecure
+}
+
+// readEdgeCookie parses the edge-token cookie value, or "" when absent/empty.
+func (h *Handler) readEdgeCookie(r *http.Request) string {
+	c, err := r.Cookie(h.edgeCookieName())
 	if err != nil || c == nil {
 		return ""
 	}
 	return c.Value
 }
 
-// edgeCookie builds the host-only Set-Cookie value for the edge token. The
-// __Host- prefix forces (browser-enforced) Secure + Path=/ + no Domain; HttpOnly
-// keeps it out of tenant JS; SameSite=Lax carries it on the dashboard callback nav.
-func edgeCookie(token string) string {
-	return edgeCookieName + "=" + token +
-		"; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=" + strconv.Itoa(edgeCookieMaxAge)
+// edgeCookie builds the host-only Set-Cookie value for the edge token. Over https the
+// __Host- prefix forces (browser-enforced) Secure + Path=/ + no Domain; HttpOnly keeps
+// it out of tenant JS; SameSite=Lax carries it on the dashboard callback nav. Over a
+// local http origin (CONTENT_SCHEME=http) the Secure attribute + __Host- prefix are
+// dropped — a Secure cookie can't be set over http — keeping only HttpOnly + host-only.
+func (h *Handler) edgeCookie(token string) string {
+	c := h.edgeCookieName() + "=" + token +
+		"; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + strconv.Itoa(edgeCookieMaxAge)
+	if h.cfg.ContentScheme != "http" {
+		c += "; Secure"
+	}
+	return c
 }
 
 // pathOf returns the request URL pathname in its RAW, still-percent-encoded form
