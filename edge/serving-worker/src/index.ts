@@ -41,6 +41,12 @@ import {
   isServiceWorkerScript,
   platformSecurityHeaders,
 } from "./security";
+import {
+  CRAWLER_BLOCKED_BODY,
+  isAICrawler,
+  llmsTxtBody,
+  robotsTxtBody,
+} from "./llm";
 import { type GatedConfig, gatedConfig } from "./config";
 import type { FetchLike } from "./edgetoken";
 import { serveGated } from "./gated";
@@ -278,6 +284,13 @@ export async function serve(
     return accountSuspended(orgStatus);
   }
 
+  // 3.5 LLM-access surface — robots.txt, AI-crawler gating, and the generated
+  //     /llms.txt index. Runs before content dispatch: public sites welcome crawlers
+  //     and expose /llms.txt; gated sites disallow crawlers (robots + 403) so their
+  //     content is reachable by LLMs only through the authenticated Dropway MCP.
+  const llmMeta = await handleLLMMeta(request, env, route, url);
+  if (llmMeta !== null) return bodyFor(request, llmMeta);
+
   // 4. Dispatch by access mode.
   switch (route.access_mode) {
     case "public":
@@ -294,6 +307,61 @@ export async function serve(
       // Unreachable given parseRouteValue, but fail closed.
       return notFound(route);
   }
+}
+
+/**
+ * LLM-access surface: robots.txt, AI-crawler gating, and the generated /llms.txt.
+ * Returns a Response when handled, or null to fall through to the content dispatch.
+ * Mirrors services/serve/internal/serve/llm.go (serveLLMMeta).
+ */
+async function handleLLMMeta(
+  request: Request,
+  env: Env,
+  route: RouteValue,
+  url: URL,
+): Promise<Response | null> {
+  const clean = cleanPath(url.pathname);
+  if (clean === null) return null; // unsafe path → let the normal flow 404
+  const isPublic = route.access_mode === "public";
+
+  // robots.txt — served to everyone (incl. crawlers) so they learn the rules.
+  if (clean === "robots.txt") {
+    const headers = new Headers(securityHeaders());
+    headers.set("Content-Type", "text/plain; charset=utf-8");
+    headers.set(
+      "Cache-Control",
+      isPublic
+        ? "public, max-age=3600"
+        : "private, no-store, max-age=0, must-revalidate",
+    );
+    return new Response(robotsTxtBody(isPublic), { status: 200, headers });
+  }
+
+  // AI-crawler gate: refuse known AI user-agents on non-public sites (403) rather
+  // than bouncing them through /authz. Public sites welcome crawlers.
+  if (!isPublic && isAICrawler(request.headers.get("User-Agent"))) {
+    const headers = new Headers(securityHeaders());
+    headers.set("Content-Type", "text/plain; charset=utf-8");
+    headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+    headers.set("Vary", "User-Agent");
+    return new Response(CRAWLER_BLOCKED_BODY, { status: 403, headers });
+  }
+
+  // /llms.txt index — public sites only. On a gated site it is treated like any
+  // other content (gated/404), never exposed to discovery.
+  if (clean === "llms.txt" && isPublic) {
+    const manifest = await loadManifest(env, route);
+    if (manifest === null) return notFound(route);
+    const headers = new Headers(securityHeaders());
+    headers.set("Content-Type", "text/plain; charset=utf-8");
+    headers.set("Cache-Control", "public, max-age=300");
+    return new Response(llmsTxtBody(url.host, manifest, url.origin), {
+      status: 200,
+      headers,
+    });
+  }
+
+  return null;
 }
 
 /** Resolve the gated-path config + injected fetch from env/opts. */

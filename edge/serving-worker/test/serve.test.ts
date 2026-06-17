@@ -1775,3 +1775,90 @@ describe("serve() gated path — hard revocation end-to-end", () => {
     expect(await res.text()).toBe("<h1>home</h1>");
   });
 });
+
+// --- LLM access: robots.txt / llms.txt / AI-crawler gating ------------------
+
+describe("LLM access", () => {
+  const GATED: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+
+  function reqUA(path: string, ua: string): Request {
+    return new Request(`https://${HOST}${path}`, {
+      method: "GET",
+      headers: { "User-Agent": ua },
+    });
+  }
+
+  it("public robots.txt allows all crawlers", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const res = await serveNoCache(
+      get(HOST, "/robots.txt"),
+      envFor(PUBLIC_ROUTE, HOST, objects),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Allow: /");
+    expect(body).not.toContain("Disallow: /");
+  });
+
+  it("gated robots.txt disallows all crawlers", async () => {
+    const res = await serveNoCache(
+      get(HOST, "/robots.txt"),
+      envFor(GATED, HOST, {}),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Disallow: /");
+  });
+
+  it("gated site 403s an AI crawler", async () => {
+    const res = await serve(
+      reqUA("/", "Mozilla/5.0 (compatible; GPTBot/1.1)"),
+      envFor(GATED, HOST, {}),
+      { cache: null },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("public site serves content to an AI crawler", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const res = await serve(
+      reqUA("/", "ClaudeBot/1.0 (+https://www.anthropic.com)"),
+      envFor(PUBLIC_ROUTE, HOST, objects),
+      { cache: null },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<h1>home</h1>");
+  });
+
+  it("gated /llms.txt is not exposed to crawlers (403)", async () => {
+    const res = await serve(
+      reqUA("/llms.txt", "CCBot/2.0"),
+      envFor(GATED, HOST, {}),
+      { cache: null },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("public /llms.txt lists HTML pages, not assets", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+      "about.html": { body: "<h1>about</h1>", content_type: "text/html" },
+      "docs/index.html": { body: "<h1>docs</h1>", content_type: "text/html" },
+      "style.css": { body: "body{}", content_type: "text/css" },
+    });
+    const res = await serveNoCache(
+      get(HOST, "/llms.txt"),
+      envFor(PUBLIC_ROUTE, HOST, objects),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body.startsWith(`# ${HOST}`)).toBe(true);
+    expect(body).toContain(`https://${HOST}/`);
+    expect(body).toContain(`https://${HOST}/about`);
+    expect(body).toContain(`https://${HOST}/docs/`);
+    expect(body).not.toContain("style.css");
+  });
+});
