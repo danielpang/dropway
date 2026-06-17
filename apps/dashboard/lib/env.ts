@@ -122,3 +122,14 @@ export const API_URL: string =
   process.env.API_URL ??
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:8080";
+
+/**
+ * Public base URL of the Dropway MCP server (mcp.dropway.dev in cloud, the
+ * host-published :8092 locally). Shown in the "Connect" instructions so a user can
+ * add it as a custom MCP connector in Claude / Cursor / Codex. Must be NEXT_PUBLIC_
+ * because the Connect modal is a client component. The MCP server itself is the
+ * OAuth resource server; clients discover the dashboard authorization server from
+ * its 401 (RFC 9728), so only this one URL is needed in the UI.
+ */
+export const MCP_URL: string =
+  process.env.NEXT_PUBLIC_MCP_URL ?? "http://localhost:8092";

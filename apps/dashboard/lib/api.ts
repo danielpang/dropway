@@ -406,8 +406,10 @@ export const api = {
    * can render the toggle in its true state instead of a hardcoded default (H10).
    * Any member may read it.
    */
-  getOrgPolicy(): Promise<{ allow_external_sharing: boolean }> {
-    return apiFetch<{ allow_external_sharing: boolean }>("/v1/orgs/policy");
+  getOrgPolicy(): Promise<{ allow_external_sharing: boolean; mcp_enabled: boolean }> {
+    return apiFetch<{ allow_external_sharing: boolean; mcp_enabled: boolean }>(
+      "/v1/orgs/policy",
+    );
   },
 
   /**
@@ -418,6 +420,18 @@ export const api = {
   setAllowExternalSharing(enabled: boolean): Promise<AllowExternalResult> {
     return apiFetch<AllowExternalResult>("/v1/orgs/allow-external-sharing", {
       method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  /**
+   * Toggle whether the Dropway MCP server may serve this org (owner/admin only →
+   * 403). The MCP resource server re-checks the flag per request, so a disable
+   * takes effect immediately even for already-issued OAuth tokens.
+   */
+  setMcpEnabled(enabled: boolean): Promise<{ mcp_enabled: boolean }> {
+    return apiFetch<{ mcp_enabled: boolean }>("/v1/orgs/mcp", {
+      method: "PATCH",
       body: JSON.stringify({ enabled }),
     });
   },

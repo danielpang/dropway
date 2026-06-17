@@ -38,3 +38,36 @@ export async function setAllowExternalSharingAction(input: {
     return { ok: false, message: "Could not reach the API. Try again." };
   }
 }
+
+export type McpActionResult =
+  | { ok: true; mcpEnabled: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Toggle whether the Dropway MCP server may serve this org (owner/admin only → the
+ * Go API re-checks the role and 403s otherwise). The MCP resource server re-checks
+ * the flag per request, so disabling cuts off MCP access immediately even for
+ * already-issued OAuth tokens.
+ */
+export async function setMcpEnabledAction(input: {
+  enabled: boolean;
+}): Promise<McpActionResult> {
+  try {
+    const result = await api.setMcpEnabled(input.enabled);
+    revalidatePath("/settings");
+    return { ok: true, mcpEnabled: result.mcp_enabled };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      if (apiMsg) return { ok: false, message: apiMsg };
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can change MCP access.",
+        };
+      }
+      return { ok: false, message: "Could not update MCP access. Try again." };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}

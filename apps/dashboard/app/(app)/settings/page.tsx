@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CreditCard, Globe2, ShieldAlert, Users } from "lucide-react";
+import { Bot, CreditCard, Globe2, ShieldAlert, Users } from "lucide-react";
 
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
+import { McpAccess } from "@/components/settings/mcp-access";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { MCP_URL } from "@/lib/env";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Organization settings" };
@@ -39,13 +41,14 @@ export default async function OrgSettingsPage() {
 
   const manage = canManage(org.myRole);
 
-  // Render the toggle in its LIVE state (H10), not a hardcoded OFF. On a transient
-  // API error fall back to false (fully-internal default) — the steady-state value
-  // is shown on the next load.
-  const allowExternalSharing = await api
+  // Render the toggles in their LIVE state (H10), not hardcoded defaults. On a
+  // transient API error fall back to the safe defaults (external sharing OFF; MCP
+  // ON, its column default) — the steady-state values show on the next load.
+  const policy = await api
     .getOrgPolicy()
-    .then((p) => p.allow_external_sharing)
-    .catch(() => false);
+    .catch(() => ({ allow_external_sharing: false, mcp_enabled: true }));
+  const allowExternalSharing = policy.allow_external_sharing;
+  const mcpEnabled = policy.mcp_enabled;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -89,6 +92,29 @@ export default async function OrgSettingsPage() {
               </p>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* LLM / MCP access */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Bot className="size-4 text-muted-foreground" aria-hidden />
+            LLM access (MCP)
+          </CardTitle>
+          <CardDescription>
+            Let AI tools reach this organization&rsquo;s sites through the Dropway
+            MCP server. Public sites are also readable by crawlers via{" "}
+            <code className="font-mono text-xs">/llms.txt</code>; gated sites stay
+            private and are reachable only through an authorized MCP connection.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <McpAccess
+            initialEnabled={mcpEnabled}
+            canManage={manage}
+            mcpUrl={MCP_URL}
+          />
         </CardContent>
       </Card>
 
