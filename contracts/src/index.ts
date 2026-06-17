@@ -44,7 +44,7 @@ export const MIN_SCHEMA_VERSION = 1 as const;
  * sync with kv-route.schema.json and the Go struct (json tags) in services/api.
  */
 export interface KVRouteValue {
-  /** Owning org (auth.organization.id / app.org_meta.id). */
+  /** Owning org (identity.organization.id / app.org_meta.id). */
   org_id: string;
   /** Target site (app.sites.id). */
   site_id: string;

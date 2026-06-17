@@ -500,8 +500,8 @@ func setOrgContext(ctx context.Context, tx pgx.Tx, orgID string) error {
 // orgExceedsFreeCaps reports whether, after a downgrade to Free, the org would be
 // over the Free caps: ANY user owns > 10 sites, OR the org has > 5 members. The
 // sites read is RLS-scoped (the GUC is set on the tx); the member count reads the
-// Better-Auth-owned auth.member table explicitly by org (outside app RLS). A
-// missing auth.member table (self-host pre-Better-Auth) counts as 0 members.
+// Better-Auth-owned identity.member table explicitly by org (outside app RLS). A
+// missing identity.member table (self-host pre-Better-Auth) counts as 0 members.
 func orgExceedsFreeCaps(ctx context.Context, tx pgx.Tx, orgID string) (bool, error) {
 	// Max sites owned by any single user in the org (per-USER cap).
 	var maxSitesPerUser int64
@@ -519,7 +519,7 @@ func orgExceedsFreeCaps(ctx context.Context, tx pgx.Tx, orgID string) (bool, err
 
 	var members int64
 	err := tx.QueryRow(ctx,
-		`SELECT count(*) FROM auth.member WHERE "organizationId" = $1`, orgID,
+		`SELECT count(*) FROM identity.member WHERE "organizationId" = $1`, orgID,
 	).Scan(&members)
 	if err != nil {
 		if isUndefinedTable(err) {
@@ -532,7 +532,7 @@ func orgExceedsFreeCaps(ctx context.Context, tx pgx.Tx, orgID string) (bool, err
 }
 
 // isUndefinedTable reports a Postgres "relation does not exist" (SQLSTATE 42P01),
-// used to tolerate a missing auth.member table on a self-host that hasn't migrated
+// used to tolerate a missing identity.member table on a self-host that hasn't migrated
 // Better Auth.
 func isUndefinedTable(err error) bool {
 	type pgcoder interface{ SQLState() string }

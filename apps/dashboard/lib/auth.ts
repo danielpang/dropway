@@ -25,8 +25,10 @@ import {
 // Next runtime.
 
 /**
- * Better Auth server instance — the authoritative owner of the `auth` schema
+ * Better Auth server instance — the authoritative owner of the `identity` schema
  * (user/session/account/verification/jwks/organization/member/invitation).
+ * Named `identity` (not `auth`) to avoid colliding with Postgres providers that
+ * reserve their own `auth` schema (e.g. Supabase's GoTrue).
  *
  * Architecture notes (see docs/ARCHITECTURE.md §2.2, §5, §8):
  *  - Better Auth runs self-hosted inside the Next.js dashboard and OWNS + migrates
@@ -39,11 +41,11 @@ import {
  *  - Google sign-in is a core, first-class method alongside email/password and
  *    magic link. Email verification is required.
  */
-// A single shared pg Pool for Better Auth's `auth` schema (search_path pinned to
-// auth). Reused by the session hook below to look up a user's organization.
+// A single shared pg Pool for Better Auth's `identity` schema (search_path pinned
+// to identity). Reused by the session hook below to look up a user's organization.
 const authPool = new Pool({
   connectionString: databaseUrl(),
-  options: "-c search_path=auth",
+  options: "-c search_path=identity",
 });
 
 export const auth = betterAuth({
@@ -54,11 +56,11 @@ export const auth = betterAuth({
   // Postgres via a node-postgres Pool. Better Auth uses its built-in Kysely
   // adapter when handed a `Pool`, generating + migrating its own identity tables.
   //
-  // Better Auth OWNS the `auth` schema (architecture §5/§8): `databaseUrl()` is a
-  // PRIVILEGED connection (it must CREATE its tables), and `options` pins the
-  // session search_path to `auth` so the adapter's UNqualified tables (user,
-  // session, member, organization, …) are created in + read from `auth` — exactly
-  // where the Go API reads them (auth.member) for authz.
+  // Better Auth OWNS the `identity` schema (architecture §5/§8): `databaseUrl()` is
+  // a PRIVILEGED connection (it must CREATE its tables), and `options` pins the
+  // session search_path to `identity` so the adapter's UNqualified tables (user,
+  // session, member, organization, …) are created in + read from `identity` —
+  // exactly where the Go API reads them (identity.member) for authz.
   database: authPool,
 
   // Set the user's first organization as the session's ACTIVE org on every new
@@ -76,7 +78,7 @@ export const auth = betterAuth({
           if (s.activeOrganizationId) return { data: session };
           try {
             const res = await authPool.query<{ organizationId: string }>(
-              `SELECT "organizationId" FROM auth.member WHERE "userId" = $1 ORDER BY "createdAt" LIMIT 1`,
+              `SELECT "organizationId" FROM identity.member WHERE "userId" = $1 ORDER BY "createdAt" LIMIT 1`,
               [s.userId],
             );
             const orgId = res.rows[0]?.organizationId;
@@ -207,7 +209,7 @@ export const auth = betterAuth({
         // the user's ACTIVE organization — REQUIRED for the per-request RLS tenant
         // context (without it the API 500s "claims missing org_id"). email/
         // email_verified back the allowlist authz path. `role` is intentionally
-        // omitted: it's a hint the API re-checks LIVE against auth.member, so a stale
+        // omitted: it's a hint the API re-checks LIVE against identity.member, so a stale
         // claim can't grant admin. `sub` (user id) is set separately by getSubject.
         definePayload: ({ user, session }) => ({
           org_id: session.activeOrganizationId ?? "",

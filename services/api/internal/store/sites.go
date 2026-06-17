@@ -75,11 +75,11 @@ func countMembersAndPending(ctx context.Context, tx pgx.Tx, orgID string) (int64
 		}
 		return n, nil
 	}
-	members, err := count(`SELECT count(*) FROM auth.member WHERE "organizationId" = $1`)
+	members, err := count(`SELECT count(*) FROM identity.member WHERE "organizationId" = $1`)
 	if err != nil {
 		return 0, err
 	}
-	pending, err := count(`SELECT count(*) FROM auth.invitation WHERE "organizationId" = $1 AND status = 'pending'`)
+	pending, err := count(`SELECT count(*) FROM identity.invitation WHERE "organizationId" = $1 AND status = 'pending'`)
 	if err != nil {
 		return 0, err
 	}
@@ -155,15 +155,15 @@ type SiteVersion struct {
 	CreatedAt   time.Time
 }
 
-// ErrOrgSlugNotFound is returned when an org has no auth.organization row to read
+// ErrOrgSlugNotFound is returned when an org has no identity.organization row to read
 // a slug from — the canonical content host can't be formed, so the operation
 // fails rather than emitting a malformed host.
 var ErrOrgSlugNotFound = errors.New("store: org slug not found")
 
-// OrgSlug returns the org's slug from auth.organization (the Better-Auth-owned
+// OrgSlug returns the org's slug from identity.organization (the Better-Auth-owned
 // identity table the dashboard writes; dropway_app has SELECT via migration 0012).
 // It is the org half of the canonical content host (projection.HostForSite). The
-// read runs inside the active tenant's tx context — auth.organization has no RLS,
+// read runs inside the active tenant's tx context — identity.organization has no RLS,
 // so the row resolves by id directly. A missing row is surfaced as
 // ErrOrgSlugNotFound (the host can't be formed). It is raw pgx because the auth
 // schema is outside the sqlc-typed app schema (mirrors resolveHost in authz.go).
@@ -186,13 +186,13 @@ func (s *Store) OrgSlug(ctx context.Context, t Tenant) (string, error) {
 	return slug, nil
 }
 
-// orgSlugTx reads auth.organization.slug for orgID on an already-open tx, so the
+// orgSlugTx reads identity.organization.slug for orgID on an already-open tx, so the
 // canonical host can be formed inside the same tenant-context transaction a store
 // write already runs in (no extra round-trip / second connection). A missing row
 // → ErrOrgSlugNotFound.
 func orgSlugTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error) {
 	var slug string
-	err := tx.QueryRow(ctx, `SELECT slug FROM auth.organization WHERE id = $1`, orgID).Scan(&slug)
+	err := tx.QueryRow(ctx, `SELECT slug FROM identity.organization WHERE id = $1`, orgID).Scan(&slug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrOrgSlugNotFound
@@ -234,7 +234,7 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 	var out Site
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		// The canonical content host is ORG-NAMESPACED: <orgSlug>--<slug>. Read the
-		// org slug under the active tenant context (auth.organization, outside RLS) so
+		// org slug under the active tenant context (identity.organization, outside RLS) so
 		// the global host registry reserves the org-scoped host, not a bare slug.
 		orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
 		if err != nil {

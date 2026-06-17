@@ -2,7 +2,7 @@
 
 // Phase-2 integration test (ARCHITECTURE.md §5/§6/§9): access control & domains,
 // exercised against real Postgres 16 + the goose app migrations as the
-// non-BYPASSRLS dropway_app role, plus a synthetic Better Auth `auth.member` table
+// non-BYPASSRLS dropway_app role, plus a synthetic Better Auth `identity.member` table
 // the Go API reads for role re-checks.
 //
 // Run with:
@@ -475,33 +475,33 @@ func TestIntegration_Phase2_AccessControl(t *testing.T) {
 	t.Log("PASS: org_only allow/deny, allowlist claim + external gating, password, expiry refuse, admin-only role re-check, external-sharing reconcile, custom-domain verify writes KV, edge token aud binding, FIX1 custom-host revoked on access+reconcile, FIX2 org_only live-membership re-check")
 }
 
-// seedAuthMemberTable creates a minimal Better Auth `auth.member` table the Go API
+// seedAuthMemberTable creates a minimal Better Auth `identity.member` table the Go API
 // reads for role re-checks. Better Auth owns + migrates this in production; here we
 // create the shape the store's MemberRole/ListMembers queries bind to. We also
-// GRANT the runtime role read access (the auth schema is outside app RLS).
+// GRANT the runtime role read access (the identity schema is outside app RLS).
 func seedAuthMemberTable(t *testing.T) {
 	t.Helper()
-	mustExecRaw(t, `CREATE SCHEMA IF NOT EXISTS auth;`)
-	mustExecRaw(t, `CREATE TABLE IF NOT EXISTS auth.member (
+	mustExecRaw(t, `CREATE SCHEMA IF NOT EXISTS identity;`)
+	mustExecRaw(t, `CREATE TABLE IF NOT EXISTS identity.member (
 		id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
 		"organizationId" uuid NOT NULL,
 		"userId" uuid NOT NULL,
 		"role" text NOT NULL
 	);`)
-	mustExecRaw(t, `GRANT USAGE ON SCHEMA auth TO dropway_app;`)
-	mustExecRaw(t, `GRANT SELECT ON auth.member TO dropway_app;`)
+	mustExecRaw(t, `GRANT USAGE ON SCHEMA identity TO dropway_app;`)
+	mustExecRaw(t, `GRANT SELECT ON identity.member TO dropway_app;`)
 }
 
 func insertMember(t *testing.T, orgID, userID, role string) {
 	t.Helper()
-	mustExecRaw(t, `INSERT INTO auth.member ("organizationId","userId","role") VALUES ('`+orgID+`','`+userID+`','`+role+`');`)
+	mustExecRaw(t, `INSERT INTO identity.member ("organizationId","userId","role") VALUES ('`+orgID+`','`+userID+`','`+role+`');`)
 }
 
 // deleteMember removes a membership row (simulating org removal) so a still-valid
 // JWT no longer corresponds to a current member — the FIX 2 org_only re-check.
 func deleteMember(t *testing.T, orgID, userID string) {
 	t.Helper()
-	mustExecRaw(t, `DELETE FROM auth.member WHERE "organizationId" = '`+orgID+`' AND "userId" = '`+userID+`';`)
+	mustExecRaw(t, `DELETE FROM identity.member WHERE "organizationId" = '`+orgID+`' AND "userId" = '`+userID+`';`)
 }
 
 // mustExecRaw runs a raw SQL statement (no positional substitution) as the owner.

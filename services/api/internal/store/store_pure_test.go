@@ -98,7 +98,7 @@ func TestCheckViolation(t *testing.T) {
 
 func TestIsUndefinedTable(t *testing.T) {
 	// 42P01 undefined_table and 3F000 invalid_schema_name both mean Better Auth's
-	// auth.member table isn't present (self-host pre-migration / DB-less).
+	// identity.member table isn't present (self-host pre-migration / DB-less).
 	if !isUndefinedTable(pgErr("42P01", "")) {
 		t.Error("42P01 (undefined_table) must classify as undefined table")
 	}

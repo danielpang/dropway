@@ -170,7 +170,7 @@ func run(baseLogger *slog.Logger) error {
 	}
 	api.AllowJWTRoleFallback = cfg.AllowJWTRoleFallback
 	if cfg.AllowJWTRoleFallback {
-		slog.Warn("ALLOW_JWT_ROLE_FALLBACK=true — admin gating will trust the JWT role claim when auth.member is unavailable")
+		slog.Warn("ALLOW_JWT_ROLE_FALLBACK=true — admin gating will trust the JWT role claim when identity.member is unavailable")
 	}
 	// Display-URL scheme/port for the live_url / preview_url the API returns (the
 	// stored host_routes.host stays the bare host). Defaults: https, no port.

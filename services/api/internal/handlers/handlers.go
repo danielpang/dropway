@@ -53,7 +53,7 @@ type API struct {
 	RevocationReader EdgeRevocationReader
 
 	// AllowJWTRoleFallback gates the requireAdmin fallback to the verified JWT role
-	// claim when the Better Auth auth.member table is unavailable. Default false
+	// claim when the Better Auth identity.member table is unavailable. Default false
 	// (strict): admin-gated actions are DENIED when membership can't be confirmed
 	// live. A self-host pre-Better-Auth can opt in (ALLOW_JWT_ROLE_FALLBACK=true).
 	// See config.Config.AllowJWTRoleFallback / ARCHITECTURE.md §10 [LOW].
@@ -180,7 +180,7 @@ func (a *API) requireDomains(w http.ResponseWriter) bool {
 // It writes a 403 and returns false on a non-admin, an empty membership, or any
 // re-check error.
 //
-// If the Better Auth auth.member table is unavailable (a self-host that hasn't run
+// If the Better Auth identity.member table is unavailable (a self-host that hasn't run
 // Better Auth yet), the behavior is STRICT BY DEFAULT (ARCHITECTURE.md §10 [LOW]):
 // admin-gated actions are DENIED rather than trusting the unverified JWT role
 // claim. A self-host pre-Better-Auth can opt back into the claim fallback by setting

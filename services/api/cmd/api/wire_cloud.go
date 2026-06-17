@@ -109,7 +109,7 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 
 	// Authed billing handlers (Checkout/Portal/Current).
 	stripeClient := cloudbilling.NewStripeClient(deps.Cfg.StripeSecretKey)
-	// Billing's owner/admin gate re-checks the LIVE auth.member role (not the JWT
+	// Billing's owner/admin gate re-checks the LIVE identity.member role (not the JWT
 	// claim) via the core Store, strict-by-default with ALLOW_JWT_ROLE_FALLBACK —
 	// the same confused-deputy guard the rest of the API uses (§5.4/§10, FIX 2).
 	bh := cloudbilling.NewHandlers(store, stripeClient, prices, deps.Cfg.DashboardURL,

@@ -60,13 +60,13 @@ type Handlers struct {
 	prices         PriceMap
 	dashboardURL   string // e.g. https://app.dropway.dev
 	roles          RoleChecker
-	allowJWTRoleFB bool // ALLOW_JWT_ROLE_FALLBACK: trust the JWT role only when auth.member is unavailable
+	allowJWTRoleFB bool // ALLOW_JWT_ROLE_FALLBACK: trust the JWT role only when identity.member is unavailable
 	log            *slog.Logger
 }
 
 // NewHandlers builds the billing HTTP handlers. dashboardURL is the dashboard
 // origin used for Checkout success/cancel + Portal return URLs. roles is the live
-// auth.member re-check; allowJWTRoleFB mirrors the core API's strict-by-default
+// identity.member re-check; allowJWTRoleFB mirrors the core API's strict-by-default
 // fallback policy.
 func NewHandlers(s CheckoutPortalStore, sc StripeClient, prices PriceMap, dashboardURL string, roles RoleChecker, allowJWTRoleFB bool, log *slog.Logger) *Handlers {
 	if log == nil {

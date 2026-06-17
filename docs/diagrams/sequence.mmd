@@ -11,7 +11,7 @@ sequenceDiagram
   rect rgb(232,245,233)
     note over U,M: a) Sign up
     U->>D: POST /api/auth/sign-up/email
-    D->>PG: create user + session (auth schema)
+    D->>PG: create user + session (identity schema)
     D->>M: send verification email
     D-->>U: Set-Cookie session, redirect to /onboarding
     U->>D: create organization

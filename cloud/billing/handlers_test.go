@@ -94,7 +94,7 @@ func newHandlersUnderAuth(t *testing.T, store CheckoutPortalStore, sc StripeClie
 	return newHandlersUnderAuthLive(t, store, sc, c, fakeRoles{role: c.Role})
 }
 
-// newHandlersUnderAuthLive lets a test inject the LIVE auth.member role separately
+// newHandlersUnderAuthLive lets a test inject the LIVE identity.member role separately
 // from the JWT claim role (to exercise the stale-claim re-check, FIX 2).
 func newHandlersUnderAuthLive(t *testing.T, store CheckoutPortalStore, sc StripeClient, c *auth.Claims, roles RoleChecker) http.Handler {
 	t.Helper()
@@ -108,7 +108,7 @@ func newHandlersUnderAuthLive(t *testing.T, store CheckoutPortalStore, sc Stripe
 }
 
 // TestCheckout_StaleAdminClaim_DeniedByLiveRole is the FIX 2 regression test: a
-// caller whose JWT still says role=admin but whose LIVE auth.member role is member
+// caller whose JWT still says role=admin but whose LIVE identity.member role is member
 // must be denied (403) — billing re-checks the live role, never the stale claim.
 func TestCheckout_StaleAdminClaim_DeniedByLiveRole(t *testing.T) {
 	store := &fakeCPStore{}

@@ -133,7 +133,7 @@ func (s *Store) AuthorizeMint(ctx context.Context, v MintViewer, host string) (M
 	switch mode {
 	case projection.AccessOrgOnly:
 		// The JWT org_id claim must match the site's org (fast hint), AND the viewer
-		// must be a CURRENT member of the site's org per the live auth.member table.
+		// must be a CURRENT member of the site's org per the live identity.member table.
 		// Membership is authoritative: a user removed from the org but still holding
 		// an unexpired JWT must NOT be able to mint an edge token (FIX 2 /
 		// ARCHITECTURE.md §6 "org-only → viewer ∈ member(site.org_id) (re-check)").

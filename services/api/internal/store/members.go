@@ -12,7 +12,7 @@ import (
 
 // Member is a row of the Better Auth organization `member` table, READ-ONLY to the
 // Go API (Better Auth owns + migrates it; the Go API only reads role for authz and
-// re-checks it — ARCHITECTURE.md §5/§8). It lives in the `auth` schema.
+// re-checks it — ARCHITECTURE.md §5/§8). It lives in the `identity` schema.
 type Member struct {
 	UserID string
 	OrgID  string
@@ -36,24 +36,24 @@ func IsAdminRole(role string) bool {
 }
 
 // MemberRole loads the caller's CURRENT role from the Better Auth member table
-// (auth.member), NOT the JWT claim — the live re-check that gates admin-only
+// (identity.member), NOT the JWT claim — the live re-check that gates admin-only
 // actions (ARCHITECTURE.md §5 confused-deputy guard, §10 [HIGH]). It runs under the
-// active tenant context but reads the auth schema directly (raw pgx; the auth
+// active tenant context but reads the identity schema directly (raw pgx; the auth
 // schema is outside sqlc's app scope).
 //
 // The Better Auth Organization plugin stores members as
-// auth.member("organizationId","userId","role"). If the auth schema/table is not
+// identity.member("organizationId","userId","role"). If the identity schema/table is not
 // present (a self-host that hasn't run Better Auth yet, or a DB-less test), it
 // returns ErrAuthSchemaUnavailable so the caller can decide how to degrade.
 func (s *Store) MemberRole(ctx context.Context, orgID, userID string) (string, error) {
 	if orgID == "" || userID == "" {
 		return "", ErrNoMembership
 	}
-	// The auth tables are NOT under the app RLS policies; we filter explicitly by
+	// The identity tables are NOT under the app RLS policies; we filter explicitly by
 	// (org, user). Read directly on the pool (no app tenant context needed).
 	var role string
 	row := s.pool.QueryRow(ctx,
-		`SELECT "role" FROM auth.member WHERE "organizationId" = $1 AND "userId" = $2`,
+		`SELECT "role" FROM identity.member WHERE "organizationId" = $1 AND "userId" = $2`,
 		orgID, userID)
 	if err := row.Scan(&role); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -68,7 +68,7 @@ func (s *Store) MemberRole(ctx context.Context, orgID, userID string) (string, e
 }
 
 // requireLiveMembership confirms the viewer is a CURRENT member of orgID per the
-// live auth.member table — the authoritative org_only mint check (FIX 2). A missing
+// live identity.member table — the authoritative org_only mint check (FIX 2). A missing
 // member row → ErrNotOrgMember (mapped to 403). If the Better Auth member table is
 // unavailable, the mint is REFUSED (ErrNotOrgMember), not silently granted: an
 // org_only token is an access grant, so we fail closed when membership can't be
@@ -84,12 +84,12 @@ func (s *Store) requireLiveMembership(ctx context.Context, orgID, userID string)
 }
 
 // ListMembers returns the org's members from the Better Auth member table. RLS does
-// not apply to the auth schema, so we scope explicitly by organizationId (the
+// not apply to the identity schema, so we scope explicitly by organizationId (the
 // caller is already authorized for orgID via its verified claim + this read is only
 // of its own org).
 func (s *Store) ListMembers(ctx context.Context, orgID string) ([]Member, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT "userId", "organizationId", "role" FROM auth.member WHERE "organizationId" = $1 ORDER BY "role", "userId"`,
+		`SELECT "userId", "organizationId", "role" FROM identity.member WHERE "organizationId" = $1 ORDER BY "role", "userId"`,
 		orgID)
 	if err != nil {
 		if isUndefinedTable(err) {
@@ -109,10 +109,10 @@ func (s *Store) ListMembers(ctx context.Context, orgID string) ([]Member, error)
 	return out, rows.Err()
 }
 
-// ErrAuthSchemaUnavailable is returned when the Better Auth auth.member table is
+// ErrAuthSchemaUnavailable is returned when the Better Auth identity.member table is
 // absent (Better Auth hasn't migrated yet / DB-less). Callers fall back to the JWT
 // role claim with a warning rather than hard-failing.
-var ErrAuthSchemaUnavailable = errors.New("store: auth.member table unavailable")
+var ErrAuthSchemaUnavailable = errors.New("store: identity.member table unavailable")
 
 // isUndefinedTable reports a Postgres 42P01 (undefined_table / schema) error.
 func isUndefinedTable(err error) bool {

@@ -27,7 +27,7 @@ flowchart LR
   user -. presigned blob upload .-> store
   caddy -->|reverse proxy · tls-check| serve
   dash -->|Bearer EdDSA JWT| api
-  dash -->|auth schema| pg
+  dash -->|identity schema| pg
   dash -. verify / magic link .-> smtp
   api -->|app schema · dropway_app · RLS| pg
   api -->|presign · write manifest| store

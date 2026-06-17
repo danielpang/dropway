@@ -31,7 +31,7 @@ type Config struct {
 	Cloud bool
 
 	// AllowJWTRoleFallback controls whether admin-gated actions may fall back to
-	// the verified JWT role claim when the Better Auth auth.member table is
+	// the verified JWT role claim when the Better Auth identity.member table is
 	// unavailable (ALLOW_JWT_ROLE_FALLBACK). Default FALSE (strict): if membership/
 	// role can't be confirmed live, admin-gated actions are DENIED rather than
 	// trusting the claim. A self-host that hasn't migrated Better Auth yet can opt

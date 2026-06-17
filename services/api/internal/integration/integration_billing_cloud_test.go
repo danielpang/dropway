@@ -11,7 +11,7 @@
 // It stands up fresh Postgres 16 + MinIO containers via `docker run`, applies BOTH
 // the app migrations (db/migrations/app) AND the cloud billing migration
 // (db/migrations/billing) as the owner role, seeds a synthetic Better Auth
-// auth.member table, then drives the REAL production billing path:
+// identity.member table, then drives the REAL production billing path:
 //
 //   - the cloud quota provider (Free 10 sites/user) on the FSL store.CreateSite —
 //     11th site → 402 (cloud cap), proving the hard cap;
@@ -110,6 +110,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	cbExecOwner(t, "SET app.current_org_id = '"+orgID+"'; INSERT INTO app.org_meta (id, allow_external_sharing) VALUES ('"+orgID+"', true);")
 	cbExecOwner(t, "SET app.current_org_id = '"+orgID+"'; INSERT INTO app.org_usage (org_id) VALUES ('"+orgID+"');")
 	cbSeedAuthOrg(t, orgID, "orga")
+	cbSeedAuthMember(t) // empty identity.member must exist before PreflightMembers (cloud always has Better Auth migrated)
 	if err := st.EnsureOrgProvisioned(ctx, tenant); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	}
 	for i := 1; i <= 5; i++ {
 		cbExecOwner(t, fmt.Sprintf(
-			`INSERT INTO auth.member ("organizationId","userId","role") VALUES ('%s','c0000000-0000-0000-0000-00000000000%d','member');`,
+			`INSERT INTO identity.member ("organizationId","userId","role") VALUES ('%s','c0000000-0000-0000-0000-00000000000%d','member');`,
 			orgID, i))
 	}
 	if err := st.PreflightMembers(ctx, tenant); err == nil {
@@ -475,18 +476,24 @@ func cbApplyMigrations(t *testing.T, root string) {
 		"-v", "ON_ERROR_STOP=1", "-c", "ALTER ROLE dropway_app WITH PASSWORD '"+cbAppPw+"';")
 }
 
-// cbSeedAuthMember creates the minimal Better Auth auth.member table the over-limit
-// member count reads, and grants the runtime role SELECT on it.
+// cbSeedAuthMember creates the minimal Better Auth identity.member + identity.invitation
+// tables the member-cap preflight reads (countMembersAndPending queries BOTH), and grants
+// the runtime role SELECT on them. Cloud always has Better Auth migrated, so both exist.
 func cbSeedAuthMember(t *testing.T) {
 	t.Helper()
-	cbExecOwner(t, `CREATE SCHEMA IF NOT EXISTS auth;
-		CREATE TABLE IF NOT EXISTS auth.member (
+	cbExecOwner(t, `CREATE SCHEMA IF NOT EXISTS identity;
+		CREATE TABLE IF NOT EXISTS identity.member (
 			id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
 			"organizationId" uuid NOT NULL,
 			"userId" uuid NOT NULL,
 			"role" text NOT NULL);
-		GRANT USAGE ON SCHEMA auth TO dropway_app;
-		GRANT SELECT ON auth.member TO dropway_app;`)
+		CREATE TABLE IF NOT EXISTS identity.invitation (
+			id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+			"organizationId" uuid NOT NULL,
+			status text NOT NULL);
+		GRANT USAGE ON SCHEMA identity TO dropway_app;
+		GRANT SELECT ON identity.member TO dropway_app;
+		GRANT SELECT ON identity.invitation TO dropway_app;`)
 }
 
 // cbExecOwner runs SQL as the owner (postgres) inside the pg container.
@@ -497,15 +504,15 @@ func cbExecOwner(t *testing.T, sql string) {
 		"-v", "ON_ERROR_STOP=1", "-c", sql)
 }
 
-// cbSeedAuthOrg seeds the Better-Auth-owned auth.organization slug for an org so
+// cbSeedAuthOrg seeds the Better-Auth-owned identity.organization slug for an org so
 // store.CreateSite can form the org-namespaced content host (projection.HostForSite).
 func cbSeedAuthOrg(t *testing.T, orgID, slug string) {
 	t.Helper()
-	cbExecOwner(t, `CREATE SCHEMA IF NOT EXISTS auth;
-		CREATE TABLE IF NOT EXISTS auth.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text);
-		GRANT USAGE ON SCHEMA auth TO dropway_app;
-		GRANT SELECT ON auth.organization TO dropway_app;
-		INSERT INTO auth.organization (id, slug, name) VALUES ('`+orgID+`', '`+slug+`', '`+slug+`') ON CONFLICT (id) DO NOTHING;`)
+	cbExecOwner(t, `CREATE SCHEMA IF NOT EXISTS identity;
+		CREATE TABLE IF NOT EXISTS identity.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text);
+		GRANT USAGE ON SCHEMA identity TO dropway_app;
+		GRANT SELECT ON identity.organization TO dropway_app;
+		INSERT INTO identity.organization (id, slug, name) VALUES ('`+orgID+`', '`+slug+`', '`+slug+`') ON CONFLICT (id) DO NOTHING;`)
 }
 
 func cbRun(t *testing.T, name string, args ...string) {

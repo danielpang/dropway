@@ -22,7 +22,7 @@ docker compose -f deploy/docker-compose.yml up
 
 That will:
 
-1. Start **Postgres 16** (the single source of truth — `app` + `auth` schemas, `FORCE RLS`).
+1. Start **Postgres 16** (the single source of truth — `app` + `identity` schemas, `FORCE RLS`).
 2. Start **MinIO** (S3 API on `:9000`, web console on `:9001`) and create the blob bucket.
 3. Run **goose** (`migrate` service) to apply `db/migrations/app/` as the privileged
    owner role and provision the **non-superuser, non-BYPASSRLS `dropway_app`** runtime role.

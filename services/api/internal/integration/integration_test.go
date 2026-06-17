@@ -195,6 +195,7 @@ func TestIntegration_Phase1(t *testing.T) {
 	userC := "c0000000-0000-0000-0000-000000000002"
 	tC := store.Tenant{OrgID: orgC, UserID: userC}
 	mustExec(t, "INSERT INTO app.org_meta (id) VALUES ($1)", orgC) // allow_external_sharing defaults false
+	seedAuthOrg(t, orgC, "orgc")                                   // Better Auth org row exists, so the slug read precedes (not masks) the external-sharing trigger
 	must(t, st.EnsureOrgProvisioned(ctx, tC))
 	if _, err := st.CreateSite(ctx, tC, "gamma", projection.AccessPublic); err != store.ErrExternalSharingDisabled {
 		t.Fatalf("expected ErrExternalSharingDisabled for public site under false policy, got %v", err)
@@ -419,18 +420,18 @@ func mustExec(t *testing.T, sql string, args ...string) {
 	run(t, "docker", "exec", "dropway-it-pg", "psql", ownerDSNLocal(), "-v", "ON_ERROR_STOP=1", "-c", final)
 }
 
-// seedAuthOrg creates the minimal Better-Auth-owned `auth.organization` table (if
+// seedAuthOrg creates the minimal Better-Auth-owned `identity.organization` table (if
 // absent) and inserts an org row with the given slug, granting dropway_app SELECT
-// (the auth schema is outside app RLS). The Go API reads auth.organization.slug to
+// (the identity schema is outside app RLS). The Go API reads identity.organization.slug to
 // build the org-namespaced content host (projection.HostForSite); CreateSite /
 // Publish fail with store.ErrOrgSlugNotFound without this row.
 func seedAuthOrg(t *testing.T, orgID, slug string) {
 	t.Helper()
-	mustExec(t, `CREATE SCHEMA IF NOT EXISTS auth`)
-	mustExec(t, `CREATE TABLE IF NOT EXISTS auth.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text)`)
-	mustExec(t, `GRANT USAGE ON SCHEMA auth TO dropway_app`)
-	mustExec(t, `GRANT SELECT ON auth.organization TO dropway_app`)
-	mustExec(t, "INSERT INTO auth.organization (id, slug, name) VALUES ($1, $2, $2) ON CONFLICT (id) DO NOTHING", orgID, slug)
+	mustExec(t, `CREATE SCHEMA IF NOT EXISTS identity`)
+	mustExec(t, `CREATE TABLE IF NOT EXISTS identity.organization (id uuid PRIMARY KEY, slug text NOT NULL, name text)`)
+	mustExec(t, `GRANT USAGE ON SCHEMA identity TO dropway_app`)
+	mustExec(t, `GRANT SELECT ON identity.organization TO dropway_app`)
+	mustExec(t, "INSERT INTO identity.organization (id, slug, name) VALUES ($1, $2, $2) ON CONFLICT (id) DO NOTHING", orgID, slug)
 }
 
 func run(t *testing.T, name string, args ...string) {

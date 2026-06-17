@@ -83,7 +83,7 @@ func TestTimeFromUnix(t *testing.T) {
 	}
 }
 
-// isUndefinedTable tolerates a missing auth.member table (self-host that hasn't
+// isUndefinedTable tolerates a missing identity.member table (self-host that hasn't
 // migrated Better Auth): only SQLSTATE 42P01 (undefined_table) qualifies, and a
 // plain error or a different SQLSTATE must NOT be swallowed.
 func TestIsUndefinedTable(t *testing.T) {

@@ -222,7 +222,7 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrHostNotFound):
 		httpx.WriteError(w, fmt.Errorf("%w: host not found", httpx.ErrNotFound))
 	case errors.Is(err, store.ErrOrgSlugNotFound):
-		// The org has no auth.organization row, so the canonical content host can't
+		// The org has no identity.organization row, so the canonical content host can't
 		// be formed. This is a provisioning gap, not a client error → opaque 500.
 		httpx.WriteError(w, fmt.Errorf("org is not fully provisioned (missing organization slug): %w", err))
 	case errors.Is(err, store.ErrNotOrgMember), errors.Is(err, store.ErrNotAllowlisted):

@@ -13,8 +13,8 @@ function requireServer(): void {
 
 /**
  * Postgres connection string Better Auth uses for its identity tables. Better Auth
- * OWNS + migrates the `auth` schema, so it connects with a PRIVILEGED role (DDL +
- * DML on the auth schema) — distinct from the Go API's restricted, non-BYPASSRLS
+ * OWNS + migrates the `identity` schema, so it connects with a PRIVILEGED role (DDL +
+ * DML on the identity schema) — distinct from the Go API's restricted, non-BYPASSRLS
  * `dropway_app` DATABASE_URL, which only needs SELECT on auth.* for authz reads.
  *
  * Prefers BETTER_AUTH_DATABASE_URL; falls back to DATABASE_URL for a single-role

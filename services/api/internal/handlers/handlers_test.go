@@ -51,7 +51,7 @@ type fakeStore struct {
 }
 
 // OrgSlug returns the configured fake org slug (default "org"), mirroring the real
-// store's auth.organization read used to build the org-namespaced content host.
+// store's identity.organization read used to build the org-namespaced content host.
 func (f *fakeStore) OrgSlug(_ context.Context, t store.Tenant) (string, error) {
 	if f.orgSlugErr != nil {
 		return "", f.orgSlugErr

@@ -64,7 +64,7 @@ func (s *Store) withTx(ctx context.Context, t Tenant, fn func(q *db.Queries) err
 }
 
 // withTxRaw is withTx for callers that also need the raw pgx.Tx (e.g. to read the
-// auth schema, which sqlc doesn't type — see orgSlugTx). fn receives both the tx
+// identity schema, which sqlc doesn't type — see orgSlugTx). fn receives both the tx
 // and a *db.Queries bound to it, under the same RLS tenant context.
 func (s *Store) withTxRaw(ctx context.Context, t Tenant, fn func(tx pgx.Tx, q *db.Queries) error) error {
 	tx, err := s.pool.Begin(ctx)

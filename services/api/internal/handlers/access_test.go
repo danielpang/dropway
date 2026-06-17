@@ -364,7 +364,7 @@ func TestAllowExternalSharing_Admin_Reconciles(t *testing.T) {
 // --- admin re-check when the member table is unavailable (FIX 3) ---
 //
 // Strict by default: with the JWT-role fallback DISABLED, an admin-gated action is
-// DENIED when auth.member is unavailable even if the JWT claims admin. With the
+// DENIED when identity.member is unavailable even if the JWT claims admin. With the
 // fallback explicitly ENABLED (self-host pre-Better-Auth), the verified JWT role
 // claim is trusted: admin → allowed, member → still forbidden.
 

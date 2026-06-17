@@ -44,7 +44,7 @@ flowchart LR
   user -. presigned blob upload .-> store
   caddy -->|reverse proxy · tls-check| serve
   dash -->|Bearer EdDSA JWT| api
-  dash -->|auth schema| pg
+  dash -->|identity schema| pg
   dash -. verify / magic link .-> smtp
   api -->|app schema · dropway_app · RLS| pg
   api -->|presign · write manifest| store
@@ -79,7 +79,7 @@ sequenceDiagram
   rect rgb(232,245,233)
     note over U,M: a) Sign up
     U->>D: POST /api/auth/sign-up/email
-    D->>PG: create user + session (auth schema)
+    D->>PG: create user + session (identity schema)
     D->>M: send verification email
     D-->>U: Set-Cookie session, redirect to /onboarding
     U->>D: create organization

@@ -364,7 +364,7 @@ func TestAddDomain_NoDomainsProvider_503(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ListMembers degradation: auth.member unavailable → empty list, not an error.
+// ListMembers degradation: identity.member unavailable → empty list, not an error.
 // ---------------------------------------------------------------------------
 
 func TestListMembers_AuthSchemaUnavailable_EmptyList(t *testing.T) {
