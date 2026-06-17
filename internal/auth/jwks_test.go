@@ -257,3 +257,33 @@ func TestVerify_RejectsWrongAudience(t *testing.T) {
 		t.Fatal("expected wrong-audience token to be rejected")
 	}
 }
+
+// WithExtraAudiences accepts ANY of {audience} ∪ extras (e.g. a trailing-slash
+// canonicalization from an MCP client) but still rejects an unlisted audience.
+func TestVerify_ExtraAudiences(t *testing.T) {
+	pub, priv := newKey(t)
+	js := newJWKSServer(map[string]ed25519.PublicKey{"k1": pub})
+	defer js.Close()
+
+	v := NewVerifier(js.URL, testIssuer, testAud,
+		WithHTTPClient(js.Client()), WithExtraAudiences(testAud+"/"))
+
+	// The trailing-slash variant is accepted.
+	cSlash := goodClaims()
+	cSlash.Audience = jwt.ClaimStrings{testAud + "/"}
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", cSlash)); err != nil {
+		t.Fatalf("trailing-slash audience should be accepted: %v", err)
+	}
+
+	// The primary audience is still accepted.
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", goodClaims())); err != nil {
+		t.Fatalf("primary audience should still be accepted: %v", err)
+	}
+
+	// An unlisted audience is still rejected (no blanket acceptance).
+	cBad := goodClaims()
+	cBad.Audience = jwt.ClaimStrings{"https://evil.example"}
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", cBad)); err == nil {
+		t.Fatal("unlisted audience must still be rejected with extra audiences set")
+	}
+}

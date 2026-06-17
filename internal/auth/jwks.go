@@ -48,7 +48,14 @@ type Verifier struct {
 	jwksURL  string
 	issuer   string
 	audience string
-	client   *http.Client
+	// extraAudiences are ADDITIONAL accepted `aud` values beyond `audience`. When
+	// non-empty the verifier accepts a token whose audience matches ANY of
+	// {audience} ∪ extraAudiences. Used by the MCP server, whose OAuth clients
+	// canonicalize the resource URL differently (e.g. mcp-remote appends a trailing
+	// slash: "http://host" → "http://host/"). Empty by default → the API keeps its
+	// strict single-audience check unchanged.
+	extraAudiences []string
+	client         *http.Client
 
 	minRefreshInterval time.Duration
 
@@ -69,6 +76,15 @@ func WithHTTPClient(c *http.Client) Option { return func(v *Verifier) { v.client
 // triggered by unknown kids (rate-limit / anti-DoS). Default 15s.
 func WithMinRefreshInterval(d time.Duration) Option {
 	return func(v *Verifier) { v.minRefreshInterval = d }
+}
+
+// WithExtraAudiences adds ADDITIONAL accepted `aud` values beyond the primary one
+// passed to NewVerifier. A token is accepted if its audience matches ANY of them.
+// Use this when clients may send the resource identifier in more than one canonical
+// form (e.g. with/without a trailing slash). With no extra audiences the verifier
+// keeps its strict single-audience behavior.
+func WithExtraAudiences(auds ...string) Option {
+	return func(v *Verifier) { v.extraAudiences = append(v.extraAudiences, auds...) }
 }
 
 // NewVerifier builds a Verifier for the given JWKS URL, expected issuer and
@@ -113,16 +129,42 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		return nil, ErrUnknownKey
 	}
 
-	parser := jwt.NewParser(
+	parserOpts := []jwt.ParserOption{
 		jwt.WithValidMethods([]string{allowedAlg}), // rejects none + HMAC
 		jwt.WithIssuer(v.issuer),
-		jwt.WithAudience(v.audience),
 		jwt.WithExpirationRequired(),
-	)
+	}
+	// With no extra audiences keep the library's strict single-audience check (the
+	// API path, unchanged). With extras, validate the audience ourselves against the
+	// allowed set after parsing.
+	if len(v.extraAudiences) == 0 {
+		parserOpts = append(parserOpts, jwt.WithAudience(v.audience))
+	}
+	parser := jwt.NewParser(parserOpts...)
 	if _, err := parser.ParseWithClaims(token, claims, keyfunc); err != nil {
 		return nil, err
 	}
+	if len(v.extraAudiences) > 0 && !v.audienceAllowed(claims.Audience) {
+		return nil, jwt.ErrTokenInvalidAudience
+	}
 	return claims, nil
+}
+
+// audienceAllowed reports whether the token's audience claim contains any of the
+// accepted audiences ({audience} ∪ extraAudiences). Only consulted when extra
+// audiences are configured.
+func (v *Verifier) audienceAllowed(aud jwt.ClaimStrings) bool {
+	for _, a := range aud {
+		if a == v.audience {
+			return true
+		}
+		for _, e := range v.extraAudiences {
+			if a == e {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (v *Verifier) lookup(kid string) (ed25519.PublicKey, bool) {

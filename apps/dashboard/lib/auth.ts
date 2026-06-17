@@ -262,8 +262,11 @@ export const auth = betterAuth({
       // the token's `aud` then equals that resource (which the MCP Go verifier
       // pins). Compliant MCP clients read the resource from the server's RFC 9728
       // metadata, which advertises exactly this URL. `iss` is the jwt() plugin's
-      // issuer (jwtIssuer()) — the same value the MCP verifier expects.
-      validAudiences: [mcpResourceUrl()],
+      // issuer (jwtIssuer()) — the same value the MCP verifier expects. We register
+      // BOTH the bare and trailing-slash forms because some MCP clients (e.g.
+      // mcp-remote) URL-canonicalize the resource and append a "/"
+      // ("http://host" → "http://host/"); the MCP verifier accepts both too.
+      validAudiences: [mcpResourceUrl(), mcpResourceUrl() + "/"],
       customAccessTokenClaims: async ({ user }) => {
         if (!user) return {};
         const orgId = await firstOrgId(user.id);
