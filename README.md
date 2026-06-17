@@ -117,7 +117,7 @@ docker compose -f deploy/docker-compose.yml up --build
 
 ```sh
 docker compose -f deploy/docker-compose.yml exec dashboard \
-  pnpm dlx @better-auth/cli@1.3.4 migrate --yes
+  pnpm dlx @better-auth/cli@latest migrate --yes
 ```
 
 Then open **http://localhost:3000**, sign up, create an org, create a site, and deploy

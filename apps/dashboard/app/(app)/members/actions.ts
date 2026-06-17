@@ -126,7 +126,9 @@ export async function finalizeMemberRemovalAction(input: {
   // 1. Kill the removed user's sessions so a still-valid session can't re-mint a JWT.
   try {
     const ctx = await auth.$context;
-    await ctx.internalAdapter.deleteSessions(input.userId);
+    // Better Auth 1.6 renamed the "delete all of a user's sessions" call to
+    // deleteUserSessions (deleteSessions now takes specific session tokens).
+    await ctx.internalAdapter.deleteUserSessions(input.userId);
   } catch {
     // Best-effort: a failed session delete still leaves the edge denylist + the live
     // membership re-check in force (gated access is revoked); it only leaves a ≤10m

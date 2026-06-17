@@ -157,7 +157,7 @@ services:
   # (a privileged role that owns `identity`) with search_path=identity (lib/auth.ts). Run it
   # ONCE after first boot (`@better-auth/cli` is a separate package → pnpm dlx):
   #   docker compose -f deploy/docker-compose.yml exec dashboard \
-  #     pnpm dlx @better-auth/cli@1.3.4 migrate --yes
+  #     pnpm dlx @better-auth/cli@latest migrate --yes
   # (See deploy/README.md.) The app migrations create an EMPTY `identity` schema as a
   # namespace + grant dropway_app SELECT on the identity tables (baseline); app rows attach
   # via app.org_meta (PK = Better Auth organization.id).
