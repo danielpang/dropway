@@ -454,10 +454,14 @@ jobs:
         run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 
       - name: run Better Auth migration (owns the identity schema)
+        # @latest, not a pin: the CLI versions SEPARATELY from the better-auth lib
+        # (apps/dashboard is on 1.6.19) and an old CLI won't create the OAuth-provider
+        # tables (oauthClient/oauthAccessToken/oauthConsent/oauthRefreshToken) in the
+        # identity schema. Matches deploy/README + the compose/.env.example one-liner.
         run: |
           for i in $(seq 1 30); do
             if docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T dashboard \
-                 pnpm dlx @better-auth/cli@1.3.4 migrate --yes; then
+                 pnpm dlx @better-auth/cli@latest migrate --yes; then
               echo "better-auth migrate ok"; exit 0
             fi
             echo "retry better-auth migrate ($i)"; sleep 5
