@@ -10,12 +10,11 @@ URL** in seconds. Drag a folder into the dashboard, or run `dropway deploy ./dis
 and you get a real URL you control: share it with the whole internet, your whole
 company, a few specific people, or behind a password — and change your mind anytime.
 
-It's **open source and self-hostable**, with an optional hosted SaaS. Think
-"Netlify-meets-access-control," built multi-tenant from the ground up.
+It's **open source and self-hostable**, with an optional hosted SaaS at [dropway.dev](https://dropway.dev). Think
 
 ```sh
 dropway deploy ./dist
-# → https://quarterly-report.dropwaycontent.com  (org-only, versioned, rollback-able)
+# → https://acme-quarterly-report.dropwaycontent.com  (acme org-only, versioned, rollback-able)
 ```
 
 ---
@@ -56,6 +55,12 @@ control as first-class features.**
   cut at the edge right away, not whenever a token happens to expire.
 - **Safe to serve untrusted content** — tenant HTML/JS is served from a separate
   Public-Suffix-List domain, so one site can never reach another's (or your) session.
+- **LLM-friendly access** *(coming soon)* — **public** sites auto-serve an
+  [`llms.txt`](https://llmstxt.org/) index and welcome AI crawlers (GPTBot, ClaudeBot,
+  PerplexityBot, …), so agents can discover and read your content. **Gated** sites
+  (org-only / allowlist / password) stay off-limits to crawlers — LLMs reach them
+  **only** through the authenticated **Dropway MCP server**, so your access control
+  holds for AI exactly as it does for people.
 - **No surprise bandwidth bills** — content is served from Cloudflare R2 (free egress),
   so heavy traffic doesn't translate into a heavy invoice.
 - **Open source + self-hostable** — run the whole thing yourself, unlimited, for free.
@@ -183,14 +188,11 @@ can self-host for free, plus an optional hosted SaaS for convenience and scale.
   ships in the self-host build**, so self-host has no limits. **`ee/`** holds
   license-gated enterprise features (SSO/SAML, audit export, custom domains).
 
-Pricing strategy for the hosted SaaS is in **[`docs/pricing.md`](docs/pricing.md)**.
-
 ## Docs & status
 
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — the full system design.
 - **[`docs/diagrams/`](docs/diagrams/)** — component + sequence diagrams (sign-up,
   sign-in, deploy, gated access).
-- **[`docs/pricing.md`](docs/pricing.md)** — pricing model + storage metering.
 - **[`status.md`](status.md)** — build status, monorepo map, and the complete local-run
   reference.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — contributions welcome under a DCO sign-off.
