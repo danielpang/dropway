@@ -29,6 +29,7 @@ type p2State struct {
 	memberErr    error
 	preflightErr error                        // injected by MembersPreflight (e.g. a *quota.ExceededError)
 	orgPolicy    bool                         // allow_external_sharing
+	mcpEnabled   bool                         // org_meta.mcp_enabled (default true)
 	domains      map[string]store.Domain      // domainID → domain
 	hostRoutes   map[string][]store.HostRoute // siteID → registered hosts (canonical + custom)
 	mintFn       func(v store.MintViewer, host string) (store.MintDecision, error)
@@ -51,6 +52,7 @@ func (f *fakeStore) p2() *p2State {
 			members:    map[string]string{},
 			domains:    map[string]store.Domain{},
 			hostRoutes: map[string][]store.HostRoute{},
+			mcpEnabled: true, // org_meta.mcp_enabled default
 		}
 		p2registry[f] = s
 	}
@@ -155,7 +157,21 @@ func (f *fakeStore) ListAllowlistEntries(_ context.Context, t store.Tenant, site
 }
 
 func (f *fakeStore) GetOrgPolicy(_ context.Context, t store.Tenant) (store.OrgPolicy, error) {
-	return store.OrgPolicy{OrgID: t.OrgID, AllowExternalSharing: f.p2().orgPolicy}, nil
+	return store.OrgPolicy{
+		OrgID:                t.OrgID,
+		AllowExternalSharing: f.p2().orgPolicy,
+		MCPEnabled:           f.p2().mcpEnabled,
+	}, nil
+}
+
+func (f *fakeStore) SetMcpEnabled(_ context.Context, t store.Tenant, enabled bool) (store.OrgPolicy, error) {
+	f.lastTenant = t
+	f.p2().mcpEnabled = enabled
+	return store.OrgPolicy{
+		OrgID:                t.OrgID,
+		AllowExternalSharing: f.p2().orgPolicy,
+		MCPEnabled:           enabled,
+	}, nil
 }
 
 func (f *fakeStore) SetAllowExternalSharing(_ context.Context, t store.Tenant, enabled bool) (store.ReconcileResult, error) {

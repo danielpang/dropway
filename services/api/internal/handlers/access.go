@@ -282,6 +282,54 @@ func (a *API) GetOrgPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"allow_external_sharing": pol.AllowExternalSharing,
+		"mcp_enabled":            pol.MCPEnabled,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /v1/orgs/mcp  {enabled}
+// ---------------------------------------------------------------------------
+
+type mcpEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetMcpEnabled toggles whether the Dropway MCP server may serve this org
+// (ADMIN/OWNER only — role re-checked against the member table). Enabling/disabling
+// only flips the flag; the MCP resource server re-checks org_meta.mcp_enabled per
+// request, so a disable takes effect immediately even for already-issued tokens (no
+// edge reconcile needed, unlike allow_external_sharing).
+func (a *API) SetMcpEnabled(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	if !a.requireAdmin(w, r, t) {
+		return
+	}
+
+	var req mcpEnabledRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+
+	pol, err := a.Store.SetMcpEnabled(r.Context(), t, req.Enabled)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	logger(r).Info("mcp_enabled toggled", "org_id", t.OrgID, "enabled", pol.MCPEnabled)
+	a.recordAudit(r, t, audit.ActionMcpToggle, "org:"+t.OrgID, map[string]any{
+		"enabled": pol.MCPEnabled,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"mcp_enabled": pol.MCPEnabled,
 	})
 }
 

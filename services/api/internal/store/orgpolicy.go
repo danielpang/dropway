@@ -13,6 +13,9 @@ import (
 type OrgPolicy struct {
 	OrgID                string
 	AllowExternalSharing bool
+	// MCPEnabled is whether the Dropway MCP server may serve this org. Default true
+	// (org_meta.mcp_enabled); an admin/owner can disable it (SetMcpEnabled).
+	MCPEnabled bool
 }
 
 // GetOrgPolicy returns the active org's sharing policy.
@@ -26,7 +29,41 @@ func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 			}
 			return err
 		}
-		out = OrgPolicy{OrgID: meta.ID, AllowExternalSharing: meta.AllowExternalSharing}
+		out = OrgPolicy{
+			OrgID:                meta.ID,
+			AllowExternalSharing: meta.AllowExternalSharing,
+			MCPEnabled:           meta.McpEnabled,
+		}
+		return nil
+	})
+	return out, err
+}
+
+// SetMcpEnabled toggles whether the Dropway MCP server may serve this org
+// (admin/owner only — the caller re-checks the role against the member table) and
+// returns the resulting policy. The MCP resource server ALSO re-checks
+// org_meta.mcp_enabled per request, so disabling takes effect immediately even for
+// already-issued OAuth access tokens.
+func (s *Store) SetMcpEnabled(ctx context.Context, t Tenant, enabled bool) (OrgPolicy, error) {
+	var out OrgPolicy
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := q.SetMcpEnabled(ctx, db.SetMcpEnabledParams{
+			ID: t.OrgID, McpEnabled: enabled,
+		}); err != nil {
+			return err
+		}
+		meta, err := q.GetOrgMeta(ctx, t.OrgID)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = OrgPolicy{
+			OrgID:                meta.ID,
+			AllowExternalSharing: meta.AllowExternalSharing,
+			MCPEnabled:           meta.McpEnabled,
+		}
 		return nil
 	})
 	return out, err

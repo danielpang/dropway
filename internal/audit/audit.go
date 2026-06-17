@@ -41,6 +41,9 @@ const (
 	// ActionAllowExternalSharing records the org allow_external_sharing toggle
 	// (PUT /v1/orgs/allow-external-sharing).
 	ActionAllowExternalSharing Action = "org.allow_external_sharing"
+	// ActionMcpToggle records the org mcp_enabled toggle (PATCH /v1/orgs/mcp) —
+	// enabling/disabling the Dropway MCP server for the org.
+	ActionMcpToggle Action = "org.mcp_toggle"
 	// ActionMemberRevoke records an admin revoking a member's edge tokens /
 	// removing them (POST /v1/members/{userId}/revoke).
 	ActionMemberRevoke Action = "member.revoke"

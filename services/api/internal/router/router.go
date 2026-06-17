@@ -78,6 +78,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// state — H10); writing it is admin/owner only (re-checked in the handler).
 		r.Get("/orgs/policy", api.GetOrgPolicy)
 		r.Put("/orgs/allow-external-sharing", api.SetAllowExternalSharing)
+		// MCP access toggle (admin/owner only, re-checked in the handler). Default on;
+		// disabling immediately stops the Dropway MCP server from serving the org.
+		r.Patch("/orgs/mcp", api.SetMcpEnabled)
 
 		// Generic hard-revoke (admin/owner only): {kind:user|site|org, id} → bump the
 		// denylist min_iat. The unified "sign-out-everywhere" affordance the dashboard

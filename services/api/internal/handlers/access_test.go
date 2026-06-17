@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +44,8 @@ func mountAccess(a *API, c *auth.Claims) http.Handler {
 		r.Post("/v1/authz/mint", a.AuthzMint)
 		r.Get("/v1/members", a.ListMembers)
 		r.Put("/v1/orgs/allow-external-sharing", a.SetAllowExternalSharing)
+		r.Get("/v1/orgs/policy", a.GetOrgPolicy)
+		r.Patch("/v1/orgs/mcp", a.SetMcpEnabled)
 		r.Put("/v1/sites/{id}/access", a.SetSiteAccess)
 		r.Post("/v1/sites/{id}/allowlist", a.AddAllowlistEntry)
 		r.Delete("/v1/sites/{id}/allowlist", a.RemoveAllowlistEntry)
@@ -66,6 +69,10 @@ func putJSON(h http.Handler, path, body string) *httptest.ResponseRecorder {
 
 func getReq(h http.Handler, path string) *httptest.ResponseRecorder {
 	return doReq(h, http.MethodGet, path, "")
+}
+
+func patchJSON(h http.Handler, path, body string) *httptest.ResponseRecorder {
+	return doReq(h, http.MethodPatch, path, body)
 }
 
 func doReq(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -358,6 +365,64 @@ func TestAllowExternalSharing_Admin_Reconciles(t *testing.T) {
 	rv, _ := proj.Get("s.dropwaycontent.com")
 	if rv.AccessMode != projection.AccessOrgOnly {
 		t.Fatalf("reconcile did not rewrite route: %+v", rv)
+	}
+}
+
+// --- MCP toggle (PATCH /v1/orgs/mcp) ---
+
+func TestSetMcpEnabled_MemberForbidden(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleMember
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccess(a, claims("user_1", "org_1", "member"))
+	rr := patchJSON(h, "/v1/orgs/mcp", `{"enabled":false}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rr.Code)
+	}
+	// The flag must NOT have changed (still default-enabled).
+	if !fs.p2().mcpEnabled {
+		t.Fatal("member was able to flip mcp_enabled")
+	}
+}
+
+func TestSetMcpEnabled_AdminTogglesOffAndOn(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleAdmin
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccess(a, claims("user_1", "org_1", "admin"))
+
+	rr := patchJSON(h, "/v1/orgs/mcp", `{"enabled":false}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("disable status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Body.String(); !strings.Contains(got, `"mcp_enabled":false`) {
+		t.Fatalf("disable body = %s, want mcp_enabled:false", got)
+	}
+	if fs.p2().mcpEnabled {
+		t.Fatal("disable did not persist")
+	}
+
+	rr = patchJSON(h, "/v1/orgs/mcp", `{"enabled":true}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("enable status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if !fs.p2().mcpEnabled {
+		t.Fatal("enable did not persist")
+	}
+}
+
+func TestGetOrgPolicy_IncludesMcpEnabled(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleMember
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccess(a, claims("user_1", "org_1", "member"))
+	rr := getReq(h, "/v1/orgs/policy")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	// Default org → MCP enabled; any member may read it.
+	if got := rr.Body.String(); !strings.Contains(got, `"mcp_enabled":true`) {
+		t.Fatalf("policy body = %s, want mcp_enabled:true", got)
 	}
 }
 

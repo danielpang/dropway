@@ -138,6 +138,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the caller org's policy (live toggle state)
+         * @description Any member may read it (it drives the org's own settings UI). Returns the live allow_external_sharing flag and mcp_enabled flag. Writing the values stays admin/owner only (allow-external-sharing / mcp endpoints).
+         */
+        get: operations["getOrgPolicy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Toggle whether the Dropway MCP server may serve this org (admin/owner only)
+         * @description Owner/admin only (role re-checked against the member table). Flips org_meta.mcp_enabled. The MCP resource server re-checks this flag per request, so disabling takes effect immediately even for already-issued OAuth access tokens (no edge reconcile needed). Default enabled.
+         */
+        patch: operations["setMcpEnabled"];
+        trace?: never;
+    };
     "/v1/domains/{domainID}/status": {
         parameters: {
             query?: never;
@@ -802,6 +842,60 @@ export interface operations {
                     "application/json": {
                         allow_external_sharing?: boolean;
                         downgraded_sites?: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getOrgPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's current policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        allow_external_sharing?: boolean;
+                        mcp_enabled?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    setMcpEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The new mcp_enabled value */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        mcp_enabled?: boolean;
                     };
                 };
             };

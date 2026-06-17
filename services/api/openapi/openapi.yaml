@@ -200,6 +200,56 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/orgs/policy:
+    get:
+      summary: Read the caller org's policy (live toggle state)
+      description: >
+        Any member may read it (it drives the org's own settings UI). Returns the
+        live allow_external_sharing flag and mcp_enabled flag. Writing the values
+        stays admin/owner only (allow-external-sharing / mcp endpoints).
+      operationId: getOrgPolicy
+      responses:
+        "200":
+          description: The org's current policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allow_external_sharing: { type: boolean }
+                  mcp_enabled: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/orgs/mcp:
+    patch:
+      summary: Toggle whether the Dropway MCP server may serve this org (admin/owner only)
+      description: >
+        Owner/admin only (role re-checked against the member table). Flips
+        org_meta.mcp_enabled. The MCP resource server re-checks this flag per request,
+        so disabling takes effect immediately even for already-issued OAuth access
+        tokens (no edge reconcile needed). Default enabled.
+      operationId: setMcpEnabled
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new mcp_enabled value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mcp_enabled: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/domains/{domainID}/status:
     get:
       summary: Poll a custom domain's verification status

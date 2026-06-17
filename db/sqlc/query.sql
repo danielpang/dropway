@@ -29,7 +29,7 @@ VALUES ($1)
 ON CONFLICT (org_id) DO NOTHING;
 
 -- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled
 FROM app.org_meta
 WHERE id = $1;
 
@@ -411,6 +411,14 @@ WHERE hr.host = $1;
 -- Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
 UPDATE app.org_meta
 SET allow_external_sharing = $2
+WHERE id = $1;
+
+-- name: SetMcpEnabled :exec
+-- Toggle whether the Dropway MCP server may serve this org (admin/owner only,
+-- enforced in Go). The MCP resource server ALSO re-checks org_meta.mcp_enabled per
+-- request, so disabling takes effect immediately even for already-issued tokens.
+UPDATE app.org_meta
+SET mcp_enabled = $2
 WHERE id = $1;
 
 -- name: ListPublicSitesForOrg :many
