@@ -23,6 +23,9 @@ vendor/
 .env.*.local
 !.env.example
 
+# Private billing data — never commit (kept local only; purged from history)
+docs/pricing.md
+
 # Local infra state
 .data/
 minio-data/
