@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { api, ApiError, type Site } from "@/lib/api";
 import { loadOrgBillingState } from "@/lib/billing-server";
+import { loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Sites" };
 
@@ -26,9 +27,10 @@ export default async function DashboardPage() {
 
   // Billing-derived read-only state (over_limit / past_due) disables "New site"
   // (§9). UX mirror of server enforcement; loads in parallel with the sites list.
-  const [sitesResult, billing] = await Promise.allSettled([
+  const [sitesResult, billing, activeOrg] = await Promise.allSettled([
     api.listSites(),
     loadOrgBillingState(),
+    loadActiveOrg(),
   ]);
 
   if (sitesResult.status === "fulfilled") {
@@ -46,6 +48,10 @@ export default async function DashboardPage() {
   const readOnly =
     billing.status === "fulfilled" ? billing.value.readOnly : false;
 
+  // Org slug for the "New site" URL preview (<org-slug>--<site-slug>.dropwaycontent.com).
+  const orgSlug =
+    activeOrg.status === "fulfilled" ? (activeOrg.value?.slug ?? null) : null;
+
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -55,7 +61,7 @@ export default async function DashboardPage() {
             Deploy a folder, get a live, access-controlled URL.
           </p>
         </div>
-        <NewSiteDialog readOnly={readOnly} />
+        <NewSiteDialog readOnly={readOnly} orgSlug={orgSlug} />
       </div>
 
       {loadError ? (
@@ -71,7 +77,7 @@ export default async function DashboardPage() {
           ))}
         </ul>
       ) : (
-        <EmptyState readOnly={readOnly} />
+        <EmptyState readOnly={readOnly} orgSlug={orgSlug} />
       )}
     </div>
   );
@@ -124,7 +130,13 @@ function SiteRow({ site }: { site: Site }) {
 }
 
 /** Shown when the org has no sites yet. */
-function EmptyState({ readOnly }: { readOnly: boolean }) {
+function EmptyState({
+  readOnly,
+  orgSlug,
+}: {
+  readOnly: boolean;
+  orgSlug: string | null;
+}) {
   return (
     <Card className="flex flex-col items-center gap-4 border-dashed p-12 text-center">
       <span className="grid size-12 place-items-center rounded-xl bg-secondary text-secondary-foreground">
@@ -140,7 +152,7 @@ function EmptyState({ readOnly }: { readOnly: boolean }) {
           to push your first deploy.
         </p>
       </div>
-      <NewSiteDialog readOnly={readOnly} />
+      <NewSiteDialog readOnly={readOnly} orgSlug={orgSlug} />
     </Card>
   );
 }

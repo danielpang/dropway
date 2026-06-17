@@ -22,11 +22,19 @@ interface DialogProps {
   children: React.ReactNode;
   /** Optional aria-label when there is no visible DialogTitle. */
   label?: string;
+  /** Extra classes for the panel — e.g. a wider `max-w-*` override (default max-w-md). */
+  className?: string;
 }
 
 const TitleIdContext = React.createContext<string | undefined>(undefined);
 
-export function Dialog({ open, onOpenChange, children, label }: DialogProps) {
+export function Dialog({
+  open,
+  onOpenChange,
+  children,
+  label,
+  className,
+}: DialogProps) {
   const [mounted, setMounted] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const titleId = React.useId();
@@ -96,6 +104,7 @@ export function Dialog({ open, onOpenChange, children, label }: DialogProps) {
           "relative z-10 w-full max-w-md rounded-lg border border-border bg-popover text-popover-foreground shadow-lg",
           "focus-visible:outline-none",
           "animate-fade-in",
+          className,
         )}
       >
         <button

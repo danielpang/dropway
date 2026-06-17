@@ -53,7 +53,14 @@ const useIsomorphicLayoutEffect =
  * trigger is DISABLED with an explanatory tooltip and the dialog can't open —
  * a UX mirror of the server-side restriction (the API would 402/403 anyway).
  */
-export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
+export function NewSiteDialog({
+  readOnly = false,
+  orgSlug = null,
+}: {
+  readOnly?: boolean;
+  /** The active org's slug — content hosts are `<org-slug>--<site-slug>.dropwaycontent.com`. */
+  orgSlug?: string | null;
+}) {
   const router = useRouter();
 
   const [open, setOpen] = React.useState(false);
@@ -149,6 +156,7 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
       </Button>
 
       <Dialog
+        className="max-w-xl"
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
@@ -158,8 +166,9 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
         <DialogHeader>
           <DialogTitle>Create a new site</DialogTitle>
           <DialogDescription>
-            Pick a slug — it becomes your site&rsquo;s subdomain. You can deploy
-            content from the CLI right after.
+            Pick a slug — combined with your org slug it becomes your
+            site&rsquo;s subdomain. You can deploy content from the CLI right
+            after.
           </DialogDescription>
         </DialogHeader>
 
@@ -167,7 +176,12 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
           <DialogBody>
             <div className="space-y-2">
               <Label htmlFor="site-slug">Slug</Label>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                {orgSlug ? (
+                  <span className="shrink-0 whitespace-nowrap font-mono text-sm text-muted-foreground">
+                    {orgSlug}--
+                  </span>
+                ) : null}
                 <Input
                   ref={inputRef}
                   id="site-slug"
@@ -177,11 +191,11 @@ export function NewSiteDialog({ readOnly = false }: { readOnly?: boolean }) {
                   onChange={onSlugChange}
                   aria-invalid={touched && !slugValid}
                   aria-describedby="slug-help"
-                  className="font-mono"
+                  className="min-w-0 flex-1 font-mono"
                   autoFocus
                   disabled={pending}
                 />
-                <span className="whitespace-nowrap text-sm text-muted-foreground">
+                <span className="shrink-0 whitespace-nowrap font-mono text-sm text-muted-foreground">
                   .dropwaycontent.com
                 </span>
               </div>
