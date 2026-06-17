@@ -68,6 +68,25 @@ func main() {
 	st := store.New(pool)
 	svc := &tools.Service{Store: st, Blobs: objStore}
 
+	mux := newMux(verifier, st, svc, publicURL, dashboardURL)
+
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Info("mcp listening", "addr", srv.Addr, "resource", publicURL, "authz", dashboardURL)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Error("serve", "err", err)
+		os.Exit(1)
+	}
+}
+
+// newMux wires the HTTP surface: /healthz, the RFC 9728 protected-resource
+// metadata, and the OAuth-gated + mcp_enabled-gated /mcp Streamable-HTTP handler.
+// Extracted from main so the integration test can stand the server up in-process
+// against a test JWKS + a real Postgres-backed store.
+func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, publicURL, dashboardURL string) http.Handler {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "dropway", Version: "v1"}, nil)
 	tools.Register(server, svc)
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(
@@ -88,17 +107,7 @@ func main() {
 		requireMCPEnabled(st, mcpHandler))
 	mux.Handle("/mcp", protected)
 	mux.Handle("/mcp/", protected)
-
-	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	log.Info("mcp listening", "addr", srv.Addr, "resource", publicURL, "authz", dashboardURL)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error("serve", "err", err)
-		os.Exit(1)
-	}
+	return mux
 }
 
 // requireMCPEnabled rejects requests for an org whose admin/owner has turned MCP
