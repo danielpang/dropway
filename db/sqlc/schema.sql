@@ -21,7 +21,8 @@ CREATE TABLE app.org_meta (
     plan_tier              text NOT NULL DEFAULT 'free',
     allow_external_sharing boolean NOT NULL DEFAULT false,
     default_visibility     text NOT NULL DEFAULT 'org_only',
-    created_at             timestamptz NOT NULL DEFAULT now()
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    mcp_enabled            boolean NOT NULL DEFAULT true
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
