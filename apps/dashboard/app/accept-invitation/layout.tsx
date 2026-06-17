@@ -17,7 +17,7 @@ export default function AcceptInvitationLayout({
             aria-hidden
             className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground text-xs font-bold"
           >
-            S
+            D
           </span>
           Dropway
         </Link>

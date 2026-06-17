@@ -37,7 +37,7 @@ export default async function OnboardingPage() {
             aria-hidden
             className="grid size-6 place-items-center rounded-md bg-primary text-xs font-bold text-primary-foreground"
           >
-            S
+            D
           </span>
           Dropway
         </span>
