@@ -34,16 +34,20 @@ plane is ready.
 
 | Service        | Purpose                                                        | Ports |
 |----------------|---------------------------------------------------------------|-------|
+| `api`          | Go control-plane: system of record + authz boundary           | 8080  |
+| `dashboard`    | Next.js + Better Auth (control plane + OAuth authorization server) | 3000  |
+| `serve`        | Go content server (`*.<CONTENT_DOMAIN>`); serves sites + `llms.txt` | 8090  |
+| `mcp`          | OAuth-protected MCP server for LLM access to sites             | 8092  |
 | `postgres`     | System of record; `app` schema (Go-owned) + RLS               | 5432  |
 | `minio`        | R2/S3-compatible object store for blobs + deploy manifests     | 9000 (S3), 9001 (console) |
 | `createbucket` | One-shot: ensures the `dropway-blobs` bucket exists            | —     |
 | `migrate`      | One-shot: `goose up` of the app schema + sets runtime password | —     |
 
-The **Go API** (`services/api`) and the **dashboard** (`apps/dashboard`) are owned by
-other parts of the repo; once present they slot into this compose file behind the same
-env contract documented in [`.env.example`](./.env.example) (`DATABASE_URL`, the
-`S3_*` block, and the `JWKS_URL` / `JWT_ISSUER` / `JWT_AUDIENCE` trio the Go verifier
-uses).
+The **Go API** (`services/api`), the **dashboard** (`apps/dashboard`), the **content
+server** (`services/serve`), and the **MCP server** (`services/mcp`) all slot into this
+compose file behind the env contract documented in [`.env.example`](./.env.example)
+(`DATABASE_URL`, the `S3_*` block, and the `JWKS_URL` / `JWT_ISSUER` / `JWT_AUDIENCE`
+trio the Go verifiers use).
 
 ## Serving sites: the content domain
 
@@ -96,6 +100,52 @@ Two things to know:
   `__Host-edge` cookie, which browsers accept only over `https`. With the local `http`
   default, view a **public** site in the browser; gated tiers need a real TLS origin
   (`CONTENT_SCHEME=https`).
+
+## LLM access: the MCP server
+
+The `mcp` service (`services/mcp`) is an **OAuth-protected, remote (Streamable HTTP)
+[Model Context Protocol](https://modelcontextprotocol.io/) server**. It lets an
+**authorized** LLM agent list and read a tenant's deployed sites — **including gated
+content** — scoped to one org by the same Postgres RLS as everything else (it connects
+as the non-`BYPASSRLS` `dropway_app` role via `DATABASE_URL`). Public sites are reachable
+by crawlers without MCP via the `serve`/Worker-emitted `llms.txt`; gated sites are
+reachable by an LLM **only** through an authorized MCP connection.
+
+**It comes up with the stack** — `docker compose -f deploy/docker-compose.yml up` starts
+`mcp` on `:8092` alongside the rest. Users connect their AI tool from the dashboard
+(**Settings → LLM access (MCP) → Connect**); the first connection runs a browser OAuth
+2.1 flow (Dynamic Client Registration → sign in → "Authorize MCP access") against the
+dashboard, which is the authorization server. No API keys are exchanged.
+
+**Env contract** (in [`.env.example`](./.env.example)). The audience/issuer must line up
+across services or token verification fails:
+
+| Var | What it sets | Local default | Production |
+|---|---|---|---|
+| `MCP_PORT` | port the server listens on | `8092` | `8092` (behind your TLS edge) |
+| `MCP_PUBLIC_URL` | the server's external URL — used as the OAuth **resource/audience** | `http://localhost:8092` | `https://mcp.dropway.dev` |
+| `NEXT_PUBLIC_MCP_URL` | the URL the dashboard's Connect modal displays | `http://localhost:8092` | `https://mcp.dropway.dev` |
+
+How the pieces agree (all enforced — a mismatch is a 401):
+
+- **`MCP_PUBLIC_URL`** is the OAuth **resource** the client requests and the **audience**
+  (`aud`) the MCP server pins. The dashboard registers it in the OAuth provider's
+  `validAudiences` (read from the same value), so the provider mints a **JWT** access
+  token (not opaque) whose `aud` matches. Keep `MCP_PUBLIC_URL` **byte-identical** on the
+  `mcp` and `dashboard` services, and make it the URL clients actually connect to.
+- **`JWT_ISSUER`** is the `iss` the MCP server expects; the dashboard's `jwt()` plugin
+  stamps it onto OAuth access tokens (the same value the Go API already verifies).
+- **`JWKS_URL`** (compose default `http://dashboard:3000/api/auth/jwks`) is where the MCP
+  server fetches the signing keys to verify tokens.
+- The MCP server re-checks **`org_meta.mcp_enabled`** on every request, so an admin
+  turning MCP off in Settings cuts off access immediately — even for already-issued
+  tokens, independent of TTL.
+
+**Production:** give `mcp.dropway.dev` a DNS record + TLS (front it with your edge/load
+balancer terminating TLS to `:8092`), set `MCP_PUBLIC_URL=https://mcp.dropway.dev` and
+`NEXT_PUBLIC_MCP_URL=https://mcp.dropway.dev`, and point `MCP_DASHBOARD_URL` at your
+dashboard origin (the browser-facing authorization server). See
+[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §6 ("LLM access").
 
 ## Two database roles (why there are two URLs)
 

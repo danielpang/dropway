@@ -163,6 +163,31 @@ the port, so the stored route stays the bare host. Full details (wildcard DNS/ce
 Public-Suffix-List isolation rule, and the `https` requirement for gated sites) are in
 **[`deploy/README.md`](deploy/README.md#serving-sites-the-content-domain)**.
 
+### Connect an AI tool (MCP)
+
+Dropway ships an **OAuth-protected MCP server** (the `mcp` service, `http://localhost:8092`
+locally) so an LLM agent can browse and read your sites. **Public** sites are also readable
+by crawlers via an auto-served [`llms.txt`](https://llmstxt.org/); **gated** sites
+(org-only / allowlist / password) are reachable by an LLM **only** through an authorized MCP
+connection — your access control holds for AI exactly as it does for people.
+
+Add it to your AI tool as a custom connector using the MCP URL — the dashboard shows
+copy-paste steps under **Settings → LLM access (MCP) → Connect**. The short version:
+
+| Tool | How |
+|---|---|
+| **Claude Cowork** | Settings → Connectors → *Add custom connector* → paste `http://localhost:8092/mcp` |
+| **Claude Code** | `claude mcp add --transport http dropway http://localhost:8092/mcp`, then `/mcp` → *Authenticate* |
+| **Cursor** | add `{ "mcpServers": { "dropway": { "url": "http://localhost:8092/mcp" } } }` to `~/.cursor/mcp.json` |
+| **Codex** | add `[mcp_servers.dropway]` with `url = "http://localhost:8092/mcp"` to `~/.codex/config.toml` |
+
+The first connection opens your browser to sign in and approve **"Authorize MCP access"** —
+that's standard OAuth 2.1 (no API keys to copy). Access stays scoped to your organization
+and honors each site's sharing settings. Owners/admins can switch MCP access off for the
+whole org under **Settings → LLM access (MCP)**. In production set `MCP_PUBLIC_URL` /
+`NEXT_PUBLIC_MCP_URL` to your MCP host (e.g. `https://mcp.dropway.dev`); see
+**[`deploy/README.md`](deploy/README.md#llm-access-the-mcp-server)**.
+
 ### Develop without Docker
 
 ```sh
@@ -193,7 +218,7 @@ can self-host for free, plus an optional hosted SaaS for convenience and scale.
 
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — the full system design.
 - **[`docs/diagrams/`](docs/diagrams/)** — component + sequence diagrams (sign-up,
-  sign-in, deploy, gated access).
+  sign-in, deploy, gated access, LLM/MCP access).
 - **[`status.md`](status.md)** — build status, monorepo map, and the complete local-run
   reference.
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — contributions welcome under a DCO sign-off.

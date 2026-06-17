@@ -1,9 +1,11 @@
 sequenceDiagram
   actor U as User (owner)
   actor V as Viewer
+  actor L as LLM agent
   participant D as dashboard
   participant A as api
   participant S as serve
+  participant MCP as mcp
   participant PG as Postgres
   participant OS as Object store
   participant M as Email
@@ -58,4 +60,21 @@ sequenceDiagram
     V->>S: GET / (with __Host-edge cookie)
     S->>OS: read manifest + blob
     S-->>V: stream content (private, no-store)
+  end
+
+  rect rgb(225,245,254)
+    note over L,OS: e) LLM agent reads gated content via the MCP server (OAuth 2.1)
+    L->>MCP: MCP request (no token)
+    MCP-->>L: 401 + WWW-Authenticate (resource metadata)
+    L->>MCP: GET /.well-known/oauth-protected-resource
+    MCP-->>L: authorization_server = dashboard
+    L->>D: register client (DCR) + authorize (PKCE, resource=mcp)
+    D->>U: sign in + approve "Authorize MCP access"
+    D-->>L: redirect with auth code
+    L->>D: exchange code for JWT access token (aud=mcp, org_id)
+    L->>MCP: MCP request (Bearer JWT)
+    MCP->>D: fetch JWKS, verify token (iss/aud)
+    MCP->>PG: check org_meta.mcp_enabled, SET LOCAL RLS
+    MCP->>OS: read manifest + blob (org-scoped)
+    MCP-->>L: list_sites / read_file results
   end

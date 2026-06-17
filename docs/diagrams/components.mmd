@@ -1,21 +1,27 @@
 flowchart LR
   user(["User / Browser"])
+  agent(["LLM agent<br/>Claude · Cursor · Codex"])
 
   subgraph edge["Content edge"]
     direction TB
     caddy["Caddy<br/>TLS · on-demand certs · cache"]
-    serve["serve (Go)<br/>*.dropwaycontent.com<br/>serve content + enforce access"]
+    serve["serve (Go)<br/>*.dropwaycontent.com<br/>content + access + llms.txt"]
   end
 
   subgraph control["Control plane"]
     direction TB
-    dash["dashboard (Next.js)<br/>Better Auth · /authz<br/>app.dropway.dev"]
+    dash["dashboard (Next.js)<br/>Better Auth · /authz · OAuth AS<br/>app.dropway.dev"]
     api["api (Go)<br/>system of record + authz<br/>api.dropway.dev"]
+  end
+
+  subgraph llm["LLM access"]
+    direction TB
+    mcp["mcp (Go)<br/>OAuth-protected MCP server<br/>mcp.dropway.dev"]
   end
 
   subgraph datap["Data plane"]
     direction TB
-    pg[("Postgres<br/>auth + app schemas · RLS")]
+    pg[("Postgres<br/>identity + app schemas · RLS")]
     redis[("Redis / Valkey<br/>route projection · revocation")]
     store[("Object store · MinIO / R2<br/>blobs + manifests")]
   end
@@ -25,6 +31,9 @@ flowchart LR
   user -->|session cookie| dash
   user -->|content GET| caddy
   user -. presigned blob upload .-> store
+  agent -->|public: llms.txt · crawl| caddy
+  agent -->|OAuth 2.1 sign-in + consent| dash
+  agent -->|Bearer JWT · MCP| mcp
   caddy -->|reverse proxy · tls-check| serve
   dash -->|Bearer EdDSA JWT| api
   dash -->|identity schema| pg
@@ -36,6 +45,9 @@ flowchart LR
   serve -->|read blobs + manifests| store
   serve -->|read revocation| redis
   serve -->|fetch edge JWKS| api
+  mcp -->|verify token · fetch JWKS| dash
+  mcp -->|app schema · dropway_app · RLS| pg
+  mcp -->|read blobs + manifests| store
 
   classDef plane fill:#f8fafc,stroke:#cbd5e1,color:#0f172a;
-  class edge,control,datap plane;
+  class edge,control,datap,llm plane;

@@ -10,29 +10,39 @@ blocks below natively.
 
 How the runtime pieces talk to each other. `serve` is the self-host content edge
 (the plain-Go alternative to the Cloudflare serving Worker); Redis/Valkey holds the
-route projection + revocation denylist (`api` writes, `serve` reads).
+route projection + revocation denylist (`api` writes, `serve` reads). `mcp` is the
+OAuth-protected MCP server: an LLM agent reads **public** content as a crawler (via
+`llms.txt` on the edge) and **gated** content only through `mcp`, after a browser
+OAuth flow against the dashboard (the authorization server) — scoped to one org by
+the same RLS as the rest of the platform.
 
 ![Components](./components.png)
 
 ```mermaid
 flowchart LR
   user(["User / Browser"])
+  agent(["LLM agent<br/>Claude · Cursor · Codex"])
 
   subgraph edge["Content edge"]
     direction TB
     caddy["Caddy<br/>TLS · on-demand certs · cache"]
-    serve["serve (Go)<br/>*.dropwaycontent.com<br/>serve content + enforce access"]
+    serve["serve (Go)<br/>*.dropwaycontent.com<br/>content + access + llms.txt"]
   end
 
   subgraph control["Control plane"]
     direction TB
-    dash["dashboard (Next.js)<br/>Better Auth · /authz<br/>app.dropway.dev"]
+    dash["dashboard (Next.js)<br/>Better Auth · /authz · OAuth AS<br/>app.dropway.dev"]
     api["api (Go)<br/>system of record + authz<br/>api.dropway.dev"]
+  end
+
+  subgraph llm["LLM access"]
+    direction TB
+    mcp["mcp (Go)<br/>OAuth-protected MCP server<br/>mcp.dropway.dev"]
   end
 
   subgraph datap["Data plane"]
     direction TB
-    pg[("Postgres<br/>auth + app schemas · RLS")]
+    pg[("Postgres<br/>identity + app schemas · RLS")]
     redis[("Redis / Valkey<br/>route projection · revocation")]
     store[("Object store · MinIO / R2<br/>blobs + manifests")]
   end
@@ -42,6 +52,9 @@ flowchart LR
   user -->|session cookie| dash
   user -->|content GET| caddy
   user -. presigned blob upload .-> store
+  agent -->|public: llms.txt · crawl| caddy
+  agent -->|OAuth 2.1 sign-in + consent| dash
+  agent -->|Bearer JWT · MCP| mcp
   caddy -->|reverse proxy · tls-check| serve
   dash -->|Bearer EdDSA JWT| api
   dash -->|identity schema| pg
@@ -53,15 +66,19 @@ flowchart LR
   serve -->|read blobs + manifests| store
   serve -->|read revocation| redis
   serve -->|fetch edge JWKS| api
+  mcp -->|verify token · fetch JWKS| dash
+  mcp -->|app schema · dropway_app · RLS| pg
+  mcp -->|read blobs + manifests| store
 
   classDef plane fill:#f8fafc,stroke:#cbd5e1,color:#0f172a;
-  class edge,control,datap plane;
+  class edge,control,datap,llm plane;
 ```
 
 ## 2. Sequence flows
 
 (a) sign up · (b) sign in · (c) create + deploy a site · (d) another user opening a
-site shared with them (the gated edge-token exchange).
+site shared with them (the gated edge-token exchange) · (e) an LLM agent reading gated
+content through the MCP server (the OAuth 2.1 flow).
 
 ![Sequence](./sequence.png)
 
@@ -69,9 +86,11 @@ site shared with them (the gated edge-token exchange).
 sequenceDiagram
   actor U as User (owner)
   actor V as Viewer
+  actor L as LLM agent
   participant D as dashboard
   participant A as api
   participant S as serve
+  participant MCP as mcp
   participant PG as Postgres
   participant OS as Object store
   participant M as Email
@@ -126,6 +145,23 @@ sequenceDiagram
     V->>S: GET / (with __Host-edge cookie)
     S->>OS: read manifest + blob
     S-->>V: stream content (private, no-store)
+  end
+
+  rect rgb(225,245,254)
+    note over L,OS: e) LLM agent reads gated content via the MCP server (OAuth 2.1)
+    L->>MCP: MCP request (no token)
+    MCP-->>L: 401 + WWW-Authenticate (resource metadata)
+    L->>MCP: GET /.well-known/oauth-protected-resource
+    MCP-->>L: authorization_server = dashboard
+    L->>D: register client (DCR) + authorize (PKCE, resource=mcp)
+    D->>U: sign in + approve "Authorize MCP access"
+    D-->>L: redirect with auth code
+    L->>D: exchange code for JWT access token (aud=mcp, org_id)
+    L->>MCP: MCP request (Bearer JWT)
+    MCP->>D: fetch JWKS, verify token (iss/aud)
+    MCP->>PG: check org_meta.mcp_enabled, SET LOCAL RLS
+    MCP->>OS: read manifest + blob (org-scoped)
+    MCP-->>L: list_sites / read_file results
   end
 ```
 
