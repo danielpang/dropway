@@ -33,6 +33,6 @@ baseline (version 1) as already-applied and runs nothing, so it keeps working. T
 get a clean version history, drop and recreate the database so it builds from the
 baseline. (Pre-launch, just recreate it.)
 
-Note: the `auth` schema is owned and migrated by Better Auth (the dashboard), not
-by these files. The baseline only ensures the `auth` namespace exists as an FK
+Note: the `identity` schema is owned and migrated by Better Auth (the dashboard), not
+by these files. The baseline only ensures the `identity` namespace exists as an FK
 target and grants the runtime role read access.

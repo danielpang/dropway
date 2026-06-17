@@ -97,7 +97,7 @@ A DCO check runs in CI; PRs with unsigned commits will be asked to add the sign-
   file is `NNNN_name.sql` with both `-- +goose Up` and `-- +goose Down` sections.
 - **Never hand-edit a production schema.** RLS policies, GRANTs, and triggers are
   hand-written, reviewed migrations.
-- The **`auth`** schema belongs to Better Auth — do not migrate it here.
+- The **`identity`** schema belongs to Better Auth — do not migrate it here.
 - The **`billing`** schema is cloud-only; the core must never reference it.
 - New tenant tables **must** carry a denormalized `org_id`, a composite index leading on
   `org_id`, and `ENABLE` + `FORCE ROW LEVEL SECURITY` with a subquery-free

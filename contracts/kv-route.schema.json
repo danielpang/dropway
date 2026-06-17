@@ -10,7 +10,7 @@
     "org_id": {
       "type": "string",
       "format": "uuid",
-      "description": "Owning org (auth.organization.id / app.org_meta.id). Used to build the per-org R2 blob prefix.",
+      "description": "Owning org (identity.organization.id / app.org_meta.id). Used to build the per-org R2 blob prefix.",
       "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     },
     "site_id": {

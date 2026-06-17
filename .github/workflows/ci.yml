@@ -368,7 +368,7 @@ jobs:
       - name: boot the stack
         run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 
-      - name: run Better Auth migration (owns the auth schema)
+      - name: run Better Auth migration (owns the identity schema)
         run: |
           for i in $(seq 1 30); do
             if docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T dashboard \

@@ -18,7 +18,7 @@ function requireServer(): void {
  * `dropway_app` DATABASE_URL, which only needs SELECT on auth.* for authz reads.
  *
  * Prefers BETTER_AUTH_DATABASE_URL; falls back to DATABASE_URL for a single-role
- * setup. (lib/auth.ts also pins the connection's search_path to `auth` so the
+ * setup. (lib/auth.ts also pins the connection's search_path to `identity` so the
  * unqualified Better Auth tables are created in + read from that schema.)
  */
 export function databaseUrl(): string {

@@ -109,7 +109,7 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
                ▼                  ▼          ▼                └──────────►▼
    ┌───────────────────────────────────────────────────────────────────────────────────┐
    │              SUPABASE / POSTGRES   (single source of truth · FORCE RLS)             │
-   │   auth schema:    Better Auth tables (Better-Auth-migrated; Go reads, never migrates)│
+   │   identity schema:    Better Auth tables (Better-Auth-migrated; Go reads, never migrates)│
    │   app schema:     org_meta + sites/versions/domains/policy/org_usage (Go·goose·sqlc) │
    │   billing schema: subscriptions… (cloud-only; FK → app.org_meta; app NEVER → billing)│
    │   Go connects as non-BYPASSRLS `dropway_app`; SET LOCAL app.current_org_id per tx     │
@@ -233,24 +233,24 @@ Shopify's internal **Quick** proved a sharp thesis: *sharing things is harder th
 **Recommended: Stripe** (hybrid seat+metered fits best) + Stripe Tax. Keep a thin `BillingProvider` Go interface so an MoR can wrap later.
 
 ### ORM / data access — *one writer-owner per table, generated consumers (refined)*
-**Recommended: Go = sqlc + pgx/v5 over the `app` schema (migrations via `goose`); Better Auth OWNS + migrates its own identity/org tables (in an `auth` schema); the dashboard consumes a generated OpenAPI TS client, NOT Postgres (no Drizzle, no `supabase-js`).** The only genuine cross-language *data* contract is the Worker's KV value shape, defined once in `contracts/` (JSON Schema → Go struct + TS type + round-trip test). No single migration engine over the union — Better Auth and goose each own their schema, with a documented, CI-gated migration order. Full rationale in §8.
+**Recommended: Go = sqlc + pgx/v5 over the `app` schema (migrations via `goose`); Better Auth OWNS + migrates its own identity/org tables (in an `identity` schema); the dashboard consumes a generated OpenAPI TS client, NOT Postgres (no Drizzle, no `supabase-js`).** The only genuine cross-language *data* contract is the Worker's KV value shape, defined once in `contracts/` (JSON Schema → Go struct + TS type + round-trip test). No single migration engine over the union — Better Auth and goose each own their schema, with a documented, CI-gated migration order. Full rationale in §8.
 
 ---
 
 ## 5. Data Model + RLS
 
 **Schema ownership — one writer-owner per table, namespaced schemas (refined):**
-- **`auth` schema — Better Auth owns AND migrates** (user/session/account/verification/jwks/organization/member/invitation). The Go API reads it (membership/role for authz) but **never migrates it**.
-- **`app` schema — Go owns** via `goose` migrations: `org_meta` (PK = Better Auth `organization.id`) + all app tables. Business data attaches to the org via `org_meta`, so the two migration tools never fight over one table. App tables FK to `auth.organization.id` (read-only target).
+- **`identity` schema — Better Auth owns AND migrates** (user/session/account/verification/jwks/organization/member/invitation). The Go API reads it (membership/role for authz) but **never migrates it**.
+- **`app` schema — Go owns** via `goose` migrations: `org_meta` (PK = Better Auth `organization.id`) + all app tables. Business data attaches to the org via `org_meta`, so the two migration tools never fight over one table. App tables FK to `identity.organization.id` (read-only target).
 - **`billing` schema — cloud-only, proprietary**, applied only by the cloud deployment. **FK direction is cloud → core only** (`billing.subscriptions.org_id → app.org_meta.id`); the core *never* references `billing`, so the OSS build compiles and runs without it.
-- **Migration order is a CI-gated invariant:** Better Auth (`auth`) runs before app migrations that FK to `organization.id`. *(Open question: confirm Better Auth's custom-`auth`-schema support on the pinned version; pin it and add a contract test asserting the column names the Go API reads.)*
+- **Migration order is a CI-gated invariant:** Better Auth (`identity`) runs before app migrations that FK to `organization.id`. *(Open question: confirm Better Auth's custom-`identity`-schema support on the pinned version; pin it and add a contract test asserting the column names the Go API reads.)*
 
 ```
   user  (Better Auth)        ── account, session (Better Auth-owned)
        │
    ┌───┴──────────────┬──────────────────┬───────────────────┐
    ▼                  ▼                  ▼                   ▼
-  AUTH SCHEMA (Better Auth-owned/migrated)        APP SCHEMA (Go-owned, goose)
+  IDENTITY SCHEMA (Better Auth-owned/migrated)        APP SCHEMA (Go-owned, goose)
   ──────────────────────────────────────          ─────────────────────────────
   user ─ account ─ session ─ jwks                  org_meta  (PK = organization.id;
    │                                                 plan_tier cache, allow_external_sharing
@@ -404,12 +404,12 @@ Static→dynamic is **additive**: same manifest, routing, auth, RLS; dynamic jus
 
 **Rule: each table has exactly one writer-owner; every other runtime consumes a *generated* artifact, never a hand-written duplicate.** There is no single migration engine over the union — that fought Better Auth. Instead:
 
-- **Better Auth OWNS + migrates** `user/session/account/verification/jwks/organization/member/invitation` (the `auth` schema). The Go API treats these **read-mostly** (membership/role for authz) and **never migrates them**. App data attaches via the separate **`org_meta`** table keyed by `organization.id`, so the two tools never fight over one table.
+- **Better Auth OWNS + migrates** `user/session/account/verification/jwks/organization/member/invitation` (the `identity` schema). The Go API treats these **read-mostly** (membership/role for authz) and **never migrates them**. App data attaches via the separate **`org_meta`** table keyed by `organization.id`, so the two tools never fight over one table.
 - **Go OWNS the `app` schema** via versioned SQL migrations (**`goose`**). From that SQL: **sqlc → Go types** (compile-checked, no reflection; cleanest `SET LOCAL` wrapper). The DB stays Go's private detail.
 - **The dashboard consumes the API, not the DB.** From the Go API's **OpenAPI** spec → a generated typed TS client. The frontend's contract is the API, decoupling it from the schema. **No Drizzle / Prisma / `supabase-js` in the dashboard** (it never opens a PG connection for business data; Better Auth is the only TS↔PG path, for its own tables).
 - **KV/D1 is a rebuildable projection**, written only by the Go API on publish, read-only to the Worker. The Go↔TS struct for the KV value is the one genuine cross-language *data* contract: define it once in **`contracts/`** (JSON Schema → codegen both sides) with a `schema_version` field and a **round-trip test in CI**.
 - **RLS policies, GRANTs, the org-policy CHECK/trigger, and `auto_join_by_domain`** are hand-written, reviewed `goose` migrations (diff tools can't capture RLS). Never edit prod schema by hand.
-- **Migration order** (CI-gated invariant): Better Auth (`auth`) before app migrations that FK to `organization.id`. Namespaced schemas avoid collisions.
+- **Migration order** (CI-gated invariant): Better Auth (`identity`) before app migrations that FK to `organization.id`. Namespaced schemas avoid collisions.
 
 **Identity → DB, the security crux (no Supabase `authenticated` role):**
 - **Default (RLS-enforced):** the Go API verifies the **EdDSA JWT via JWKS**, then per request in a tx: `SET LOCAL app.current_user_id = …; SET LOCAL app.current_org_id = …`. Policies read these GUCs. Transaction-scoped → safe under **Supavisor transaction-mode pooling**. Connect as the **non-`BYPASSRLS` `dropway_app` role** with `FORCE ROW LEVEL SECURITY` so RLS is never silently skipped.
@@ -544,7 +544,7 @@ dropway/
 ├── ee/                    # [DROPWAY ENTERPRISE EDITION LICENSE] SSO/SAML, audit export, advanced RBAC, custom domains
 ├── db/
 │   ├── migrations/app/    # [FSL] Go-owned app schema — goose migrations + hand-written RLS/GRANT/trigger
-│   ├── auth-schema/       #   Better-Auth-generated SQL (generate-only; Better Auth migrates the auth schema)
+│   ├── identity-schema/       #   Better-Auth-generated SQL (generate-only; Better Auth migrates the identity schema)
 │   └── sqlc.yaml
 ├── deploy/                # [FSL] docker-compose.yml + Helm chart for one-command self-host
 └── packages/
@@ -577,7 +577,7 @@ Stand up and prove each layer end-to-end before building atop it. Each row is a 
 |---|---|---|---|
 | 1 | Domains/PSL | Register `dropwaycontent.com`, submit to PSL; wildcard DNS + cert | Browser refuses a `Domain=dropwaycontent.com` cookie set from `a.…` reaching `b.…` |
 | 1b | JWKS/JWT spike (P0) | Mint a Better Auth **EdDSA** JWT; point the Go verifier at JWKS | Go **accepts** the EdDSA JWT, **rejects `alg:none` and `HS256`**, and refreshes JWKS on `kid` rotation (rate-limited) |
-| 2 | DB + RLS | `goose` app migrations as `dropway_app` (non-BYPASSRLS) + `FORCE RLS`; Better Auth migrates `auth` schema | As `dropway_app` with `SET LOCAL app.current_org_id=A`: org B rows invisible for select/update/delete; **`FORCE RLS` blocks the owner path too**; deploy-token for A can't write B; a member can't write `org_meta`/`member.role` |
+| 2 | DB + RLS | `goose` app migrations as `dropway_app` (non-BYPASSRLS) + `FORCE RLS`; Better Auth migrates `identity` schema | As `dropway_app` with `SET LOCAL app.current_org_id=A`: org B rows invisible for select/update/delete; **`FORCE RLS` blocks the owner path too**; deploy-token for A can't write B; a member can't write `org_meta`/`member.role` |
 | 2b | Pooling + `SET LOCAL` | Supavisor transaction-mode pool | Tenant GUCs don't leak across pooled transactions (interleave two orgs' txns) |
 | 3 | Auth + roles | Better Auth (Google + email/magic, email-verify) + Organization + JWT/EdDSA | Google sign-up works; JWT shows `user_id`/`org_id`/`role`; member can't toggle `allow_external_sharing` or promote admins (403); with policy=false the **API** rejects public/external grants (not just UI) |
 | 4 | Storage + deploy | R2 + Go prepare/publish + CLI | `dropway deploy ./fixture` → only-changed-blob upload; server rejects blob whose bytes ≠ claimed hash; rollback in seconds |

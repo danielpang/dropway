@@ -70,7 +70,7 @@ pnpm --filter @dropway/dashboard lint
 pnpm --filter @dropway/dashboard build
 ```
 
-Better Auth migrates its own `auth` schema. With `DATABASE_URL` set, generate /
+Better Auth migrates its own `identity` schema. With `DATABASE_URL` set, generate /
 apply its tables with the Better Auth CLI, e.g.:
 
 ```bash
