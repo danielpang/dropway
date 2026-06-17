@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { betterAuth } from "better-auth";
 import { jwt, magicLink, organization } from "better-auth/plugins";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
 
 import {
@@ -48,6 +49,24 @@ const authPool = new Pool({
   options: "-c search_path=identity",
 });
 
+/**
+ * The user's first organization id — the default "active org" for a new session AND
+ * the org stamped into MCP OAuth access tokens (customAccessTokenClaims below), so the
+ * MCP resource server can scope RLS straight from the token. Best-effort: returns
+ * undefined on a lookup error or a user with no membership.
+ */
+async function firstOrgId(userId: string): Promise<string | undefined> {
+  try {
+    const res = await authPool.query<{ organizationId: string }>(
+      `SELECT "organizationId" FROM identity.member WHERE "userId" = $1 ORDER BY "createdAt" LIMIT 1`,
+      [userId],
+    );
+    return res.rows[0]?.organizationId;
+  } catch {
+    return undefined;
+  }
+}
+
 export const auth = betterAuth({
   appName: "Dropway",
   baseURL: betterAuthUrl(),
@@ -76,17 +95,10 @@ export const auth = betterAuth({
         before: async (session) => {
           const s = session as { userId: string; activeOrganizationId?: string | null };
           if (s.activeOrganizationId) return { data: session };
-          try {
-            const res = await authPool.query<{ organizationId: string }>(
-              `SELECT "organizationId" FROM identity.member WHERE "userId" = $1 ORDER BY "createdAt" LIMIT 1`,
-              [s.userId],
-            );
-            const orgId = res.rows[0]?.organizationId;
-            if (orgId) return { data: { ...session, activeOrganizationId: orgId } };
-          } catch {
-            // Transient lookup error or no membership: leave the active org unset
-            // (onboarding's organization.create sets it explicitly).
-          }
+          // Transient lookup error or no membership: leave the active org unset
+          // (onboarding's organization.create sets it explicitly).
+          const orgId = await firstOrgId(s.userId);
+          if (orgId) return { data: { ...session, activeOrganizationId: orgId } };
           return { data: session };
         },
       },
@@ -216,6 +228,21 @@ export const auth = betterAuth({
           email: user.email,
           email_verified: user.emailVerified,
         }),
+      },
+    }),
+
+    // OAuth 2.1 authorization server for the Dropway MCP server. An LLM client adds
+    // the MCP URL as a custom connector → discovers this AS → the user signs in and
+    // approves on /oauth/consent → the client receives a JWT access token. The token
+    // carries `org_id` (customAccessTokenClaims), which the MCP resource server reads
+    // to scope RLS — the same claim shape the Go verifier already expects.
+    oauthProvider({
+      loginPage: "/sign-in",
+      consentPage: "/oauth/consent",
+      customAccessTokenClaims: async ({ user }) => {
+        if (!user) return {};
+        const orgId = await firstOrgId(user.id);
+        return orgId ? { org_id: orgId } : {};
       },
     }),
   ],
