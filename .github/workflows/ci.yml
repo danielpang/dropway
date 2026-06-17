@@ -13,6 +13,8 @@
 #   sql                : goose app migrations apply on real Postgres + RLS isolation holds.
 #   mcp                : the MCP server boots on real Postgres + a test JWKS; its endpoints
 #                        enforce OAuth + the org mcp_enabled kill-switch (§6 "LLM access").
+#   serve              : the content server serves an org-only site from real object storage
+#                        only with a valid edge token; denies (302) otherwise (§6).
 #   typecheck          : the whole TS workspace type-checks (contracts + apps + edge).
 #
 # See docs/ARCHITECTURE.md §12/§13 — these jobs map to verification rows 2, 10, 11.
@@ -358,6 +360,29 @@ jobs:
           MCP_IT_OWNER_DSN: ${{ env.OWNER_DSN }}
           MCP_IT_APP_DSN: postgres://dropway_app:dropway_app_ci_pw@localhost:5432/dropway?sslmode=disable
         run: go test -tags integration -v ./services/mcp/cmd/mcp/...
+
+  # ---------------------------------------------------------------------------
+  # (c3) Serve (content server): an integration test that ACCESSES an org-only
+  #      (restricted) site through the real `serve` handler backed by real object
+  #      storage (a MinIO container the test starts). Asserts no cookie → 302 to
+  #      /authz, a valid org_only edge token → 200 + bytes from MinIO (private/no-
+  #      store), and expired / wrong-host tokens → 302 (§6 edge auth & sharing
+  #      tiers). The `//go:build integration` tag scopes it to this job; the
+  #      package's hermetic unit tests still run under `go test ./...` (job a).
+  # ---------------------------------------------------------------------------
+  serve:
+    name: serve (org-only access · integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: serve org-only integration test (real MinIO)
+        run: go test -tags integration -run TestIntegration_OrgOnly ./services/serve/internal/serve/...
 
   # ---------------------------------------------------------------------------
   # (d) Typecheck: the whole TS workspace compiles. `pnpm -r typecheck` runs the
