@@ -151,6 +151,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// STEP 3.5: LLM-access surface — robots.txt, AI-crawler gating, and the generated
+	// /llms.txt index. Runs before content dispatch: public sites welcome crawlers and
+	// expose /llms.txt; gated sites disallow crawlers (robots + 403) so their content is
+	// reachable by LLMs only through the authenticated Dropway MCP server.
+	if h.serveLLMMeta(w, r, &rt, host) {
+		return
+	}
+
 	// STEP 4: dispatch by access mode.
 	switch rt.AccessMode {
 	case projection.AccessPublic:
