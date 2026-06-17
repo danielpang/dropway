@@ -55,12 +55,13 @@ control as first-class features.**
   cut at the edge right away, not whenever a token happens to expire.
 - **Safe to serve untrusted content** — tenant HTML/JS is served from a separate
   Public-Suffix-List domain, so one site can never reach another's (or your) session.
-- **LLM-friendly access** *(coming soon)* — **public** sites auto-serve an
+- **LLM-friendly access** — **public** sites auto-serve an
   [`llms.txt`](https://llmstxt.org/) index and welcome AI crawlers (GPTBot, ClaudeBot,
   PerplexityBot, …), so agents can discover and read your content. **Gated** sites
   (org-only / allowlist / password) stay off-limits to crawlers — LLMs reach them
-  **only** through the authenticated **Dropway MCP server**, so your access control
-  holds for AI exactly as it does for people.
+  **only** through the authenticated **Dropway MCP server** (OAuth 2.1; connect it to
+  Claude, Cursor, or Codex), so your access control holds for AI exactly as it does for
+  people. Owners/admins can switch MCP access off per org in Settings.
 - **No surprise bandwidth bills** — content is served from Cloudflare R2 (free egress),
   so heavy traffic doesn't translate into a heavy invoice.
 - **Open source + self-hostable** — run the whole thing yourself, unlimited, for free.

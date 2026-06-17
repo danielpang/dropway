@@ -13,6 +13,7 @@ import {
   googleClientSecret,
   jwtAudience,
   jwtIssuer,
+  mcpResourceUrl,
   requireEmailVerification,
 } from "@/lib/env";
 
@@ -239,6 +240,30 @@ export const auth = betterAuth({
     oauthProvider({
       loginPage: "/sign-in",
       consentPage: "/oauth/consent",
+      // The scopes a client may request. We keep the OIDC defaults (so this stays a
+      // valid OIDC provider — "openid" is required for that) and add a custom "mcp"
+      // scope: the MCP server advertises scopes_supported:["mcp"] in its RFC 9728
+      // metadata, so MCP clients request scope=mcp; it must be a registered scope or
+      // the authorize step 400s with invalid_scope. DCR clients inherit this list as
+      // their allowed scopes (clientRegistrationAllowedScopes defaults to it).
+      scopes: ["openid", "profile", "email", "offline_access", "mcp"],
+      // Dynamic Client Registration (RFC 7591) is REQUIRED for the MCP "paste a
+      // URL" UX: an MCP client (Claude/Cursor/Codex) self-registers a client_id
+      // anonymously the first time it hits the server — the user has no client
+      // credentials to enter, they authenticate later in the browser authorize
+      // step. Enabling this also publishes `registration_endpoint` in the AS
+      // metadata, which MCP clients discover and call. Without unauthenticated DCR
+      // the connector flow dead-ends (no way to register).
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      // The MCP server's resource id must be a VALID audience for this plugin to
+      // mint a JWT (not opaque) access token: the provider only issues a JWT when
+      // the client sends an RFC 8707 `resource` param AND it's in validAudiences;
+      // the token's `aud` then equals that resource (which the MCP Go verifier
+      // pins). Compliant MCP clients read the resource from the server's RFC 9728
+      // metadata, which advertises exactly this URL. `iss` is the jwt() plugin's
+      // issuer (jwtIssuer()) — the same value the MCP verifier expects.
+      validAudiences: [mcpResourceUrl()],
       customAccessTokenClaims: async ({ user }) => {
         if (!user) return {};
         const orgId = await firstOrgId(user.id);

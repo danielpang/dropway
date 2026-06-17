@@ -141,6 +141,56 @@ services:
         condition: service_completed_successfully
         required: false
 
+  # ---------------------------------------------------------------------------
+  # mcp — the Dropway MCP server (services/mcp/cmd/mcp). An OAuth-protected,
+  # remote (Streamable HTTP) Model Context Protocol endpoint that lets an
+  # AUTHORIZED LLM agent list + read a tenant's deployed sites — INCLUDING gated
+  # content — scoped to one org by the same Postgres RLS as the rest of the
+  # platform (connects as the non-BYPASSRLS dropway_app role via DATABASE_URL).
+  #
+  # Auth is OAuth 2.1 against the dashboard (Better Auth + @better-auth/oauth-
+  # provider): an MCP client discovers the authorization server from this server's
+  # /.well-known/oauth-protected-resource, the user logs in + approves in the
+  # browser, and the resulting JWT access token is verified here against the
+  # platform JWKS. The audience/issuer contract MUST line up (ARCHITECTURE.md):
+  #   * JWKS_URL       → the dashboard JWKS (internal compose URL) that signs tokens
+  #   * JWT_ISSUER     → the jwt() plugin issuer; the oauth-provider stamps it as `iss`
+  #   * MCP_PUBLIC_URL → this server's EXTERNAL url; it's the OAuth `resource`/`aud`,
+  #                      and the dashboard registers it in validAudiences so a JWT
+  #                      (not opaque) token is issued. Must be browser-reachable.
+  #   * DASHBOARD_URL  → the OAuth authorization server (browser-facing dashboard).
+  #
+  # Local testing has no public DNS: clients hit it on the host-published 8092.
+  # `required: false` on postgres/createbucket so it also runs against external
+  # Postgres/R2 with the bundled profiles disabled.
+  # ---------------------------------------------------------------------------
+  mcp:
+    build:
+      context: ..
+      dockerfile: services/mcp/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Server-side fetch of the dashboard JWKS over the compose network (the
+      # dashboard is the OAuth authorization server + token signer).
+      JWKS_URL: ${MCP_JWKS_URL:-http://dashboard:3000/api/auth/jwks}
+      # The OAuth authorization server, sent to the BROWSER → host-published dashboard.
+      DASHBOARD_URL: ${MCP_DASHBOARD_URL:-http://localhost:3000}
+      # This server's external URL == the OAuth resource/audience. Browser-reachable.
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:8092}
+    ports:
+      - "${MCP_PORT:-8092}:8092"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+      createbucket:
+        condition: service_completed_successfully
+        required: false
+
   # ===========================================================================
   # MIGRATIONS — always runs (against the bundled OR an external Postgres).
   # ===========================================================================

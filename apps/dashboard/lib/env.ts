@@ -133,3 +133,21 @@ export const API_URL: string =
  */
 export const MCP_URL: string =
   process.env.NEXT_PUBLIC_MCP_URL ?? "http://localhost:8092";
+
+/**
+ * The MCP server's canonical resource identifier — the `aud` an OAuth access token
+ * for the MCP server must carry, and what the dashboard registers as a valid
+ * audience so the @better-auth/oauth-provider plugin issues a JWT (not opaque) access
+ * token for it. MUST equal both (a) the `resource` the MCP server advertises in its
+ * RFC 9728 metadata and (b) the audience the MCP Go verifier enforces (MCP_PUBLIC_URL
+ * on that service). Server-side only: prefers the runtime MCP_PUBLIC_URL (the exact
+ * value the mcp service is configured with), falling back to the public URL. No
+ * trailing slash so the audience string is byte-identical across services.
+ */
+export function mcpResourceUrl(): string {
+  return (
+    process.env.MCP_PUBLIC_URL ??
+    process.env.NEXT_PUBLIC_MCP_URL ??
+    "http://localhost:8092"
+  ).replace(/\/$/, "");
+}

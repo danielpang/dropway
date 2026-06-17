@@ -355,6 +355,12 @@ Request → host.dropwaycontent.com/path  (Serving Worker)
 ```
 Password gate is served from a **platform-controlled origin tenant JS cannot render or script** (anti-phishing — §10).
 
+**LLM access — same access model, two doors (Phase 5).** Crawlers and AI agents see exactly what people see, enforced by the same access modes — never a separate bypass:
+- **Public content → open to crawlers.** Public sites auto-serve a [`llms.txt`](https://llmstxt.org/) index and a `robots.txt` that allows AI crawlers (GPTBot, ClaudeBot, PerplexityBot, …); gated sites serve a `robots.txt` that **disallows** them and never emit `llms.txt`. Enforced in BOTH serving planes at parity: `services/serve` (self-host Go) and `edge/serving-worker` (Cloudflare).
+- **Gated content → authorized MCP only.** An LLM reaches org-only/allowlist/password content **only** through the **Dropway MCP server** (`services/mcp`, `mcp.dropway.dev`) — an OAuth-protected, remote (Streamable HTTP) MCP endpoint built on the official Go SDK. It connects to Postgres as the non-BYPASSRLS `dropway_app` role and scopes every read to ONE org by the same RLS as the rest of the platform (tenant from the token's `org_id` claim → `SET LOCAL app.current_org_id`).
+- **Auth is OAuth 2.1, reusing the existing identity plane.** The MCP client discovers the authorization server from the resource's RFC 9728 metadata (`/.well-known/oauth-protected-resource` → the dashboard), the user signs in + approves on `/oauth/consent`, and the dashboard (**Better Auth + `@better-auth/oauth-provider`**) issues a **JWT access token**. The MCP server verifies it against the platform JWKS exactly like the Go API does — `iss` = the jwt() plugin issuer, `aud` = the MCP server's resource URL (registered in `validAudiences` so a JWT, not opaque, token is minted), `org_id` = a custom claim stamped from the user's org. Tokens stay short-lived; killing the Better Auth session stops re-mint.
+- **Org kill-switch, re-checked per request.** `org_meta.mcp_enabled` (default true; owner/admin toggles it in Settings via `PATCH /v1/orgs/mcp`) is re-read on **every** MCP request, so disabling cuts off all MCP access immediately — even for already-issued tokens — independent of TTL.
+
 **Revocation story:** the common case is just the **short token/JWT TTL** (5–15 min) — minted from the revocable Better Auth DB session, so killing the session stops re-mint. **Hard revocation** (ban, org removal) adds a **KV denylist / per-subject `min_iat`** checked at the authz exchange — built in **Phase 4**, not speculatively.
 
 **Edge projection pipeline (connective tissue, Phase 1+):** the **Go API** writes the KV/D1 projection on publish (`route:<host>` + access_mode + allowlist) — it is the **only writer**, the Worker reads only. Postgres is authoritative and the projection is **fully rebuildable** from it (carry a `schema_version`; a reconciler re-pushes on drift; DR drill in §13). When an admin flips `allow_external_sharing`→false or unshares, the Go API rewrites the affected routes within the propagation window.
@@ -528,10 +534,16 @@ dropway/
 │   │                      #   OpenAPI client — NO direct Postgres for business data
 │   └── docs/              # marketing/docs (optional)
 ├── services/
-│   └── api/               # [FSL] Go: chi (api.dropway.dev) = SYSTEM OF RECORD; verifies EdDSA JWT;
-│       │                  #   deploy orchestration, KV/D1 projection writer, authz. cloud/ via interfaces.
-│       ├── internal/{deploy,edge,db(sqlc),authz,quota(QuotaProvider iface; no-op default)}
-│       └── openapi/        #   OpenAPI spec → dashboard TS client
+│   ├── api/               # [FSL] Go: chi (api.dropway.dev) = SYSTEM OF RECORD; verifies EdDSA JWT;
+│   │   │                  #   deploy orchestration, KV/D1 projection writer, authz. cloud/ via interfaces.
+│   │   ├── internal/{deploy,edge,db(sqlc),authz,quota(QuotaProvider iface; no-op default)}
+│   │   └── openapi/        #   OpenAPI spec → dashboard TS client
+│   ├── serve/             # [FSL] Go: self-host content server (*.dropwaycontent.com) — the plain-Go
+│   │                      #   alternative to the Cloudflare serving Worker; serves all 4 access modes +
+│   │                      #   /llms.txt + AI-crawler gating (public-only)
+│   └── mcp/               # [FSL] Go: Dropway MCP server (mcp.dropway.dev) — OAuth-protected, remote
+│                          #   (Streamable HTTP) MCP endpoint; official go-sdk; lets authorized LLM agents
+│                          #   list/read a tenant's sites (incl. GATED) scoped to one org by the same RLS
 ├── edge/
 │   └── serving-worker/    # [FSL] Cloudflare Worker (*.dropwaycontent.com): R2+KV+D1; public=no-JWT router,
 │                          #   gated=host-scoped-token verify (P2)
