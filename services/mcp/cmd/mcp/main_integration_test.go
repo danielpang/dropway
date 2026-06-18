@@ -200,7 +200,10 @@ func TestMCPServer_Endpoints(t *testing.T) {
 	jwks := newJWKS(t, pub)
 	defer jwks.Close()
 
-	verifier := coreauth.NewVerifier(jwks.URL, itIssuer, itResource)
+	// Mirror production wiring: accept the trailing-slash resource form too (some
+	// MCP clients, e.g. mcp-remote, canonicalize the resource and append "/").
+	verifier := coreauth.NewVerifier(jwks.URL, itIssuer, itResource,
+		coreauth.WithExtraAudiences(itResource+"/"))
 	st := store.New(appPool)
 	svc := &tools.Service{Store: st, Blobs: stubBlobs{}}
 
@@ -251,15 +254,32 @@ func TestMCPServer_Endpoints(t *testing.T) {
 		}
 	}
 
-	// 5) /mcp with a valid token → 200 initialize (serverInfo "dropway")
+	// 5) /mcp with a valid token → 200 initialize (serverInfo "dropway"). Both
+	// audience forms must work: the bare resource AND the trailing-slash variant a
+	// client like mcp-remote sends — neither should be rejected.
 	token := mintToken(t, priv, itResource)
-	{
-		resp, body := postMCP(t, ts.URL, token)
+	for _, tc := range []struct {
+		name string
+		aud  string
+	}{
+		{"no trailing slash", itResource},
+		{"trailing slash", itResource + "/"},
+	} {
+		tok := mintToken(t, priv, tc.aud)
+		resp, body := postMCP(t, ts.URL, tok)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("valid-token initialize = %d, want 200; body: %s", resp.StatusCode, body)
+			t.Fatalf("valid-token initialize [aud=%s] = %d, want 200; body: %s", tc.name, resp.StatusCode, body)
 		}
 		if !strings.Contains(body, "dropway") || !strings.Contains(body, "serverInfo") {
-			t.Fatalf("initialize body missing serverInfo/dropway: %s", body)
+			t.Fatalf("initialize body [aud=%s] missing serverInfo/dropway: %s", tc.name, body)
+		}
+	}
+
+	// A token for an UNRELATED resource is still rejected (no blanket acceptance).
+	{
+		resp, _ := postMCP(t, ts.URL, mintToken(t, priv, "http://evil.example"))
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("wrong-audience token /mcp = %d, want 401", resp.StatusCode)
 		}
 	}
 
