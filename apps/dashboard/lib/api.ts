@@ -25,6 +25,8 @@ import type { components, operations } from "@/lib/api-generated/schema";
 export type Me = components["schemas"]["Me"];
 export type Site = components["schemas"]["Site"];
 export type Version = components["schemas"]["Version"];
+/** One immutable deploy in a site's history (the rollback picker rows). */
+export type SiteVersion = components["schemas"]["SiteVersion"];
 export type ManifestFile = components["schemas"]["ManifestFile"];
 export type AccessMode = NonNullable<Site["access_mode"]>;
 export type Role = NonNullable<Me["role"]>;
@@ -283,6 +285,14 @@ export const api = {
     return apiFetch<Site>(`/v1/sites/${id}`);
   },
 
+  /** A site's deploy history, newest first (each flagged is_current). */
+  async listVersions(siteId: string): Promise<SiteVersion[]> {
+    const body = await apiFetch<{ versions?: SiteVersion[] }>(
+      `/v1/sites/${siteId}/versions`,
+    );
+    return body.versions ?? [];
+  },
+
   /** Create a new site (subject to the cloud quota gate → may 402). */
   createSite(input: { slug: string }): Promise<Site> {
     return apiFetch<Site>("/v1/sites", {
@@ -411,6 +421,11 @@ export const api = {
   /** Poll a custom domain's verification + TLS status (advances the state machine). */
   getDomainStatus(domainId: string): Promise<Domain> {
     return apiFetch<Domain>(`/v1/domains/${domainId}/status`);
+  },
+
+  /** Remove a custom domain (admin/owner). 204 No Content on success. */
+  async deleteDomain(domainId: string): Promise<void> {
+    await apiFetch<void>(`/v1/domains/${domainId}`, { method: "DELETE" });
   },
 
   /**

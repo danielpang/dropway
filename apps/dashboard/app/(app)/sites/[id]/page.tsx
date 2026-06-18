@@ -54,6 +54,17 @@ export default async function SiteDetailPage({
     throw err;
   }
 
+  // Custom domains are only offered when the server has a real provider configured
+  // (Cloudflare for SaaS). Hidden in self-host/dev where they can't be verified.
+  const customDomainsEnabled = await api
+    .me()
+    .then((me) => me.custom_domains_enabled ?? false)
+    .catch(() => false);
+
+  // Deploy history for the rollback picker (newest first). Best-effort: an empty
+  // list just renders the dialog's "no versions yet" state.
+  const versions = await api.listVersions(id).catch(() => []);
+
   const isLive = Boolean(site.current_version_id);
   const liveUrl = site.live_url ?? `https://${site.slug}.dropwaycontent.com`;
 
@@ -98,16 +109,15 @@ export default async function SiteDetailPage({
               Access
             </Link>
           </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/sites/${id}/domains`}>
-              <Link2 aria-hidden />
-              Domains
-            </Link>
-          </Button>
-          <RollbackDialog
-            siteId={site.id ?? id}
-            currentVersionId={site.current_version_id ?? null}
-          />
+          {customDomainsEnabled && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/sites/${id}/domains`}>
+                <Link2 aria-hidden />
+                Domains
+              </Link>
+            </Button>
+          )}
+          <RollbackDialog siteId={site.id ?? id} versions={versions} />
         </div>
       </div>
 

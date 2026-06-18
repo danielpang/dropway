@@ -66,6 +66,39 @@ export async function addDomainAction(input: {
   }
 }
 
+export type RemoveDomainResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Remove a custom domain (DELETE /v1/domains/{id}). The Go API re-checks owner/admin,
+ * drops the global host route (so the custom host stops serving), and best-effort
+ * deletes the Cloudflare custom hostname.
+ */
+export async function removeDomainAction(input: {
+  siteId: string;
+  domainId: string;
+}): Promise<RemoveDomainResult> {
+  try {
+    await api.deleteDomain(input.domainId);
+    revalidatePath(`/sites/${input.siteId}/domains`);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can remove custom domains.",
+        };
+      }
+      if (err.status === 404) {
+        // Already gone — treat as success so the row clears.
+        return { ok: true };
+      }
+      return { ok: false, message: "Could not remove the domain. Try again." };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 export type DomainStatusResult =
   | { ok: true; domain: Domain }
   | { ok: false; message: string };

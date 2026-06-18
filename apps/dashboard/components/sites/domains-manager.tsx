@@ -8,15 +8,24 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
 import {
   addDomainAction,
   refreshDomainStatusAction,
+  removeDomainAction,
 } from "@/app/(app)/sites/[id]/domains/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Domain } from "@/lib/api";
@@ -61,6 +70,10 @@ export function DomainsManager({
       next[idx] = updated;
       return next;
     });
+  }
+
+  function remove(id: string) {
+    setDomains((prev) => prev.filter((d) => d.id !== id));
   }
 
   async function onAdd(e: React.FormEvent) {
@@ -133,7 +146,13 @@ export function DomainsManager({
         <ul className="space-y-3">
           {domains.map((domain) => (
             <li key={domain.id ?? domain.hostname}>
-              <DomainCard domain={domain} onUpdate={upsert} />
+              <DomainCard
+                domain={domain}
+                siteId={siteId}
+                canManage={!disabled}
+                onUpdate={upsert}
+                onRemove={remove}
+              />
             </li>
           ))}
         </ul>
@@ -145,15 +164,38 @@ export function DomainsManager({
 /** One domain: hostname, status badges, the DCV record, and a status poller. */
 function DomainCard({
   domain,
+  siteId,
+  canManage,
   onUpdate,
+  onRemove,
 }: {
   domain: Domain;
+  siteId: string;
+  canManage: boolean;
   onUpdate: (d: Domain) => void;
+  onRemove: (id: string) => void;
 }) {
   const router = useRouter();
   const [refreshing, setRefreshing] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
   const [pollError, setPollError] = React.useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = React.useState(false);
+  const [removing, setRemoving] = React.useState(false);
+
+  async function onRemoveConfirmed() {
+    if (!domain.id) return;
+    setRemoving(true);
+    setPollError(null);
+    const result = await removeDomainAction({ siteId, domainId: domain.id });
+    if (result.ok) {
+      onRemove(domain.id);
+      setConfirmRemove(false);
+      router.refresh();
+    } else {
+      setPollError(result.message);
+      setRemoving(false);
+    }
+  }
 
   const inFlight = isInFlight(domain);
 
@@ -222,6 +264,18 @@ function DomainCard({
               {refreshing ? "Checking" : "Refresh"}
             </Button>
           )}
+          {canManage && domain.id && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-9 text-muted-foreground hover:text-destructive"
+              onClick={() => setConfirmRemove(true)}
+              aria-label={`Remove ${domain.hostname}`}
+            >
+              <Trash2 aria-hidden />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -279,6 +333,39 @@ function DomainCard({
           {pollError}
         </p>
       )}
+
+      <Dialog open={confirmRemove} onOpenChange={(o) => !removing && setConfirmRemove(o)}>
+        <DialogHeader>
+          <DialogTitle>Remove custom domain?</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-muted-foreground">
+            <span className="font-mono text-foreground">{domain.hostname}</span>{" "}
+            will stop serving this site. You can add it again later, but it will
+            need to be re-verified.
+          </p>
+        </DialogBody>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setConfirmRemove(false)}
+            disabled={removing}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void onRemoveConfirmed()}
+            disabled={removing}
+            aria-busy={removing}
+          >
+            {removing ? <Loader2 className="animate-spin" aria-hidden /> : <Trash2 aria-hidden />}
+            Remove
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }

@@ -48,11 +48,15 @@ export default async function SiteDomainsPage({
     throw err;
   }
 
-  const [org, domains] = await Promise.all([
+  const [org, domains, me] = await Promise.all([
     loadActiveOrg(),
     api.listDomains(id).catch((): Domain[] => []),
+    api.me().catch(() => null),
   ]);
   const manage = org ? canManage(org.myRole) : false;
+  // Custom domains only work when the API has a real Cloudflare-for-SaaS provider.
+  // In self-host/dev the feature is hidden (it could never finish verification).
+  const enabled = me?.custom_domains_enabled ?? false;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -74,37 +78,59 @@ export default async function SiteDomainsPage({
         </p>
       </div>
 
-      {!manage && (
-        <Card className="border-amber-500/30 bg-amber-500/5">
+      {!enabled ? (
+        <Card>
           <CardContent className="flex items-start gap-3 pt-6 text-sm">
             <ShieldAlert
-              className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
               aria-hidden
             />
             <p className="text-muted-foreground">
-              Only owners and admins can add or verify custom domains. The list
-              below is read-only for you.
+              Custom domains aren&rsquo;t available on this deployment. They require
+              a Cloudflare-for-SaaS configuration on the server, which isn&rsquo;t
+              set up here. Your site is still reachable at its{" "}
+              <span className="font-mono text-foreground">
+                .dropwaycontent.com
+              </span>{" "}
+              address.
             </p>
           </CardContent>
         </Card>
-      )}
+      ) : (
+        <>
+          {!manage && (
+            <Card className="border-amber-500/30 bg-amber-500/5">
+              <CardContent className="flex items-start gap-3 pt-6 text-sm">
+                <ShieldAlert
+                  className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+                  aria-hidden
+                />
+                <p className="text-muted-foreground">
+                  Only owners and admins can add or verify custom domains. The
+                  list below is read-only for you.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Domains</CardTitle>
-          <CardDescription>
-            Add a domain, create the DNS record we show you, then verify. DNS can
-            take a few minutes to propagate.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DomainsManager
-            siteId={id}
-            initialDomains={domains}
-            disabled={!manage}
-          />
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Domains</CardTitle>
+              <CardDescription>
+                Add a domain, create the DNS record we show you, then verify. DNS
+                can take a few minutes to propagate.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DomainsManager
+                siteId={id}
+                initialDomains={domains}
+                disabled={!manage}
+              />
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

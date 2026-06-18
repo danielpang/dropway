@@ -198,6 +198,26 @@ export interface paths {
         patch: operations["setMcpEnabled"];
         trace?: never;
     };
+    "/v1/domains/{domainID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a custom domain (admin/owner only)
+         * @description Deletes the custom domain: removes the global host route (so the custom host stops serving immediately), then best-effort deletes the edge route projection and the Cloudflare custom hostname. Owner/admin only.
+         */
+        delete: operations["deleteDomain"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/domains/{domainID}/status": {
         parameters: {
             query?: never;
@@ -248,6 +268,26 @@ export interface paths {
         };
         /** Get one site */
         get: operations["getSite"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a site's deploy history (newest first)
+         * @description Returns every immutable version of the site, newest first, each flagged with whether it is the live version. Drives the dashboard rollback picker.
+         */
+        get: operations["listVersions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -468,6 +508,8 @@ export interface components {
             org_id?: string;
             /** @enum {string} */
             role?: "owner" | "admin" | "member";
+            /** @description Whether custom domains are backed by a real provider (Cloudflare for SaaS). False in self-host/dev, where the dashboard hides the feature because it can never finish verification. */
+            custom_domains_enabled?: boolean;
         };
         Member: {
             /** Format: uuid */
@@ -556,6 +598,21 @@ export interface components {
             version_no?: number;
             /** Format: uri */
             preview_url?: string;
+        };
+        /** @description One immutable deploy in a site's history. */
+        SiteVersion: {
+            /** Format: uuid */
+            id?: string;
+            version_no?: number;
+            status?: string;
+            /** Format: int64 */
+            size_bytes?: number;
+            content_hash?: string;
+            created_by?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** @description Whether this is the version the site is currently serving. */
+            is_current?: boolean;
         };
         ManifestFile: {
             /** @description Request path served from the site (e.g. index.html, assets/app.js). */
@@ -958,6 +1015,30 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    deleteDomain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domainID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     getDomainStatus: {
         parameters: {
             query?: never;
@@ -1059,6 +1140,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Site"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        versions?: components["schemas"]["SiteVersion"][];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];

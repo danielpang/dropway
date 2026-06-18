@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { History, Loader2 } from "lucide-react";
+import { Check, History, Loader2 } from "lucide-react";
 
 import { publishVersionAction } from "@/app/(app)/sites/[id]/actions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,55 +15,45 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-
-/** UUID v4-ish shape check so we fail fast before the round-trip. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import type { SiteVersion } from "@/lib/api";
+import { cn, formatBytes } from "@/lib/utils";
 
 /**
- * Rollback (re-publish) affordance on the site detail page. Publishing an older
- * version_id IS the rollback in Phase 1 (the API flips the live pointer). The
- * caller passes the current live version so we can warn when it's re-entered.
+ * Rollback (re-publish) affordance on the site detail page. Instead of asking for a
+ * version id, it shows the site's deploy history (fetched server-side and passed in)
+ * and lets the user pick a version to make live. Publishing an older version IS the
+ * rollback in Phase 1 — the API flips the live pointer and the URL updates instantly.
  */
 export function RollbackDialog({
   siteId,
-  currentVersionId,
+  versions,
 }: {
   siteId: string;
-  currentVersionId: string | null;
+  versions: SiteVersion[];
 }) {
   const router = useRouter();
 
   const [open, setOpen] = React.useState(false);
-  const [versionId, setVersionId] = React.useState("");
+  const [selected, setSelected] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [touched, setTouched] = React.useState(false);
-
-  const valid = UUID_RE.test(versionId.trim());
-  const isCurrent = versionId.trim() === currentVersionId;
 
   function reset() {
-    setVersionId("");
+    setSelected(null);
     setError(null);
-    setTouched(false);
     setPending(false);
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setTouched(true);
-    if (!valid) return;
+  const selectedVersion = versions.find((v) => v.id === selected) ?? null;
 
+  async function onSubmit() {
+    if (!selectedVersion?.id || selectedVersion.is_current) return;
+    setError(null);
     setPending(true);
     const result = await publishVersionAction({
       siteId,
-      versionId: versionId.trim(),
+      versionId: selectedVersion.id,
     });
-
     if (result.ok) {
       setOpen(false);
       reset();
@@ -86,73 +77,115 @@ export function RollbackDialog({
           setOpen(next);
           if (!next) reset();
         }}
+        className="max-w-lg"
       >
         <DialogHeader>
-          <DialogTitle>Publish a version</DialogTitle>
+          <DialogTitle>Version history</DialogTitle>
           <DialogDescription>
-            Paste a version id to make it live. Rolling back is just publishing
-            an earlier version — the live URL flips instantly.
+            Pick a version to make live. Rolling back is just publishing an
+            earlier version — the live URL flips instantly.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={onSubmit}>
-          <DialogBody>
-            <div className="space-y-2">
-              <Label htmlFor="version-id">Version id</Label>
-              <Input
-                id="version-id"
-                name="version-id"
-                placeholder="00000000-0000-0000-0000-000000000000"
-                value={versionId}
-                onChange={(e) => setVersionId(e.target.value)}
-                aria-invalid={touched && !valid}
-                className="font-mono text-xs"
-                autoFocus
-                disabled={pending}
-              />
-              {touched && !valid && (
-                <p className="text-xs text-destructive">
-                  Enter a valid version id (UUID).
-                </p>
-              )}
-              {valid && isCurrent && (
-                <p className="text-xs text-muted-foreground">
-                  This is already the live version.
-                </p>
-              )}
-              {error && (
-                <p
-                  role="alert"
-                  className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                >
-                  {error}
-                </p>
-              )}
-            </div>
-          </DialogBody>
+        <DialogBody>
+          {versions.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+              No versions yet. Deploy this site to create one.
+            </p>
+          ) : (
+            <ul
+              role="radiogroup"
+              aria-label="Versions"
+              className="max-h-[50vh] space-y-1.5 overflow-y-auto"
+            >
+              {versions.map((v) => {
+                const ready = v.status === "ready";
+                const selectable = ready && !v.is_current;
+                const isSel = v.id === selected;
+                return (
+                  <li key={v.id ?? v.version_no}>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={isSel}
+                      disabled={!selectable || pending}
+                      onClick={() => v.id && setSelected(v.id)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                        isSel
+                          ? "border-primary bg-primary/5"
+                          : "border-border",
+                        selectable
+                          ? "hover:border-foreground/30 cursor-pointer"
+                          : "cursor-default opacity-70",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">
+                            Version {v.version_no}
+                          </span>
+                          {v.is_current && <Badge variant="success">Live</Badge>}
+                          {!ready && (
+                            <Badge variant="muted" className="capitalize">
+                              {v.status ?? "pending"}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {v.created_at
+                            ? new Date(v.created_at).toLocaleString()
+                            : "—"}
+                          {typeof v.size_bytes === "number" &&
+                            ` · ${formatBytes(v.size_bytes)}`}
+                        </p>
+                      </div>
+                      {isSel && (
+                        <Check
+                          className="size-4 shrink-0 text-primary"
+                          aria-hidden
+                        />
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setOpen(false);
-                reset();
-              }}
-              disabled={pending}
+          {error && (
+            <p
+              role="alert"
+              className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
             >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={pending || (valid && isCurrent)}
-              aria-busy={pending}
-            >
-              {pending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              Publish version
-            </Button>
-          </DialogFooter>
-        </form>
+              {error}
+            </p>
+          )}
+        </DialogBody>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setOpen(false);
+              reset();
+            }}
+            disabled={pending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => void onSubmit()}
+            disabled={pending || !selectedVersion || selectedVersion.is_current}
+            aria-busy={pending}
+          >
+            {pending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Publish version
+          </Button>
+        </DialogFooter>
       </Dialog>
     </>
   );
