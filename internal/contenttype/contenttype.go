@@ -9,35 +9,54 @@
 package contenttype
 
 import (
-	"mime"
 	"path/filepath"
 	"strings"
 )
 
-// ForPath guesses a file's content type from its extension, falling back to a
-// binary default for unknown extensions. It prefers the stdlib mime table and
-// overrides a few common static-site extensions the table can miss or get wrong.
+// byExt maps a lowercased file extension (with leading dot) to its content type. It
+// is an EXPLICIT table — deliberately not the stdlib mime package — so the result is
+// identical on every OS (mime.TypeByExtension also reads the host's /etc/mime.types,
+// which made the same file get different types on Linux vs macOS). The set mirrors
+// the dashboard's table (apps/dashboard/lib/deploy-manifest.ts) so all deploy paths
+// agree; anything not listed falls back to application/octet-stream.
+var byExt = map[string]string{
+	".html":        "text/html; charset=utf-8",
+	".htm":         "text/html; charset=utf-8",
+	".css":         "text/css; charset=utf-8",
+	".js":          "text/javascript; charset=utf-8",
+	".mjs":         "text/javascript; charset=utf-8",
+	".json":        "application/json",
+	".map":         "application/json",
+	".svg":         "image/svg+xml",
+	".wasm":        "application/wasm",
+	".webmanifest": "application/manifest+json",
+	".txt":         "text/plain; charset=utf-8",
+	".xml":         "application/xml",
+	".ico":         "image/x-icon",
+	".png":         "image/png",
+	".jpg":         "image/jpeg",
+	".jpeg":        "image/jpeg",
+	".gif":         "image/gif",
+	".webp":        "image/webp",
+	".avif":        "image/avif",
+	".woff":        "font/woff",
+	".woff2":       "font/woff2",
+	".ttf":         "font/ttf",
+	".otf":         "font/otf",
+	".eot":         "application/vnd.ms-fontobject",
+	".pdf":         "application/pdf",
+	".mp4":         "video/mp4",
+	".webm":        "video/webm",
+	".mp3":         "audio/mpeg",
+	".wav":         "audio/wav",
+}
+
+// ForPath guesses a file's content type from its extension via an explicit table,
+// falling back to a binary default for unknown extensions. The result does not vary
+// with the host OS.
 func ForPath(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
-	// Overrides first: pin the static-site essentials so the result doesn't vary
-	// with a host's /etc/mime.types, and so JS/JSON carry the charset we want.
-	switch ext {
-	case ".js", ".mjs":
-		return "text/javascript; charset=utf-8"
-	case ".json":
-		return "application/json"
-	case ".html", ".htm":
-		return "text/html; charset=utf-8"
-	case ".css":
-		return "text/css; charset=utf-8"
-	case ".wasm":
-		return "application/wasm"
-	case ".webmanifest":
-		return "application/manifest+json"
-	case ".svg":
-		return "image/svg+xml"
-	}
-	if ct := mime.TypeByExtension(ext); ct != "" {
+	if ct, ok := byExt[ext]; ok {
 		return ct
 	}
 	return "application/octet-stream"
