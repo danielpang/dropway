@@ -42,7 +42,7 @@ jobs:
   #     pulls in cloud/quota + cloud/billing via the `cloud` build tag + DI.
   # ---------------------------------------------------------------------------
   go-api:
-    name: go-api (build · vet · test · cloud build)
+    name: Go · build, vet & test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,7 +79,7 @@ jobs:
   #          The grep skips files marked with a build-tag style opt-out comment.
   # ---------------------------------------------------------------------------
   open-core-boundary:
-    name: open-core boundary (no core → cloud/ee refs)
+    name: Open-core · no cloud/ee leak
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -171,7 +171,7 @@ jobs:
   #     are invisible to the non-BYPASSRLS dropway_app role (§13 row 2).
   # ---------------------------------------------------------------------------
   sql:
-    name: sql (goose migrate + RLS isolation)
+    name: DB · migrations & RLS isolation
     runs-on: ubuntu-latest
 
     services:
@@ -312,7 +312,7 @@ jobs:
   #      `go test ./...` (job a); only this job compiles + runs it (§6 "LLM access").
   # ---------------------------------------------------------------------------
   mcp:
-    name: mcp (server endpoints · integration)
+    name: MCP · endpoints + OAuth (integration)
     runs-on: ubuntu-latest
 
     services:
@@ -371,7 +371,7 @@ jobs:
   #      package's hermetic unit tests still run under `go test ./...` (job a).
   # ---------------------------------------------------------------------------
   serve:
-    name: serve (org-only access · integration)
+    name: Serve · org-only access (integration)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -390,7 +390,7 @@ jobs:
   #     the dashboard, the edge worker).
   # ---------------------------------------------------------------------------
   typecheck:
-    name: typecheck (TS workspace)
+    name: TypeScript · typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -415,7 +415,7 @@ jobs:
   #     internal/manifest.Digest (a drift there silently breaks finalize).
   # ---------------------------------------------------------------------------
   dashboard-unit:
-    name: dashboard (unit tests)
+    name: Dashboard · unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -442,7 +442,7 @@ jobs:
   #     full prepare→upload→finalize→publish path end to end.
   # ---------------------------------------------------------------------------
   e2e:
-    name: e2e (browser · full stack)
+    name: E2E · browser deploy (full stack)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
