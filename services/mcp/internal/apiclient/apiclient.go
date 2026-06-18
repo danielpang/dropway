@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,14 +29,45 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// uploadEndpoint, when set, is the object store's internally-reachable base
+	// (scheme+host, e.g. http://minio:9000). Presigned blob URLs come back signed
+	// against the BROWSER-facing public endpoint (e.g. http://localhost:9000),
+	// which the MCP server — uploading server-side from inside the compose network
+	// — can't reach. uploadBlob then dials this host instead while preserving the
+	// original (signed) Host header. Nil → upload to the URL exactly as signed.
+	uploadEndpoint *url.URL
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithUploadEndpoint routes server-side blob uploads to an internally-reachable
+// object-store base URL (scheme+host), preserving the presigned Host header so the
+// SigV4 signature still verifies. A blank or unparseable value is ignored. See the
+// Client.uploadEndpoint field for why this exists.
+func WithUploadEndpoint(base string) Option {
+	return func(c *Client) {
+		base = strings.TrimSpace(base)
+		if base == "" {
+			return
+		}
+		if u, err := url.Parse(base); err == nil && u.Host != "" {
+			c.uploadEndpoint = u
+		}
+	}
 }
 
 // New builds a Client for the API base URL (e.g. http://api:8080).
-func New(baseURL string) *Client {
-	return &Client{
+func New(baseURL string, opts ...Option) *Client {
+	c := &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 15 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Site is the subset of the API's Site response the MCP tools surface.
@@ -186,10 +218,27 @@ func (c *Client) Deploy(ctx context.Context, token, siteID string, files []Deplo
 // uploadBlob PUTs raw bytes to a presigned URL. No Authorization (the URL is the
 // credential) and no Content-Type (it's not part of the SigV4 signature) — matching
 // the dashboard's browser upload.
-func (c *Client) uploadBlob(ctx context.Context, url string, data []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+//
+// When an uploadEndpoint is configured (the self-host/compose case), the request is
+// dialed at that internal host instead of the presigned URL's public host, while the
+// original host is preserved as the Host header so the SigV4 `host` the API signed
+// still verifies at the object store.
+func (c *Client) uploadBlob(ctx context.Context, rawURL string, data []byte) error {
+	target, signedHost := rawURL, ""
+	if c.uploadEndpoint != nil {
+		if u, err := url.Parse(rawURL); err == nil && u.Host != c.uploadEndpoint.Host {
+			signedHost = u.Host // the host the presigned signature covers
+			u.Scheme = c.uploadEndpoint.Scheme
+			u.Host = c.uploadEndpoint.Host
+			target = u.String()
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(data))
 	if err != nil {
 		return err
+	}
+	if signedHost != "" {
+		req.Host = signedHost // sent as Host header; dial still uses target's host
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

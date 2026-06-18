@@ -226,6 +226,63 @@ func TestDeploy_NoPublishStagesOnly(t *testing.T) {
 	}
 }
 
+// TestUploadBlob_RewritesHostKeepsSignedHostHeader proves the self-host upload fix:
+// a presigned URL signed against the public host (which the MCP server can't reach
+// from inside the compose network) is dialed at the internal endpoint, yet the
+// original public host is sent as the Host header so the SigV4 signature verifies.
+func TestUploadBlob_RewritesHostKeepsSignedHostHeader(t *testing.T) {
+	var gotHost, gotPath, gotRawQuery string
+	var gotBody []byte
+	// This server stands in for the INTERNAL object store (e.g. minio:9000).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost, gotPath, gotRawQuery = r.Host, r.URL.Path, r.URL.RawQuery
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := New("http://api:8080", WithUploadEndpoint(srv.URL))
+
+	// A presigned URL signed against the unreachable public host, with a signature
+	// query string that must survive the rewrite untouched.
+	presigned := "http://localhost:9000/dropway-blobs/blobs/org/abc123?X-Amz-Signature=deadbeef&X-Amz-SignedHeaders=host"
+	if err := c.uploadBlob(context.Background(), presigned, []byte("payload")); err != nil {
+		t.Fatalf("uploadBlob: %v", err)
+	}
+
+	if gotHost != "localhost:9000" {
+		t.Errorf("Host header = %q, want the signed public host localhost:9000", gotHost)
+	}
+	if gotPath != "/dropway-blobs/blobs/org/abc123" {
+		t.Errorf("path = %q, want it preserved", gotPath)
+	}
+	if gotRawQuery != "X-Amz-Signature=deadbeef&X-Amz-SignedHeaders=host" {
+		t.Errorf("query = %q, want the presigned query preserved verbatim", gotRawQuery)
+	}
+	if string(gotBody) != "payload" {
+		t.Errorf("body = %q, want the raw bytes", gotBody)
+	}
+}
+
+// TestUploadBlob_NoRewriteWithoutEndpoint confirms that without an upload endpoint
+// the URL is used exactly as signed (the browser/CLI host path is unchanged).
+func TestUploadBlob_NoRewriteWithoutEndpoint(t *testing.T) {
+	var gotHost string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// No WithUploadEndpoint → PUT goes straight to the URL's own host.
+	if err := New("http://api:8080").uploadBlob(context.Background(), srv.URL+"/u/abc", []byte("x")); err != nil {
+		t.Fatalf("uploadBlob: %v", err)
+	}
+	if gotHost != strings.TrimPrefix(srv.URL, "http://") {
+		t.Errorf("Host = %q, want the URL's own host %q", gotHost, strings.TrimPrefix(srv.URL, "http://"))
+	}
+}
+
 func TestErrorMapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

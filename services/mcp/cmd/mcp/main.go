@@ -77,7 +77,12 @@ func main() {
 	// forwarding the user's token (the API accepts the MCP audience). Without an
 	// API_URL the server stays read-only and those tools are not registered.
 	if apiURL := os.Getenv("API_URL"); apiURL != "" {
-		svc.API = apiclient.New(apiURL)
+		// Presigned blob URLs come back signed against the browser-facing public
+		// endpoint (S3_PUBLIC_ENDPOINT, e.g. localhost:9000), which this server —
+		// uploading server-side from inside the compose network — can't reach. Route
+		// uploads to the internal object-store endpoint (S3_ENDPOINT, e.g. minio:9000)
+		// while preserving the signed Host header so the signature still verifies.
+		svc.API = apiclient.New(apiURL, apiclient.WithUploadEndpoint(os.Getenv("S3_ENDPOINT")))
 		log.Info("control-plane write tools enabled", "api_url", apiURL)
 	} else {
 		log.Info("API_URL not set — MCP server is read-only (no create_site/set_site_access)")
