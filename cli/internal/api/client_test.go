@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/danielpang/dropway/cli/internal/manifest"
+	"github.com/danielpang/dropway/internal/contenttype"
 )
 
 // TestManifestFromBuild proves the build-manifest → wire-shape conversion fills in
@@ -42,8 +43,23 @@ func TestManifestFromBuild(t *testing.T) {
 
 // TestContentTypeFor_FallbackTable covers the explicit fallback switch the stdlib
 // mime table can miss (the cases that exercise the non-stdlib branch).
-// Content-type inference moved to the shared internal/contenttype package (tested
-// there); the deploy path uses contenttype.ForPath.
+// TestContentTypeFor_FallbackTable covers the extensions the stdlib mime table can
+// miss — the CLI keeps this even though inference moved to internal/contenttype, so
+// the deploy output it relies on stays pinned.
+func TestContentTypeFor_FallbackTable(t *testing.T) {
+	cases := map[string]string{
+		"app.mjs":          "text/javascript",
+		"x.wasm":           "application/wasm",
+		"site.webmanifest": "application/manifest+json",
+		"NoExtAtAll":       "application/octet-stream",
+		"archive.tar.zst":  "application/octet-stream", // unknown → default
+	}
+	for path, want := range cases {
+		if got := contenttype.ForPath(path); !strings.Contains(got, want) {
+			t.Errorf("ForPath(%q) = %q, want substring %q", path, got, want)
+		}
+	}
+}
 
 // TestHTTPClient_ErrorBodies asserts every endpoint surfaces a non-2xx with the
 // status code so a deploy fails loudly instead of proceeding on a bad response.

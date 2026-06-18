@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/danielpang/dropway/internal/contenttype"
 )
 
 // TestHTTPClient_FullFlow drives the real HTTPClient through the entire deploy
@@ -113,5 +115,20 @@ func TestHTTPClient_ErrorBody(t *testing.T) {
 	}
 }
 
-// Content-type inference now lives in the shared internal/contenttype package
-// (tested there); the CLI deploy path uses contenttype.ForPath.
+// TestContentTypeFor checks the content types the CLI deploy path records. The
+// inference itself now lives in the shared internal/contenttype package, but the
+// CLI keeps this test so a change there can't silently break the deploy output the
+// CLI depends on.
+func TestContentTypeFor(t *testing.T) {
+	cases := map[string]string{
+		"index.html": "text/html",
+		"app.js":     "javascript",
+		"data.json":  "json",
+		"x.unknown":  "application/octet-stream",
+	}
+	for path, want := range cases {
+		if got := contenttype.ForPath(path); !strings.Contains(got, want) {
+			t.Errorf("ForPath(%q) = %q, want substring %q", path, got, want)
+		}
+	}
+}
