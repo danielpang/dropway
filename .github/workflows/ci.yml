@@ -36,6 +36,55 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # (0) Detect which areas a PR/push touched, so the heavy jobs below only run when
+  #     relevant code changed (a docs-only PR shouldn't spin up Postgres/MinIO/the
+  #     browser). Each job declares `needs: changes` + an `if:` on these outputs.
+  #
+  #     NOTE on required checks: gating with a job-level `if:` makes an unaffected
+  #     job report "skipped", which branch protection treats as PASSING — so merges
+  #     aren't blocked. (A workflow-level `paths:` filter would instead leave a
+  #     required check stuck pending forever, which is why we don't use one.)
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      db: ${{ steps.filter.outputs.db }}
+      ts: ${{ steps.filter.outputs.ts }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@v4
+      # dorny/paths-filter — pin to a major tag here; can be SHA-pinned for supply-
+      # chain strictness. Outputs a boolean per group below.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            db:
+              - 'db/**'
+            ts:
+              - 'apps/**'
+              - 'edge/**'
+              - 'contracts/**'
+              - 'packages/**'
+              - '**/package.json'
+              - '**/tsconfig*.json'
+              - 'pnpm-lock.yaml'
+            deploy:
+              - 'deploy/**'
+            ci:
+              - '.github/workflows/**'
+
+  # ---------------------------------------------------------------------------
   # (a) Go API + core: build/vet/test the whole Go module — `go test ./...` covers
   #     the API handler/store/auth tests (services/api/...) plus the CLI + internal
   #     packages — then prove the cloud-tagged build also compiles. The cloud build
@@ -43,6 +92,8 @@ jobs:
   # ---------------------------------------------------------------------------
   go-api:
     name: Go · build, vet & test
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +131,8 @@ jobs:
   # ---------------------------------------------------------------------------
   open-core-boundary:
     name: Open-core · no cloud/ee leak
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -172,6 +225,8 @@ jobs:
   # ---------------------------------------------------------------------------
   sql:
     name: DB · migrations & RLS isolation
+    needs: changes
+    if: needs.changes.outputs.db == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -313,6 +368,8 @@ jobs:
   # ---------------------------------------------------------------------------
   mcp:
     name: MCP · endpoints + OAuth (integration)
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.db == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -372,6 +429,8 @@ jobs:
   # ---------------------------------------------------------------------------
   serve:
     name: Serve · org-only access (integration)
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -391,6 +450,8 @@ jobs:
   # ---------------------------------------------------------------------------
   typecheck:
     name: TypeScript · typecheck
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -416,6 +477,8 @@ jobs:
   # ---------------------------------------------------------------------------
   dashboard-unit:
     name: Dashboard · unit tests
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -443,6 +506,8 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e:
     name: E2E · browser deploy (full stack)
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ts == 'true' || needs.changes.outputs.db == 'true' || needs.changes.outputs.deploy == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
