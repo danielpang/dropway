@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
 
-# Dropway — system diagrams
+# Dropway system diagrams
 
 Diagrams-as-code (Mermaid). The `.mmd` files are the source of truth; the `.png`
 files are pre-rendered for quick viewing. GitHub renders the fenced `mermaid`
@@ -13,7 +13,7 @@ How the runtime pieces talk to each other. `serve` is the self-host content edge
 route projection + revocation denylist (`api` writes, `serve` reads). `mcp` is the
 OAuth-protected MCP server: an LLM agent reads **public** content as a crawler (via
 `llms.txt` on the edge) and **gated** content only through `mcp`, after a browser
-OAuth flow against the dashboard (the authorization server) — scoped to one org by
+OAuth flow against the dashboard (the authorization server), scoped to one org by
 the same RLS as the rest of the platform.
 
 ![Components](./components.png)
@@ -76,9 +76,9 @@ flowchart LR
 
 ## 2. Sequence flows
 
-(a) sign up · (b) sign in · (c) create + deploy a site · (d) another user opening a
-site shared with them (the gated edge-token exchange) · (e) an LLM agent reading gated
-content through the MCP server (the OAuth 2.1 flow).
+(a) sign up, (b) sign in, (c) create and deploy a site, (d) another user opening a
+site shared with them (the gated edge-token exchange), and (e) an LLM agent reading
+gated content through the MCP server (the OAuth 2.1 flow).
 
 ![Sequence](./sequence.png)
 

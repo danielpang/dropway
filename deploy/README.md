@@ -2,14 +2,14 @@
 
 # Self-hosting Dropway
 
-One command brings up the open-core data plane — **Postgres**, an **R2/S3-compatible
-object store (MinIO)**, and a one-shot **goose** migration runner — entirely offline,
-with **no Stripe, no quotas, and no caps** (`DROPWAY_CLOUD=false` → the
+One command brings up the open-core data plane: **Postgres**, an **R2/S3-compatible
+object store (MinIO)**, and a one-shot **goose** migration runner, entirely offline,
+with **no Stripe, no quotas, and no caps** (`DROPWAY_CLOUD=false` selects the
 no-op/unlimited `QuotaProvider`). See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
 §13 (row 13) and §14 for the full self-host story.
 
 > The proprietary `cloud/` (Stripe + the 10-sites/5-members quota gate) and `ee/`
-> modules are **not** part of this build. Self-host is unlimited; the FSL *license*,
+> modules are **not** part of this build. Self-host is unlimited. The FSL *license*,
 > not a runtime limit, is what prevents reselling Dropway as a service.
 
 ## Quickstart (one command)
@@ -22,7 +22,7 @@ docker compose -f deploy/docker-compose.yml up
 
 That will:
 
-1. Start **Postgres 16** (the single source of truth — `app` + `identity` schemas, `FORCE RLS`).
+1. Start **Postgres 16** (the single source of truth: `app` + `identity` schemas, `FORCE RLS`).
 2. Start **MinIO** (S3 API on `:9000`, web console on `:9001`) and create the blob bucket.
 3. Run **goose** (`migrate` service) to apply `db/migrations/app/` as the privileged
    owner role and provision the **non-superuser, non-BYPASSRLS `dropway_app`** runtime role.
@@ -36,12 +36,12 @@ plane is ready.
 |----------------|---------------------------------------------------------------|-------|
 | `api`          | Go control-plane: system of record + authz boundary           | 8080  |
 | `dashboard`    | Next.js + Better Auth (control plane + OAuth authorization server) | 3000  |
-| `serve`        | Go content server (`*.<CONTENT_DOMAIN>`); serves sites + `llms.txt` | 8090  |
+| `serve`        | Go content server (`*.<CONTENT_DOMAIN>`), serves sites + `llms.txt` | 8090  |
 | `mcp`          | OAuth-protected MCP server for LLM access to sites             | 8092  |
 | `postgres`     | System of record; `app` schema (Go-owned) + RLS               | 5432  |
 | `minio`        | R2/S3-compatible object store for blobs + deploy manifests     | 9000 (S3), 9001 (console) |
-| `createbucket` | One-shot: ensures the `dropway-blobs` bucket exists            | —     |
-| `migrate`      | One-shot: `goose up` of the app schema + sets runtime password | —     |
+| `createbucket` | One-shot: ensures the `dropway-blobs` bucket exists            | none  |
+| `migrate`      | One-shot: `goose up` of the app schema + sets runtime password | none  |
 
 The **Go API** (`services/api`), the **dashboard** (`apps/dashboard`), the **content
 server** (`services/serve`), and the **MCP server** (`services/mcp`) all slot into this
@@ -51,7 +51,7 @@ trio the Go verifiers use).
 
 ## Serving sites: the content domain
 
-Published sites are served by the **content server** (`services/serve` — the
+Published sites are served by the **content server** (`services/serve`, the
 Cloudflare-free serving plane) at an **org-namespaced host**:
 
 ```
@@ -73,7 +73,7 @@ Three vars in [`.env`](./.env.example) decide the URL the dashboard and CLI hand
 
 **Why `localhost` locally:** `*.localhost` resolves to `127.0.0.1` in every browser with
 **zero DNS setup**, so a deploy's live URL is a clickable
-`http://<org>--<app>.localhost:8090/` out of the box — nothing to add to `/etc/hosts`.
+`http://<org>--<app>.localhost:8090/` out of the box, with nothing to add to `/etc/hosts`.
 
 **Pointing it at your own domain:** set `CONTENT_DOMAIN` to a domain you control, give it
 a **wildcard DNS record + TLS cert** (`*.your-domain` → the content server), and switch
@@ -86,7 +86,7 @@ CONTENT_PORT=                  # empty → standard :443
 ```
 
 For per-tenant **origin isolation** (so one tenant's JS can never reach another tenant's
-— or your dashboard's — cookies), serve content from a **separate registrable domain on
+cookies, or your dashboard's), serve content from a **separate registrable domain on
 the [Public Suffix List](https://publicsuffix.org/)**, never a subdomain of your
 dashboard. See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §3.
 
@@ -98,22 +98,22 @@ Two things to know:
   stored host.
 - **Gated sites need `https`.** `org_only` / `allowlist` / `password` sites set a
   `__Host-edge` cookie, which browsers accept only over `https`. With the local `http`
-  default, view a **public** site in the browser; gated tiers need a real TLS origin
+  default, view a **public** site in the browser. Gated tiers need a real TLS origin
   (`CONTENT_SCHEME=https`).
 
 ## LLM access: the MCP server
 
 The `mcp` service (`services/mcp`) is an **OAuth-protected, remote (Streamable HTTP)
 [Model Context Protocol](https://modelcontextprotocol.io/) server**. It lets an
-**authorized** LLM agent list and read a tenant's deployed sites — **including gated
-content** — scoped to one org by the same Postgres RLS as everything else (it connects
+**authorized** LLM agent list and read a tenant's deployed sites (**including gated
+content**) scoped to one org by the same Postgres RLS as everything else (it connects
 as the non-`BYPASSRLS` `dropway_app` role via `DATABASE_URL`). Public sites are reachable
 by crawlers without MCP via the `serve`/Worker-emitted `llms.txt`; gated sites are
 reachable by an LLM **only** through an authorized MCP connection.
 
-**It comes up with the stack** — `docker compose -f deploy/docker-compose.yml up` starts
+**It comes up with the stack.** `docker compose -f deploy/docker-compose.yml up` starts
 `mcp` on `:8092` alongside the rest. Users connect their AI tool from the dashboard
-(**Settings → LLM access (MCP) → Connect**); the first connection runs a browser OAuth
+(**Settings → LLM access (MCP) → Connect**). The first connection runs a browser OAuth
 2.1 flow (Dynamic Client Registration → sign in → "Authorize MCP access") against the
 dashboard, which is the authorization server. No API keys are exchanged.
 
@@ -123,21 +123,21 @@ across services or token verification fails:
 | Var | What it sets | Local default | Production |
 |---|---|---|---|
 | `MCP_PORT` | port the server listens on | `8092` | `8092` (behind your TLS edge) |
-| `MCP_PUBLIC_URL` | the server's external URL — used as the OAuth **resource/audience** | `http://localhost:8092` | `https://mcp.dropway.dev` |
+| `MCP_PUBLIC_URL` | the server's external URL, used as the OAuth **resource/audience** | `http://localhost:8092` | `https://mcp.dropway.dev` |
 | `NEXT_PUBLIC_MCP_URL` | the URL the dashboard's Connect modal displays | `http://localhost:8092` | `https://mcp.dropway.dev` |
 | `API_URL` (on `mcp`) | the Go API the write tools call (forwarding the user's token) | `http://api:8080` | your internal api URL |
 
 **Read vs write tools.** The read tools (`list_sites`, `list_files`, `read_file`,
 `download_site`) run off the RLS-scoped store. The write tools (`create_site`,
-`set_site_access`, `deploy_site` — upload files + publish) call the Go API over HTTP with
+`set_site_access`, `deploy_site`, which upload files + publish) call the Go API over HTTP with
 the forwarded token, so they reuse the API's quota, admin re-check (`set_site_access` is
-owner/admin only), deploy verification, edge-route projection, revocation, and audit —
-the API stays the only projection writer. For the
+owner/admin only), deploy verification, edge-route projection, revocation, and audit. The
+API stays the only projection writer. For the
 API to accept the forwarded token it reads `MCP_PUBLIC_URL` and adds it to the verifier's
-accepted audiences. Unset `API_URL` on the `mcp` service → it runs **read-only** (the
+accepted audiences. Unset `API_URL` on the `mcp` service and it runs **read-only** (the
 write tools aren't registered).
 
-How the pieces agree (all enforced — a mismatch is a 401):
+How the pieces agree (all enforced, and a mismatch is a 401):
 
 - **`MCP_PUBLIC_URL`** is the OAuth **resource** the client requests and the **audience**
   (`aud`) the MCP server pins. The dashboard registers it in the OAuth provider's
@@ -149,7 +149,7 @@ How the pieces agree (all enforced — a mismatch is a 401):
 - **`JWKS_URL`** (compose default `http://dashboard:3000/api/auth/jwks`) is where the MCP
   server fetches the signing keys to verify tokens.
 - The MCP server re-checks **`org_meta.mcp_enabled`** on every request, so an admin
-  turning MCP off in Settings cuts off access immediately — even for already-issued
+  turning MCP off in Settings cuts off access immediately, even for already-issued
   tokens, independent of TTL.
 
 **Production:** give `mcp.dropway.dev` a DNS record + TLS (front it with your edge/load
@@ -162,12 +162,12 @@ dashboard origin (the browser-facing authorization server). See
 
 Migrations and runtime use **different roles**, on purpose (ARCHITECTURE.md §5):
 
-- **`DATABASE_OWNER_URL`** — the privileged **owner/admin** role. Used **only** by the
+- **`DATABASE_OWNER_URL`** is the privileged **owner/admin** role. Used **only** by the
   `migrate` step to create schemas, tables, policies, and the runtime role.
-- **`DATABASE_URL`** — the **`dropway_app`** runtime role: non-superuser,
+- **`DATABASE_URL`** is the **`dropway_app`** runtime role: non-superuser,
   **non-BYPASSRLS**. Every tenant table is `FORCE ROW LEVEL SECURITY`, so this
   connection is fully subject to the per-tenant policies. The Go API runs
-  `SET LOCAL app.current_org_id = …` per transaction; rows from other orgs are
+  `SET LOCAL app.current_org_id = …` per transaction, so rows from other orgs are
   invisible. Keep the password in `DATABASE_URL` in sync with
   `DROPWAY_APP_DB_PASSWORD`.
 
@@ -197,7 +197,7 @@ docker compose -f deploy/docker-compose.yml down -v        # stop + wipe pgdata/
 
 ## Production self-host notes
 
-- **Rotate every secret** in `.env` — the defaults are dev-only.
+- **Rotate every secret** in `.env`. The defaults are dev-only.
 - Point `JWKS_URL` / `JWT_ISSUER` / `JWT_AUDIENCE` at your real dashboard and API origins.
 - Swap the local MinIO `S3_*` values for managed object storage if you prefer.
 - Back up the `pgdata` volume; the KV/edge routing projection is fully rebuildable
@@ -205,9 +205,9 @@ docker compose -f deploy/docker-compose.yml down -v        # stop + wipe pgdata/
 - **Dev projection writer is in-memory.** When no Cloudflare KV creds are set, the API
   uses the local (dev) projection writer. Its route map can be mirrored to
   `PROJECTION_FILE`, but the **denylist (`revoked:*`) and org-status (`org_status:*`)
-  projections are kept ONLY in memory and are NOT persisted across restarts** — after
+  projections are kept ONLY in memory and are NOT persisted across restarts**. After
   a restart they start empty. This is acceptable by design: both fail **closed** (a
-  missing denylist entry just forces an extra re-auth; a missing org-status is
+  missing denylist entry just forces an extra re-auth, and a missing org-status is
   re-derived on the next billing webhook) and are fully **rebuildable from Postgres**,
   so a restart never opens access or loses durable state. Production uses Cloudflare
   KV, which is durable.

@@ -3,12 +3,12 @@
 # Contributing to Dropway
 
 Thanks for your interest in Dropway! This guide covers how to contribute to the
-**FSL-licensed core**. Please read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first —
-it is the approved design and the source of truth for how the pieces fit together.
+**FSL-licensed core**. Please read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first.
+It is the approved design and the source of truth for how the pieces fit together.
 
 > The proprietary `cloud/` and `ee/` trees are not open for outside contribution.
 
-## Developer Certificate of Origin (DCO) — required
+## Developer Certificate of Origin (DCO): required
 
 Every commit must be **signed off** under the
 [Developer Certificate of Origin](https://developercertificate.org/) (DCO). This is a
@@ -67,7 +67,7 @@ If you forgot, amend the last commit:
 git commit --amend -s --no-edit
 ```
 
-…or sign off a whole branch with a rebase:
+Or sign off a whole branch with a rebase:
 
 ```sh
 git rebase --signoff main
@@ -78,7 +78,7 @@ A DCO check runs in CI; PRs with unsigned commits will be asked to add the sign-
 ## Workflow
 
 1. **Open an issue first** for anything non-trivial so we can agree on the approach.
-2. **Branch off `main`** — never commit directly to it.
+2. **Branch off `main`**: never commit directly to it.
 3. **Keep changes idiomatic and well-commented**, matching the surrounding style.
 4. **Make CI green locally** before pushing:
    - Go: `go build ./... && go vet ./... && go test ./...` and `go build -tags cloud ./...`
@@ -87,7 +87,7 @@ A DCO check runs in CI; PRs with unsigned commits will be asked to add the sign-
    - TS: `pnpm -r typecheck`.
    - **Open-core boundary:** the core (`services/ cli/ internal/ apps/ edge/`) must never
      import anything under `cloud/` or `ee/` except through a build-tagged DI seam. CI
-     enforces this; don't break it.
+     enforces this, so don't break it.
 5. **Open a PR** describing the change and linking the issue. End the PR body with the
    standard generation footer if applicable.
 
@@ -97,7 +97,7 @@ A DCO check runs in CI; PRs with unsigned commits will be asked to add the sign-
   file is `NNNN_name.sql` with both `-- +goose Up` and `-- +goose Down` sections.
 - **Never hand-edit a production schema.** RLS policies, GRANTs, and triggers are
   hand-written, reviewed migrations.
-- The **`identity`** schema belongs to Better Auth — do not migrate it here.
+- The **`identity`** schema belongs to Better Auth; do not migrate it here.
 - The **`billing`** schema is cloud-only; the core must never reference it.
 - New tenant tables **must** carry a denormalized `org_id`, a composite index leading on
   `org_id`, and `ENABLE` + `FORCE ROW LEVEL SECURITY` with a subquery-free

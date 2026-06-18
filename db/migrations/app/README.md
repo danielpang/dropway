@@ -7,8 +7,8 @@ schema (the Go API's system of record). They are applied by the `migrate` step i
 ## History starts at a squashed baseline
 
 `0001_baseline.sql` is a **squashed baseline**, not the original first migration.
-Before the first tagged release — while there was no production database to
-upgrade — the original 13 incremental migrations (`0001_schemas_and_roles` …
+Before the first tagged release, while there was no production database to
+upgrade, the original 13 incremental migrations (`0001_schemas_and_roles` through
 `0013_org_status`) were collapsed into this single file for legibility: each table
 is shown in its final form instead of being reconstructed by replaying a dozen
 `ALTER`s.
@@ -21,8 +21,8 @@ the `SECURITY DEFINER` function `search_path` hardening).
 
 ## Adding new migrations
 
-Just add `0002_*.sql`, `0003_*.sql`, … as normal. Never edit `0001_baseline.sql`
-once anything has been deployed from it — append a new migration instead. The next
+Just add `0002_*.sql`, `0003_*.sql`, and so on as normal. Never edit `0001_baseline.sql`
+once anything has been deployed from it; append a new migration instead. The next
 squash (if ever) should likewise happen only when there are no databases that
 would be left mid-history.
 
