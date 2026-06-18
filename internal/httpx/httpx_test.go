@@ -15,7 +15,7 @@ import (
 // body so the dashboard/CLI can drive the upgrade flow.
 func TestWriteError_QuotaExceeded402(t *testing.T) {
 	ex := &quota.ExceededError{
-		Limit:      quota.ResourceSitePerUser,
+		Limit:      quota.ResourceSitePerOrg,
 		Current:    10,
 		Max:        10,
 		PlanTier:   "free",
@@ -38,8 +38,8 @@ func TestWriteError_QuotaExceeded402(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, rr.Body.String())
 	}
-	if got.Limit != quota.ResourceSitePerUser {
-		t.Errorf("limit = %q, want %q", got.Limit, quota.ResourceSitePerUser)
+	if got.Limit != quota.ResourceSitePerOrg {
+		t.Errorf("limit = %q, want %q", got.Limit, quota.ResourceSitePerOrg)
 	}
 	if got.Current != 10 || got.Max != 10 {
 		t.Errorf("current/max = %d/%d, want 10/10", got.Current, got.Max)

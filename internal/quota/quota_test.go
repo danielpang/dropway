@@ -16,9 +16,9 @@ func TestUnlimited_AllowsEverything(t *testing.T) {
 		res     Resource
 		current int64
 	}{
-		{"free", ResourceSitePerUser, 0},
-		{"free", ResourceSitePerUser, 10},
-		{"free", ResourceSitePerUser, 1_000_000},
+		{"free", ResourceSitePerOrg, 0},
+		{"free", ResourceSitePerOrg, 10},
+		{"free", ResourceSitePerOrg, 1_000_000},
 		{"free", ResourceMemberPerOrg, 5},
 		{"free", ResourceMemberPerOrg, 9999},
 		{"business", ResourceMemberPerOrg, 99},

@@ -57,22 +57,23 @@ SELECT COALESCE(
     'free'
 )::text AS plan_tier;
 
--- name: LockUserSiteQuota :exec
--- Serialize concurrent site creates for the SAME (org, user): take a transaction-
--- scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
--- create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
--- critical section, so two racing creates can't both read current=N and both
--- insert (the TOCTOU the cap must not allow). Advisory locks are independent of
--- RLS and of row locks, so this needs no rows to exist yet (§9 race safety).
-SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text || ':sites'));
+-- name: LockOrgSiteQuota :exec
+-- Serialize concurrent site creates for the SAME org: take a transaction-scoped
+-- advisory lock keyed by hashtext(org||':sites'). Held until the create-site tx
+-- commits/rolls back, it makes the COUNT → policy check → INSERT a critical
+-- section, so two racing creates anywhere in the org can't both read current=N and
+-- both insert (the TOCTOU the per-ORG cap must not allow). Advisory locks are
+-- independent of RLS and of row locks, so this needs no rows to exist yet.
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':sites'));
 
--- name: CountSitesForUser :one
--- The number of sites the user already owns in the active org. Read under the
--- advisory lock above; RLS scopes it to the active org, and we additionally filter
--- by org_id + owner_user_id so the per-USER cap is exact.
+-- name: CountSitesForOrg :one
+-- The number of sites in the active org (the per-ORG cap input, POOLED across all
+-- members — seats are free, so the lever is org site count). Read under the
+-- advisory lock above; RLS already scopes it to the active org and we filter by
+-- org_id to be explicit.
 SELECT count(*)::bigint AS n
 FROM app.sites
-WHERE org_id = $1 AND owner_user_id = $2;
+WHERE org_id = $1;
 
 -- name: LockOrgMemberQuota :exec
 -- Serialize the members-cap preflight for an org: a transaction-scoped advisory
@@ -156,6 +157,30 @@ RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, crea
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
 FROM app.sites
 WHERE id = $1;
+
+-- name: GetSiteStorageBytes :one
+-- LOGICAL storage of a single site = the byte size of its CURRENT (live) version
+-- (site_versions.size_bytes, the sum of that version's file sizes). A site with no
+-- live version is 0. "Logical" means NOT deduplicated across sites/versions: a file
+-- shipped by two sites counts in both, the same per-folder model Dropbox/Drive use.
+-- RLS scopes the read to the active org.
+SELECT COALESCE(v.size_bytes, 0)::bigint AS bytes
+FROM app.sites s
+LEFT JOIN app.site_versions v ON v.id = s.current_version_id
+WHERE s.id = $1;
+
+-- name: ListSiteStorageForOrg :many
+-- LOGICAL storage per site for the active org (the current-version size of each
+-- site, 0 when it has no live version) paired with the owning user, so the caller
+-- can show per-site usage AND aggregate it per user. Same non-deduplicated model as
+-- GetSiteStorageBytes. RLS scopes the read to the active org.
+SELECT
+    s.id            AS site_id,
+    s.owner_user_id AS owner_user_id,
+    COALESCE(v.size_bytes, 0)::bigint AS bytes
+FROM app.sites s
+LEFT JOIN app.site_versions v ON v.id = s.current_version_id
+ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at

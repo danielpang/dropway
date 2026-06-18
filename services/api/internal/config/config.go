@@ -112,6 +112,14 @@ type Config struct {
 	// success/cancel + Billing-Portal return URLs. Defaults to https://app.dropway.dev.
 	DashboardURL string
 
+	// EnforceStorageQuota gates the cloud per-org STORAGE cap (ENFORCE_STORAGE_QUOTA).
+	// Defaults to FALSE: storage is metered/tracked but a deploy is never rejected for
+	// crossing a storage band — the only paid lever today is the per-org site count
+	// (docs/pricing.md). The cap code stays in cloud/quota; flip this to true once
+	// storage billing ships so an over-band org is held until it upgrades. No effect in
+	// the OSS build (Unlimited ignores it).
+	EnforceStorageQuota bool
+
 	// ContentScheme / ContentPort configure how the API renders the DISPLAY URLs it
 	// returns to clients (live_url / preview_url): scheme://host[:port]. They affect
 	// ONLY the displayed URL — the stored host_routes.host (and the route:<host> KV
@@ -159,6 +167,7 @@ func Load() (Config, error) {
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
 		DashboardURL:          envOr("DASHBOARD_URL", "https://app.dropway.dev"),
+		EnforceStorageQuota:   parseBool(os.Getenv("ENFORCE_STORAGE_QUOTA")),
 
 		ContentScheme: envOr("CONTENT_SCHEME", "https"),
 		ContentPort:   os.Getenv("CONTENT_PORT"),

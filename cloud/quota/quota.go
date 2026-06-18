@@ -5,13 +5,18 @@
 // build (docs/ARCHITECTURE.md §14, cloud/LICENSE).
 //
 // It implements the core quota.Provider PURE POLICY interface
-// (Allow(planTier, res, current)) with the hard-cap member-count bands and
-// per-user site caps from §9:
+// (Allow(planTier, res, current)) with the seat-free per-ORG site bands from
+// docs/pricing.md ("pay for sites, not seats"):
 //
-//	Free       : ≤ 5 members/org, ≤ 10 sites/user  → 402 {next_tier: business}
-//	Business   : 6–99 members/org (cap 99)         → 402 {next_tier: enterprise}
-//	Enterprise : 100–1,000 members/org (cap 1000)  → 402 {next_tier: contact_sales}
-//	Contact Sales: > 1,000                          (no self-serve checkout)
+//	Free       : ≤ 10 sites/org   → 402 {next_tier: business}
+//	Pro        : ≤ 100 sites/org  → 402 {next_tier: enterprise}
+//	Enterprise : unlimited sites  (no site cap)
+//
+// SEATS ARE FREE: members are unlimited on every plan, so ResourceMemberPerOrg
+// always passes. Storage (bytes/org) keeps its own bands (§5) but is GATED OFF by
+// default — it's metered, not enforced, until storage billing ships (toggle with
+// ENFORCE_STORAGE_QUOTA / NewProvider's enforceStorage). "Pro" is the public name
+// for the internal "business" plan tier.
 //
 // Race-safety lives in the STORE: it holds a per-(org,subject) advisory lock
 // across COUNT → Allow → INSERT inside the request tx (internal/store). This
@@ -34,17 +39,13 @@ const (
 	tierSales      PlanTier = "contact_sales"
 )
 
-// Hard caps per tier (§9). These are the maximum EXISTING count; creating one
-// more is rejected when current >= cap.
+// Per-ORG site caps (docs/pricing.md). These are the maximum EXISTING count;
+// creating one more is rejected when current >= cap. Enterprise is uncapped
+// (handled in orgSiteCap), so it has no constant here. Seats are free, so there
+// are no member caps.
 const (
-	freeMembersCap = 5
-	freeSitesCap   = 10
-
-	businessMembersCap = 99
-	businessSitesCap   = 100
-
-	enterpriseMembersCap = 1000
-	enterpriseSitesCap   = 1000
+	freeSitesCap     = 10
+	businessSitesCap = 100
 )
 
 // Per-org storage caps in BYTES (docs/pricing.md §3/§5). gib is binary (1<<30) to
@@ -68,10 +69,19 @@ type URLBuilder interface {
 // Provider is the cloud quota.Provider (pure policy). Construct with NewProvider.
 type Provider struct {
 	upgrade URLBuilder
+	// enforceStorage gates the per-org STORAGE band. Default OFF (storage is metered
+	// but never blocks a deploy) — the only paid lever today is the site count. When
+	// false, AllowN(storage) always returns nil; the band code below is kept intact for
+	// when storage billing ships (config: ENFORCE_STORAGE_QUOTA → docs/pricing.md).
+	enforceStorage bool
 }
 
 // NewProvider builds the cloud provider. urls may be nil (no CTA URLs in the 402).
-func NewProvider(urls URLBuilder) *Provider { return &Provider{upgrade: urls} }
+// enforceStorage turns the per-org storage cap on; pass false to meter-without-gating
+// (the current default — see Config.EnforceStorageQuota).
+func NewProvider(urls URLBuilder, enforceStorage bool) *Provider {
+	return &Provider{upgrade: urls, enforceStorage: enforceStorage}
+}
 
 // Ensure the cloud provider satisfies the core interface so DI is a drop-in.
 var _ corequota.Provider = (*Provider)(nil)
@@ -96,11 +106,22 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 	var capMax int64
 	var next PlanTier
 	switch res {
-	case corequota.ResourceSitePerUser:
-		capMax, next = siteCap(tier)
+	case corequota.ResourceSitePerOrg:
+		max, nx, unlimited := orgSiteCap(tier)
+		if unlimited {
+			return nil // Enterprise: unlimited sites.
+		}
+		capMax, next = max, nx
 	case corequota.ResourceMemberPerOrg:
-		capMax, next = memberCap(tier)
+		// Seats are free: unlimited members on every plan (docs/pricing.md). The
+		// seam stays so seat policy could be re-tightened here without a store change.
+		return nil
 	case corequota.ResourceStorageBytesPerOrg:
+		// Storage is metered but only GATED when explicitly enabled (storage billing
+		// is not live yet). Off → never blocks a deploy; the band logic is preserved.
+		if !p.enforceStorage {
+			return nil
+		}
 		capMax, next = storageCap(tier)
 	default:
 		// Unknown resources are not capped by the cloud policy (the store only
@@ -134,27 +155,18 @@ func (p *Provider) exceeded(res corequota.Resource, current, max int64, tier, ne
 	return e
 }
 
-// siteCap returns the per-user site cap and the tier to upgrade to for `tier`.
-func siteCap(tier PlanTier) (max int64, next PlanTier) {
+// orgSiteCap returns the per-ORG site cap, the tier to upgrade to, and whether the
+// tier is uncapped. The bands are seat-free (docs/pricing.md): Free 10 → Business
+// (Pro) 100 → Enterprise UNLIMITED. Enterprise has no self-serve upgrade above it,
+// so it returns unlimited=true and the caller never builds a 402.
+func orgSiteCap(tier PlanTier) (max int64, next PlanTier, unlimited bool) {
 	switch tier {
 	case TierBusiness:
-		return businessSitesCap, TierEnterprise
+		return businessSitesCap, TierEnterprise, false
 	case TierEnterprise:
-		return enterpriseSitesCap, tierSales
+		return 0, "", true
 	default: // free
-		return freeSitesCap, TierBusiness
-	}
-}
-
-// memberCap returns the per-org member cap and the next tier for `tier`.
-func memberCap(tier PlanTier) (max int64, next PlanTier) {
-	switch tier {
-	case TierBusiness:
-		return businessMembersCap, TierEnterprise
-	case TierEnterprise:
-		return enterpriseMembersCap, tierSales
-	default: // free
-		return freeMembersCap, TierBusiness
+		return freeSitesCap, TierBusiness, false
 	}
 }
 

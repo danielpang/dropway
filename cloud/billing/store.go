@@ -37,13 +37,11 @@ import (
 	"github.com/danielpang/dropway/internal/projection"
 )
 
-// Free-tier caps mirrored from §9 (the cloud quota bands). A read-only downgrade
-// sets org_status='over_limit' when the org now exceeds either, so the dashboard
-// shows the banner and new actions are blocked — but NO data is deleted.
-const (
-	freeSitesPerUserCap  = 10
-	freeMembersPerOrgCap = 5
-)
+// Free-tier cap mirrored from the cloud quota bands (docs/pricing.md). A read-only
+// downgrade sets org_status='over_limit' when the org now exceeds it, so the
+// dashboard shows the banner and new actions are blocked — but NO data is deleted.
+// Seats are free, so only the per-ORG site count gates over-limit.
+const freeSitesPerOrgCap = 10
 
 // BillingStore is the pgx-backed persistence. Construct with NewStore.
 type BillingStore struct {
@@ -317,9 +315,9 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 // SetCanceled handles customer.subscription.deleted: a READ-ONLY downgrade to
 // Free (§9 — NEVER delete data). In one org-scoped tx it sets the subscription to
 // plan_tier='free', status='canceled', drops org_meta.plan_tier to 'free', and
-// computes org_status: 'over_limit' if the org now exceeds the Free caps (a user
-// with > 10 sites OR the org with > 5 members), else 'active'. The org keeps all
-// its sites/members; they just become read-only/over-limit until it re-subscribes.
+// computes org_status: 'over_limit' if the org now exceeds the Free cap (> 10
+// sites in the org), else 'active'. The org keeps all its sites; they just become
+// read-only/over-limit until it re-subscribes.
 func (s *BillingStore) SetCanceled(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return errors.New("billing: SetCanceled with empty OrgID")
@@ -498,37 +496,17 @@ func setOrgContext(ctx context.Context, tx pgx.Tx, orgID string) error {
 }
 
 // orgExceedsFreeCaps reports whether, after a downgrade to Free, the org would be
-// over the Free caps: ANY user owns > 10 sites, OR the org has > 5 members. The
-// sites read is RLS-scoped (the GUC is set on the tx); the member count reads the
-// Better-Auth-owned identity.member table explicitly by org (outside app RLS). A
-// missing identity.member table (self-host pre-Better-Auth) counts as 0 members.
+// over the Free cap: the ORG owns > 10 sites (pooled across all members). Seats are
+// free, so members never push an org over-limit. The sites read is RLS-scoped (the
+// GUC is set on the tx), matching the per-org cap the quota provider enforces.
 func orgExceedsFreeCaps(ctx context.Context, tx pgx.Tx, orgID string) (bool, error) {
-	// Max sites owned by any single user in the org (per-USER cap).
-	var maxSitesPerUser int64
+	var sites int64
 	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(MAX(c), 0) FROM (
-		    SELECT count(*) AS c FROM app.sites
-		    WHERE org_id = $1 GROUP BY owner_user_id
-		 ) t`, orgID,
-	).Scan(&maxSitesPerUser); err != nil {
+		`SELECT count(*) FROM app.sites WHERE org_id = $1`, orgID,
+	).Scan(&sites); err != nil {
 		return false, fmt.Errorf("billing: count sites for over-limit check: %w", err)
 	}
-	if maxSitesPerUser > freeSitesPerUserCap {
-		return true, nil
-	}
-
-	var members int64
-	err := tx.QueryRow(ctx,
-		`SELECT count(*) FROM identity.member WHERE "organizationId" = $1`, orgID,
-	).Scan(&members)
-	if err != nil {
-		if isUndefinedTable(err) {
-			members = 0 // Better Auth not migrated (self-host) → treat as empty.
-		} else {
-			return false, fmt.Errorf("billing: count members for over-limit check: %w", err)
-		}
-	}
-	return members > freeMembersPerOrgCap, nil
+	return sites > freeSitesPerOrgCap, nil
 }
 
 // isUndefinedTable reports a Postgres "relation does not exist" (SQLSTATE 42P01),

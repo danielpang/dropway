@@ -60,6 +60,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 		r.Get("/me", api.Me)
 		r.Get("/members", api.ListMembers)
+		// Logical storage usage per user (the members-page usage column). Any member
+		// may read it (org-scoped). Display-only attribution, not an entitlement.
+		r.Get("/storage", api.StorageUsage)
 		// Members cap gate (H8): the dashboard invite path calls this before adding a
 		// member; 402 when the org is at/over its members_per_org cap (cloud bands;
 		// OSS unlimited). Any member may call it (read-only check of its own org).

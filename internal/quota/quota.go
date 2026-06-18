@@ -16,8 +16,9 @@
 //
 // The CORE ships the Unlimited implementation (every action allowed → a
 // self-hosted build has no caps). The hosted build wires in cloud/quota's real
-// Provider (the Free 5-members/10-sites → Business → Enterprise → Contact-Sales
-// hard caps), selected via the `cloud` build tag in services/api/cmd/api.
+// Provider (the Free 10-sites → Pro 100-sites → Enterprise unlimited hard caps,
+// with FREE seats on every tier), selected via the `cloud` build tag in
+// services/api/cmd/api.
 package quota
 
 import (
@@ -29,7 +30,15 @@ import (
 type Resource string
 
 const (
-	ResourceSitePerUser  Resource = "sites_per_user"
+	// ResourceSitePerOrg caps the number of sites in an ORG (the workspace), pooled
+	// across all members. This is the seat-free pricing lever (docs/pricing.md): you
+	// move up a tier when you need MORE SITES, not more seats. The store counts every
+	// site in the org (CountSitesForOrg) under a per-org advisory lock.
+	ResourceSitePerOrg Resource = "sites_per_org"
+	// ResourceMemberPerOrg is the org-seat policy seam. Seats are FREE under the
+	// current pricing (unlimited members on every plan), so the cloud provider returns
+	// unlimited for it and the members preflight always passes; the seam stays so seat
+	// policy could be re-tightened in the provider without any store/handler change.
 	ResourceMemberPerOrg Resource = "members_per_org"
 	// ResourceStorageBytesPerOrg is a CONTINUOUS resource (bytes), checked with
 	// AllowN(current, delta) rather than Allow's "+1" — a deploy adds `delta` bytes

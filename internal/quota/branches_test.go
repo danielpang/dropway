@@ -22,13 +22,13 @@ func TestAsExceeded_NonMatch(t *testing.T) {
 // upgrade message).
 func TestExceededError_Error(t *testing.T) {
 	e := &ExceededError{
-		Limit:    ResourceSitePerUser,
+		Limit:    ResourceSitePerOrg,
 		Current:  10,
 		Max:      10,
 		PlanTier: "free",
 	}
 	got := e.Error()
-	for _, want := range []string{"sites_per_user", "10/10", "free"} {
+	for _, want := range []string{"sites_per_org", "10/10", "free"} {
 		if !contains(got, want) {
 			t.Errorf("Error() = %q, missing %q", got, want)
 		}

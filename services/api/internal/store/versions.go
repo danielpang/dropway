@@ -173,6 +173,49 @@ func (s *Store) OrgStorageBytes(ctx context.Context, t Tenant) (int64, error) {
 	return n, err
 }
 
+// SiteStorage is the LOGICAL storage of one site (the byte size of its current live
+// version) paired with the owning user. Logical = NOT deduplicated across
+// sites/versions (a file shipped by two sites counts in both), matching the
+// per-folder size model of Dropbox/Drive — see docs/pricing.md. The org's
+// authoritative (deduplicated) footprint is OrgStorageBytes; these per-site/per-user
+// numbers are for display + attribution, not billing.
+type SiteStorage struct {
+	SiteID      string
+	OwnerUserID string
+	Bytes       int64
+}
+
+// SiteStorageBytes returns the logical storage of one site (its current-version
+// size; 0 if it has no live version or is another tenant's). RLS-scoped.
+func (s *Store) SiteStorageBytes(ctx context.Context, t Tenant, siteID string) (int64, error) {
+	var n int64
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		v, err := q.GetSiteStorageBytes(ctx, siteID)
+		n = v
+		return err
+	})
+	return n, err
+}
+
+// ListSiteStorage returns the logical storage of every site in the active org with
+// its owner, so the caller can show per-site usage and aggregate it per user. RLS
+// scopes the read to the active org.
+func (s *Store) ListSiteStorage(ctx context.Context, t Tenant) ([]SiteStorage, error) {
+	var out []SiteStorage
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		rows, err := q.ListSiteStorageForOrg(ctx)
+		if err != nil {
+			return err
+		}
+		out = make([]SiteStorage, len(rows))
+		for i, r := range rows {
+			out[i] = SiteStorage{SiteID: r.SiteID, OwnerUserID: r.OwnerUserID, Bytes: r.Bytes}
+		}
+		return nil
+	})
+	return out, err
+}
+
 // RecomputeOrgStorage reconciles an org's running storage total to the authoritative
 // ledger sum (the cheap drift fix — docs/pricing.md §5.5). Run periodically; a
 // deeper audit additionally lists R2 to prune ledger rows orphaned by a crashed GC.

@@ -13,7 +13,7 @@
 // (db/migrations/billing) as the owner role, seeds a synthetic Better Auth
 // identity.member table, then drives the REAL production billing path:
 //
-//   - the cloud quota provider (Free 10 sites/user) on the FSL store.CreateSite —
+//   - the cloud quota provider (Free 10 sites/org) on the FSL store.CreateSite —
 //     11th site → 402 (cloud cap), proving the hard cap;
 //   - a SIGNED checkout.session.completed webhook (real RealSignatureVerifier +
 //     real *billing.Handler over the SAME non-BYPASSRLS dropway_app pool) sets
@@ -25,8 +25,8 @@
 //   - a FORGED signature → 400 and NO DB write;
 //   - customer.subscription.deleted → org_meta.plan_tier='free' + org_status set,
 //     with NO data deleted (read-only downgrade);
-//   - CONCURRENCY: N goroutines create sites for a capped Free user → exactly the
-//     cap succeed (the per-(org,user) advisory lock in store.CreateSite).
+//   - CONCURRENCY: N goroutines create sites for a capped Free org → exactly the
+//     cap succeed (the per-org advisory lock in store.CreateSite).
 //
 // Containers are torn down on completion (even on failure) via t.Cleanup.
 //
@@ -88,7 +88,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 
 	// The cloud quota provider gives the FSL store its hard-cap bands; the store
 	// owns the race-safe advisory-lock mechanics.
-	qp := cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"})
+	qp := cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"}, false)
 	st := store.New(pool, qp)
 
 	// The production billing persistence + webhook handler over the SAME pool. The
@@ -129,26 +129,26 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	} else if ex.PlanTier != "free" || ex.NextTier != "business" || ex.Max != 10 {
 		t.Fatalf("402 payload wrong: %+v", ex)
 	}
-	t.Log("PASS: Free org capped at 10 sites/user (11th → 402)")
+	t.Log("PASS: Free org capped at 10 sites/org (11th → 402)")
 
 	// -----------------------------------------------------------------------
-	// 1b. H8: the members_per_org cap is enforced by the race-safe preflight. A Free
-	// org (cap 5) passes with 0 members, then 402s once it has 5.
+	// 1b. SEATS ARE FREE (docs/pricing.md): members are unlimited on every plan, so
+	// the preflight passes with 0 members AND after seeding many. The seam stays
+	// wired (so seat policy could be re-tightened in the cloud provider alone), but
+	// the cloud provider returns nil for ResourceMemberPerOrg today.
 	// -----------------------------------------------------------------------
 	if err := st.PreflightMembers(ctx, tenant); err != nil {
 		t.Fatalf("members preflight with 0 members should pass: %v", err)
 	}
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 9; i++ {
 		cbExecOwner(t, fmt.Sprintf(
 			`INSERT INTO identity.member ("organizationId","userId","role") VALUES ('%s','c0000000-0000-0000-0000-00000000000%d','member');`,
 			orgID, i))
 	}
-	if err := st.PreflightMembers(ctx, tenant); err == nil {
-		t.Fatal("H8: members preflight with 5 members on Free must 402")
-	} else if ex, ok := quota.AsExceeded(err); !ok || ex.PlanTier != "free" || ex.Max != 5 {
-		t.Fatalf("H8: member-cap 402 payload wrong: ok=%v err=%v", ok, err)
+	if err := st.PreflightMembers(ctx, tenant); err != nil {
+		t.Fatalf("seat-free: members preflight with 9 members on Free must still pass, got %v", err)
 	}
-	t.Log("PASS: H8 — Free org member cap enforced (5 members → preflight 402)")
+	t.Log("PASS: seats are free — members unlimited on Free (9 members → preflight still passes)")
 
 	// -----------------------------------------------------------------------
 	// 2. SIGNED checkout.session.completed → plan_tier=business in BOTH tables.
@@ -322,8 +322,8 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	t.Logf("PASS: subscription.deleted → Free + org_status=over_limit, %d sites preserved (no data deleted)", sitesAfter)
 
 	// -----------------------------------------------------------------------
-	// 7. CONCURRENCY: N goroutines create sites for a fresh capped Free user →
-	//    exactly the cap (10) succeed (per-(org,user) advisory lock serializes).
+	// 7. CONCURRENCY: N goroutines create sites for a fresh capped Free org →
+	//    exactly the cap (10) succeed (per-org advisory lock serializes).
 	// -----------------------------------------------------------------------
 	concOrg := "22222222-2222-2222-2222-222222222222"
 	concUser := "b0000000-0000-0000-0000-000000000002"

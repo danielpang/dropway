@@ -18,8 +18,11 @@ import (
 // PreflightMembers is the server-side members_per_org cap check the dashboard's
 // invite path calls BEFORE adding a member (Better Auth inserts the member row in
 // its own tx, so this is a preflight, not the insert itself). It returns a
-// *quota.ExceededError (→ 402) when the org is at/over its member cap; OSS =
-// Unlimited (always nil), cloud = the hard-cap bands.
+// *quota.ExceededError (→ 402) when the org is at/over its member cap. Seats are
+// currently FREE (docs/pricing.md): both OSS Unlimited AND the cloud provider
+// return nil for ResourceMemberPerOrg, so this preflight always passes today. It
+// stays wired as the enforcement seam so seat policy can be re-tightened in the
+// cloud provider alone, with no handler/store change.
 //
 // Race-safe WITHIN our path: everything runs in ONE tx that takes the per-org
 // advisory lock (LockOrgMemberQuota) first, so two concurrent preflights for the
@@ -256,22 +259,24 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 			}
 		}
 
-		// Race-safe per-user site cap (§9): take a per-(org,user) advisory lock for
-		// the rest of the tx, then COUNT → policy → INSERT as one critical section,
-		// so two concurrent same-user creates can't both read current=N and both
-		// insert. OSS = Unlimited (always nil); cloud = the hard-cap bands.
-		if err := q.LockUserSiteQuota(ctx, db.LockUserSiteQuotaParams{Column1: t.OrgID, Column2: t.UserID}); err != nil {
+		// Race-safe per-ORG site cap (docs/pricing.md "pay for sites, not seats"):
+		// take a per-org advisory lock for the rest of the tx, then COUNT → policy →
+		// INSERT as one critical section, so two concurrent creates anywhere in the
+		// org can't both read current=N and both insert. The count is POOLED across
+		// all members (seats are free). OSS = Unlimited (always nil); cloud = the
+		// hard-cap bands (Free 10 → Pro 100 → Enterprise unlimited).
+		if err := q.LockOrgSiteQuota(ctx, t.OrgID); err != nil {
 			return err
 		}
 		planTier, err := q.GetPlanTier(ctx, t.OrgID)
 		if err != nil {
 			return err
 		}
-		current, err := q.CountSitesForUser(ctx, db.CountSitesForUserParams{OrgID: t.OrgID, OwnerUserID: t.UserID})
+		current, err := q.CountSitesForOrg(ctx, t.OrgID)
 		if err != nil {
 			return err
 		}
-		if err := s.quota.Allow(planTier, quota.ResourceSitePerUser, current); err != nil {
+		if err := s.quota.Allow(planTier, quota.ResourceSitePerOrg, current); err != nil {
 			return err // *quota.ExceededError → handler renders HTTP 402
 		}
 

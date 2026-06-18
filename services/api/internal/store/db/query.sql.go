@@ -53,22 +53,18 @@ func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEnt
 	return err
 }
 
-const countSitesForUser = `-- name: CountSitesForUser :one
+const countSitesForOrg = `-- name: CountSitesForOrg :one
 SELECT count(*)::bigint AS n
 FROM app.sites
-WHERE org_id = $1 AND owner_user_id = $2
+WHERE org_id = $1
 `
 
-type CountSitesForUserParams struct {
-	OrgID       string
-	OwnerUserID string
-}
-
-// The number of sites the user already owns in the active org. Read under the
-// advisory lock above; RLS scopes it to the active org, and we additionally filter
-// by org_id + owner_user_id so the per-USER cap is exact.
-func (q *Queries) CountSitesForUser(ctx context.Context, arg CountSitesForUserParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countSitesForUser, arg.OrgID, arg.OwnerUserID)
+// The number of sites in the active org (the per-ORG cap input, POOLED across all
+// members — seats are free, so the lever is org site count). Read under the
+// advisory lock above; RLS already scopes it to the active org and we filter by
+// org_id to be explicit.
+func (q *Queries) CountSitesForOrg(ctx context.Context, orgID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countSitesForOrg, orgID)
 	var n int64
 	err := row.Scan(&n)
 	return n, err
@@ -457,6 +453,25 @@ func (q *Queries) GetSiteAccessPolicy(ctx context.Context, siteID string) (AppSi
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getSiteStorageBytes = `-- name: GetSiteStorageBytes :one
+SELECT COALESCE(v.size_bytes, 0)::bigint AS bytes
+FROM app.sites s
+LEFT JOIN app.site_versions v ON v.id = s.current_version_id
+WHERE s.id = $1
+`
+
+// LOGICAL storage of a single site = the byte size of its CURRENT (live) version
+// (site_versions.size_bytes, the sum of that version's file sizes). A site with no
+// live version is 0. "Logical" means NOT deduplicated across sites/versions: a file
+// shipped by two sites counts in both, the same per-folder model Dropbox/Drive use.
+// RLS scopes the read to the active org.
+func (q *Queries) GetSiteStorageBytes(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRow(ctx, getSiteStorageBytes, id)
+	var bytes int64
+	err := row.Scan(&bytes)
+	return bytes, err
 }
 
 const getSiteVersion = `-- name: GetSiteVersion :one
@@ -872,6 +887,46 @@ func (q *Queries) ListPublishedSitesForRebuild(ctx context.Context) ([]ListPubli
 	return items, nil
 }
 
+const listSiteStorageForOrg = `-- name: ListSiteStorageForOrg :many
+SELECT
+    s.id            AS site_id,
+    s.owner_user_id AS owner_user_id,
+    COALESCE(v.size_bytes, 0)::bigint AS bytes
+FROM app.sites s
+LEFT JOIN app.site_versions v ON v.id = s.current_version_id
+ORDER BY s.created_at DESC
+`
+
+type ListSiteStorageForOrgRow struct {
+	SiteID      string
+	OwnerUserID string
+	Bytes       int64
+}
+
+// LOGICAL storage per site for the active org (the current-version size of each
+// site, 0 when it has no live version) paired with the owning user, so the caller
+// can show per-site usage AND aggregate it per user. Same non-deduplicated model as
+// GetSiteStorageBytes. RLS scopes the read to the active org.
+func (q *Queries) ListSiteStorageForOrg(ctx context.Context) ([]ListSiteStorageForOrgRow, error) {
+	rows, err := q.db.Query(ctx, listSiteStorageForOrg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSiteStorageForOrgRow{}
+	for rows.Next() {
+		var i ListSiteStorageForOrgRow
+		if err := rows.Scan(&i.SiteID, &i.OwnerUserID, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSiteVersions = `-- name: ListSiteVersions :many
 SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
 FROM app.site_versions
@@ -1013,6 +1068,21 @@ func (q *Queries) LockOrgMemberQuota(ctx context.Context, dollar_1 string) error
 	return err
 }
 
+const lockOrgSiteQuota = `-- name: LockOrgSiteQuota :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':sites'))
+`
+
+// Serialize concurrent site creates for the SAME org: take a transaction-scoped
+// advisory lock keyed by hashtext(org||':sites'). Held until the create-site tx
+// commits/rolls back, it makes the COUNT → policy check → INSERT a critical
+// section, so two racing creates anywhere in the org can't both read current=N and
+// both insert (the TOCTOU the per-ORG cap must not allow). Advisory locks are
+// independent of RLS and of row locks, so this needs no rows to exist yet.
+func (q *Queries) LockOrgSiteQuota(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockOrgSiteQuota, dollar_1)
+	return err
+}
+
 const lockOrgStorageQuota = `-- name: LockOrgStorageQuota :exec
 
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
@@ -1027,26 +1097,6 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
 // site cap uses). Held until the deploy tx commits/rolls back.
 func (q *Queries) LockOrgStorageQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockOrgStorageQuota, dollar_1)
-	return err
-}
-
-const lockUserSiteQuota = `-- name: LockUserSiteQuota :exec
-SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text || ':sites'))
-`
-
-type LockUserSiteQuotaParams struct {
-	Column1 string
-	Column2 string
-}
-
-// Serialize concurrent site creates for the SAME (org, user): take a transaction-
-// scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
-// create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
-// critical section, so two racing creates can't both read current=N and both
-// insert (the TOCTOU the cap must not allow). Advisory locks are independent of
-// RLS and of row locks, so this needs no rows to exist yet (§9 race safety).
-func (q *Queries) LockUserSiteQuota(ctx context.Context, arg LockUserSiteQuotaParams) error {
-	_, err := q.db.Exec(ctx, lockUserSiteQuota, arg.Column1, arg.Column2)
 	return err
 }
 

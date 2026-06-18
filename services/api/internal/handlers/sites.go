@@ -18,7 +18,10 @@ import (
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
-// siteResponse is the API representation of a site.
+// siteResponse is the API representation of a site. StorageBytes is the site's
+// LOGICAL storage (its current live version's size; 0 before the first deploy) —
+// NOT deduplicated across sites, so it's the "how big is this site on its own"
+// number, like a Dropbox/Drive folder size.
 type siteResponse struct {
 	ID               string    `json:"id"`
 	OrgID            string    `json:"org_id"`
@@ -27,14 +30,16 @@ type siteResponse struct {
 	AccessMode       string    `json:"access_mode"`
 	CurrentVersionID *string   `json:"current_version_id,omitempty"`
 	LiveURL          string    `json:"live_url"`
+	StorageBytes     int64     `json:"storage_bytes"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
 // toSiteResponse renders a site for the API. orgSlug is the org half of the
 // canonical content host (projection.HostForSite); the display LiveURL is built
 // from the configured scheme/port (API.ContentURL). All sites in one request
-// share the active tenant's org, so the caller resolves orgSlug once.
-func (a *API) toSiteResponse(s store.Site, orgSlug string) siteResponse {
+// share the active tenant's org, so the caller resolves orgSlug once. storageBytes
+// is the site's logical size (0 for a just-created site with no live version).
+func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) siteResponse {
 	return siteResponse{
 		ID:               s.ID,
 		OrgID:            s.OrgID,
@@ -43,6 +48,7 @@ func (a *API) toSiteResponse(s store.Site, orgSlug string) siteResponse {
 		AccessMode:       s.AccessMode,
 		CurrentVersionID: s.CurrentVersionID,
 		LiveURL:          a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
+		StorageBytes:     storageBytes,
 		CreatedAt:        s.CreatedAt,
 	}
 }
@@ -116,7 +122,8 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		"slug":        site.Slug,
 		"access_mode": site.AccessMode,
 	})
-	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug))
+	// A just-created site has no live version yet → 0 logical bytes.
+	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0))
 }
 
 // ListSites returns the caller org's sites.
@@ -139,9 +146,20 @@ func (a *API) ListSites(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	// Logical storage per site (one query for the whole org), keyed by site id so
+	// each response carries its size without an N+1.
+	storage, err := a.Store.ListSiteStorage(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	bytesBySite := make(map[string]int64, len(storage))
+	for _, s := range storage {
+		bytesBySite[s.SiteID] = s.Bytes
+	}
 	out := make([]siteResponse, len(sites))
 	for i, s := range sites {
-		out[i] = a.toSiteResponse(s, orgSlug)
+		out[i] = a.toSiteResponse(s, orgSlug, bytesBySite[s.ID])
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": out})
 }
@@ -167,7 +185,12 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug))
+	bytes, err := a.Store.SiteStorageBytes(r.Context(), t, site.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
 }
 
 // decodeJSON strictly decodes the request body into v (unknown fields rejected),

@@ -17,10 +17,11 @@ type Querier interface {
 	// no-op; we only set claim fields when still unclaimed so the original claimant
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
-	// The number of sites the user already owns in the active org. Read under the
-	// advisory lock above; RLS scopes it to the active org, and we additionally filter
-	// by org_id + owner_user_id so the per-USER cap is exact.
-	CountSitesForUser(ctx context.Context, arg CountSitesForUserParams) (int64, error)
+	// The number of sites in the active org (the per-ORG cap input, POOLED across all
+	// members — seats are free, so the lever is org site count). Read under the
+	// advisory lock above; RLS already scopes it to the active org and we filter by
+	// org_id to be explicit.
+	CountSitesForOrg(ctx context.Context, orgID string) (int64, error)
 	// ===========================================================================
 	// sites
 	// ===========================================================================
@@ -75,6 +76,12 @@ type Querier interface {
 	GetPlanTier(ctx context.Context, id string) (string, error)
 	GetSite(ctx context.Context, id string) (AppSite, error)
 	GetSiteAccessPolicy(ctx context.Context, siteID string) (AppSiteAccessPolicy, error)
+	// LOGICAL storage of a single site = the byte size of its CURRENT (live) version
+	// (site_versions.size_bytes, the sum of that version's file sizes). A site with no
+	// live version is 0. "Logical" means NOT deduplicated across sites/versions: a file
+	// shipped by two sites counts in both, the same per-folder model Dropbox/Drive use.
+	// RLS scopes the read to the active org.
+	GetSiteStorageBytes(ctx context.Context, id string) (int64, error)
 	GetSiteVersion(ctx context.Context, id string) (AppSiteVersion, error)
 	// Used to make a re-deploy of identical content idempotent (the per-site
 	// content_hash unique constraint backs this).
@@ -126,6 +133,11 @@ type Querier interface {
 	// access_mode source (the site row). Drives projection.RebuildFromDB: Postgres
 	// is authoritative, the KV/D1 projection is a rebuildable cache.
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
+	// LOGICAL storage per site for the active org (the current-version size of each
+	// site, 0 when it has no live version) paired with the owning user, so the caller
+	// can show per-site usage AND aggregate it per user. Same non-deduplicated model as
+	// GetSiteStorageBytes. RLS scopes the read to the active org.
+	ListSiteStorageForOrg(ctx context.Context) ([]ListSiteStorageForOrgRow, error)
 	ListSiteVersions(ctx context.Context, siteID string) ([]AppSiteVersion, error)
 	ListSites(ctx context.Context) ([]AppSite, error)
 	// ===========================================================================
@@ -143,6 +155,13 @@ type Querier interface {
 	// OUR code path (Better Auth actually inserts the member row), so the lock just
 	// makes our COUNT → policy check coherent under concurrent preflights.
 	LockOrgMemberQuota(ctx context.Context, dollar_1 string) error
+	// Serialize concurrent site creates for the SAME org: take a transaction-scoped
+	// advisory lock keyed by hashtext(org||':sites'). Held until the create-site tx
+	// commits/rolls back, it makes the COUNT → policy check → INSERT a critical
+	// section, so two racing creates anywhere in the org can't both read current=N and
+	// both insert (the TOCTOU the per-ORG cap must not allow). Advisory locks are
+	// independent of RLS and of row locks, so this needs no rows to exist yet.
+	LockOrgSiteQuota(ctx context.Context, dollar_1 string) error
 	// ===========================================================================
 	// storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
 	// ===========================================================================
@@ -151,13 +170,6 @@ type Querier interface {
 	// → ledger INSERT → counter UPDATE is a critical section (the same TOCTOU guard the
 	// site cap uses). Held until the deploy tx commits/rolls back.
 	LockOrgStorageQuota(ctx context.Context, dollar_1 string) error
-	// Serialize concurrent site creates for the SAME (org, user): take a transaction-
-	// scoped advisory lock keyed by hashtext(org||':'||user||':sites'). Held until the
-	// create-site tx commits/rolls back, it makes the COUNT → policy check → INSERT a
-	// critical section, so two racing creates can't both read current=N and both
-	// insert (the TOCTOU the cap must not allow). Advisory locks are independent of
-	// RLS and of row locks, so this needs no rows to exist yet (§9 race safety).
-	LockUserSiteQuota(ctx context.Context, arg LockUserSiteQuotaParams) error
 	// ===========================================================================
 	// site_versions
 	// ===========================================================================

@@ -54,7 +54,12 @@ const cloudBuild = true
 // (internal/store). The dashboard fills the active org from the session, so the
 // CTA URLs need no org id.
 func newQuotaProvider(cfg config.Config) quota.Provider {
-	return cloudquota.NewProvider(cloudquota.DashboardURLBuilder{DashboardBaseURL: cfg.DashboardURL})
+	// Storage gating is off by default (ENFORCE_STORAGE_QUOTA): storage is metered but
+	// only the per-org site count blocks a deploy today (docs/pricing.md).
+	return cloudquota.NewProvider(
+		cloudquota.DashboardURLBuilder{DashboardBaseURL: cfg.DashboardURL},
+		cfg.EnforceStorageQuota,
+	)
 }
 
 // quotaProviderName labels the wired provider for startup logging.

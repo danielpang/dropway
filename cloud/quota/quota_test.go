@@ -8,13 +8,15 @@ import (
 	corequota "github.com/danielpang/dropway/internal/quota"
 )
 
+// newProvider builds a provider with STORAGE ENFORCEMENT ON, so the storage-band
+// tests exercise the cap. Production defaults to off (see TestStorage_NotEnforced).
 func newProvider() *Provider {
-	return NewProvider(DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"})
+	return NewProvider(DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"}, true)
 }
 
 func TestFreeTier_SiteCap(t *testing.T) {
-	// 10 sites already → 11th rejected.
-	err := newProvider().Allow("free", corequota.ResourceSitePerUser, 10)
+	// 10 sites in the org already → 11th rejected (per-ORG cap, pooled across members).
+	err := newProvider().Allow("free", corequota.ResourceSitePerOrg, 10)
 	ex, ok := corequota.AsExceeded(err)
 	if !ok {
 		t.Fatalf("want ExceededError, got %v", err)
@@ -34,7 +36,7 @@ func TestFreeTier_SiteCap(t *testing.T) {
 }
 
 func TestFreeTier_UnderSiteCap(t *testing.T) {
-	if err := newProvider().Allow("free", corequota.ResourceSitePerUser, 9); err != nil {
+	if err := newProvider().Allow("free", corequota.ResourceSitePerOrg, 9); err != nil {
 		t.Fatalf("9 sites should be allowed: %v", err)
 	}
 }
@@ -74,54 +76,49 @@ func TestAllow_DelegatesToAllowN(t *testing.T) {
 func TestEmptyTier_DefaultsToFree(t *testing.T) {
 	// An empty/unknown plan tier must be treated as Free (fail-closed to the
 	// tightest paid-relevant cap, not unlimited).
-	if err := newProvider().Allow("", corequota.ResourceSitePerUser, 10); err == nil {
+	if err := newProvider().Allow("", corequota.ResourceSitePerOrg, 10); err == nil {
 		t.Fatal("empty tier should default to free and cap at 10 sites")
 	}
 }
 
-func TestFreeTier_MemberCap(t *testing.T) {
-	err := newProvider().Allow("free", corequota.ResourceMemberPerOrg, 5)
-	ex, ok := corequota.AsExceeded(err)
-	if !ok {
-		t.Fatalf("want ExceededError, got %v", err)
+// Storage gating is OFF by default (ENFORCE_STORAGE_QUOTA=false): storage is metered
+// but a deploy is never rejected for crossing a band, no matter how large the delta.
+func TestStorage_NotEnforcedByDefault(t *testing.T) {
+	const gib = int64(1) << 30
+	p := NewProvider(DashboardURLBuilder{DashboardBaseURL: "https://app.dropway.dev"}, false)
+	cases := []struct {
+		tier           string
+		current, delta int64
+	}{
+		{"free", 4 * gib, 100 * gib},      // way past the 5 GiB Free band
+		{"business", 100 * gib, 50 * gib}, // past the 100 GiB Pro band
+		{"enterprise", 500 * gib, 1 * gib},
 	}
-	if ex.Max != 5 || ex.NextTier != "business" {
-		t.Errorf("max=%d next=%q, want 5/business", ex.Max, ex.NextTier)
+	for _, c := range cases {
+		if err := p.AllowN(c.tier, corequota.ResourceStorageBytesPerOrg, c.current, c.delta); err != nil {
+			t.Errorf("storage must not be gated when disabled: AllowN(%q, %d, +%d) = %v", c.tier, c.current, c.delta, err)
+		}
 	}
-}
-
-func TestBusinessTier_MemberCap(t *testing.T) {
-	// 99 members on Business → 100th rejected, upgrade to enterprise.
-	err := newProvider().Allow("business", corequota.ResourceMemberPerOrg, 99)
-	ex, ok := corequota.AsExceeded(err)
-	if !ok {
-		t.Fatalf("want ExceededError, got %v", err)
-	}
-	if ex.Max != 99 || ex.NextTier != "enterprise" {
-		t.Errorf("max=%d next=%q, want 99/enterprise", ex.Max, ex.NextTier)
-	}
-}
-
-func TestBusinessTier_UnderMemberCap(t *testing.T) {
-	if err := newProvider().Allow("business", corequota.ResourceMemberPerOrg, 98); err != nil {
-		t.Fatalf("98 members on business should be allowed: %v", err)
+	// Site caps are still enforced regardless of the storage flag.
+	if err := p.Allow("free", corequota.ResourceSitePerOrg, 10); err == nil {
+		t.Error("the site cap must still fire even with storage gating off")
 	}
 }
 
-func TestEnterpriseTier_MemberCap_ContactSales(t *testing.T) {
-	// 1000 members on Enterprise → 1001st rejected, contact sales (no checkout).
-	err := newProvider().Allow("enterprise", corequota.ResourceMemberPerOrg, 1000)
-	ex, ok := corequota.AsExceeded(err)
-	if !ok {
-		t.Fatalf("want ExceededError, got %v", err)
+// Seats are free: members are unlimited on EVERY plan (docs/pricing.md). The cloud
+// provider must never 402 on the member resource, regardless of tier or count.
+func TestMembers_AlwaysUnlimited(t *testing.T) {
+	p := newProvider()
+	cases := []struct {
+		tier    string
+		current int64
+	}{
+		{"free", 0}, {"free", 5}, {"free", 9999},
+		{"business", 100}, {"enterprise", 1_000_000}, {"", 50},
 	}
-	if ex.Max != 1000 || ex.NextTier != "contact_sales" {
-		t.Errorf("max=%d next=%q, want 1000/contact_sales", ex.Max, ex.NextTier)
-	}
-	if ex.SalesURL == "" {
-		t.Error("contact_sales boundary must carry a sales_url")
-	}
-	if ex.UpgradeURL != "" {
-		t.Error("contact_sales boundary must NOT carry an upgrade_url (no self-serve)")
+	for _, c := range cases {
+		if err := p.Allow(c.tier, corequota.ResourceMemberPerOrg, c.current); err != nil {
+			t.Errorf("members must be unlimited: Allow(%q, members, %d) = %v, want nil", c.tier, c.current, err)
+		}
 	}
 }

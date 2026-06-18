@@ -107,6 +107,36 @@ func (f *fakeStore) GetSite(_ context.Context, t store.Tenant, id string) (store
 	return s, nil
 }
 
+// siteBytes is the fake's logical size of a site: its current version's SizeBytes
+// (0 when it has no live version) — mirrors GetSiteStorageBytes' LEFT JOIN.
+func (f *fakeStore) siteBytes(s store.Site) int64 {
+	if s.CurrentVersionID == nil {
+		return 0
+	}
+	if v, ok := f.versions[*s.CurrentVersionID]; ok {
+		return v.SizeBytes
+	}
+	return 0
+}
+
+func (f *fakeStore) SiteStorageBytes(_ context.Context, t store.Tenant, id string) (int64, error) {
+	f.lastTenant = t
+	s, ok := f.sites[id]
+	if !ok {
+		return 0, nil // mirrors the SQL: a missing/other-tenant site yields no row → 0
+	}
+	return f.siteBytes(s), nil
+}
+
+func (f *fakeStore) ListSiteStorage(_ context.Context, t store.Tenant) ([]store.SiteStorage, error) {
+	f.lastTenant = t
+	out := make([]store.SiteStorage, 0, len(f.sites))
+	for _, s := range f.sites {
+		out = append(out, store.SiteStorage{SiteID: s.ID, OwnerUserID: s.OwnerUserID, Bytes: f.siteBytes(s)})
+	}
+	return out, nil
+}
+
 func (f *fakeStore) CreateSiteVersion(_ context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error) {
 	f.lastTenant = t
 	v := store.SiteVersion{
@@ -227,7 +257,7 @@ func TestCreateSite_QuotaExceeded_402(t *testing.T) {
 	// *quota.ExceededError as a 402 with the upgrade body — drive that via the fake
 	// store returning the error the cloud provider would produce.
 	ex := &quota.ExceededError{
-		Limit:      quota.ResourceSitePerUser,
+		Limit:      quota.ResourceSitePerOrg,
 		Current:    10,
 		Max:        10,
 		PlanTier:   "free",

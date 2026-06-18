@@ -169,6 +169,30 @@ paths:
                     items: { $ref: "#/components/schemas/Member" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /v1/storage:
+    get:
+      summary: Logical storage usage per user for the caller org
+      description: >
+        Per-user LOGICAL storage for the active org: each user's total is the sum of
+        their sites' current-version sizes. "Logical" means NOT deduplicated (a file
+        shipped by two users counts for both — the per-folder model of Dropbox/Drive).
+        Display-only attribution for the members page, NOT an entitlement; the
+        authoritative deduplicated org footprint is metered separately. Users with no
+        sites are omitted (render as 0). Any org member may read it (org-scoped).
+      operationId: storageUsage
+      responses:
+        "200":
+          description: Per-user logical storage, sorted by user id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/UserStorage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/orgs/allow-external-sharing:
     put:
       summary: Toggle the org allow_external_sharing policy (admin/owner only)
@@ -832,7 +856,22 @@ components:
         access_mode: { type: string, enum: [public, password, allowlist, org_only] }
         current_version_id: { type: string, format: uuid, nullable: true }
         live_url: { type: string, format: uri }
+        storage_bytes:
+          type: integer
+          format: int64
+          description: >
+            The site's LOGICAL storage in bytes: the size of its current live
+            version (0 before the first deploy). "Logical" means NOT deduplicated
+            across sites/versions — the per-folder size you'd expect from Dropbox or
+            Drive, not the org's billed footprint.
         created_at: { type: string, format: date-time }
+
+    UserStorage:
+      type: object
+      description: One user's logical storage total in the org (bytes).
+      properties:
+        user_id: { type: string, format: uuid }
+        bytes: { type: integer, format: int64 }
 
     Version:
       type: object

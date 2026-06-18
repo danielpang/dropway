@@ -30,6 +30,12 @@ type SiteStore interface {
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	Publish(ctx context.Context, t store.Tenant, siteID, versionID string) (store.PublishResult, error)
 
+	// Logical storage (current-version size; NOT deduplicated) for the usage views:
+	// per site on the site page, aggregated per user on the members page. The
+	// authoritative deduplicated org footprint is OrgStorageBytes.
+	SiteStorageBytes(ctx context.Context, t store.Tenant, siteID string) (int64, error)
+	ListSiteStorage(ctx context.Context, t store.Tenant) ([]store.SiteStorage, error)
+
 	// Phase 2 — access control & domains.
 	SetSiteAccess(ctx context.Context, t store.Tenant, p store.SetAccessParams) (store.PublishResult, error)
 	GetSiteAccessPolicy(ctx context.Context, t store.Tenant, siteID string) (store.AccessPolicy, error)

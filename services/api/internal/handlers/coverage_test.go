@@ -133,6 +133,68 @@ func TestGetSite_NotFound_404(t *testing.T) {
 	}
 }
 
+// GetSite surfaces the site's LOGICAL storage (its current version's size); a site
+// with no live version reports 0.
+func TestGetSite_StorageBytes(t *testing.T) {
+	fs := newFakeStore()
+	ver := "v1"
+	fs.versions[ver] = store.SiteVersion{ID: ver, SiteID: "s1", SizeBytes: 4096}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "alpha", OwnerUserID: "user_1", AccessMode: "public", CurrentVersionID: &ver}
+	fs.sites["s2"] = store.Site{ID: "s2", OrgID: "org_1", Slug: "beta", OwnerUserID: "user_1", AccessMode: "public"} // no live version
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccessWithSites(a, claims("user_1", "org_1", "member"))
+
+	var live siteResponse
+	if err := json.Unmarshal(getReq(h, "/v1/sites/s1").Body.Bytes(), &live); err != nil {
+		t.Fatal(err)
+	}
+	if live.StorageBytes != 4096 {
+		t.Errorf("live site storage_bytes = %d, want 4096", live.StorageBytes)
+	}
+	var empty siteResponse
+	if err := json.Unmarshal(getReq(h, "/v1/sites/s2").Body.Bytes(), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.StorageBytes != 0 {
+		t.Errorf("site with no live version storage_bytes = %d, want 0", empty.StorageBytes)
+	}
+}
+
+// StorageUsage sums each user's sites' current-version sizes (logical) and returns a
+// per-user breakdown sorted by user id.
+func TestStorageUsage_PerUser(t *testing.T) {
+	fs := newFakeStore()
+	v1, v2, v3 := "v1", "v2", "v3"
+	fs.versions[v1] = store.SiteVersion{ID: v1, SiteID: "s1", SizeBytes: 1000}
+	fs.versions[v2] = store.SiteVersion{ID: v2, SiteID: "s2", SizeBytes: 2000}
+	fs.versions[v3] = store.SiteVersion{ID: v3, SiteID: "s3", SizeBytes: 500}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", OwnerUserID: "alice", CurrentVersionID: &v1}
+	fs.sites["s2"] = store.Site{ID: "s2", OrgID: "org_1", OwnerUserID: "alice", CurrentVersionID: &v2}
+	fs.sites["s3"] = store.Site{ID: "s3", OrgID: "org_1", OwnerUserID: "bob", CurrentVersionID: &v3}
+	fs.sites["s4"] = store.Site{ID: "s4", OrgID: "org_1", OwnerUserID: "bob"} // no live version → 0
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := authed(a.StorageUsage, claims("alice", "org_1", "member"))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/storage", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Users []userStorageResponse `json:"users"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	// Sorted by user id: alice (1000+2000) then bob (500).
+	want := []userStorageResponse{{UserID: "alice", Bytes: 3000}, {UserID: "bob", Bytes: 500}}
+	if len(body.Users) != 2 || body.Users[0] != want[0] || body.Users[1] != want[1] {
+		t.Errorf("per-user storage = %+v, want %+v", body.Users, want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ListAllowlist / RemoveAllowlistEntry (access.go) — the untested allowlist read
 // + delete paths.
@@ -428,7 +490,7 @@ func TestWriteStoreError_StatusMapping(t *testing.T) {
 
 func TestWriteStoreError_QuotaExceeded_402(t *testing.T) {
 	ex := &quota.ExceededError{
-		Limit: quota.ResourceSitePerUser, Current: 10, Max: 10,
+		Limit: quota.ResourceSitePerOrg, Current: 10, Max: 10,
 		PlanTier: "free", NextTier: "business",
 		UpgradeURL: "https://app.dropway.dev/billing/upgrade?tier=business",
 	}

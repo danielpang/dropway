@@ -5,6 +5,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -469,6 +470,49 @@ func (a *API) ListMembers(w http.ResponseWriter, r *http.Request) {
 		out[i] = memberResponse{UserID: m.UserID, Role: m.Role}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"members": out})
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/storage  — logical storage usage (per user) for the active org
+// ---------------------------------------------------------------------------
+
+type userStorageResponse struct {
+	UserID string `json:"user_id"`
+	Bytes  int64  `json:"bytes"`
+}
+
+// StorageUsage reports LOGICAL per-user storage for the active org: each user's
+// total is the sum of their sites' current-version sizes. "Logical" means NOT
+// deduplicated — a file shipped by two users counts for both, the per-folder model
+// Dropbox/Drive use. It's display-only attribution (the members page usage column),
+// not an entitlement; the authoritative deduplicated footprint is the org storage
+// counter. Any org member may read it (org-scoped, same visibility as ListMembers).
+// Users with no sites are simply absent (the caller renders them as 0).
+func (a *API) StorageUsage(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	sites, err := a.Store.ListSiteStorage(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	byUser := make(map[string]int64)
+	for _, s := range sites {
+		byUser[s.OwnerUserID] += s.Bytes
+	}
+	users := make([]userStorageResponse, 0, len(byUser))
+	for uid, b := range byUser {
+		users = append(users, userStorageResponse{UserID: uid, Bytes: b})
+	}
+	// Stable order (map iteration is randomized) so the response is deterministic.
+	sort.Slice(users, func(i, j int) bool { return users[i].UserID < users[j].UserID })
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
 // ---------------------------------------------------------------------------
