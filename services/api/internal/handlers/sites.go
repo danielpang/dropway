@@ -193,6 +193,61 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
 }
 
+// versionResponse is one row of a site's deploy history.
+type versionResponse struct {
+	ID          string    `json:"id"`
+	VersionNo   int32     `json:"version_no"`
+	Status      string    `json:"status"`
+	SizeBytes   int64     `json:"size_bytes"`
+	ContentHash string    `json:"content_hash"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	// IsCurrent marks the version the site is currently serving (the live one).
+	IsCurrent bool `json:"is_current"`
+}
+
+// ListVersions returns a site's deploy history (newest first), each flagged with
+// whether it is the live version, so the dashboard can offer a one-click rollback
+// instead of asking for a version id.
+func (a *API) ListVersions(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	siteID := chi.URLParam(r, "id")
+
+	// Resolve the site first: 404 for an absent/other-tenant site, and to read the
+	// current live version so each row can be flagged is_current.
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	versions, err := a.Store.ListSiteVersions(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	out := make([]versionResponse, len(versions))
+	for i, v := range versions {
+		out[i] = versionResponse{
+			ID:          v.ID,
+			VersionNo:   v.VersionNo,
+			Status:      v.Status,
+			SizeBytes:   v.SizeBytes,
+			ContentHash: v.ContentHash,
+			CreatedBy:   v.CreatedBy,
+			CreatedAt:   v.CreatedAt,
+			IsCurrent:   site.CurrentVersionID != nil && *site.CurrentVersionID == v.ID,
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"versions": out})
+}
+
 // decodeJSON strictly decodes the request body into v (unknown fields rejected),
 // bounding the body so a hostile client can't OOM the server.
 func decodeJSON(r *http.Request, v any) error {

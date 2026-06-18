@@ -166,6 +166,7 @@ func run(baseLogger *slog.Logger) error {
 	api := handlers.NewFull(qp, siteStore, obj, proj)
 	api.EdgeSigner = edgeSigner
 	api.Domains = domains
+	api.CustomDomainsEnabled = customDomainsConfigured(cfg)
 	// The edge revoker (hard-revocation denylist writer) is the SAME KV writer as
 	// the route projection — both the Cloudflare KV and the local writer implement
 	// projection.Revoker on the "revoked:" prefix. Wire it when the writer supports
@@ -270,12 +271,20 @@ func newProjectionWriter(cfg config.Config) projection.Writer {
 	return projection.NewLocal()
 }
 
+// customDomainsConfigured reports whether a REAL Cloudflare-for-SaaS provider is
+// wired (a zone + API token). When false the custom-domain flow uses the in-memory
+// fake, which can never reach "verified" — so the dashboard hides the feature
+// (surfaced via /v1/me's custom_domains_enabled).
+func customDomainsConfigured(cfg config.Config) bool {
+	return cfg.CFZoneID != "" && cfg.CFAPIToken != ""
+}
+
 // newDomainProvider selects the custom-hostname provider. With a Cloudflare zone +
 // API token it uses Cloudflare for SaaS (production); otherwise it falls back to
 // the in-memory Fake (offline/self-host/dev) so the custom-domain endpoints work
 // without Cloudflare.
 func newDomainProvider(cfg config.Config) customdomains.Provider {
-	if cfg.CFZoneID != "" && cfg.CFAPIToken != "" {
+	if customDomainsConfigured(cfg) {
 		slog.Info("custom-domain provider: cloudflare for saas", "zone", cfg.CFZoneID)
 		return customdomains.NewCloudflareProvider(cfg.CFZoneID, cfg.CFAPIToken, projection.ContentDomain)
 	}

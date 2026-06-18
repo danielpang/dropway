@@ -30,6 +30,7 @@ func mountAccessWithSites(a *API, c *auth.Claims) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(v))
 		r.Get("/v1/sites/{id}", a.GetSite)
+		r.Get("/v1/sites/{id}/versions", a.ListVersions)
 	})
 	return r
 }
@@ -157,6 +158,47 @@ func TestGetSite_StorageBytes(t *testing.T) {
 	}
 	if empty.StorageBytes != 0 {
 		t.Errorf("site with no live version storage_bytes = %d, want 0", empty.StorageBytes)
+	}
+}
+
+// ListVersions returns the site's deploy history newest-first, with the live
+// version flagged is_current.
+func TestListVersions_OK(t *testing.T) {
+	fs := newFakeStore()
+	v2 := "v2"
+	fs.versions["v1"] = store.SiteVersion{ID: "v1", SiteID: "s1", VersionNo: 1, Status: "ready", SizeBytes: 100}
+	fs.versions["v2"] = store.SiteVersion{ID: "v2", SiteID: "s1", VersionNo: 2, Status: "ready", SizeBytes: 200}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "alpha", OwnerUserID: "user_1", CurrentVersionID: &v2}
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccessWithSites(a, claims("user_1", "org_1", "member"))
+
+	rr := getReq(h, "/v1/sites/s1/versions")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Versions []versionResponse `json:"versions"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Versions) != 2 {
+		t.Fatalf("want 2 versions, got %d", len(body.Versions))
+	}
+	// Newest first: v2 (current) then v1.
+	if body.Versions[0].VersionNo != 2 || !body.Versions[0].IsCurrent {
+		t.Errorf("first row = %+v, want version_no 2 + is_current", body.Versions[0])
+	}
+	if body.Versions[1].VersionNo != 1 || body.Versions[1].IsCurrent {
+		t.Errorf("second row = %+v, want version_no 1 + not current", body.Versions[1])
+	}
+}
+
+func TestListVersions_SiteNotFound_404(t *testing.T) {
+	a := NewFull(quota.Unlimited{}, newFakeStore(), nil, nil)
+	h := mountAccessWithSites(a, claims("user_1", "org_1", "member"))
+	if rr := getReq(h, "/v1/sites/ghost/versions"); rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for absent site", rr.Code)
 	}
 }
 

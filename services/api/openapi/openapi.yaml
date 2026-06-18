@@ -274,6 +274,26 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/domains/{domainID}:
+    delete:
+      summary: Remove a custom domain (admin/owner only)
+      description: >
+        Deletes the custom domain: removes the global host route (so the custom host
+        stops serving immediately), then best-effort deletes the edge route
+        projection and the Cloudflare custom hostname. Owner/admin only.
+      operationId: deleteDomain
+      parameters:
+        - name: domainID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
   /v1/domains/{domainID}/status:
     get:
       summary: Poll a custom domain's verification status
@@ -358,6 +378,29 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Site" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/versions:
+    get:
+      summary: List a site's deploy history (newest first)
+      description: >
+        Returns every immutable version of the site, newest first, each flagged with
+        whether it is the live version. Drives the dashboard rollback picker.
+      operationId: listVersions
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteVersion" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -797,6 +840,12 @@ components:
         user_id: { type: string }
         org_id: { type: string }
         role: { type: string, enum: [owner, admin, member] }
+        custom_domains_enabled:
+          type: boolean
+          description: >
+            Whether custom domains are backed by a real provider (Cloudflare for
+            SaaS). False in self-host/dev, where the dashboard hides the feature
+            because it can never finish verification.
 
     Member:
       type: object
@@ -879,6 +928,21 @@ components:
         version_id: { type: string, format: uuid }
         version_no: { type: integer }
         preview_url: { type: string, format: uri }
+
+    SiteVersion:
+      type: object
+      description: One immutable deploy in a site's history.
+      properties:
+        id: { type: string, format: uuid }
+        version_no: { type: integer }
+        status: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        content_hash: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        is_current:
+          type: boolean
+          description: Whether this is the version the site is currently serving.
 
     ManifestFile:
       type: object

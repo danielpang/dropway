@@ -28,6 +28,10 @@ type Querier interface {
 	CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite, error)
 	CreateSiteVersion(ctx context.Context, arg CreateSiteVersionParams) (AppSiteVersion, error)
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
+	// Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
+	// also drop the global host route (so serve/edge stop resolving the host) and delete
+	// the Cloudflare custom hostname. RLS scopes the delete to the active org.
+	DeleteDomain(ctx context.Context, id string) (DeleteDomainRow, error)
 	// Remove every external-email allowlist grant in the active org (reconcile on
 	// disabling external sharing — revoke external access).
 	DeleteExternalAllowlistEntriesForOrg(ctx context.Context) error

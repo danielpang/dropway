@@ -65,6 +65,13 @@ type API struct {
 	// config.Config; ContentScheme defaults to "https" when empty (via ContentURL).
 	ContentScheme string
 	ContentPort   string
+
+	// CustomDomainsEnabled reports whether the custom-domain feature is actually
+	// backed by a real provider (Cloudflare for SaaS is configured). False in
+	// self-host/dev, where the provider is the in-memory fake that can never reach
+	// "verified". Surfaced on /v1/me so the dashboard hides the Domains UI when the
+	// feature can't actually work. Wired from config in main.go.
+	CustomDomainsEnabled bool
 }
 
 // ContentURL renders a content host as a client-facing display URL using the
@@ -115,6 +122,9 @@ type meResponse struct {
 	UserID string `json:"user_id"`
 	OrgID  string `json:"org_id"`
 	Role   string `json:"role"`
+	// CustomDomainsEnabled tells the dashboard whether to show the custom-domain UI
+	// (true only when a real Cloudflare-for-SaaS provider is configured).
+	CustomDomainsEnabled bool `json:"custom_domains_enabled"`
 }
 
 // Me returns the caller's verified identity.
@@ -125,9 +135,10 @@ func (a *API) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, meResponse{
-		UserID: claims.UserID(),
-		OrgID:  claims.OrgID,
-		Role:   claims.Role,
+		UserID:               claims.UserID(),
+		OrgID:                claims.OrgID,
+		Role:                 claims.Role,
+		CustomDomainsEnabled: a.CustomDomainsEnabled,
 	})
 }
 

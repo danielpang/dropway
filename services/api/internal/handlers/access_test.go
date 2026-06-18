@@ -53,6 +53,7 @@ func mountAccess(a *API, c *auth.Claims) http.Handler {
 		r.Post("/v1/sites/{id}/domains", a.AddDomain)
 		r.Get("/v1/sites/{id}/domains", a.ListDomains)
 		r.Get("/v1/domains/{domainID}/status", a.GetDomainStatus)
+		r.Delete("/v1/domains/{domainID}", a.DeleteDomain)
 	})
 	return r
 }
@@ -491,6 +492,44 @@ func TestAddDomain_Admin_CreatesPending(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &body)
 	if body.Hostname != "docs.acme.com" || body.VerifyStatus != store.DomainPending || body.DCVRecord == "" {
 		t.Fatalf("domain = %+v", body)
+	}
+}
+
+func TestDeleteDomain_Admin_Removes(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s"}
+	fs.p2().members["user_1"] = store.RoleAdmin
+	fs.p2().domains["dom_docs.acme.com"] = store.Domain{
+		ID: "dom_docs.acme.com", OrgID: "org_1", SiteID: "site_1", Hostname: "docs.acme.com",
+		VerifyStatus: store.DomainVerified, TLSStatus: store.TLSIssued, CFHostnameID: "cf-1",
+	}
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	a.Domains = newFakeDomains()
+	h := mountAccess(a, claims("user_1", "org_1", "admin"))
+
+	rr := doReq(h, http.MethodDelete, "/v1/domains/dom_docs.acme.com", "")
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := fs.p2().domains["dom_docs.acme.com"]; ok {
+		t.Error("domain should have been removed from the store")
+	}
+}
+
+func TestDeleteDomain_MemberForbidden(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s"}
+	fs.p2().members["user_1"] = store.RoleMember
+	fs.p2().domains["dom_x"] = store.Domain{ID: "dom_x", OrgID: "org_1", SiteID: "site_1", Hostname: "x.acme.com"}
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	a.Domains = newFakeDomains()
+	h := mountAccess(a, claims("user_1", "org_1", "member"))
+	rr := doReq(h, http.MethodDelete, "/v1/domains/dom_x", "")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rr.Code)
+	}
+	if _, ok := fs.p2().domains["dom_x"]; !ok {
+		t.Error("a forbidden delete must not remove the domain")
 	}
 }
 

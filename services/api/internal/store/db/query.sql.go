@@ -168,6 +168,36 @@ func (q *Queries) DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistE
 	return err
 }
 
+const deleteDomain = `-- name: DeleteDomain :one
+DELETE FROM app.domains
+WHERE id = $1
+RETURNING id, org_id, site_id, hostname, cf_hostname_id
+`
+
+type DeleteDomainRow struct {
+	ID           string
+	OrgID        string
+	SiteID       string
+	Hostname     string
+	CfHostnameID pgtype.Text
+}
+
+// Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
+// also drop the global host route (so serve/edge stop resolving the host) and delete
+// the Cloudflare custom hostname. RLS scopes the delete to the active org.
+func (q *Queries) DeleteDomain(ctx context.Context, id string) (DeleteDomainRow, error) {
+	row := q.db.QueryRow(ctx, deleteDomain, id)
+	var i DeleteDomainRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Hostname,
+		&i.CfHostnameID,
+	)
+	return i, err
+}
+
 const deleteExternalAllowlistEntriesForOrg = `-- name: DeleteExternalAllowlistEntriesForOrg :exec
 DELETE FROM app.allowlist_entries
 WHERE is_external = true

@@ -28,6 +28,7 @@ type SiteStore interface {
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
 	CreateSiteVersion(ctx context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error)
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
+	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)
 	Publish(ctx context.Context, t store.Tenant, siteID, versionID string) (store.PublishResult, error)
 
 	// Logical storage (current-version size; NOT deduplicated) for the usage views:
@@ -62,6 +63,7 @@ type SiteStore interface {
 	GetDomain(ctx context.Context, t store.Tenant, id string) (store.Domain, error)
 	ListDomainsForSite(ctx context.Context, t store.Tenant, siteID string) ([]store.Domain, error)
 	UpdateDomainStatus(ctx context.Context, t store.Tenant, id, verifyStatus, tlsStatus string) (store.MarkDomainVerifiedResult, error)
+	DeleteDomain(ctx context.Context, t store.Tenant, id string) (store.DeleteDomainResult, error)
 
 	// Global host registry (canonical + verified custom hosts) for a site — used to
 	// rewrite EVERY route on an access/policy change (FIX 1).

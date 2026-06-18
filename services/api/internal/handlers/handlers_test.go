@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 
 	"github.com/danielpang/dropway/internal/auth"
@@ -153,6 +154,19 @@ func (f *fakeStore) GetSiteVersion(_ context.Context, t store.Tenant, id string)
 		return store.SiteVersion{}, store.ErrNotFound
 	}
 	return v, nil
+}
+
+func (f *fakeStore) ListSiteVersions(_ context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error) {
+	f.lastTenant = t
+	var out []store.SiteVersion
+	for _, v := range f.versions {
+		if v.SiteID == siteID {
+			out = append(out, v)
+		}
+	}
+	// Newest first (highest version_no), mirroring the SQL ORDER BY.
+	sort.Slice(out, func(i, j int) bool { return out[i].VersionNo > out[j].VersionNo })
+	return out, nil
 }
 
 func (f *fakeStore) Publish(_ context.Context, t store.Tenant, siteID, versionID string) (store.PublishResult, error) {

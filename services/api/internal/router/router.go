@@ -98,6 +98,8 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/", api.CreateSite)
 			r.Get("/", api.ListSites)
 			r.Get("/{id}", api.GetSite)
+			// Deploy history (newest first) for the rollback picker.
+			r.Get("/{id}/versions", api.ListVersions)
 
 			r.Post("/{id}/deployments/prepare", api.PrepareDeployment)
 			r.Post("/{id}/deployments", api.FinalizeDeployment)
@@ -120,6 +122,8 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 		// Poll a custom domain's verification status (drives the state machine).
 		r.Get("/domains/{domainID}/status", api.GetDomainStatus)
+		// Remove a custom domain (admin/owner): drops the route + Cloudflare hostname.
+		r.Delete("/domains/{domainID}", api.DeleteDomain)
 	})
 
 	return r

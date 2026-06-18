@@ -18,6 +18,7 @@ func TestActionVocab(t *testing.T) {
 		{ActionDeployPublish, "deploy.publish"},
 		{ActionDomainAdd, "domain.add"},
 		{ActionDomainVerify, "domain.verify"},
+		{ActionDomainRemove, "domain.remove"},
 		{ActionAllowExternalSharing, "org.allow_external_sharing"},
 		{ActionMemberRevoke, "member.revoke"},
 		{ActionSiteRevokeAccess, "site.revoke_access"},
@@ -35,8 +36,8 @@ func TestActionVocab_NoDuplicates(t *testing.T) {
 	all := []Action{
 		ActionSiteCreate, ActionSiteAccessChange, ActionAllowlistAdd,
 		ActionAllowlistRemove, ActionDeployFinalize, ActionDeployPublish,
-		ActionDomainAdd, ActionDomainVerify, ActionAllowExternalSharing,
-		ActionMemberRevoke, ActionSiteRevokeAccess,
+		ActionDomainAdd, ActionDomainVerify, ActionDomainRemove,
+		ActionAllowExternalSharing, ActionMemberRevoke, ActionSiteRevokeAccess,
 	}
 	seen := make(map[Action]bool, len(all))
 	for _, a := range all {

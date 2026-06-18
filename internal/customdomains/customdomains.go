@@ -66,4 +66,9 @@ type Provider interface {
 	CreateCustomHostname(ctx context.Context, hostname string) (CreateResult, error)
 	// Status polls the custom hostname's verification + TLS state by its id.
 	Status(ctx context.Context, id string) (StatusResult, error)
+	// DeleteCustomHostname removes the custom hostname from Cloudflare for SaaS by
+	// id (called when the user removes a custom domain). Idempotent: deleting an
+	// already-removed/unknown id is not an error, so removal stays clean even when
+	// the CF side is already gone.
+	DeleteCustomHostname(ctx context.Context, id string) error
 }

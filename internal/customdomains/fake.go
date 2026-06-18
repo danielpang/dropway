@@ -62,6 +62,15 @@ func (f *Fake) Status(_ context.Context, id string) (StatusResult, error) {
 	return res, nil
 }
 
+// DeleteCustomHostname removes the hostname from the in-memory store. Idempotent:
+// an unknown id is a no-op (matches the real provider's tolerant delete).
+func (f *Fake) DeleteCustomHostname(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.hosts, id)
+	return nil
+}
+
 // AdvanceTo forces a hostname to a state (test helper). Active implies TLS issued.
 func (f *Fake) AdvanceTo(id string, state VerifyState) error {
 	f.mu.Lock()

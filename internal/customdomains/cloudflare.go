@@ -133,6 +133,43 @@ func (c *CloudflareProvider) Status(ctx context.Context, id string) (StatusResul
 	}, nil
 }
 
+// DeleteCustomHostname DELETEs the custom hostname from the zone. A 404 (or CF's
+// "custom hostname not found" code 1436) is treated as success so removal is
+// idempotent — re-deleting an already-gone hostname is not an error.
+func (c *CloudflareProvider) DeleteCustomHostname(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	url := fmt.Sprintf("%s/zones/%s/custom_hostnames/%s", c.baseURL(), c.ZoneID, id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIToken)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("customdomains: cloudflare delete: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil // already gone → idempotent
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	var env cfEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return fmt.Errorf("customdomains: cloudflare returned %d: %s", resp.StatusCode, bytes.TrimSpace(raw))
+	}
+	if !env.Success {
+		for _, e := range env.Errors {
+			if e.Code == 1436 { // custom hostname not found → idempotent success
+				return nil
+			}
+		}
+		return fmt.Errorf("customdomains: cloudflare delete error (%d): %+v", resp.StatusCode, env.Errors)
+	}
+	return nil
+}
+
 // dcvFrom extracts the DCV record CF expects (ownership verification or the SSL
 // validation TXT record).
 func dcvFrom(h cfCustomHost) DCVRecord {

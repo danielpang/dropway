@@ -38,6 +38,9 @@ const (
 	// ActionDomainVerify records a custom domain reaching verified+TLS
 	// (GET /v1/domains/{id}/status that transitions it).
 	ActionDomainVerify Action = "domain.verify"
+	// ActionDomainRemove records a custom domain removed
+	// (DELETE /v1/domains/{id}).
+	ActionDomainRemove Action = "domain.remove"
 	// ActionAllowExternalSharing records the org allow_external_sharing toggle
 	// (PUT /v1/orgs/allow-external-sharing).
 	ActionAllowExternalSharing Action = "org.allow_external_sharing"

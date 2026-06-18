@@ -198,6 +198,54 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, t Tenant, id, verifyStat
 	return res, err
 }
 
+// DeleteDomainResult carries the bits the handler needs to finish removal outside
+// the DB: the hostname (to drop its edge route) and the Cloudflare custom-hostname
+// id (to delete it at Cloudflare).
+type DeleteDomainResult struct {
+	Hostname     string
+	CFHostnameID string
+}
+
+// DeleteDomain removes a custom domain for the active org: it deletes the app.domains
+// row AND the global host_routes entry for that hostname in one tx, so serve/edge
+// immediately stop resolving the host to the site. It returns the hostname +
+// CF hostname id so the handler can also remove the edge route projection and the
+// Cloudflare custom hostname. RLS scopes the writes to the active org; a domain the
+// caller can't see is ErrNotFound.
+func (s *Store) DeleteDomain(ctx context.Context, t Tenant, id string) (DeleteDomainResult, error) {
+	var res DeleteDomainResult
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		// Confirm ownership first (RLS already scopes, but be explicit + give 404).
+		existing, err := q.GetDomain(ctx, id)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if existing.OrgID != t.OrgID {
+			return ErrNotFound
+		}
+		row, err := q.DeleteDomain(ctx, id)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		// Drop the global host route so the custom host stops serving immediately.
+		if err := q.DeleteHostRoute(ctx, row.Hostname); err != nil {
+			return err
+		}
+		res.Hostname = row.Hostname
+		if row.CfHostnameID.Valid {
+			res.CFHostnameID = row.CfHostnameID.String
+		}
+		return nil
+	})
+	return res, err
+}
+
 // ---------------------------------------------------------------------------
 // constants, conversions, helpers
 // ---------------------------------------------------------------------------

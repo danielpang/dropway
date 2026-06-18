@@ -388,6 +388,14 @@ SET verify_status = $2,
 WHERE id = $1
 RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at;
 
+-- name: DeleteDomain :one
+-- Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
+-- also drop the global host route (so serve/edge stop resolving the host) and delete
+-- the Cloudflare custom hostname. RLS scopes the delete to the active org.
+DELETE FROM app.domains
+WHERE id = $1
+RETURNING id, org_id, site_id, hostname, cf_hostname_id;
+
 -- ===========================================================================
 -- host_routes (Phase 2) — register/unregister a custom host in the global registry
 -- ===========================================================================

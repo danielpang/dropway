@@ -182,6 +182,53 @@ func (a *API) GetDomainStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, toDomainResponse(res.Domain))
 }
 
+// DeleteDomain removes a custom domain (admin/owner only). It deletes the
+// app.domains row + the global host route in one tx (so serve/edge stop resolving
+// the host immediately), then best-effort removes the edge route projection and the
+// Cloudflare custom hostname. The local removal is authoritative: a failure to clean
+// up Cloudflare/KV is logged, not surfaced, since the host already no longer serves.
+func (a *API) DeleteDomain(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) || !a.requireDomains(w) {
+		return
+	}
+	if !a.requireAdmin(w, r, t) {
+		return
+	}
+	domainID := chi.URLParam(r, "domainID")
+
+	res, err := a.Store.DeleteDomain(r.Context(), t, domainID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	// Best-effort cleanup of the edge route projection (route:<host>) so the Worker
+	// stops serving the custom host. The host_routes row is already gone (the DB is
+	// authoritative); a projection error is logged, not fatal.
+	if a.Projection != nil && res.Hostname != "" {
+		if err := a.Projection.DeleteRoute(r.Context(), res.Hostname); err != nil {
+			logger(r).Error("projection delete failed after domain remove", "host", res.Hostname, "err", err)
+		}
+	}
+	// Best-effort delete of the Cloudflare custom hostname (idempotent provider-side).
+	if res.CFHostnameID != "" {
+		if err := a.Domains.DeleteCustomHostname(r.Context(), res.CFHostnameID); err != nil {
+			logger(r).Error("cloudflare delete custom hostname failed", "cf_id", res.CFHostnameID, "err", err)
+		}
+	}
+
+	logger(r).Info("custom domain removed", "domain_id", domainID, "hostname", res.Hostname)
+	a.recordAudit(r, t, audit.ActionDomainRemove, "domain:"+domainID, map[string]any{
+		"hostname": res.Hostname,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // mapDomainStatus maps the provider VerifyState onto the app.domains
 // (verify_status, tls_status) pair driving the pending→verifying→active machine.
 func mapDomainStatus(s customdomains.StatusResult) (verify, tls string) {

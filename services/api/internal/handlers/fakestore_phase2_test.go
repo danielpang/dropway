@@ -298,3 +298,22 @@ func (f *fakeStore) UpdateDomainStatus(_ context.Context, t store.Tenant, id, ve
 	}
 	return res, nil
 }
+
+func (f *fakeStore) DeleteDomain(_ context.Context, t store.Tenant, id string) (store.DeleteDomainResult, error) {
+	d, ok := f.p2().domains[id]
+	if !ok {
+		return store.DeleteDomainResult{}, store.ErrNotFound
+	}
+	delete(f.p2().domains, id)
+	// Drop the global host route for the hostname (mirrors the real store).
+	if hosts, ok := f.p2().hostRoutes[d.SiteID]; ok {
+		kept := hosts[:0]
+		for _, hr := range hosts {
+			if hr.Host != d.Hostname {
+				kept = append(kept, hr)
+			}
+		}
+		f.p2().hostRoutes[d.SiteID] = kept
+	}
+	return store.DeleteDomainResult{Hostname: d.Hostname, CFHostnameID: d.CFHostnameID}, nil
+}
