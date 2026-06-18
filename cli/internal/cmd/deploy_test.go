@@ -164,14 +164,16 @@ func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
 	}
 }
 
-func TestDeploy_Send_RequiresToken(t *testing.T) {
+func TestDeploy_Send_RequiresAuth(t *testing.T) {
 	dir := tempSite(t)
 	os.Unsetenv("DROPWAY_TOKEN")
+	// Isolate credential storage to an empty dir so there's no stored login.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "x")
-	if err == nil || !strings.Contains(err.Error(), "DROPWAY_TOKEN") {
-		t.Fatalf("err = %v, want a DROPWAY_TOKEN requirement error", err)
+	if err == nil || !strings.Contains(err.Error(), "login") {
+		t.Fatalf("err = %v, want a sign-in requirement error", err)
 	}
 }
 

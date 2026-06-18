@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -193,6 +194,14 @@ func run(baseLogger *slog.Logger) error {
 	// billing routes (wire_cloud.go). The OSS route surface is therefore identical
 	// whether or not this call is present.
 	mux := router.New(verifier, api, baseLogger)
+
+	// RFC 9728 protected-resource metadata: lets the CLI (`dropway login`) discover
+	// the OAuth authorization server (the dashboard) and the audience to request, so
+	// a browser sign-in mints a token this API accepts. `resource` is the API's own
+	// audience; the dashboard registers it in the OAuth provider's validAudiences.
+	mux.Get("/.well-known/oauth-protected-resource",
+		oauthProtectedResource(cfg.JWTAudience, cfg.DashboardURL))
+
 	mountCloud(mux, cloudDeps{
 		Cfg:                  cfg,
 		Pool:                 pool,
@@ -272,4 +281,21 @@ func newDomainProvider(cfg config.Config) customdomains.Provider {
 	}
 	slog.Warn("custom-domain provider: in-memory fake (no CF_ZONE_ID/CF_API_TOKEN) — dev/self-host only")
 	return customdomains.NewFake()
+}
+
+// oauthProtectedResource serves the RFC 9728 protected-resource metadata pointing
+// the CLI's `dropway login` flow at the OAuth authorization server (the dashboard)
+// and the audience to request. resource is this API's own audience; authServer is
+// the dashboard origin. Unauthenticated + cacheable.
+func oauthProtectedResource(resource, authServer string) http.HandlerFunc {
+	body, _ := json.Marshal(map[string]any{
+		"resource":                 resource,
+		"authorization_servers":    []string{authServer},
+		"bearer_methods_supported": []string{"header"},
+	})
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = w.Write(body)
+	}
 }

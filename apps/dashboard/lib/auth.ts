@@ -265,8 +265,14 @@ export const auth = betterAuth({
       // issuer (jwtIssuer()) — the same value the MCP verifier expects. We register
       // BOTH the bare and trailing-slash forms because some MCP clients (e.g.
       // mcp-remote) URL-canonicalize the resource and append a "/"
-      // ("http://host" → "http://host/"); the MCP verifier accepts both too.
-      validAudiences: [mcpResourceUrl(), mcpResourceUrl() + "/"],
+      // ("http://host" → "http://host/"). The Go API audience (jwtAudience) is also
+      // registered so the CLI's `dropway login` can request a token the API accepts.
+      validAudiences: [
+        mcpResourceUrl(),
+        mcpResourceUrl() + "/",
+        jwtAudience(),
+        jwtAudience() + "/",
+      ],
       customAccessTokenClaims: async ({ user }) => {
         if (!user) return {};
         const orgId = await firstOrgId(user.id);

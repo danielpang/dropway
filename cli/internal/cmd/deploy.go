@@ -14,10 +14,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/danielpang/dropway/cli/internal/api"
+	"github.com/danielpang/dropway/cli/internal/auth"
 	"github.com/danielpang/dropway/cli/internal/manifest"
 )
 
-// tokenEnv is the env var carrying the Bearer deploy token.
+// tokenEnv is the env var carrying a Bearer deploy token (CI / non-interactive).
 const tokenEnv = "DROPWAY_TOKEN"
 
 // newDeployCmd builds the `dropway deploy <dir>` command. clientFactory is
@@ -38,7 +39,8 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 		Long: "Walk <dir>, compute a SHA-256 per file, and (with --send) run the full deploy:\n" +
 			"  prepare → upload only-changed blobs → finalize → publish → print the live URL.\n" +
 			"Without --send it prints the plan (the manifest it would upload) with no network.\n" +
-			"Requires " + tokenEnv + " for --send. Target a site with --site-id, or --new --site <slug>.",
+			"For --send, sign in first with `dropway login` (or set " + tokenEnv + " for CI).\n" +
+			"Target a site with --site-id, or --new --site <slug>.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := args[0]
@@ -59,20 +61,21 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 			// 2. Without --send, print the plan and stop (a dry run by design).
 			if !send {
 				printPlan(out, files)
-				fmt.Fprintln(out, "\n(dry run — pass --send to upload; set "+tokenEnv+" for auth)")
+				fmt.Fprintln(out, "\n(dry run — pass --send to upload; run `dropway login` first)")
 				return nil
 			}
 
-			// 3. --send: require the token + a target site.
-			token := os.Getenv(tokenEnv)
-			if token == "" {
-				return fmt.Errorf("deploy: --send requires %s to be set", tokenEnv)
+			// 3. --send: resolve auth (DROPWAY_TOKEN, else the stored `dropway login`
+			// credentials, refreshing as needed) + require a target site.
+			ctx := context.Background()
+			token, err := auth.Token(ctx, baseURL)
+			if err != nil {
+				return fmt.Errorf("deploy: %w", err)
 			}
 			if siteID == "" && !createNew {
 				return fmt.Errorf("deploy: --send requires --site-id <id>, or --new --site <slug> to create one")
 			}
 			client := clientFactory(baseURL, token)
-			ctx := context.Background()
 
 			// 3a. Create the site first if requested.
 			if createNew {
@@ -123,7 +126,7 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 	cmd.Flags().StringVar(&siteID, "site-id", "", "existing site id to deploy to")
 	cmd.Flags().BoolVar(&createNew, "new", false, "create a new site (requires --site <slug>)")
 	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Dropway API base URL")
-	cmd.Flags().BoolVar(&send, "send", false, "actually run the deploy (requires "+tokenEnv+")")
+	cmd.Flags().BoolVar(&send, "send", false, "actually run the deploy (sign in first with `dropway login`)")
 	return cmd
 }
 

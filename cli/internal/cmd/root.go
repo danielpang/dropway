@@ -18,6 +18,8 @@ func NewRootCmd() *cobra.Command {
 	// prepend a redundant "dropway version " before it.
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newLoginCmd())
+	root.AddCommand(newLogoutCmd())
 	root.AddCommand(newDeployCmd(defaultClientFactory))
 	// Phase-4 operator jobs (direct DB/R2 access, not the deploy-token API path).
 	root.AddCommand(newGCCmd(defaultOpsFactory))
