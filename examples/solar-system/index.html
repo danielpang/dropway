@@ -1,0 +1,91 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+<!-- Orrery: an interactive 3D Solar System (Sun → Pluto) built with Three.js — drag to orbit, scroll to zoom, hover or click a body for facts. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>Orrery — An Interactive Solar System</title>
+  <meta name="description" content="An interactive 3D model of the Solar System, from the Sun out to Pluto. Drag to orbit, scroll to zoom, hover a planet for facts." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500&family=Space+Grotesk:wght@300;400;500;600&display=swap" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Pin Three.js r0.160.0 from jsDelivr via an ES-module import map -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#hud-controls">Skip to controls</a>
+
+  <!-- The WebGL canvas mounts here -->
+  <div id="scene" aria-hidden="true"></div>
+
+  <!-- Loading veil -->
+  <div id="loader" role="status" aria-live="polite">
+    <div class="loader__ring"></div>
+    <p class="loader__text">Aligning the planets…</p>
+  </div>
+
+  <!-- HUD overlay -->
+  <main class="hud" id="hud">
+    <header class="hud__head">
+      <p class="hud__eyebrow">Dropway · Showcase</p>
+      <h1 class="hud__title">Orrery</h1>
+      <p class="hud__sub">An interactive model of our Solar System, the Sun out to Pluto.</p>
+    </header>
+
+    <!-- Legend / body list -->
+    <nav class="legend" aria-label="Celestial bodies">
+      <h2 class="legend__title">Bodies</h2>
+      <ul class="legend__list" id="legend-list"></ul>
+    </nav>
+
+    <!-- Playback controls -->
+    <section class="controls" id="hud-controls" aria-label="Animation controls">
+      <button class="ctrl-btn" id="toggle-play" type="button" aria-pressed="true">
+        <span class="ctrl-btn__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18"><rect class="icon-pause" x="6" y="5" width="4" height="14" rx="1"/><rect class="icon-pause" x="14" y="5" width="4" height="14" rx="1"/><path class="icon-play" d="M7 5l12 7-12 7z"/></svg>
+        </span>
+        <span class="ctrl-btn__label" id="toggle-label">Pause</span>
+      </button>
+
+      <label class="slider" for="speed">
+        <span class="slider__label">Orbital speed</span>
+        <input type="range" id="speed" min="0" max="3" step="0.05" value="1" aria-describedby="speed-readout" />
+        <output class="slider__out" id="speed-readout" for="speed">1.00×</output>
+      </label>
+    </section>
+
+    <p class="hud__hint" id="hud-hint">Drag to orbit · Scroll to zoom · Click a planet</p>
+  </main>
+
+  <!-- Floating info card (hidden until a body is focused) -->
+  <aside class="card" id="info-card" hidden aria-live="polite">
+    <button class="card__close" id="card-close" type="button" aria-label="Dismiss info card">&times;</button>
+    <div class="card__swatch" id="card-swatch" aria-hidden="true"></div>
+    <h3 class="card__name" id="card-name">—</h3>
+    <p class="card__tag" id="card-tag">—</p>
+    <dl class="card__stats">
+      <div><dt>Diameter</dt><dd id="card-diameter">—</dd></div>
+      <div><dt>Distance from Sun</dt><dd id="card-distance">—</dd></div>
+      <div><dt>Orbital period</dt><dd id="card-period">—</dd></div>
+    </dl>
+    <p class="card__fact" id="card-fact">—</p>
+  </aside>
+
+  <noscript>
+    <div class="noscript">This experience needs JavaScript and WebGL. Please enable them to explore the Solar System.</div>
+  </noscript>
+
+  <script type="module" src="script.js"></script>
+</body>
+</html>

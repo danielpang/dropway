@@ -1,0 +1,61 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+<!-- Interactive Periodic Table of the Elements: a static, framework-free explorer of all 118 elements. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interactive Periodic Table of the Elements</title>
+  <meta name="description" content="A beautiful, interactive periodic table of all 118 elements — search, filter by category, color by state, and explore details for every element.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="site-header">
+      <h1>The Periodic Table</h1>
+      <p>All 118 elements, arranged by the patterns that shape our universe. Search, filter, and click any element to explore it.</p>
+    </header>
+
+    <div class="controls">
+      <div class="search-field">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input id="search" type="search" placeholder="Search by name, symbol, or number…" autocomplete="off" aria-label="Search elements by name, symbol, or atomic number">
+      </div>
+
+      <div class="toggle-field">
+        <label for="colorMode">Color by</label>
+        <select id="colorMode" aria-label="Choose how to color the elements">
+          <option value="category">Category</option>
+          <option value="state">State at room temp</option>
+        </select>
+      </div>
+
+      <button id="clearFilters" type="button" class="clear-btn" hidden>Clear filters</button>
+    </div>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section class="legend" id="legend" aria-label="Legend — click a category to filter"></section>
+
+    <div class="scroller">
+      <main class="table" id="table" data-color-mode="category" role="list" aria-label="Periodic table of the elements"></main>
+    </div>
+
+    <footer class="site-footer">
+      <p>Tip: press <kbd>/</kbd> to jump to search, <kbd>Esc</kbd> to close a detail. Toggle legend chips to filter by category. Atomic masses follow standard atomic weights; bracketed values mark the most stable isotope.</p>
+    </footer>
+  </div>
+
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" hidden>
+    <div class="modal-card" id="modalCard"></div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

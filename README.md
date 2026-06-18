@@ -1,0 +1,221 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+
+# Dropway
+
+### A folder of files → a live, access-controlled URL in one command.
+
+Dropway turns any static site (for example an HTML/CSS report, a data dashboard, a React or
+Vite build, a docs site, or an AI-generated page) into a live, versioned, shareable
+URL in seconds. Drag a folder into the dashboard, or upload via MCP,
+and you get a real URL you control: share it with the whole internet, your team and
+company, or a few specific people. Change your mind anytime.
+
+It's open source and self-hostable, with an optional hosted SaaS at [dropway.dev](https://dropway.dev).
+
+
+## Why teams need it
+
+Building something is easy now. Sharing it with the right people, safely,
+is still difficult. You've generated a report, a prototype, a dashboard, or a page,
+and your options aren't great:
+
+- **Email a zip / screenshot**: no live URL, instantly stale, impossible to update.
+- **Spin up S3 + CloudFront**: not simple for non-technical folks.
+- **Vercel/ Netlify project**: requires access to Github, can't share with just your team.
+- **Paste into a wiki**: loses the real layout, interactivity, and your CSS/JS.
+- **Internal file shares**: no link you can send someone outside the team, no expiry,
+  no audit of who saw what.
+
+None of these options allow you to *"share this with these three people,"* or *"anyone at
+my company,"* or *"public, but password-protected,"* and then revoke it, or roll
+back a bad version.
+
+Dropway is that missing layer: simple and quick to publish, with sharing and access
+control as first-class features.
+
+## What you get
+
+- **Drag-and-drop to deploy**: folder to live URL. No pipeline, no config. Pre-built static output just works.
+- **Four sharing tiers, per site**: public, password-protected, specific
+  people (email allowlist), or anyone in your org. Default-deny; you opt in.
+- **Multi-tenant orgs**: teams, roles (owner/admin/member), and an org-wide policy
+  that can forbid sharing outside the company entirely.
+- **Immutable, versioned deploys**: every deploy is content-addressed, with instant
+  rollback to any previous version.
+- **Audit log** of who shared
+  and accessed what.
+- **Immediate revocation**: remove a member or unshare a site and their access is
+  cut at the edge right away, not whenever a token happens to expire.
+- **Safe to serve untrusted content**: tenant HTML/JS is served from a separate
+  Public-Suffix-List domain, so one site can never reach another's (or your) session.
+- **LLM-friendly access**: public sites auto-serve an
+  [`llms.txt`](https://llmstxt.org/) index and welcome AI crawlers (GPTBot, ClaudeBot,
+  PerplexityBot, and others), so agents can discover and read your content. Gated sites
+  (org-only / allowlist / password) stay off-limits to crawlers. LLMs reach them
+  only through the authenticated Dropway MCP server (OAuth 2.1; connect it to
+  Claude, Cursor, or Codex), so your access control holds for AI exactly as it does for
+  people. Owners/admins can switch MCP access off per org in Settings.
+- **Open source + self-hostable**: self-host or use our service at [dropway.dev](https://dropway.dev)
+
+## Who it's for
+
+- **Engineers & data/analytics teams** sharing generated reports, notebooks-as-HTML,
+  benchmark dashboards, and one-off tools. Internally or with a client.
+- **Financial/ accounting professionals** can share analysis and reports.
+- **Designers & PMs** sharing static prototypes, design specs, and review builds with
+  the exact stakeholders who should see them, password-protected if needed.
+- **AI app / agent builders** that generate websites and need to hand a user a real,
+  access-controlled URL programmatically.
+- **Companies** that need governed sharing: "internal by default, external only if
+  an admin allows it," with roles, audit, custom domains, and instant revocation.
+
+## How it works (at a glance)
+
+```
+  upload files in dashboard  ─▶  Go API (system of record + authz)  ─▶  R2/minIO  (blob storage)
+                                       │ writes a rebuildable routing projection
+                                       ▼
+   browser ─▶ Cloudflare edge Worker (*.dropwaycontent.com) ─▶ streams your site
+              public = no login, cacheable · gated = host-scoped token from /authz
+```
+
+A **Next.js dashboard** (with Better Auth: Google / email / magic-link) is the control
+plane; a **Go API** is the system of record and the authorization boundary; a
+**Cloudflare Worker** serves content at the edge; **Postgres** (with row-level security
+per org) is the source of truth. The component + request-flow
+**[diagrams are in `docs/diagrams/`](docs/diagrams/)**.
+
+---
+
+## Run it locally
+
+You need **Docker** (with Compose). One command builds and starts the whole stack:
+the Go API, the Next.js dashboard, a bundled Postgres, a bundled MinIO (an R2/S3
+stand-in), and the schema migrations.
+
+```sh
+git clone https://github.com/your-org/dropway.git && cd dropway
+cp deploy/.env.example deploy/.env                  # safe local-dev defaults
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+| Service | URL |
+|---|---|
+| **Dashboard** (sign up here) | http://localhost:3000 |
+| **API** (Go control-plane) | http://localhost:8080 (`GET /healthz`) |
+| Postgres / MinIO (bundled) | `localhost:5432` / console http://localhost:9001 |
+
+**One time, after the first start.** Better Auth owns the identity tables, so create them:
+
+```sh
+docker compose -f deploy/docker-compose.yml exec dashboard \
+  pnpm dlx @better-auth/cli@latest migrate --yes
+```
+
+Then open **http://localhost:3000**, sign up, create an org, create a site, and deploy
+your first folder.
+
+### Use your own Postgres / object store
+
+The bundled Postgres and MinIO are optional Compose profiles. To point at Supabase /
+an external Postgres or Cloudflare R2 / S3, drop the profile from `COMPOSE_PROFILES`
+and set the matching `DATABASE_URL` / `S3_*` vars in `deploy/.env`:
+
+```sh
+COMPOSE_PROFILES= DATABASE_URL=postgres://… S3_ENDPOINT=https://… \
+  docker compose -f deploy/docker-compose.yml up --build api dashboard migrate
+```
+
+### Where your sites are served (the content domain)
+
+Published sites are served at `<org-slug>--<app-slug>.<CONTENT_DOMAIN>`, which is org-namespaced,
+so two orgs can both have an app named `blog` without colliding. Three vars in
+`deploy/.env` control the URL the dashboard and CLI hand back:
+
+| Var | Local default | Production |
+|---|---|---|
+| `CONTENT_DOMAIN` | `localhost` | your domain, e.g. `dropwaycontent.com` |
+| `CONTENT_SCHEME` | `http` | `https` |
+| `CONTENT_PORT` | `8090` | *(empty, standard `:443`)* |
+
+The local defaults make every deploy a clickable **`http://<org>--<app>.localhost:8090/`**.
+`*.localhost` resolves to `127.0.0.1` in every browser with no DNS setup. To serve
+on your own domain, point a wildcard DNS record and TLS cert (`*.your-domain`) at the
+content server and set:
+
+```sh
+CONTENT_DOMAIN=apps.example.com   # a domain you control
+CONTENT_SCHEME=https
+CONTENT_PORT=                      # empty → standard :443
+```
+
+These vars affect only the displayed URL: `serve` matches the `Host` header and strips
+the port, so the stored route stays the bare host. Full details (wildcard DNS/cert, the
+Public-Suffix-List isolation rule, and the `https` requirement for gated sites) are in
+**[`deploy/README.md`](deploy/README.md#serving-sites-the-content-domain)**.
+
+### Connect an AI tool (MCP)
+
+Dropway ships an **OAuth-protected MCP server** (the `mcp` service, `http://localhost:8092`
+locally) so an LLM agent can browse and read your sites: list sites, read or download a
+site's files. You can also use the MCP server to create a site, deploy +
+publish files to it, and change a site's sharing settings (owner/admin only, same rules
+as the dashboard). Public sites
+are also readable by crawlers via an auto-served [`llms.txt`](https://llmstxt.org/);
+gated sites (org-only / allowlist / password) are reachable by an LLM only through
+an authorized MCP connection, so your access control holds for AI exactly as it does for people.
+
+Add it to your AI tool as a custom connector using the MCP URL, the dashboard shows
+copy-paste steps under **Settings → LLM access (MCP) → Connect**. The short version:
+
+| Tool | How |
+|---|---|
+| **Claude Cowork** | Settings → Connectors → *Add custom connector* → paste `http://localhost:8092/mcp` |
+| **Claude Code** | `claude mcp add --transport http dropway http://localhost:8092/mcp`, then `/mcp` → *Authenticate* |
+| **Cursor** | add `{ "mcpServers": { "dropway": { "url": "http://localhost:8092/mcp" } } }` to `~/.cursor/mcp.json` |
+| **Codex** | add `[mcp_servers.dropway]` with `url = "http://localhost:8092/mcp"` to `~/.codex/config.toml` |
+
+The first connection opens your browser to sign in and approve **"Authorize MCP access"**.
+That's standard OAuth 2.1 (no API keys to copy). Access stays scoped to your organization
+and honors each site's sharing settings. Owners/admins can switch MCP access off for the
+whole org under **Settings → LLM access (MCP)**. In production set `MCP_PUBLIC_URL` /
+`NEXT_PUBLIC_MCP_URL` to your MCP host (e.g. `https://mcp.dropway.dev`); see
+**[`deploy/README.md`](deploy/README.md#llm-access-the-mcp-server)**.
+
+### Develop without Docker
+
+```sh
+go build ./... && go test ./...     # the Go core (API + CLI)
+go run ./services/api/cmd/api       # start the API
+corepack enable && pnpm install     # the TS workspace
+pnpm dev                            # run the dashboard
+```
+
+Full local-dev reference (build flavors, the edge Worker, migrating by hand) lives in
+**[`deploy/README.md`](deploy/README.md)**.
+
+---
+
+## Open source + hosted (open-core)
+
+Dropway follows popular Dev tools model: a source-available codebase anyone
+can self-host for free, plus an optional hosted SaaS for convenience and scale.
+
+- The **core** is under the **[Functional Source License (FSL-1.1-Apache-2.0)](LICENSE)**:
+  self-host, modify, and use it internally for free; you just can't resell it as a
+  competing hosted service. Each release becomes Apache 2.0 after two years.
+- The **`cloud/`** module (Stripe billing + usage quotas) is proprietary and **never
+  ships in the self-host build**, so self-host has no limits. **`ee/`** holds
+  license-gated enterprise features (SSO/SAML, audit export, custom domains).
+
+## Docs & status
+
+- **[`docs/diagrams/`](docs/diagrams/)**: component + sequence diagrams (sign-up,
+  sign-in, deploy, gated access, LLM/MCP access).
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)**: contributions welcome under a DCO sign-off.
+
+## License
+
+Core: **[FSL-1.1-Apache-2.0](LICENSE)** (→ Apache 2.0 after two years). `cloud/` and
+`ee/` are governed by their own licenses. The "Dropway" name and logo are reserved
+trademarks;

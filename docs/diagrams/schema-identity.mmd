@@ -1,0 +1,81 @@
+erDiagram
+  identity__user["identity.user"] {
+    text id PK
+    text name
+    text email
+    boolean emailVerified
+    text image
+    timestamp createdAt
+    timestamp updatedAt
+  }
+  identity__organization["identity.organization"] {
+    text id PK
+    text name
+    text slug
+    text logo
+    timestamp createdAt
+    text metadata
+  }
+  identity__account["identity.account"] {
+    text id PK
+    text accountId
+    text providerId
+    text userId FK
+    text accessToken
+    text refreshToken
+    text idToken
+    timestamp accessTokenExpiresAt
+    timestamp refreshTokenExpiresAt
+    text scope
+    text password
+    timestamp createdAt
+    timestamp updatedAt
+  }
+  identity__invitation["identity.invitation"] {
+    text id PK
+    text organizationId FK
+    text email
+    text role
+    text status
+    timestamp expiresAt
+    text inviterId FK
+  }
+  identity__jwks["identity.jwks"] {
+    text id PK
+    text publicKey
+    text privateKey
+    timestamp createdAt
+  }
+  identity__member["identity.member"] {
+    text id PK
+    text organizationId FK
+    text userId FK
+    text role
+    timestamp createdAt
+  }
+  identity__session["identity.session"] {
+    text id PK
+    timestamp expiresAt
+    text token
+    timestamp createdAt
+    timestamp updatedAt
+    text ipAddress
+    text userAgent
+    text userId FK
+    text activeOrganizationId
+  }
+  identity__verification["identity.verification"] {
+    text id PK
+    text identifier
+    text value
+    timestamp expiresAt
+    timestamp createdAt
+    timestamp updatedAt
+  }
+
+  identity__user ||--o{ identity__account : "userId"
+  identity__user ||--o{ identity__invitation : "inviterId"
+  identity__organization ||--o{ identity__invitation : "organizationId"
+  identity__user ||--o{ identity__member : "userId"
+  identity__organization ||--o{ identity__member : "organizationId"
+  identity__user ||--o{ identity__session : "userId"

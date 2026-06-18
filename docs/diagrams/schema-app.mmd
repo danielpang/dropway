@@ -1,0 +1,119 @@
+erDiagram
+  app__org_meta["app.org_meta"] {
+    uuid id PK
+    text plan_tier
+    boolean allow_external_sharing
+    text default_visibility
+    timestamptz created_at
+    text org_status
+  }
+  app__sites["app.sites"] {
+    uuid id PK
+    uuid org_id FK
+    text slug
+    uuid owner_user_id
+    text access_mode
+    uuid current_version_id FK
+    timestamptz created_at
+  }
+  app__site_versions["app.site_versions"] {
+    uuid id PK
+    uuid org_id FK
+    uuid site_id FK
+    integer version_no
+    text status
+    text r2_prefix
+    text content_hash
+    bigint size_bytes
+    uuid created_by
+    timestamptz created_at
+  }
+  app__allowlist_entries["app.allowlist_entries"] {
+    uuid id PK
+    uuid org_id FK
+    uuid site_id FK
+    text email
+    boolean is_external
+    timestamptz claimed_at
+    timestamptz created_at
+    uuid claimed_by_user_id
+  }
+  app__audit_log["app.audit_log"] {
+    uuid id PK
+    uuid org_id FK
+    uuid actor_user
+    text action
+    text target
+    jsonb metadata
+    inet ip
+    timestamptz created_at
+    uuid actor_token
+    text request_id
+    text trace_id
+  }
+  app__deploy_tokens["app.deploy_tokens"] {
+    uuid id PK
+    uuid org_id FK
+    text token_hash
+    text[] scopes
+    uuid site_id FK
+    timestamptz created_at
+    timestamptz revoked_at
+  }
+  app__domains["app.domains"] {
+    uuid id PK
+    uuid org_id FK
+    uuid site_id FK
+    text hostname
+    text verify_status
+    text tls_status
+    timestamptz created_at
+    text cf_hostname_id
+    text dcv_record
+  }
+  app__host_routes["app.host_routes"] {
+    text host PK
+    uuid org_id FK
+    uuid site_id FK
+    timestamptz created_at
+  }
+  app__org_blobs["app.org_blobs"] {
+    uuid org_id PK,FK
+    text content_hash PK
+    bigint size_bytes
+    timestamptz created_at
+  }
+  app__org_usage["app.org_usage"] {
+    uuid org_id PK,FK
+    integer members_count
+    integer sites_count
+    timestamptz updated_at
+    bigint storage_bytes
+  }
+  app__site_access_policy["app.site_access_policy"] {
+    uuid site_id PK,FK
+    uuid org_id FK
+    text mode
+    text password_hash
+    timestamptz expires_at
+    timestamptz updated_at
+    boolean unlisted
+  }
+
+  app__sites ||--o{ app__allowlist_entries : "site_id"
+  app__org_meta ||--o{ app__allowlist_entries : "org_id"
+  app__org_meta ||--o{ app__audit_log : "org_id"
+  app__sites ||--o{ app__deploy_tokens : "site_id"
+  app__org_meta ||--o{ app__deploy_tokens : "org_id"
+  app__org_meta ||--o{ app__domains : "org_id"
+  app__sites ||--o{ app__domains : "site_id"
+  app__sites ||--o{ app__host_routes : "site_id"
+  app__org_meta ||--o{ app__host_routes : "org_id"
+  app__org_meta ||--o{ app__org_blobs : "org_id"
+  app__org_meta ||--o{ app__org_usage : "org_id"
+  app__org_meta ||--o{ app__site_access_policy : "org_id"
+  app__sites ||--o{ app__site_access_policy : "site_id"
+  app__sites ||--o{ app__site_versions : "site_id"
+  app__org_meta ||--o{ app__site_versions : "org_id"
+  app__site_versions ||--o{ app__sites : "current_version_id"
+  app__org_meta ||--o{ app__sites : "org_id"

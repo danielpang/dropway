@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Dropway CLI release — cross-compiles the `dropway` binary for macOS + Linux on
+# amd64 + arm64 and publishes them as GitHub Release assets, so install.sh can do
+#
+#   curl -fsSL https://raw.githubusercontent.com/danielpang/dropway/main/install.sh | sh
+#
+# Trigger: push a semver tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`).
+#
+# Asset naming is the contract install.sh depends on — keep them in lockstep:
+#   dropway_<os>_<arch>     e.g. dropway_linux_amd64, dropway_darwin_arm64
+#   checksums.txt           sha256 of every binary (install.sh verifies against it)
+#
+# GitHub serves the latest release's assets at a stable, unversioned URL:
+#   https://github.com/danielpang/dropway/releases/latest/download/<asset>
+# which is exactly what install.sh fetches.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# The release job creates a GitHub Release and uploads assets to it.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build CLI binaries & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Cross-compile dropway for all targets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME}"            # the pushed tag, e.g. v0.1.0
+          COMMIT="${GITHUB_SHA::12}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          PKG="github.com/danielpang/dropway/cli/internal/cmd"
+          LDFLAGS="-s -w -X ${PKG}.version=${VERSION} -X ${PKG}.commit=${COMMIT} -X ${PKG}.date=${DATE}"
+
+          mkdir -p dist
+
+          # CGO off → fully static binaries that run on any host of that os/arch.
+          export CGO_ENABLED=0
+
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            out="dist/dropway_${os}_${arch}"
+            echo "building ${out}"
+            GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "$LDFLAGS" -o "$out" ./cli/cmd/dropway
+          done
+
+          # One checksums file covering every asset; install.sh verifies its
+          # download against this.
+          ( cd dist && sha256sum dropway_* > checksums.txt )
+          echo "--- dist ---"; ls -l dist
+
+      - name: Publish GitHub Release with the binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/dropway_*
+            dist/checksums.txt
+          generate_release_notes: true

@@ -1,0 +1,374 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Dropway — one-command self-host stack.
+#
+# `docker compose -f deploy/docker-compose.yml up --build` builds and starts the
+# WHOLE local stack:
+#   * api        — the Go control-plane API (built from services/api/Dockerfile)
+#   * dashboard  — the Next.js dashboard      (built from apps/dashboard/Dockerfile)
+#   * serve      — the self-host content server (built from services/serve/Dockerfile);
+#                  serves published sites on :8090 — the Cloudflare-Worker alternative
+#   * postgres   — bundled Postgres 16        [profile: local-db]      (OPTIONAL)
+#   * minio      — bundled R2/S3-compatible    [profile: local-storage] (OPTIONAL)
+#   * mailpit    — bundled SMTP + web inbox     [profile: local-mail]    (OPTIONAL)
+#   * caddy      — internet-facing TLS edge     [profile: edge-tls]      (OPTIONAL)
+#   * migrate    — one-shot goose runner for the `app` schema + dropway_app role
+#
+# OSS / self-host: DROPWAY_CLOUD=false ⇒ the no-op/unlimited QuotaProvider ⇒ no
+# Stripe, no caps, no cloud/ee. The api image defaults to the OSS build.
+#
+# OPTIONAL bundled data services (the open-core promise: bring your own backends):
+#   * The hosted Dropway SaaS runs on Supabase (managed Postgres) + Cloudflare R2.
+#   * Self-host DEFAULTS to the bundled postgres + minio (the `local-db` /
+#     `local-storage` profiles, enabled via COMPOSE_PROFILES in deploy/.env).
+#   * To use Supabase / an external Postgres instead: drop `local-db` from
+#     COMPOSE_PROFILES and point DATABASE_URL + DATABASE_OWNER_URL at it.
+#   * To use Cloudflare R2 / external S3 instead: drop `local-storage` and set the
+#     S3_* vars. `api`/`dashboard` depend on the bundled services with
+#     `required: false`, so they run with or without them.
+#
+# Quickstart:  cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up --build
+
+name: dropway
+
+services:
+  # ===========================================================================
+  # APPLICATION — built from this repo.
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # api — the Go control-plane (system of record + authz boundary). OSS build
+  # (unlimited). Connects to Postgres as the non-BYPASSRLS dropway_app role and to
+  # the object store for blobs/manifests. Waits for migrations to finish.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+      # For the hosted-cloud (Stripe) build: args: { DROPWAY_BUILD_TAGS: cloud }
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # In-memory edge projection in the container (no shared file with a Worker
+      # here); avoids a writable-volume requirement on the distroless image.
+      PROJECTION_FILE: ""
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+      createbucket:
+        condition: service_completed_successfully
+        required: false
+
+  # ---------------------------------------------------------------------------
+  # dashboard — the Next.js app (Better Auth + the /authz exchange). Talks to the
+  # Go API for business data and to Postgres for Better Auth's identity tables.
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ..
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # SERVER-side (RSC / server actions) calls the Go API over the Docker network:
+      # inside this container `localhost` is the container, not the api, so use the
+      # service name. The BROWSER keeps NEXT_PUBLIC_API_URL (localhost:8080 → the
+      # host-published api). Override DASHBOARD_API_URL for an external api.
+      API_URL: ${DASHBOARD_API_URL:-http://api:8080}
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+
+  # ---------------------------------------------------------------------------
+  # serve — the self-host CONTENT server (the plain Go alternative to the
+  # Cloudflare serving Worker). Serves published tenant sites on
+  # *.dropwaycontent.com + custom domains, enforcing all four access modes.
+  # This is what closes the loop: after a deploy is published, serve actually
+  # streams the bytes — no Cloudflare needed.
+  #
+  # Connects to Postgres as the non-BYPASSRLS dropway_app role (DATABASE_URL) and
+  # reads blobs/manifests from the object store (S3_* → minio:9000, server-side).
+  # It VERIFIES gated edge tokens against the API's JWKS (EDGE_JWKS_URL, internal)
+  # and 302s unauthenticated gated requests to the dashboard /authz (APP_AUTHZ_URL,
+  # which is BROWSER-facing, so the host-published dashboard URL).
+  #
+  # Local testing has no wildcard DNS, so hit it by Host header on the published
+  # content port:  curl -H 'Host: <slug>.dropwaycontent.com' http://localhost:8090/
+  # Internet-facing self-host: put the `caddy` service (profile: edge-tls) in front
+  # for automatic HTTPS + on-demand TLS for custom domains.
+  # ---------------------------------------------------------------------------
+  serve:
+    build:
+      context: ..
+      dockerfile: services/serve/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Server-side fetch of the edge JWKS over the compose network (internal api).
+      EDGE_JWKS_URL: ${SERVE_EDGE_JWKS_URL:-http://api:8080/.well-known/edge-jwks}
+      # The gated 302 target is sent to the BROWSER → host-published dashboard origin.
+      APP_AUTHZ_URL: ${SERVE_APP_AUTHZ_URL:-http://localhost:3000/authz}
+      # Hard-revocation denylist reader. Self-host has no Cloudflare KV, so without
+      # this serve has NO denylist reader and FAILS CLOSED — every gated request 302s
+      # (an infinite authz loop). Point it at a local projection-file path: an absent
+      # file loads as an EMPTY denylist (nothing revoked → gated members are served),
+      # and revocations are in-memory per-process anyway (see internal/projection/
+      # local.go). serve only READS it, so the file need not exist.
+      PROJECTION_FILE: ${SERVE_PROJECTION_FILE:-/tmp/serve-projection.json}
+    ports:
+      - "${SERVE_PORT:-8090}:8090" # content (Host-routed); 8091 is internal-only
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+      createbucket:
+        condition: service_completed_successfully
+        required: false
+
+  # ---------------------------------------------------------------------------
+  # mcp — the Dropway MCP server (services/mcp/cmd/mcp). An OAuth-protected,
+  # remote (Streamable HTTP) Model Context Protocol endpoint that lets an
+  # AUTHORIZED LLM agent list + read a tenant's deployed sites — INCLUDING gated
+  # content — scoped to one org by the same Postgres RLS as the rest of the
+  # platform (connects as the non-BYPASSRLS dropway_app role via DATABASE_URL).
+  #
+  # Auth is OAuth 2.1 against the dashboard (Better Auth + @better-auth/oauth-
+  # provider): an MCP client discovers the authorization server from this server's
+  # /.well-known/oauth-protected-resource, the user logs in + approves in the
+  # browser, and the resulting JWT access token is verified here against the
+  # platform JWKS. The audience/issuer contract MUST line up:
+  #   * JWKS_URL       → the dashboard JWKS (internal compose URL) that signs tokens
+  #   * JWT_ISSUER     → the jwt() plugin issuer; the oauth-provider stamps it as `iss`
+  #   * MCP_PUBLIC_URL → this server's EXTERNAL url; it's the OAuth `resource`/`aud`,
+  #                      and the dashboard registers it in validAudiences so a JWT
+  #                      (not opaque) token is issued. Must be browser-reachable.
+  #   * DASHBOARD_URL  → the OAuth authorization server (browser-facing dashboard).
+  #
+  # Local testing has no public DNS: clients hit it on the host-published 8092.
+  # `required: false` on postgres/createbucket so it also runs against external
+  # Postgres/R2 with the bundled profiles disabled.
+  # ---------------------------------------------------------------------------
+  mcp:
+    build:
+      context: ..
+      dockerfile: services/mcp/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Server-side fetch of the dashboard JWKS over the compose network (the
+      # dashboard is the OAuth authorization server + token signer).
+      JWKS_URL: ${MCP_JWKS_URL:-http://dashboard:3000/api/auth/jwks}
+      # The OAuth authorization server, sent to the BROWSER → host-published dashboard.
+      DASHBOARD_URL: ${MCP_DASHBOARD_URL:-http://localhost:3000}
+      # This server's external URL == the OAuth resource/audience. Browser-reachable.
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:8092}
+      # The Go API (internal compose URL) the write tools (create_site / set_site_access)
+      # call, forwarding the user's token. The API accepts the MCP audience (it reads
+      # MCP_PUBLIC_URL too). Unset → the MCP server is read-only.
+      API_URL: ${MCP_API_URL:-http://api:8080}
+    ports:
+      - "${MCP_PORT:-8092}:8092"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+        required: false
+      createbucket:
+        condition: service_completed_successfully
+        required: false
+
+  # ===========================================================================
+  # MIGRATIONS — always runs (against the bundled OR an external Postgres).
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # migrate — one-shot goose runner. Applies the Go-owned `app` schema migrations
+  # as the privileged OWNER role (DATABASE_OWNER_URL), then sets the runtime
+  # `dropway_app` role's password (the role is created NOSUPERUSER / NOBYPASSRLS by
+  # migration 0001), then exits. It does NOT apply the cloud-only
+  # db/migrations/billing — that schema only exists in the hosted deployment.
+  #
+  # NOTE — Better Auth schema: the `identity` schema is owned + migrated by Better Auth
+  # (the dashboard), NOT by goose. The dashboard connects via BETTER_AUTH_DATABASE_URL
+  # (a privileged role that owns `identity`) with search_path=identity (lib/auth.ts). Run it
+  # ONCE after first boot (`@better-auth/cli` is a separate package → pnpm dlx):
+  #   docker compose -f deploy/docker-compose.yml exec dashboard \
+  #     pnpm dlx @better-auth/cli@latest migrate --yes
+  # The app migrations create an EMPTY `identity` schema as a
+  # namespace + grant dropway_app SELECT on the identity tables (baseline); app rows attach
+  # via app.org_meta (PK = Better Auth organization.id).
+  #
+  # `required: false` on postgres so this also works against an external/Supabase
+  # DATABASE_OWNER_URL with the bundled postgres profile disabled.
+  # ---------------------------------------------------------------------------
+  migrate:
+    image: golang:1.25
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    environment:
+      GOOSE_DRIVER: postgres
+      GOOSE_DBSTRING: ${DATABASE_OWNER_URL:-postgres://postgres:postgres@postgres:5432/dropway?sslmode=disable}
+      DROPWAY_APP_DB_PASSWORD: ${DROPWAY_APP_DB_PASSWORD:-dropway-app-dev-secret}
+    working_dir: /repo
+    volumes:
+      - ../db:/repo/db:ro
+    entrypoint: >
+      /bin/sh -c "
+      set -e &&
+      go install github.com/pressly/goose/v3/cmd/goose@v3.27.1 &&
+      /go/bin/goose -dir /repo/db/migrations/app up &&
+      apt-get update >/dev/null && apt-get install -y --no-install-recommends postgresql-client >/dev/null &&
+      psql \"$$GOOSE_DBSTRING\" -v ON_ERROR_STOP=1 -c \"ALTER ROLE dropway_app WITH PASSWORD '$$DROPWAY_APP_DB_PASSWORD';\" &&
+      echo 'app migrations applied + dropway_app password set'
+      "
+    restart: "no"
+
+  # ===========================================================================
+  # OPTIONAL bundled data services (profiles). Default-on via COMPOSE_PROFILES in
+  # deploy/.env. Disable to use Supabase (Postgres) / Cloudflare R2 (object store).
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # postgres — bundled system of record. [profile: local-db]
+  # Hosted Dropway uses Supabase instead; disable this profile + set DATABASE_URL.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    profiles: ["local-db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-dropway}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-dropway}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # minio — bundled R2/S3-compatible object store. [profile: local-storage]
+  # Holds per-org blobs/<org>/<sha256> + immutable deploy manifests. Console :9001.
+  # Hosted Dropway uses Cloudflare R2 instead; disable + set the S3_* vars.
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    profiles: ["local-storage"]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dropway}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dropway-dev-secret}
+      # CORS for browser folder drag-and-drop deploy: the dashboard hashes files
+      # and PUTs blobs DIRECTLY to presigned URLs on this store, a cross-origin
+      # request from the dashboard origin. Allow it (the presigned URL is itself the
+      # credential). Default '*' for self-host simplicity; restrict to your dashboard
+      # origin(s) in production (and set the matching R2 bucket CORS policy there).
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_CORS_ALLOW_ORIGIN:-*}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"   # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # web console
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # createbucket — one-shot: ensure the blob bucket exists in MinIO.
+  # ---------------------------------------------------------------------------
+  createbucket:
+    image: minio/mc:latest
+    profiles: ["local-storage"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-dropway} ${MINIO_ROOT_PASSWORD:-dropway-dev-secret} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET:-dropway-blobs} &&
+      echo 'bucket ${MINIO_BUCKET:-dropway-blobs} ready'
+      "
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # mailpit — bundled SMTP server + web inbox for LOCAL email. [profile: local-mail]
+  # Catches every message the dashboard sends (verification / reset / magic link)
+  # so you can click the link without a real provider. The dashboard sends here when
+  # MAIL_SMTP_URL=smtp://mailpit:1025 (set in deploy/.env). Open the inbox at
+  # http://localhost:8025. NOT for production — point MAIL_SMTP_URL at a real SMTP
+  # provider (SES, Mailgun, Postmark, Resend's SMTP, …) and disable this profile.
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["local-mail"]
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"   # web inbox
+      - "${MAILPIT_SMTP_PORT:-1025}:1025" # SMTP (dashboard → mailpit)
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # caddy — internet-facing TLS edge in front of `serve`. [profile: edge-tls]
+  # Automatic HTTPS + ON-DEMAND TLS for tenant custom domains (gated by serve's
+  # /tls-check ask endpoint on :8091) + Cache-Control-honoring response cache (so
+  # public content is cached and gated/private content never is). The open-source
+  # Cloudflare-for-SaaS replacement.
+  #
+  # Run ONLY when the box is public with DNS (the content domain + each custom
+  # domain) pointed at it — real ACME can't work on localhost. For local testing,
+  # hit `serve` directly on its published 8090 with a Host header. Enable via:
+  #   COMPOSE_PROFILES=...,edge-tls   + set CADDY_ACME_EMAIL.
+  # ---------------------------------------------------------------------------
+  caddy:
+    build:
+      context: caddy
+      dockerfile: Dockerfile
+    profiles: ["edge-tls"]
+    restart: unless-stopped
+    environment:
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - serve
+
+volumes:
+  pgdata:
+  miniodata:
+  caddydata:
+  caddyconfig:

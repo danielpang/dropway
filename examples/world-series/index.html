@@ -1,0 +1,127 @@
+<!-- SPDX-License-Identifier: FSL-1.1-Apache-2.0 -->
+<!-- 2025 World Series Spray Chart — broadcast-style SVG baseball field with filterable, illustrative hit data (vanilla JS, no build step). -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2025 World Series · Spray Chart</title>
+  <meta name="description" content="A broadcast-style spray chart visualizing illustrative World Series hit locations on an SVG baseball field." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <a class="skip-link" href="#field-region">Skip to spray chart</a>
+
+  <header class="masthead">
+    <div class="masthead__inner">
+      <div class="brand">
+        <span class="brand__pennant" aria-hidden="true">◆</span>
+        <div class="brand__text">
+          <p class="brand__kicker">Broadcast Graphics</p>
+          <h1 class="brand__title">2025 World Series <span>Spray Chart</span></h1>
+        </div>
+      </div>
+      <div class="scoreboard" aria-label="Series matchup">
+        <div class="scoreboard__team scoreboard__team--away">
+          <span class="scoreboard__abbr" data-team="HARBOR">HAR</span>
+          <span class="scoreboard__name">Harbor City Mariners</span>
+        </div>
+        <span class="scoreboard__vs">vs</span>
+        <div class="scoreboard__team scoreboard__team--home">
+          <span class="scoreboard__name">Summit Range Grizzlies</span>
+          <span class="scoreboard__abbr" data-team="SUMMIT">SUM</span>
+        </div>
+      </div>
+    </div>
+    <p class="disclaimer" role="note">
+      <strong>Illustrative sample data for demonstration — not official MLB data.</strong>
+      Player names are fictional and hit locations were generated to resemble a real spray chart. Nothing here asserts an actual game result.
+    </p>
+  </header>
+
+  <main class="layout">
+    <section class="panel panel--controls" aria-labelledby="controls-heading">
+      <h2 id="controls-heading" class="panel__title">Filters</h2>
+
+      <div class="control-group">
+        <label class="control-label" for="team-select">Team</label>
+        <div class="select-wrap">
+          <select id="team-select" class="select">
+            <option value="all">Both teams</option>
+            <option value="HARBOR">Harbor City Mariners</option>
+            <option value="SUMMIT">Summit Range Grizzlies</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="control-label" for="game-select">Game</label>
+        <div class="select-wrap">
+          <select id="game-select" class="select">
+            <option value="all">All games</option>
+            <option value="1">Game 1</option>
+            <option value="2">Game 2</option>
+            <option value="3">Game 3</option>
+            <option value="4">Game 4</option>
+            <option value="5">Game 5</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <span class="control-label" id="hittype-label">Hit type</span>
+        <div class="toggles" role="group" aria-labelledby="hittype-label" id="type-toggles"></div>
+      </div>
+
+      <button type="button" id="reset-btn" class="reset-btn">Reset filters</button>
+    </section>
+
+    <section class="panel panel--field" aria-labelledby="field-heading" id="field-region">
+      <div class="field-head">
+        <h2 id="field-heading" class="panel__title">Hit locations</h2>
+        <p class="field-count" id="field-count" aria-live="polite"></p>
+      </div>
+      <div class="field-frame">
+        <svg id="field" viewBox="0 0 1000 920" role="img" aria-labelledby="field-heading field-desc" preserveAspectRatio="xMidYMid meet">
+          <desc id="field-desc">Overhead view of a baseball field with plotted hit markers, color-coded by hit type.</desc>
+        </svg>
+        <div class="tooltip" id="tooltip" role="status" aria-live="polite" hidden></div>
+      </div>
+      <ul class="legend" id="legend" aria-label="Hit type legend"></ul>
+    </section>
+
+    <section class="panel panel--stats" aria-labelledby="stats-heading" aria-live="polite">
+      <h2 id="stats-heading" class="panel__title">Summary</h2>
+      <div class="stat-headline">
+        <div class="stat-big">
+          <span class="stat-big__num" id="stat-total">0</span>
+          <span class="stat-big__label">batted balls shown</span>
+        </div>
+      </div>
+      <dl class="stat-grid" id="stat-types"></dl>
+      <div class="stat-split" id="stat-teams"></div>
+      <dl class="stat-extra">
+        <div class="stat-extra__row">
+          <dt>Avg exit velocity</dt><dd id="stat-evo">—</dd>
+        </div>
+        <div class="stat-extra__row">
+          <dt>Longest home run</dt><dd id="stat-hr">—</dd>
+        </div>
+        <div class="stat-extra__row">
+          <dt>Hits (1B–HR)</dt><dd id="stat-hits">—</dd>
+        </div>
+      </dl>
+    </section>
+  </main>
+
+  <footer class="colophon">
+    <p>Pure static showcase for <strong>Dropway</strong> · SVG field + vanilla JS · data embedded inline.</p>
+    <p class="colophon__fine">Hit locations are illustrative sample data for demonstration, not official MLB data.</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

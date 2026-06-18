@@ -1,0 +1,421 @@
+/* SPDX-License-Identifier: FSL-1.1-Apache-2.0 */
+/* Synthwave / Outrun sunset scene — pure CSS art. */
+
+:root {
+  --magenta: #ff2d95;
+  --hot-pink: #ff6ec7;
+  --orange: #ff8a3d;
+  --yellow: #ffe24b;
+  --cyan: #2de2e6;
+  --purple: #8c1eff;
+  --indigo: #1a0b2e;
+  --night: #0b0417;
+  --grid: #ff2d95;
+  --horizon: 56%;        /* vertical position of the horizon line */
+  --sun-size: clamp(220px, 42vmin, 460px);
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--night);
+  color: #fff;
+  font-family: "Orbitron", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* ============================================================= STAGE */
+.scene {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  perspective: 340px;
+  perspective-origin: 50% var(--horizon);
+}
+
+/* ------------------------------------------------------------- SKY */
+.sky {
+  position: absolute;
+  inset: 0 0 calc(100% - var(--horizon)) 0;
+  background:
+    linear-gradient(
+      to bottom,
+      #060019 0%,
+      #1a0033 34%,
+      #4a0a5e 64%,
+      #a01a6e 86%,
+      #ff2d6e 100%
+    );
+  animation: skydrift 24s ease-in-out infinite alternate;
+}
+
+@keyframes skydrift {
+  0%   { filter: hue-rotate(0deg)   saturate(1); }
+  100% { filter: hue-rotate(-18deg) saturate(1.25); }
+}
+
+/* Twinkling starfield — three radial-gradient layers, no image files. */
+.stars {
+  position: absolute;
+  inset: 0 0 32% 0;
+  background-repeat: repeat;
+  pointer-events: none;
+}
+.stars::before,
+.stars::after,
+.stars i {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat;
+  pointer-events: none;
+}
+.stars::before {
+  background-image:
+    radial-gradient(1.4px 1.4px at 20px 30px, #fff, transparent),
+    radial-gradient(1.2px 1.2px at 130px 80px, #cfe9ff, transparent),
+    radial-gradient(1.6px 1.6px at 210px 50px, #fff, transparent),
+    radial-gradient(1.2px 1.2px at 300px 120px, #ffd9f5, transparent),
+    radial-gradient(1.3px 1.3px at 90px 160px, #fff, transparent);
+  background-size: 360px 220px;
+  animation: twinkle 4.2s steps(1, end) infinite;
+}
+.stars::after {
+  background-image:
+    radial-gradient(1.1px 1.1px at 60px 70px, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 180px 30px, #bff6ff, transparent),
+    radial-gradient(1.1px 1.1px at 260px 100px, #fff, transparent),
+    radial-gradient(1.3px 1.3px at 340px 60px, #ffe7fb, transparent),
+    radial-gradient(1.2px 1.2px at 20px 130px, #fff, transparent);
+  background-size: 420px 260px;
+  animation: twinkle 5.6s steps(1, end) infinite 0.8s;
+  opacity: 0.85;
+}
+.stars i {
+  background-image:
+    radial-gradient(1px 1px at 110px 40px, #fff, transparent),
+    radial-gradient(1px 1px at 240px 150px, #d9f6ff, transparent),
+    radial-gradient(1px 1px at 30px 90px, #fff, transparent);
+  background-size: 300px 300px;
+  animation: twinkle 3.4s steps(1, end) infinite 1.6s;
+  opacity: 0.7;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 0.95; }
+}
+
+/* ------------------------------------------------------------- SUN */
+.sun {
+  position: absolute;
+  left: 50%;
+  top: var(--horizon);
+  width: var(--sun-size);
+  height: var(--sun-size);
+  transform: translate(-50%, -62%);
+  border-radius: 50%;
+  background:
+    linear-gradient(
+      to bottom,
+      var(--yellow) 0%,
+      var(--orange) 36%,
+      var(--magenta) 70%,
+      var(--purple) 100%
+    );
+  /* glow */
+  box-shadow:
+    0 0 60px 10px rgba(255, 110, 160, 0.55),
+    0 0 140px 40px rgba(255, 45, 149, 0.35),
+    0 0 220px 90px rgba(140, 30, 255, 0.22);
+  animation: sunpulse 5s ease-in-out infinite;
+}
+
+/* Scanline cutouts across the lower half of the sun. */
+.sun::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 14px,
+      var(--night) 14px,
+      var(--night) 20px
+    );
+  /* only show the stripes on the bottom ~55% of the disc */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 45%, #000 45%);
+          mask-image: linear-gradient(to bottom, transparent 45%, #000 45%);
+}
+
+@keyframes sunpulse {
+  0%, 100% {
+    box-shadow:
+      0 0 60px 10px rgba(255, 110, 160, 0.55),
+      0 0 140px 40px rgba(255, 45, 149, 0.35),
+      0 0 220px 90px rgba(140, 30, 255, 0.22);
+  }
+  50% {
+    box-shadow:
+      0 0 80px 16px rgba(255, 140, 190, 0.75),
+      0 0 180px 56px rgba(255, 45, 149, 0.5),
+      0 0 280px 120px rgba(140, 30, 255, 0.3);
+  }
+}
+
+/* --------------------------------------------------------- SKYLINE */
+/* Layered silhouette city skyline rendered with hard-edged gradients. */
+.skyline {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - var(--horizon));
+  width: 140%;
+  height: 22vmin;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.skyline span {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+/* back row — taller, dimmer */
+.skyline .far {
+  filter: drop-shadow(0 0 6px rgba(45, 226, 230, 0.4));
+  opacity: 0.55;
+  background:
+    linear-gradient(180deg, #2a0a4e, #16002e) ;
+  -webkit-mask:
+    repeating-linear-gradient(90deg,
+      transparent 0 24px, #000 24px 44px, transparent 44px 70px,
+      #000 70px 96px, transparent 96px 120px, #000 120px 150px);
+          mask:
+    repeating-linear-gradient(90deg,
+      transparent 0 24px, #000 24px 44px, transparent 44px 70px,
+      #000 70px 96px, transparent 96px 120px, #000 120px 150px);
+  -webkit-mask-size: 150px 78%;
+          mask-size: 150px 78%;
+  -webkit-mask-repeat: repeat-x;
+          mask-repeat: repeat-x;
+  -webkit-mask-position: bottom;
+          mask-position: bottom;
+}
+/* front row — shorter, sharper, darker */
+.skyline .near {
+  background: linear-gradient(180deg, #190030, #0b0417);
+  -webkit-mask:
+    repeating-linear-gradient(90deg,
+      #000 0 30px, transparent 30px 52px, #000 52px 64px,
+      transparent 64px 92px, #000 92px 132px, transparent 132px 160px);
+          mask:
+    repeating-linear-gradient(90deg,
+      #000 0 30px, transparent 30px 52px, #000 52px 64px,
+      transparent 64px 92px, #000 92px 132px, transparent 132px 160px);
+  -webkit-mask-size: 160px 55%;
+          mask-size: 160px 55%;
+  -webkit-mask-repeat: repeat-x;
+          mask-repeat: repeat-x;
+  -webkit-mask-position: bottom;
+          mask-position: bottom;
+}
+
+/* ------------------------------------------------------- GRID FLOOR */
+.floor {
+  position: absolute;
+  left: 50%;
+  top: var(--horizon);
+  width: 260vmax;
+  height: 130vmax;
+  transform-origin: 50% 0;
+  transform: translateX(-50%) rotateX(84deg);
+  background:
+    /* a wash of colour under the lines */
+    linear-gradient(to bottom, rgba(26, 11, 46, 0) 0%, rgba(45, 12, 90, 0.55) 60%, rgba(11, 4, 23, 0.9) 100%);
+  overflow: hidden;
+}
+.floor::before,
+.floor::after {
+  content: "";
+  position: absolute;
+  inset: -50% -10%;
+  background-repeat: repeat;
+}
+/* horizontal lines that rush toward the camera */
+.floor::before {
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 78px,
+      var(--grid) 78px 80px
+    );
+  background-size: 100% 80px;
+  box-shadow: 0 0 8px rgba(255, 45, 149, 0.6);
+  animation: gridrun 1.4s linear infinite;
+}
+/* vertical lines */
+.floor::after {
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      transparent 0 78px,
+      var(--cyan) 78px 80px
+    );
+  background-size: 80px 100%;
+  opacity: 0.85;
+  filter: drop-shadow(0 0 4px rgba(45, 226, 230, 0.7));
+}
+@keyframes gridrun {
+  from { background-position: 0 0; }
+  to   { background-position: 0 80px; }
+}
+
+/* Fade the far edge of the floor into the horizon haze. */
+.floor-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--horizon);
+  height: 16vmin;
+  transform: translateY(-50%);
+  background: linear-gradient(to bottom,
+    rgba(11, 4, 23, 0) 0%,
+    rgba(160, 26, 110, 0.25) 50%,
+    rgba(11, 4, 23, 0) 100%);
+  pointer-events: none;
+}
+
+/* horizon glow line */
+.horizon-glow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--horizon);
+  height: 2px;
+  transform: translateY(-1px);
+  background: var(--cyan);
+  box-shadow:
+    0 0 12px 2px var(--cyan),
+    0 0 40px 8px rgba(45, 226, 230, 0.6);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------ TITLE */
+.stage-title {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  margin: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+.stage-title .word {
+  display: block;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  font-size: clamp(2.6rem, 13vmin, 9rem);
+  line-height: 1;
+  /* chrome fill */
+  background: linear-gradient(
+    to bottom,
+    #fff 6%,
+    #ffe9fb 28%,
+    var(--hot-pink) 48%,
+    #b3005c 52%,
+    var(--orange) 70%,
+    var(--yellow) 92%
+  );
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(255, 110, 199, 0.5);
+  /* layered neon glow */
+  filter:
+    drop-shadow(0 0 6px rgba(255, 110, 199, 0.9))
+    drop-shadow(0 0 18px rgba(255, 45, 149, 0.8))
+    drop-shadow(0 0 40px rgba(140, 30, 255, 0.6));
+  animation: neonflicker 6s ease-in-out infinite;
+}
+.stage-title .tag {
+  display: block;
+  margin-top: 0.9rem;
+  font-size: clamp(0.7rem, 2.4vmin, 1.1rem);
+  letter-spacing: 0.55em;
+  text-indent: 0.55em;
+  color: var(--cyan);
+  text-shadow:
+    0 0 6px var(--cyan),
+    0 0 18px rgba(45, 226, 230, 0.7);
+}
+
+@keyframes neonflicker {
+  0%, 100% { opacity: 1; }
+  43%      { opacity: 1; }
+  45%      { opacity: 0.72; }
+  46%      { opacity: 1; }
+  62%      { opacity: 0.88; }
+  63%      { opacity: 1; }
+}
+
+/* ---------------------------------------------------- CRT OVERLAY */
+.crt {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  /* fine scanlines */
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.18) 3px,
+      rgba(0, 0, 0, 0.18) 3px
+    );
+  background-size: 100% 3px;
+  mix-blend-mode: multiply;
+}
+/* vignette + soft rolling band */
+.crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 100% at 50% 50%,
+      transparent 58%, rgba(0, 0, 0, 0.55) 100%);
+}
+.crt::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 32%;
+  background: linear-gradient(to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    rgba(255, 255, 255, 0) 100%);
+  animation: scanroll 7s linear infinite;
+}
+@keyframes scanroll {
+  from { transform: translateY(-40%); }
+  to   { transform: translateY(140%); }
+}
+
+/* --------------------------------------------------- ACCESSIBILITY */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+  }
+}

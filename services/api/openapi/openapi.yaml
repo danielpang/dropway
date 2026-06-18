@@ -1,0 +1,1032 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Dropway control-plane API (api.dropway.dev) — the system of record and authz
+# boundary. The dashboard generates its typed TS client
+# from THIS spec; the frontend's contract is the API, never the DB. Keep this
+# accurate: every path/shape here is implemented in services/api/internal/handlers.
+#
+# Phase 1 surface: identity echo, sites CRUD (create/list/get), and the deploy
+# loop (prepare → finalize → publish). Access modes other than `public`, billing,
+# and the gated /authz exchange are later phases.
+
+openapi: 3.1.0
+
+info:
+  title: Dropway API
+  version: "1.0.0-phase2"
+  description: >
+    The Dropway control plane. Most /v1 routes require a Bearer EdDSA JWT
+    (issued by Better Auth) which the Go API verifies itself (the authz boundary).
+    Every request runs under a Postgres RLS tenant context derived from the
+    verified org_id/user_id claims.
+
+
+    Phase 2 adds access control & domains: the /authz viewer exchange (mint +
+    password) which issues a host-scoped EdDSA edge token the serving Worker
+    verifies (public JWKS at /.well-known/edge-jwks), per-site access-mode + policy
+    management (admin/owner only), allowlist CRUD, the org allow_external_sharing
+    toggle (with reconcile), member listing, and Cloudflare-for-SaaS custom domains.
+  license:
+    name: FSL-1.1-Apache-2.0
+
+servers:
+  - url: https://api.dropway.dev
+    description: Production
+  - url: http://localhost:8080
+    description: Local / self-host
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe (unauthenticated)
+      security: []
+      operationId: healthz
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /.well-known/edge-jwks:
+    get:
+      summary: Edge-token JWKS (unauthenticated)
+      description: >
+        The public JWKS (OKP/Ed25519) for the edge-token signer. The serving Worker
+        fetches this and pins alg=EdDSA to verify the host-scoped edge token. This
+        is a SEPARATE keypair from Better Auth's user JWKS.
+      security: []
+      operationId: edgeJwks
+      responses:
+        "200":
+          description: The edge signer's public JWKS
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JWKS" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/authz/mint:
+    post:
+      summary: Mint a host-scoped edge token for an org_only/allowlist site
+      description: >
+        Authorizes the VERIFIED viewer (Better Auth JWT) for the org_only/allowlist
+        site resolved from {host} and mints a host-scoped EdDSA edge token (sub =
+        viewer). Re-checks live tables: org membership for org_only; the viewer's
+        VERIFIED email on the allowlist for allowlist (claiming a pending entry on
+        first match; external grants require allow_external_sharing). An expired
+        policy refuses the mint (403). A password-mode site → 400 (use /authz/password).
+      operationId: authzMint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host: { type: string, description: Content host (e.g. acme.dropwaycontent.com or a verified custom host) }
+                next: { type: string, description: Path the dashboard redirects back to (NOT used for authz) }
+      responses:
+        "200":
+          description: Minted edge token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EdgeToken" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/authz/password:
+    post:
+      summary: Mint an anonymous edge token for a password-protected site
+      description: >
+        JWT-FREE. Verifies the submitted password against the site's bcrypt hash
+        (constant-time compare) and, on success, mints an ANONYMOUS host-scoped edge
+        token (sub = "anon:<random>"). Wrong password → 401; an expired policy →
+        403; a non-password / unknown host → a generic 401 (no existence oracle).
+      security: []
+      operationId: authzPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, password]
+              properties:
+                host: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: Minted anonymous edge token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EdgeToken" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/me:
+    get:
+      summary: Echo the caller's verified identity
+      operationId: getMe
+      responses:
+        "200":
+          description: The verified claims
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/members:
+    get:
+      summary: List the caller org's members
+      description: >
+        Lists members from the Better Auth `member` table, RLS/org-scoped. The Go
+        API only READS roles (Better Auth owns invite/accept/role mutations). If the
+        Better Auth table is unavailable (self-host pre-Better-Auth), returns an
+        empty list.
+      operationId: listMembers
+      responses:
+        "200":
+          description: The org's members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/storage:
+    get:
+      summary: Logical storage usage per user for the caller org
+      description: >
+        Per-user LOGICAL storage for the active org: each user's total is the sum of
+        their sites' current-version sizes. "Logical" means NOT deduplicated (a file
+        shipped by two users counts for both — the per-folder model of Dropbox/Drive).
+        Display-only attribution for the members page, NOT an entitlement; the
+        authoritative deduplicated org footprint is metered separately. Users with no
+        sites are omitted (render as 0). Any org member may read it (org-scoped).
+      operationId: storageUsage
+      responses:
+        "200":
+          description: Per-user logical storage, sorted by user id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/UserStorage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/orgs/allow-external-sharing:
+    put:
+      summary: Toggle the org allow_external_sharing policy (admin/owner only)
+      description: >
+        Owner/admin only (role re-checked against the member table). When DISABLING,
+        reconciles: public sites are downgraded to org_only and their edge routes
+        rewritten; external-email allowlist grants are revoked. Enabling only widens
+        what is permitted (no reconcile).
+      operationId: setAllowExternalSharing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new policy + the number of downgraded sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allow_external_sharing: { type: boolean }
+                  downgraded_sites: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/orgs/policy:
+    get:
+      summary: Read the caller org's policy (live toggle state)
+      description: >
+        Any member may read it (it drives the org's own settings UI). Returns the
+        live allow_external_sharing flag and mcp_enabled flag. Writing the values
+        stays admin/owner only (allow-external-sharing / mcp endpoints).
+      operationId: getOrgPolicy
+      responses:
+        "200":
+          description: The org's current policy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allow_external_sharing: { type: boolean }
+                  mcp_enabled: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/orgs/mcp:
+    patch:
+      summary: Toggle whether the Dropway MCP server may serve this org (admin/owner only)
+      description: >
+        Owner/admin only (role re-checked against the member table). Flips
+        org_meta.mcp_enabled. The MCP resource server re-checks this flag per request,
+        so disabling takes effect immediately even for already-issued OAuth access
+        tokens (no edge reconcile needed). Default enabled.
+      operationId: setMcpEnabled
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new mcp_enabled value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mcp_enabled: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/domains/{domainID}:
+    delete:
+      summary: Remove a custom domain (admin/owner only)
+      description: >
+        Deletes the custom domain: removes the global host route (so the custom host
+        stops serving immediately), then best-effort deletes the edge route
+        projection and the Cloudflare custom hostname. Owner/admin only.
+      operationId: deleteDomain
+      parameters:
+        - name: domainID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/domains/{domainID}/status:
+    get:
+      summary: Poll a custom domain's verification status
+      description: >
+        Polls Cloudflare for the custom hostname's verification + TLS state, advances
+        the pending→verifying→active state machine, and — on verified+TLS — writes
+        the global host route → site so the custom host serves.
+      operationId: getDomainStatus
+      parameters:
+        - name: domainID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The updated domain row
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/sites:
+    post:
+      summary: Create a site
+      description: >
+        Reserved slugs are rejected (400). A slug whose content host
+        (`<slug>.dropwaycontent.com`) is already taken by another org/site
+        returns 409 Conflict — the host registry is global even though site slugs
+        are unique only per org. On the cloud build, exceeding the per-user site
+        cap returns 402 with the quota body so the dashboard can open the upgrade
+        modal.
+      operationId: createSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug:
+                  type: string
+                  description: Subdomain label under dropwaycontent.com (unique per org).
+                  example: my-docs
+      responses:
+        "201":
+          description: Site created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      summary: List the caller org's sites
+      operationId: listSites
+      responses:
+        "200":
+          description: The org's sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: "#/components/schemas/Site" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/sites/{id}:
+    get:
+      summary: Get one site
+      operationId: getSite
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/versions:
+    get:
+      summary: List a site's deploy history (newest first)
+      description: >
+        Returns every immutable version of the site, newest first, each flagged with
+        whether it is the live version. Drives the dashboard rollback picker.
+      operationId: listVersions
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteVersion" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/deployments/prepare:
+    post:
+      summary: Prepare a deployment — discover missing blobs + presigned uploads
+      description: >
+        Given the deploy manifest, returns the subset of referenced blobs not
+        already present for the org (only-changed-blob upload) and a presigned PUT
+        URL for each. Blob keys are derived server-side from the org + sha256.
+      operationId: prepareDeployment
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest]
+              properties:
+                manifest:
+                  type: array
+                  items: { $ref: "#/components/schemas/ManifestFile" }
+      responses:
+        "200":
+          description: Missing blobs + presigned upload URLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  missing:
+                    type: array
+                    items: { type: string, description: sha256 (lowercase hex) }
+                  uploads:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      format: uri
+                    description: sha256 → presigned PUT URL
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/deployments:
+    post:
+      summary: Finalize a deployment — verify blobs, write the immutable version
+      description: >
+        Server-verifies that every referenced blob is present AND its stored bytes
+        hash equals the claimed sha256, writes the immutable per-deploy manifest to
+        object storage, and inserts an immutable site_version (status=ready, next
+        version_no). Idempotent on the per-site content digest.
+      operationId: finalizeDeployment
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifest, digest]
+              properties:
+                manifest:
+                  type: array
+                  items: { $ref: "#/components/schemas/ManifestFile" }
+                digest:
+                  type: string
+                  description: Whole-deploy content address (sha256, lowercase hex). The version's content_hash + idempotency key.
+      responses:
+        "201":
+          description: Immutable version created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/publish:
+    post:
+      summary: Publish (or roll back to) a version
+      description: >
+        Flips the site's live-version pointer to version_id and writes the edge
+        routing projection (KV route:<host>). Rollback is just publishing an older
+        version_id. The pointer flip is Postgres-authoritative; the projection is a
+        rebuildable cache.
+      operationId: publish
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version_id]
+              properties:
+                version_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Published; the site is live
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  live_url: { type: string, format: uri }
+                  version_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/access:
+    put:
+      summary: Set a site's access mode + policy (admin/owner only)
+      description: >
+        Owner/admin only (role re-checked against the member table). Sets the
+        access_mode (public/password/allowlist/org_only) and the matching policy:
+        a password mode's password is hashed server-side (bcrypt; plaintext is never
+        stored), optional expires_at (RFC3339) sets a link expiry, unlisted marks a
+        public-tier site as unlisted. Rewrites the edge RouteValue (mode + expires_at
+        for the public tier). A public site under allow_external_sharing=false → 403.
+      operationId: setSiteAccess
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [public, password, allowlist, org_only] }
+                password: { type: string, description: Plaintext; hashed server-side. Required for mode=password. }
+                expires_at: { type: string, format: date-time, description: Optional link expiry (RFC3339). }
+                unlisted: { type: boolean, description: Public-tier unlisted flag. }
+      responses:
+        "200":
+          description: Access updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id: { type: string, format: uuid }
+                  mode: { type: string }
+                  unlisted: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/allowlist:
+    get:
+      summary: List a site's allowlist
+      operationId: listAllowlist
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's allowlist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowlist:
+                    type: array
+                    items: { $ref: "#/components/schemas/AllowlistEntry" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Add an email to a site's allowlist (admin/owner only)
+      description: >
+        Owner/admin only. is_external is set automatically when the email's domain is
+        not one of the org's VERIFIED domains; the DB trigger then rejects an external
+        grant under allow_external_sharing=false (403).
+      operationId: addAllowlistEntry
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "201":
+          description: Entry added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AllowlistEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Remove an email from a site's allowlist (admin/owner only)
+      operationId: removeAllowlistEntry
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: Entry removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/domains:
+    get:
+      summary: List a site's custom domains
+      operationId: listDomains
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's custom domains
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  domains:
+                    type: array
+                    items: { $ref: "#/components/schemas/Domain" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Register a custom domain for a site (admin/owner only)
+      description: >
+        Owner/admin only. Creates a Cloudflare-for-SaaS custom hostname and stores a
+        pending domains row, returning the DNS DCV record the user must create.
+        hostname is GLOBALLY UNIQUE → 409 if taken by another org/site.
+      operationId: addDomain
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname: { type: string, example: docs.acme.com }
+      responses:
+        "201":
+          description: Custom domain registered (pending verification)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Domain" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  # ===========================================================================
+  # Billing (CLOUD-ONLY / PROPRIETARY).
+  #
+  # These paths exist ONLY in the hosted-cloud build (compiled under the `cloud`
+  # Go build tag and mounted by mountCloud). The open-source / self-host build
+  # does NOT serve /webhooks/stripe or /v1/billing/* — self-host is unlimited and
+  # has no Stripe. They are documented here for the cloud client; a self-host
+  # client will get 404 on them, which is expected.
+  #
+  # CRITICAL invariant: the paid entitlement (plan_tier) is written to the DB ONLY
+  # by the signature-verified /webhooks/stripe handler — never by the browser's
+  # success redirect. Checkout/Portal only START a Stripe-hosted flow.
+  # ===========================================================================
+
+  /webhooks/stripe:
+    post:
+      summary: "[CLOUD-ONLY] Stripe webhook (JWT-FREE, signature-verified)"
+      description: >
+        The Stripe webhook endpoint. UNAUTHENTICATED (no Better Auth JWT) but
+        SIGNATURE-VERIFIED against STRIPE_WEBHOOK_SECRET via the Stripe-Signature
+        header. The handler (1) verifies the signature (else 400, no DB write),
+        (2) dedupes by Stripe event id (replay → 200 no-op), (3) maps the event to
+        a plan_tier change and persists it (the ONLY writer of plan_tier). This is
+        the source of truth for entitlement. checkout.session.completed /
+        customer.subscription.created|updated → upsert subscription + raise
+        plan_tier; customer.subscription.deleted → downgrade to Free + org_status
+        (over_limit if the org now exceeds Free caps), NEVER deleting data.
+      operationId: stripeWebhook
+      security: []
+      tags: [billing-cloud]
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+          description: "Stripe's t=<ts>,v1=<hmac> signature over the raw body."
+      requestBody:
+        required: true
+        description: The raw Stripe event JSON (verified against the signature).
+        content:
+          application/json:
+            schema: { type: object, description: A Stripe Event object. }
+      responses:
+        "200":
+          description: Processed (or acknowledged duplicate / unhandled type).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "400":
+          description: Invalid or missing signature — nothing is persisted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "405": { $ref: "#/components/responses/Error405" }
+        "500": { $ref: "#/components/responses/Error500" }
+
+  /v1/billing:
+    get:
+      summary: "[CLOUD-ONLY] Get the org's current plan"
+      description: >
+        Returns the org's authoritative plan (read from app.org_meta) plus the
+        subscription status / org_status / seats if a subscription row exists. Any
+        authenticated member may read it (it drives the dashboard's plan banner and
+        upgrade CTA); billing WRITES still require owner/admin.
+      operationId: getBilling
+      tags: [billing-cloud]
+      responses:
+        "200":
+          description: The org's current plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BillingPlan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Cloud build not present (self-host) — route does not exist.
+
+  /v1/billing/checkout:
+    post:
+      summary: "[CLOUD-ONLY] Start a Stripe Checkout session (owner/admin)"
+      description: >
+        Owner/admin only. Ensures a Stripe Customer for the org (one per org,
+        persisting stripe_customer_id), then creates a subscription-mode Checkout
+        Session for {target_tier} with client_reference_id=org_id and
+        metadata{org_id,target_tier} so the signed webhook can resolve + entitle the
+        org. Returns the Stripe-hosted checkout_url. The success redirect grants
+        NOTHING — only the webhook flips plan_tier.
+      operationId: createCheckout
+      tags: [billing-cloud]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_tier]
+              properties:
+                target_tier: { type: string, enum: [business, enterprise] }
+                seats: { type: integer, format: int64, minimum: 1, description: "Seats (defaults to 1)." }
+      responses:
+        "200":
+          description: A Stripe Checkout Session URL to redirect the user to.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkout_url: { type: string, format: uri }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/billing/portal:
+    post:
+      summary: "[CLOUD-ONLY] Open the Stripe Billing Portal (owner/admin)"
+      description: >
+        Owner/admin only. Creates a Stripe Billing Portal session for the org's
+        existing Stripe Customer (self-serve seat/plan/payment-method/cancel) and
+        returns the portal_url. 409 if the org has no Stripe customer yet (run
+        Checkout first).
+      operationId: createPortal
+      tags: [billing-cloud]
+      responses:
+        "200":
+          description: A Stripe Billing Portal URL to redirect the user to.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  portal_url: { type: string, format: uri }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived EdDSA JWT (Better Auth) or a deploy token.
+
+  parameters:
+    SiteID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: app.sites.id
+
+  schemas:
+    Me:
+      type: object
+      properties:
+        user_id: { type: string }
+        org_id: { type: string }
+        role: { type: string, enum: [owner, admin, member] }
+        custom_domains_enabled:
+          type: boolean
+          description: >
+            Whether custom domains are backed by a real provider (Cloudflare for
+            SaaS). False in self-host/dev, where the dashboard hides the feature
+            because it can never finish verification.
+
+    Member:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        role: { type: string, enum: [owner, admin, member] }
+
+    EdgeToken:
+      type: object
+      description: A minted host-scoped EdDSA edge token (the serving Worker verifies it).
+      properties:
+        token: { type: string, description: Compact EdDSA JWT (aud = the content host). }
+        host: { type: string }
+        mode: { type: string, enum: [password, allowlist, org_only] }
+
+    AllowlistEntry:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        is_external: { type: boolean }
+        claimed_at: { type: string, format: date-time, nullable: true }
+        claimed_by: { type: string, format: uuid, nullable: true }
+
+    Domain:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        site_id: { type: string, format: uuid }
+        hostname: { type: string }
+        verify_status: { type: string, enum: [pending, verifying, verified, failed] }
+        tls_status: { type: string, enum: [pending, issued, failed] }
+        dcv_record: { type: string, description: "DNS record to create: '<name> <type> <value>'." }
+
+    JWKS:
+      type: object
+      description: JSON Web Key Set (OKP/Ed25519) for the edge-token signer.
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            properties:
+              kty: { type: string, example: OKP }
+              crv: { type: string, example: Ed25519 }
+              kid: { type: string }
+              x: { type: string, description: base64url(raw public key) }
+              use: { type: string, example: sig }
+              alg: { type: string, example: EdDSA }
+
+    Site:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        slug: { type: string }
+        owner_id: { type: string, format: uuid }
+        access_mode: { type: string, enum: [public, password, allowlist, org_only] }
+        current_version_id: { type: string, format: uuid, nullable: true }
+        live_url: { type: string, format: uri }
+        storage_bytes:
+          type: integer
+          format: int64
+          description: >
+            The site's LOGICAL storage in bytes: the size of its current live
+            version (0 before the first deploy). "Logical" means NOT deduplicated
+            across sites/versions — the per-folder size you'd expect from Dropbox or
+            Drive, not the org's billed footprint.
+        created_at: { type: string, format: date-time }
+
+    UserStorage:
+      type: object
+      description: One user's logical storage total in the org (bytes).
+      properties:
+        user_id: { type: string, format: uuid }
+        bytes: { type: integer, format: int64 }
+
+    Version:
+      type: object
+      properties:
+        version_id: { type: string, format: uuid }
+        version_no: { type: integer }
+        preview_url: { type: string, format: uri }
+
+    SiteVersion:
+      type: object
+      description: One immutable deploy in a site's history.
+      properties:
+        id: { type: string, format: uuid }
+        version_no: { type: integer }
+        status: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        content_hash: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        is_current:
+          type: boolean
+          description: Whether this is the version the site is currently serving.
+
+    ManifestFile:
+      type: object
+      required: [path, sha256, size]
+      properties:
+        path:
+          type: string
+          description: Request path served from the site (e.g. index.html, assets/app.js).
+        sha256:
+          type: string
+          description: Content hash (lowercase hex). The server derives the R2 key from org + this.
+        size: { type: integer, format: int64 }
+        content_type: { type: string }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: Stable machine-readable code }
+        message: { type: string }
+
+    BillingPlan:
+      type: object
+      description: "[CLOUD-ONLY] The org's current plan (GET /v1/billing). plan_tier is read from app.org_meta (authoritative)."
+      properties:
+        plan_tier: { type: string, enum: [free, business, enterprise] }
+        status: { type: string, enum: [active, trialing, past_due, canceled, incomplete], description: Stripe subscription status (omitted if no subscription row). }
+        org_status: { type: string, enum: [active, over_limit, past_due, suspended], description: Derived account state mirrored to the edge. }
+        seats: { type: integer, format: int64 }
+
+    QuotaExceeded:
+      type: object
+      description: 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal.
+      properties:
+        limit: { type: string, enum: [sites_per_user, members_per_org] }
+        current: { type: integer, format: int64 }
+        max: { type: integer, format: int64 }
+        plan_tier: { type: string }
+        next_tier: { type: string }
+        upgrade_url: { type: string, format: uri }
+        sales_url: { type: string, format: uri }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated but not permitted (e.g. not admin/owner, expired link, not on allowlist, external sharing disabled)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: A required dependency (DB, edge signer, custom-domain provider) is not configured
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Malformed request / reserved slug / verification failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource absent (or invisible under the caller's tenant)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Slug/host already in use by another org/site (global host registry)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    QuotaExceeded:
+      description: A hard cap was crossed (cloud build only)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/QuotaExceeded" }
+    Error405:
+      description: Method not allowed (e.g. a non-POST to the Stripe webhook)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error500:
+      description: Internal error (the request may be retried; persistence is idempotent)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

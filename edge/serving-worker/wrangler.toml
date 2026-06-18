@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Dropway serving Worker — *.dropwaycontent.com (Cloudflare).
+# Phase 1: PUBLIC serve path only (JWT-free, cacheable).
+#
+# This Worker is READ-ONLY against its bindings: KV (ROUTES) and R2 (BUCKET)
+# are projections the Go API is the sole writer of. The IDs below are
+# placeholders — the infra agent fills them in (or supplies them via the
+# Cloudflare dashboard / `wrangler ... create`) per environment.
+
+name = "dropway-serving-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+# Workers runtime flags. `nodejs_compat` is harmless here and eases any future
+# shared code; the Worker itself uses only Web-standard APIs.
+compatibility_flags = ["nodejs_compat"]
+
+# Observability: structured logs for edge serve decisions.
+[observability]
+enabled = true
+
+# --- Vars (Phase 2 gated path) -----------------------------------------------
+# Non-secret configuration for the identity-gated serve path (password|allowlist|
+# org_only). The Worker verifies the host-scoped EDGE TOKEN against the Go API's
+# edge JWKS and bounces unauthenticated viewers to the dashboard /authz exchange.
+# Both have safe production defaults in src/config.ts; set them per environment.
+[vars]
+# Edge signer public keys (OKP/Ed25519). The gated path fetches + caches this to
+# verify the __Host-edge token (alg pinned EdDSA, iss + aud + exp + site_id).
+EDGE_JWKS_URL = "https://api.dropway.dev/.well-known/edge-jwks"
+# Dashboard /authz exchange a gated request with no/invalid edge token 302s to.
+APP_AUTHZ_URL = "https://app.dropway.dev/authz"
+
+# --- Phase 4 hardening (edge rate limiting / denial-of-wallet) ---------------
+# Rate limit applied per client IP (else host) BEFORE the route lookup. The
+# PRIMARY limiter is the native `ratelimit` binding below (atomic — it actually
+# counts a single-IP flood); these vars only tune the KV-counter FALLBACK
+# (src/ratelimit.ts, best-effort: KV can't count a hot-key flood). Defaults
+# 600 req / 60s.
+RATE_LIMIT_MAX = "600"
+RATE_LIMIT_WINDOW_SECONDS = "60"
+
+# Native, atomic Rate Limiting binding — the REAL denial-of-wallet control (it
+# correctly counts a single-IP flood the KV counter cannot). Keep `simple.limit`
+# /`period` in sync with the vars above; `namespace_id` is an arbitrary per-Worker
+# integer you choose. When this binding is present the Worker prefers it over the
+# KV counter (src/index.ts).
+[[ratelimit]]
+binding = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 600, period = 60 }
+
+# --- Bindings ----------------------------------------------------------------
+
+# KV: host routing projection. Key `route:<host>` → RouteValue
+#   { org_id, site_id, version_id, access_mode, schema_version }
+# Replace `id` / `preview_id` with the real namespace IDs.
+[[kv_namespaces]]
+binding = "ROUTES"
+id = "REPLACE_WITH_ROUTES_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
+
+# R2: the single private bucket holding all tenant content, content-addressed:
+#   manifests/<org_id>/<site_id>/<version_id>.json  (per-deploy path → sha256 map)
+#   blobs/<org_id>/<sha256>                          (deduped content-addressed)
+# Replace `bucket_name` with the real bucket; `preview_bucket_name` is used by
+# `wrangler dev` so local runs don't touch the production bucket.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "dropway-content"
+preview_bucket_name = "dropway-content-preview"
+
+# --- Phase 4 hardening bindings (OPTIONAL) -----------------------------------
+# LIMITS: KV for the edge rate-limiter counters (`rl:*`) AND the per-org
+# suspension/over-limit status (`org_status:<org_id>` → "suspended"|"over_limit",
+# written by the Go API on billing suspension / quota over-limit). Absent → rate
+# limiting is a no-op (fail open) and the org-status check is skipped. Uncomment
+# and fill the IDs to enable (a separate namespace from ROUTES is recommended so
+# high-churn counters don't contend with the route projection).
+#
+# [[kv_namespaces]]
+# binding = "LIMITS"
+# id = "REPLACE_WITH_LIMITS_KV_NAMESPACE_ID"
+# preview_id = "REPLACE_WITH_LIMITS_KV_PREVIEW_NAMESPACE_ID"
+#
+# REVOKED: KV for the hard-revocation denylist (`revoked:user|site|org:<id>` →
+# { "min_iat": <unix seconds> }, written by the Go API on member removal / unshare
+# / external-sharing disable / suspension). If this binding is OMITTED the Worker
+# reuses the ROUTES namespace with the `revoked:` prefix (the revocation contract default),
+# so gated revocation works out of the box. Supply a dedicated namespace only if
+# you want to isolate denylist writes from the route projection.
+#
+# [[kv_namespaces]]
+# binding = "REVOKED"
+# id = "REPLACE_WITH_REVOKED_KV_NAMESPACE_ID"
+# preview_id = "REPLACE_WITH_REVOKED_KV_PREVIEW_NAMESPACE_ID"
+
+# --- Routing (production) ----------------------------------------------------
+# The Worker answers for every tenant subdomain on the PSL content domain.
+# Commented out so `wrangler deploy` doesn't fail before the zone/route exist;
+# the infra agent enables this once `dropwaycontent.com` is on Cloudflare.
+#
+# [[routes]]
+# pattern = "*.dropwaycontent.com/*"
+# zone_name = "dropwaycontent.com"

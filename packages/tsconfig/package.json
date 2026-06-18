@@ -1,0 +1,12 @@
+{
+  "name": "@dropway/tsconfig",
+  "version": "0.0.0",
+  "private": true,
+  "license": "FSL-1.1-Apache-2.0",
+  "description": "Shared TypeScript base configs for the Dropway workspace.",
+  "files": [
+    "base.json",
+    "nextjs.json",
+    "worker.json"
+  ]
+}
