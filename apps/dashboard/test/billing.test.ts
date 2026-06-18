@@ -46,9 +46,9 @@ describe("isCheckoutTier (self-serve vs contact-sales)", () => {
 });
 
 describe("TIER_LABEL + matrix tables", () => {
-  it("labels every display tier including the top contact-sales rung", () => {
+  it("labels every display tier (business is presented as 'Pro')", () => {
     expect(TIER_LABEL.free).toBe("Free");
-    expect(TIER_LABEL.business).toBe("Business");
+    expect(TIER_LABEL.business).toBe("Pro");
     expect(TIER_LABEL.enterprise).toBe("Enterprise");
     expect(TIER_LABEL.contact_sales).toBe("Enterprise+");
   });
@@ -69,11 +69,16 @@ describe("TIER_LABEL + matrix tables", () => {
     }
   });
 
-  it("encodes the §9 free-tier caps (5 members, 10 sites/user)", () => {
-    const members = PLAN_MATRIX.find((r) => r.label === "Members / org");
-    const sites = PLAN_MATRIX.find((r) => r.label === "Sites / user");
-    expect(members?.values.free).toBe("Up to 5");
-    expect(sites?.values.free).toBe("10");
+  it("encodes the seat-free per-org bands (10/100/unlimited sites, unlimited members)", () => {
+    const sites = PLAN_MATRIX.find((r) => r.label === "Sites / workspace");
+    const members = PLAN_MATRIX.find((r) => r.label === "Team members");
+    expect(sites?.values.free).toBe("Up to 10");
+    expect(sites?.values.business).toBe("Up to 100");
+    expect(sites?.values.enterprise).toBe("Unlimited");
+    // Seats are free on every plan.
+    expect(members?.values.free).toBe("Unlimited");
+    expect(members?.values.business).toBe("Unlimited");
+    expect(members?.values.enterprise).toBe("Unlimited");
   });
 });
 

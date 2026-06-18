@@ -14,10 +14,14 @@ import type { PlanTier } from "@/lib/api";
 /** A tier the UI can show, including the top "contact sales" rung (not a DB plan_tier). */
 export type DisplayTier = PlanTier | "contact_sales";
 
-/** Human label for a tier (used in CTAs, the plan card, and the matrix header). */
+/**
+ * Human label for a tier (used in CTAs, the plan card, and the matrix header).
+ * NOTE: the internal plan_tier "business" is presented as "Pro" everywhere in the
+ * UI and on the marketing site (the DB/Stripe key stays "business").
+ */
 export const TIER_LABEL: Record<DisplayTier, string> = {
   free: "Free",
-  business: "Business",
+  business: "Pro",
   enterprise: "Enterprise",
   contact_sales: "Enterprise+",
 };
@@ -56,58 +60,60 @@ export interface PlanFeatureRow {
 }
 
 /**
- * The plan/limits matrix (architecture §9 bands), free → business → enterprise.
- * Display-only; mirrors the §9 table so paying clearly raises the caps. The
- * "Contact Sales" column lives in its own CTA, not this grid.
+ * The plan/limits matrix, free → Pro → Enterprise. Seat-free: you pay for SITES,
+ * not seats (docs/pricing.md), so the lever is the per-ORG site count and team
+ * members are unlimited on every plan. Display-only; the REAL site cap is enforced
+ * server-side in cloud/quota (ResourceSitePerOrg). The "Contact Sales" rung lives in
+ * its own CTA, not this grid.
  */
 export const PLAN_MATRIX: PlanFeatureRow[] = [
   {
-    label: "Members / org",
-    values: { free: "Up to 5", business: "Up to 99", enterprise: "Up to 1,000" },
+    label: "Sites / workspace",
+    values: { free: "Up to 10", business: "Up to 100", enterprise: "Unlimited" },
   },
   {
-    label: "Sites / user",
-    values: { free: "10", business: "100", enterprise: "1,000" },
+    label: "Team members",
+    values: { free: "Unlimited", business: "Unlimited", enterprise: "Unlimited" },
   },
   {
-    label: "Deploys / mo",
-    values: { free: "100", business: "5,000", enterprise: "50,000" },
-  },
-  {
-    label: "Bandwidth / mo",
-    values: { free: "10 GB", business: "250 GB", enterprise: "2 TB pooled" },
-  },
-  {
-    label: "Storage",
-    values: { free: "1 GB", business: "100 GB", enterprise: "500 GB" },
-  },
-  {
-    label: "Custom domains",
-    values: { free: "0", business: "5", enterprise: "50" },
+    label: "Deploy via dashboard, CLI & MCP",
+    values: { free: "Included", business: "Included", enterprise: "Included" },
   },
   {
     label: "Sharing tiers",
     values: {
-      free: "Public · org · link",
-      business: "+ Password / unlisted",
-      enterprise: "+ IP allowlist",
+      free: "Public · org · password · allowlist",
+      business: "All tiers",
+      enterprise: "All tiers",
     },
   },
   {
-    label: "SSO / SAML",
+    label: "Custom domains",
+    values: { free: "—", business: "Included", enterprise: "Included" },
+  },
+  {
+    label: "Version history & instant rollback",
+    values: { free: "Included", business: "Included", enterprise: "Included" },
+  },
+  {
+    label: "SSO / SAML & SCIM",
     values: { free: "—", business: "—", enterprise: "Included" },
   },
   {
-    label: "Audit logs",
-    values: { free: "—", business: "30-day", enterprise: "Export" },
+    label: "Audit logs & advanced RBAC",
+    values: { free: "—", business: "—", enterprise: "Included" },
   },
   {
     label: "Support",
-    values: { free: "Community", business: "Email", enterprise: "Priority + SLA" },
+    values: {
+      free: "Community",
+      business: "Priority email",
+      enterprise: "Priority + 99.9% SLA & DPA",
+    },
   },
   {
     label: "Price",
-    values: { free: "$0", business: "Per-seat", enterprise: "Per-seat or invoiced" },
+    values: { free: "$0", business: "$25 / mo flat", enterprise: "Custom" },
   },
 ];
 

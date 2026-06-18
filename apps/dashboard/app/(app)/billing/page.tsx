@@ -163,14 +163,9 @@ export default async function BillingPage({
                 {TIER_LABEL[currentTier]}
               </p>
             </div>
-            {typeof plan.seats === "number" && plan.seats > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground">Seats</p>
-                <p className="text-2xl font-semibold tabular-nums tracking-tight">
-                  {plan.seats}
-                </p>
-              </div>
-            )}
+            {/* Seat-free pricing (docs/pricing.md): team members are unlimited on
+                every plan, so we don't surface a seat count — billing is a flat fee
+                per workspace and the upgrade lever is the per-org site count. */}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
