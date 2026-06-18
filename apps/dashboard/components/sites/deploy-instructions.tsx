@@ -15,7 +15,8 @@ export function DeployInstructions({ slug }: { slug: string }) {
     () => [
       {
         label: "Install the CLI",
-        command: "brew install dropway",
+        command:
+          "curl -fsSL https://raw.githubusercontent.com/danielpang/dropway/main/install.sh | sh",
       },
       {
         label: "Authenticate (opens your browser)",
