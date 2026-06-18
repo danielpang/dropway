@@ -1,5 +1,5 @@
 // Package customdomains is the Cloudflare-for-SaaS custom-hostname seam
-// (docs/ARCHITECTURE.md §2.1 custom domains, Phase 2 Enterprise). A site owner
+// (Phase 2 Enterprise). A site owner
 // maps a custom hostname (e.g. docs.acme.com) to their site; Cloudflare for SaaS
 // issues the edge cert and the user proves control via a DNS DCV record.
 //

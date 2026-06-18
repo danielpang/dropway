@@ -430,7 +430,7 @@ export interface paths {
         put?: never;
         /**
          * [CLOUD-ONLY] Stripe webhook (JWT-FREE, signature-verified)
-         * @description The Stripe webhook endpoint. UNAUTHENTICATED (no Better Auth JWT) but SIGNATURE-VERIFIED against STRIPE_WEBHOOK_SECRET via the Stripe-Signature header. The handler (1) verifies the signature (else 400, no DB write), (2) dedupes by Stripe event id (replay → 200 no-op), (3) maps the event to a plan_tier change and persists it (the ONLY writer of plan_tier). This is the source of truth for entitlement (§9). checkout.session.completed / customer.subscription.created|updated → upsert subscription + raise plan_tier; customer.subscription.deleted → downgrade to Free + org_status (over_limit if the org now exceeds Free caps), NEVER deleting data.
+         * @description The Stripe webhook endpoint. UNAUTHENTICATED (no Better Auth JWT) but SIGNATURE-VERIFIED against STRIPE_WEBHOOK_SECRET via the Stripe-Signature header. The handler (1) verifies the signature (else 400, no DB write), (2) dedupes by Stripe event id (replay → 200 no-op), (3) maps the event to a plan_tier change and persists it (the ONLY writer of plan_tier). This is the source of truth for entitlement. checkout.session.completed / customer.subscription.created|updated → upsert subscription + raise plan_tier; customer.subscription.deleted → downgrade to Free + org_status (over_limit if the org now exceeds Free caps), NEVER deleting data.
          */
         post: operations["stripeWebhook"];
         delete?: never;
@@ -470,7 +470,7 @@ export interface paths {
         put?: never;
         /**
          * [CLOUD-ONLY] Start a Stripe Checkout session (owner/admin)
-         * @description Owner/admin only. Ensures a Stripe Customer for the org (one per org, persisting stripe_customer_id), then creates a subscription-mode Checkout Session for {target_tier} with client_reference_id=org_id and metadata{org_id,target_tier} so the signed webhook can resolve + entitle the org. Returns the Stripe-hosted checkout_url. The success redirect grants NOTHING — only the webhook flips plan_tier (§9).
+         * @description Owner/admin only. Ensures a Stripe Customer for the org (one per org, persisting stripe_customer_id), then creates a subscription-mode Checkout Session for {target_tier} with client_reference_id=org_id and metadata{org_id,target_tier} so the signed webhook can resolve + entitle the org. Returns the Stripe-hosted checkout_url. The success redirect grants NOTHING — only the webhook flips plan_tier.
          */
         post: operations["createCheckout"];
         delete?: never;

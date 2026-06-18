@@ -12,7 +12,7 @@ import (
 
 // Member is a row of the Better Auth organization `member` table, READ-ONLY to the
 // Go API (Better Auth owns + migrates it; the Go API only reads role for authz and
-// re-checks it — ARCHITECTURE.md §5/§8). It lives in the `identity` schema.
+// re-checks it). It lives in the `identity` schema.
 type Member struct {
 	UserID string
 	OrgID  string
@@ -37,7 +37,7 @@ func IsAdminRole(role string) bool {
 
 // MemberRole loads the caller's CURRENT role from the Better Auth member table
 // (identity.member), NOT the JWT claim — the live re-check that gates admin-only
-// actions (ARCHITECTURE.md §5 confused-deputy guard, §10 [HIGH]). It runs under the
+// actions (confused-deputy guard, [HIGH]). It runs under the
 // active tenant context but reads the identity schema directly (raw pgx; the auth
 // schema is outside sqlc's app scope).
 //
@@ -72,7 +72,7 @@ func (s *Store) MemberRole(ctx context.Context, orgID, userID string) (string, e
 // member row → ErrNotOrgMember (mapped to 403). If the Better Auth member table is
 // unavailable, the mint is REFUSED (ErrNotOrgMember), not silently granted: an
 // org_only token is an access grant, so we fail closed when membership can't be
-// confirmed (the strict default mirrors the JWT-fallback policy in §10 [HIGH]).
+// confirmed (the strict default mirrors the JWT-fallback policy, [HIGH]).
 func (s *Store) requireLiveMembership(ctx context.Context, orgID, userID string) error {
 	if _, err := s.MemberRole(ctx, orgID, userID); err != nil {
 		if errors.Is(err, ErrNoMembership) || errors.Is(err, ErrAuthSchemaUnavailable) {

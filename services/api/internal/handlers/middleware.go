@@ -13,7 +13,7 @@ import (
 // EnsureOrgProvisioned is middleware (mounted AFTER Auth) that idempotently
 // creates the app-side org rows (org_meta + org_usage) for the verified tenant
 // before the request reaches a handler. A solo user / first request thus always
-// has the anchor row its business data attaches to (ARCHITECTURE.md §5: app data
+// has the anchor row its business data attaches to (app data
 // attaches to the org via org_meta keyed by the Better Auth organization.id).
 //
 // It is a no-op when the rows already exist. With no Store configured it passes

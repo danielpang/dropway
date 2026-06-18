@@ -8,7 +8,7 @@ import (
 
 // TestUnlimited_AllowsEverything proves the core/self-host provider never caps:
 // any tier, any resource, any (even absurd) current count is permitted. This is
-// the self-host "unlimited" guarantee (§14.3).
+// the self-host "unlimited" guarantee.
 func TestUnlimited_AllowsEverything(t *testing.T) {
 	u := Unlimited{}
 	cases := []struct {

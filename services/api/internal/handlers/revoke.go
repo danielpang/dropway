@@ -19,7 +19,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // RevokeMember hard-revokes a user's edge tokens by writing revoked:user:<userId>
-// with min_iat = now (ARCHITECTURE.md §6/§10 revocation deny-list). Use on member
+// with min_iat = now (revocation deny-list). Use on member
 // removal / ban: every edge token the user holds, issued before now, is rejected by
 // the Worker + /authz immediately (not just at the short TTL). ADMIN/OWNER only.
 //
@@ -125,7 +125,7 @@ type revokeAccessRequest struct {
 
 // RevokeAccess is the GENERIC hard-revoke entry point the dashboard calls: it bumps
 // the denylist min_iat for one subject (kind=user|site|org), the unified
-// "sign-out-everywhere" affordance (ARCHITECTURE.md §6/§10 revocation deny-list).
+// "sign-out-everywhere" affordance (revocation deny-list).
 // ADMIN/OWNER only. For kind=site it re-checks the site belongs to the active org;
 // kind=user/org write the subject denylist directly (the org id is the caller's
 // own active org for kind=org — an admin can only org-kill THEIR org).

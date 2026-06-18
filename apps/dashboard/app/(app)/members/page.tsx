@@ -21,7 +21,7 @@ export const metadata: Metadata = { title: "Members" };
 export const dynamic = "force-dynamic";
 
 /**
- * Team members management (architecture §5.4). Lists the active org's members
+ * Team members management. Lists the active org's members
  * and pending invitations from Better Auth (which owns the membership tables),
  * with invite / role-change / remove controls gated to owner & admin. The Go API
  * independently re-checks role on every privileged write, so a non-admin who
@@ -123,7 +123,7 @@ export default async function MembersPage() {
         </Card>
       )}
 
-      {/* Danger zone: org-wide hard revocation (architecture §6/§10). Admin-only;
+      {/* Danger zone: org-wide hard revocation. Admin-only;
           the Go API re-checks role and writes the KV denylist min_iat. */}
       {manage && (
         <Card className="border-destructive/30">

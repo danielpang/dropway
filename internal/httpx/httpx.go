@@ -4,8 +4,7 @@
 //
 // The most important mapping is quota.ExceededError → HTTP 402 with the
 // ExceededError JSON body, so the dashboard can open the Stripe subscription
-// modal (or the contact-sales CTA) and the CLI can print the upgrade URL
-// (docs/ARCHITECTURE.md §9).
+// modal (or the contact-sales CTA) and the CLI can print the upgrade URL.
 package httpx
 
 import (

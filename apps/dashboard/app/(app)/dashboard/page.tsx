@@ -25,8 +25,8 @@ export default async function DashboardPage() {
   let sites: Site[] | null = null;
   let loadError: string | null = null;
 
-  // Billing-derived read-only state (over_limit / past_due) disables "New site"
-  // (§9). UX mirror of server enforcement; loads in parallel with the sites list.
+  // Billing-derived read-only state (over_limit / past_due) disables "New site".
+  // UX mirror of server enforcement; loads in parallel with the sites list.
   const [sitesResult, billing, activeOrg] = await Promise.allSettled([
     api.listSites(),
     loadOrgBillingState(),

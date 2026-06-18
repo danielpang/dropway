@@ -1,5 +1,5 @@
 // Package quota defines the open-core seam between the FSL core and the
-// proprietary cloud quota/billing module (docs/ARCHITECTURE.md §9, §14).
+// proprietary cloud quota/billing module.
 //
 // The seam is a PURE POLICY FUNCTION with no database access:
 //
@@ -31,7 +31,7 @@ type Resource string
 
 const (
 	// ResourceSitePerOrg caps the number of sites in an ORG (the workspace), pooled
-	// across all members. This is the seat-free pricing lever (docs/pricing.md): you
+	// across all members. This is the seat-free pricing lever: you
 	// move up a tier when you need MORE SITES, not more seats. The store counts every
 	// site in the org (CountSitesForOrg) under a per-org advisory lock.
 	ResourceSitePerOrg Resource = "sites_per_org"
@@ -42,7 +42,7 @@ const (
 	ResourceMemberPerOrg Resource = "members_per_org"
 	// ResourceStorageBytesPerOrg is a CONTINUOUS resource (bytes), checked with
 	// AllowN(current, delta) rather than Allow's "+1" — a deploy adds `delta` bytes
-	// of new (dedup-aware) blob storage (docs/pricing.md §5).
+	// of new (dedup-aware) blob storage.
 	ResourceStorageBytesPerOrg Resource = "storage_bytes_per_org"
 )
 

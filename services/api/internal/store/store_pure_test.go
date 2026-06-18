@@ -28,7 +28,7 @@ import (
 // not need a connection.
 
 // ---------------------------------------------------------------------------
-// IsReservedSlug — the §10 reserved-slug blocklist.
+// IsReservedSlug — the reserved-slug blocklist.
 // ---------------------------------------------------------------------------
 
 func TestIsReservedSlug(t *testing.T) {

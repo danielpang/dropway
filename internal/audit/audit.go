@@ -1,7 +1,6 @@
 // Package audit defines the small, dependency-light vocabulary for Dropway's
 // audit trail: the canonical Action constants for sensitive mutations and a
-// request-provenance Context the Go API attaches to every audit row
-// (docs/ARCHITECTURE.md §10 audit logging, §2.3 observability).
+// request-provenance Context the Go API attaches to every audit row.
 //
 // The actual row write lives in services/api/internal/store (WriteAudit, in the
 // same RLS tenant tx as the action where possible); this package only owns the
@@ -57,7 +56,7 @@ const (
 
 // Context carries the request provenance attached to an audit row: who acted,
 // from where, and the correlation ids tying the row to the structured access log
-// and edge/Worker logs for the same request (ARCHITECTURE.md §2.3). All fields
+// and edge/Worker logs for the same request. All fields
 // are optional — an empty field is written as SQL NULL.
 type Context struct {
 	// ActorUser is the verified Better Auth user id (claims.UserID). Empty for a

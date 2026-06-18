@@ -1,6 +1,5 @@
 // Package edgerevoke defines the hard-revocation denylist contract shared by the
-// Go API (the only writer) and the serving Worker + the /authz exchange (readers)
-// — docs/ARCHITECTURE.md §6 "Revocation story" / §10 [HIGH] revocation deny-list.
+// Go API (the only writer) and the serving Worker + the /authz exchange (readers).
 //
 // The common revocation case is just the short edge-token TTL (≤15m), minted from
 // the revocable Better Auth session. Hard revocation makes it IMMEDIATE by writing a
@@ -13,7 +12,7 @@
 //	revoked:org:<orgId>     → { "min_iat": ... }              org-wide (allow_external_sharing disabled)
 //
 // Billing suspension / over_limit is NOT a token revocation: it would hard-cut
-// existing viewers, contradicting the read-only over_limit model (§9). It instead
+// existing viewers, contradicting the read-only over_limit model. It instead
 // sets the per-org org_status:<orgId> KV flag (projection.OrgStatusWriter) and the
 // edge serves a read-only platform block page — existing tokens stay valid.
 //

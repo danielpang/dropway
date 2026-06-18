@@ -1,7 +1,7 @@
 //go:build cloud && integration
 
-// Cloud billing integration test (PROPRIETARY, cloud-only — docs/ARCHITECTURE.md
-// §9/§13 rows 9, 9b). It is gated behind BOTH the `cloud` and `integration` build
+// Cloud billing integration test (PROPRIETARY, cloud-only). It is gated behind
+// BOTH the `cloud` and `integration` build
 // tags so neither the default `go test ./...` nor the OSS integration test ever
 // compiles it. Run it with:
 //
@@ -132,7 +132,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	t.Log("PASS: Free org capped at 10 sites/org (11th → 402)")
 
 	// -----------------------------------------------------------------------
-	// 1b. SEATS ARE FREE (docs/pricing.md): members are unlimited on every plan, so
+	// 1b. SEATS ARE FREE: members are unlimited on every plan, so
 	// the preflight passes with 0 members AND after seeding many. The seam stays
 	// wired (so seat policy could be re-tightened in the cloud provider alone), but
 	// the cloud provider returns nil for ResourceMemberPerOrg today.
@@ -456,7 +456,7 @@ func cbStartPostgres(t *testing.T) {
 // dirs both start at version 0001; with the default shared goose_db_version table,
 // goose would treat billing's 0001 as already applied (same version number) and
 // SKIP it. Separate version tables mirror production, where the app and billing
-// schemas are migrated independently by different pipelines (§5 cloud→core only).
+// schemas are migrated independently by different pipelines (cloud→core only).
 func cbApplyMigrations(t *testing.T, root string) {
 	t.Helper()
 	migs := []struct{ dir, table string }{

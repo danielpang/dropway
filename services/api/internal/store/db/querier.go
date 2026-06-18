@@ -50,7 +50,7 @@ type Querier interface {
 	// tenant GUCs (see internal/store + internal/middleware/rlstx), so RLS scopes
 	// each statement to the active org. These queries therefore carry NO explicit
 	// org filter beyond what RLS enforces, except where we deliberately re-derive a
-	// resource's org for the confused-deputy guard (ARCHITECTURE.md §5).
+	// resource's org for the confused-deputy guard.
 	// ===========================================================================
 	// org provisioning
 	// ===========================================================================
@@ -125,7 +125,7 @@ type Querier interface {
 	// scopes the rows to the active org, so a caller only ever sees its own site's
 	// hosts. An access-mode / policy change must rewrite EVERY one of these routes
 	// (not just the canonical one), or a verified custom host keeps serving at the
-	// OLD access_mode after the policy tightened (ARCHITECTURE.md §6 revocation).
+	// OLD access_mode after the policy tightened (revocation).
 	ListHostRoutesForSite(ctx context.Context, siteID string) ([]AppHostRoute, error)
 	// Every site in the active org whose access_mode = 'public' (used by the reconcile
 	// on disabling external sharing: these are downgraded to org_only).
@@ -167,7 +167,7 @@ type Querier interface {
 	// independent of RLS and of row locks, so this needs no rows to exist yet.
 	LockOrgSiteQuota(ctx context.Context, dollar_1 string) error
 	// ===========================================================================
-	// storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
+	// storage metering: org_blobs ledger + org_usage counter
 	// ===========================================================================
 	// Serialize concurrent deploys' storage accounting for an org: a transaction-scoped
 	// advisory lock keyed by hashtext(org||':storage'), so the GetOrgStorage → cap check
@@ -251,7 +251,7 @@ type Querier interface {
 	// so an audit write can never land under the wrong tenant. actor_user is the verified
 	// user id (null for a deploy-token actor); actor_token is the deploy-token id when a
 	// token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
-	// the request provenance (ARCHITECTURE.md §10 / §2.3).
+	// the request provenance.
 	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) (AppAuditLog, error)
 }
 

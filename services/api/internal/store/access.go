@@ -142,8 +142,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 			// Rewrite EVERY host of the site (canonical + verified custom domains),
 			// not just the canonical one — each custom host has its own route:<host>
 			// KV entry, and leaving it at the old access_mode keeps the Worker serving
-			// the custom host under the OLD tier after the policy tightened (FIX 1 /
-			// ARCHITECTURE.md §6 revocation).
+			// the custom host under the OLD tier after the policy tightened (FIX 1).
 			hostRoutes, err := q.ListHostRoutesForSite(ctx, p.SiteID)
 			if err != nil {
 				return err

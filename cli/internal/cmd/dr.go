@@ -10,7 +10,7 @@ import (
 )
 
 // newDRCmd builds `dropway dr` with the `rebuild` subcommand — the documented
-// disaster-recovery drill (ARCHITECTURE.md §13 row 8): rebuild the ENTIRE KV/D1
+// disaster-recovery drill: rebuild the ENTIRE KV/D1
 // routing projection from Postgres across every org and push it to the edge writer,
 // restoring serving after a KV/D1 wipe. Postgres is authoritative; the projection is
 // a rebuildable cache.

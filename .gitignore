@@ -23,8 +23,6 @@ vendor/
 .env.*.local
 !.env.example
 
-# Private billing data — never commit (kept local only; purged from history)
-docs/pricing.md
 # Billing-schema ERD (derived from the cloud-only/proprietary billing schema)
 docs/diagrams/schema-billing.mmd
 docs/diagrams/schema-billing.png

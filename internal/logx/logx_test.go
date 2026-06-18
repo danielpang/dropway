@@ -14,7 +14,7 @@ import (
 // TestMiddleware_PropagatesAndEchoesRequestID asserts that an INBOUND X-Request-Id
 // is honored (chi RequestID reuses it) and ECHOED on the response, and that the
 // per-request logger + context request id reflect the same value — the end-to-end
-// correlation hook (ARCHITECTURE.md §2.3).
+// correlation hook.
 func TestMiddleware_PropagatesAndEchoesRequestID(t *testing.T) {
 	const inbound = "edge-trace-abc123"
 

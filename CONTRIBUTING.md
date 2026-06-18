@@ -3,8 +3,7 @@
 # Contributing to Dropway
 
 Thanks for your interest in Dropway! This guide covers how to contribute to the
-**FSL-licensed core**. Please read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first.
-It is the approved design and the source of truth for how the pieces fit together.
+**FSL-licensed core**.
 
 > The proprietary `cloud/` and `ee/` trees are not open for outside contribution.
 

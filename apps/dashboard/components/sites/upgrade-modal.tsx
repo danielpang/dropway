@@ -36,7 +36,7 @@ function tierLabel(tier: string | undefined): string {
  *  - next_tier is a self-serve tier (business / enterprise) → "Upgrade to X"
  *    POSTs /v1/billing/checkout {target_tier} and redirects to the Stripe-hosted
  *    checkout_url. (The success redirect grants NOTHING — only the signed
- *    webhook flips plan_tier; the billing page polls for that. §9.)
+ *    webhook flips plan_tier; the billing page polls for that.)
  *  - next_tier === 'contact_sales' (above Enterprise) → no checkout; show a
  *    Contact Sales CTA linking to the API-provided sales_url.
  *

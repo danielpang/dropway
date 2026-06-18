@@ -19,7 +19,7 @@ import (
 // invite path calls BEFORE adding a member (Better Auth inserts the member row in
 // its own tx, so this is a preflight, not the insert itself). It returns a
 // *quota.ExceededError (→ 402) when the org is at/over its member cap. Seats are
-// currently FREE (docs/pricing.md): both OSS Unlimited AND the cloud provider
+// currently FREE: both OSS Unlimited AND the cloud provider
 // return nil for ResourceMemberPerOrg, so this preflight always passes today. It
 // stays wired as the enforcement seam so seat policy can be re-tightened in the
 // cloud provider alone, with no handler/store change.
@@ -91,7 +91,7 @@ func countMembersAndPending(ctx context.Context, tx pgx.Tx, orgID string) (int64
 
 // reservedSlugs are subdomain labels that may not be used as a site slug — they
 // collide with platform hosts or are confusingly authoritative-looking
-// (ARCHITECTURE.md §10 "reserved-slug blocklist"). Checked at the API + here.
+// (reserved-slug blocklist). Checked at the API + here.
 var reservedSlugs = map[string]struct{}{
 	"www": {}, "app": {}, "api": {}, "admin": {}, "dashboard": {}, "static": {},
 	"assets": {}, "status": {}, "blog": {}, "docs": {}, "help": {}, "support": {},
@@ -226,7 +226,7 @@ func (s *Store) EnsureOrgProvisioned(ctx context.Context, t Tenant) error {
 //
 // quota is checked by the caller (the handler) BEFORE this, via quota.Provider —
 // the store stays cloud-free. An empty accessMode inherits the ORG's
-// default_visibility (org_only for a fresh org — internal-by-default, §2.2/§5.4),
+// default_visibility (org_only for a fresh org — internal-by-default),
 // NOT public: a brand-new org has allow_external_sharing=false, and a public site
 // would be 403'd by the external-sharing trigger.
 func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode string) (Site, error) {
@@ -259,7 +259,7 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode strin
 			}
 		}
 
-		// Race-safe per-ORG site cap (docs/pricing.md "pay for sites, not seats"):
+		// Race-safe per-ORG site cap ("pay for sites, not seats"):
 		// take a per-org advisory lock for the rest of the tx, then COUNT → policy →
 		// INSERT as one critical section, so two concurrent creates anywhere in the
 		// org can't both read current=N and both insert. The count is POOLED across
@@ -342,7 +342,7 @@ type HostRoute struct {
 // Access-mode / policy changes MUST rewrite every one of these routes, not just
 // the canonical one: a verified custom host has its own route:<host> KV entry,
 // and leaving it at the old access_mode keeps the Worker serving the custom host
-// under the OLD tier after the policy tightened (FIX 1 / ARCHITECTURE.md §6).
+// under the OLD tier after the policy tightened (FIX 1).
 func (s *Store) ListHostRoutesForSite(ctx context.Context, t Tenant, siteID string) ([]HostRoute, error) {
 	var out []HostRoute
 	err := s.withTx(ctx, t, func(q *db.Queries) error {

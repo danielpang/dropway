@@ -1,5 +1,5 @@
 // Command api is the Dropway control-plane HTTP server (api.dropway.dev): the
-// system of record and the authz boundary (docs/ARCHITECTURE.md §3).
+// system of record and the authz boundary.
 //
 // It loads config from the environment, builds the chi router, wires an
 // auth.Verifier (EdDSA JWT via JWKS) and a quota.Provider, then serves with
@@ -83,7 +83,7 @@ func run(baseLogger *slog.Logger) error {
 	// ---- Data layer: pgx pool (non-BYPASSRLS dropway_app role) → Store. ----
 	// The pool is hoisted to the run() scope so the cloud build's mountCloud can
 	// build the BillingStore over the SAME non-BYPASSRLS pool (the per-event SET
-	// LOCAL app.current_org_id is the isolation, §9). It stays nil when there's no
+	// LOCAL app.current_org_id is the isolation). It stays nil when there's no
 	// DATABASE_URL, and mountCloud then skips billing.
 	var st *store.Store
 	var pool *pgxpool.Pool
@@ -170,7 +170,7 @@ func run(baseLogger *slog.Logger) error {
 	// The edge revoker (hard-revocation denylist writer) is the SAME KV writer as
 	// the route projection — both the Cloudflare KV and the local writer implement
 	// projection.Revoker on the "revoked:" prefix. Wire it when the writer supports
-	// it so member/site/org revocation is immediate (ARCHITECTURE.md §6/§10).
+	// it so member/site/org revocation is immediate.
 	if rev, ok := proj.(handlers.EdgeRevoker); ok {
 		api.Revoker = rev
 	}

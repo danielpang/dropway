@@ -5,9 +5,9 @@ package billing
 // handlers.go is the PROPRIETARY, cloud-only HTTP surface for the dashboard's
 // billing flows: start a Stripe Checkout (first paid tier / upgrade), open the
 // Billing Portal (self-serve seat/plan/payment-method/cancel), and read the
-// current plan. These run BEHIND the verified Better Auth JWT (the authz boundary,
-// §3) and require OWNER/ADMIN — the success redirect grants nothing; only the
-// signed webhook (billing.go) mutates entitlement (§9).
+// current plan. These run BEHIND the verified Better Auth JWT (the authz boundary)
+// and require OWNER/ADMIN — the success redirect grants nothing; only the
+// signed webhook (billing.go) mutates entitlement.
 //
 // They live in cloud/ and may import internal/middleware + internal/httpx.
 
@@ -37,7 +37,7 @@ var _ CheckoutPortalStore = (*BillingStore)(nil)
 
 // RoleChecker re-reads the caller's CURRENT org role from the live Better Auth
 // member table (NOT the JWT claim). Billing gates through this so a 5–15-minute
-// JWT can't carry a stale admin role after a demotion (§5.4/§10).
+// JWT can't carry a stale admin role after a demotion.
 //
 // It is deliberately store-free (Go's internal-package rule forbids cloud/ from
 // importing services/api/internal/store). The adapter that bridges to
@@ -77,7 +77,7 @@ func NewHandlers(s CheckoutPortalStore, sc StripeClient, prices PriceMap, dashbo
 
 // requireOwnerAdmin enforces OWNER/ADMIN for an org-management (billing) action.
 // It does NOT trust the JWT role claim: it re-reads the CURRENT role from the live
-// Better Auth member table (the confused-deputy guard, §5.4/§10), exactly like the
+// Better Auth member table (the confused-deputy guard), exactly like the
 // core API's requireAdmin. Strict by default: if membership can't be confirmed live
 // it DENIES, unless ALLOW_JWT_ROLE_FALLBACK is on (then it trusts the verified claim
 // with a logged degradation). Returns the org id + caller email on success.

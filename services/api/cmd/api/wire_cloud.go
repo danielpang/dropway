@@ -4,7 +4,7 @@
 // real hard-cap quota provider (cloud/quota) AND the cloud billing surface
 // (cloud/billing): the signature-verified Stripe webhook plus the authed
 // /v1/billing/* routes. The OSS build never compiles this file, so the self-host
-// binary never links any code under cloud/ (docs/ARCHITECTURE.md §14.3) and has no
+// binary never links any code under cloud/ and has no
 // billing routes at all.
 package main
 
@@ -55,7 +55,7 @@ const cloudBuild = true
 // CTA URLs need no org id.
 func newQuotaProvider(cfg config.Config) quota.Provider {
 	// Storage gating is off by default (ENFORCE_STORAGE_QUOTA): storage is metered but
-	// only the per-org site count blocks a deploy today (docs/pricing.md).
+	// only the per-org site count blocks a deploy today.
 	return cloudquota.NewProvider(
 		cloudquota.DashboardURLBuilder{DashboardBaseURL: cfg.DashboardURL},
 		cfg.EnforceStorageQuota,
@@ -67,7 +67,7 @@ func quotaProviderName() string { return "cloud hard-cap (free/business/enterpri
 
 // mountCloud wires cloud/billing onto the shared chi mux. It builds:
 //   - the Postgres BillingStore over the SAME non-BYPASSRLS dropway_app pool (the
-//     per-event SET LOCAL app.current_org_id is the isolation, §9);
+//     per-event SET LOCAL app.current_org_id is the isolation);
 //   - the RealSignatureVerifier (Stripe-Signature → parsed Event, price→tier via
 //     the configured price ids) + the webhook Handler;
 //   - the real StripeClient (Checkout/Portal/Customer) + the billing Handlers.
@@ -116,7 +116,7 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	stripeClient := cloudbilling.NewStripeClient(deps.Cfg.StripeSecretKey)
 	// Billing's owner/admin gate re-checks the LIVE identity.member role (not the JWT
 	// claim) via the core Store, strict-by-default with ALLOW_JWT_ROLE_FALLBACK —
-	// the same confused-deputy guard the rest of the API uses (§5.4/§10, FIX 2).
+	// the same confused-deputy guard the rest of the API uses (FIX 2).
 	bh := cloudbilling.NewHandlers(store, stripeClient, prices, deps.Cfg.DashboardURL,
 		storeRoleChecker{deps.Store}, deps.Cfg.AllowJWTRoleFallback, slog.Default())
 

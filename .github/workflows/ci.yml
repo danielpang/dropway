@@ -9,15 +9,13 @@
 #   e2e             : a real browser drives the full stack (Playwright).
 #
 # Plus the standing invariants:
-#   open-core-boundary : the OSS core has ZERO references into cloud/ or ee/ (§11/§14).
+#   open-core-boundary : the OSS core has ZERO references into cloud/ or ee/.
 #   sql                : goose app migrations apply on real Postgres + RLS isolation holds.
 #   mcp                : the MCP server boots on real Postgres + a test JWKS; its endpoints
-#                        enforce OAuth + the org mcp_enabled kill-switch (§6 "LLM access").
+#                        enforce OAuth + the org mcp_enabled kill-switch (LLM access).
 #   serve              : the content server serves an org-only site from real object storage
-#                        only with a valid edge token; denies (302) otherwise (§6).
+#                        only with a valid edge token; denies (302) otherwise.
 #   typecheck          : the whole TS workspace type-checks (contracts + apps + edge).
-#
-# See docs/ARCHITECTURE.md §12/§13 — these jobs map to verification rows 2, 10, 11.
 
 name: ci
 
@@ -116,7 +114,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # (b) Open-core boundary: the OSS build of the core (services/ cli/ internal/
   #     apps/ edge/) must NOT depend on anything under cloud/ or ee/. If it does,
-  #     the self-host build would link proprietary code — fail (§11/§14.3).
+  #     the self-host build would link proprietary code — fail.
   #
   #     Two complementary checks:
   #       1. Go (authoritative): `go list -deps` with NO build tags resolves the
@@ -170,7 +168,6 @@ jobs:
               echo
               echo "Inject these via the QuotaProvider/BillingProvider interfaces behind"
               echo "a //go:build cloud (or ee) tag, never as a default import."
-              echo "See ARCHITECTURE.md §11/§14.3."
               exit 1
             fi
           fi
@@ -212,7 +209,7 @@ jobs:
               echo "$MATCHES"
               echo
               echo "Cloud features must be loaded via a runtime dynamic import gated on"
-              echo "process.env.DROPWAY_CLOUD, never a top-level import. See §14.3."
+              echo "process.env.DROPWAY_CLOUD, never a top-level import."
               exit 1
             fi
           fi
@@ -221,7 +218,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # (c) SQL: apply the app migrations against a real Postgres 16, then assert RLS
   #     tenant isolation — set app.current_org_id to org A and confirm org B rows
-  #     are invisible to the non-BYPASSRLS dropway_app role (§13 row 2).
+  #     are invisible to the non-BYPASSRLS dropway_app role.
   # ---------------------------------------------------------------------------
   sql:
     name: DB · migrations & RLS isolation
@@ -364,7 +361,7 @@ jobs:
   #      protected-resource metadata, the 401 (no/garbage token) + 200 (valid token)
   #      auth states, and the per-request org `mcp_enabled` kill-switch (200 → 403 →
   #      200). The `//go:build integration` tag keeps this out of the default
-  #      `go test ./...` (job a); only this job compiles + runs it (§6 "LLM access").
+  #      `go test ./...` (job a); only this job compiles + runs it (LLM access).
   # ---------------------------------------------------------------------------
   mcp:
     name: MCP · endpoints + OAuth (integration)
@@ -423,7 +420,7 @@ jobs:
   #      (restricted) site through the real `serve` handler backed by real object
   #      storage (a MinIO container the test starts). Asserts no cookie → 302 to
   #      /authz, a valid org_only edge token → 200 + bytes from MinIO (private/no-
-  #      store), and expired / wrong-host tokens → 302 (§6 edge auth & sharing
+  #      store), and expired / wrong-host tokens → 302 (edge auth & sharing
   #      tiers). The `//go:build integration` tag scopes it to this job; the
   #      package's hermetic unit tests still run under `go test ./...` (job a).
   # ---------------------------------------------------------------------------

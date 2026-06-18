@@ -6,7 +6,7 @@
 -- This migration is applied ONLY by the hosted-cloud deployment. The core
 -- (OSS) build NEVER references the `billing` schema: FK direction is strictly
 -- cloud -> core (billing.subscriptions.org_id -> app.org_meta.id), so the core
--- compiles and runs without billing ever existing (ARCHITECTURE.md §5 / §9 / §14).
+-- compiles and runs without billing ever existing.
 --
 -- Run ordering: the `app` migrations (db/migrations/app/) must be applied first
 -- so that app.org_meta exists as the FK target.
@@ -16,7 +16,7 @@
 --
 -- Stripe subscription mirror + webhook idempotency ledger. Stripe is the source
 -- of truth; this schema MIRRORS it, written ONLY by the signature-verified
--- webhook in cloud/billing (never by a browser redirect; §9).
+-- webhook in cloud/billing (never by a browser redirect).
 
 -- +goose Up
 
@@ -26,7 +26,7 @@ CREATE SCHEMA IF NOT EXISTS billing;
 
 -- +goose StatementBegin
 -- subscriptions: one row per org (one Stripe Customer per org). plan_tier here is
--- the AUTHORITATIVE entitlement the synchronous hard-cap check reads (§9).
+-- the AUTHORITATIVE entitlement the synchronous hard-cap check reads.
 -- org_status reflects derived account state (active / over_limit / past_due) the
 -- edge mirrors to KV.
 CREATE TABLE billing.subscriptions (
@@ -53,7 +53,7 @@ CREATE INDEX subscriptions_stripe_customer_id_idx ON billing.subscriptions (stri
 
 -- +goose StatementBegin
 -- processed_stripe_events: webhook dedupe ledger. The webhook INSERTs the Stripe
--- event id; ON CONFLICT -> already processed -> return 200 idempotently (§9).
+-- event id; ON CONFLICT -> already processed -> return 200 idempotently.
 CREATE TABLE billing.processed_stripe_events (
     event_id     text PRIMARY KEY, -- Stripe event.id (evt_...)
     event_type   text NOT NULL,
@@ -64,8 +64,8 @@ CREATE TABLE billing.processed_stripe_events (
 -- ---------------------------------------------------------------------------
 -- Runtime grants. The cloud BillingStore (cloud/billing/store.go) connects as the
 -- SAME non-BYPASSRLS `dropway_app` runtime role as the rest of the API (the
--- per-event SET LOCAL app.current_org_id is the isolation, NOT a privileged role
--- -- §9). billing.* tables have NO RLS (they are the cloud-only Stripe mirror), so
+-- per-event SET LOCAL app.current_org_id is the isolation, NOT a privileged role).
+-- billing.* tables have NO RLS (they are the cloud-only Stripe mirror), so
 -- the runtime role just needs schema USAGE + table DML here; the ONE cross-schema
 -- write it makes (UPDATE app.org_meta.plan_tier) is already granted + RLS-scoped by
 -- the app migrations (0003). The role is created by the app migrations (0001), so

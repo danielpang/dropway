@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // HARD REVOCATION — the KV denylist / per-subject `min_iat` check on the GATED
-// path (docs/ARCHITECTURE.md §6 "Revocation story", §10 "[HIGH] Revocation under
-// staleness — mandatory deny-list", §12 Phase-4 "KV denylist / min_iat
-// hard-revocation"). The short 15-minute edge-token TTL is the backstop; this
+// path ("Revocation story", "[HIGH] Revocation under staleness — mandatory
+// deny-list", Phase-4 "KV denylist / min_iat hard-revocation"). The short
+// 15-minute edge-token TTL is the backstop; this
 // denylist makes a ban / unshare / org-suspension take effect IMMEDIATELY instead
 // of waiting out the TTL.
 //
@@ -21,7 +21,7 @@
 // Direction of safety: the denylist is REBUILDABLE from Postgres and only ever
 // fails CLOSED — a stale or partially-missing denylist causes at most an extra
 // re-auth (302 → /authz), never opens access. A KV read error is therefore
-// treated as "revoked unknown" → fail closed (302), matching §10's fail-closed
+// treated as "revoked unknown" → fail closed (302), matching the fail-closed
 // mandate for the revocation check.
 
 /** The KV key prefixes of the three denylist dimensions (matches the contract). */
@@ -107,8 +107,8 @@ export interface RevocationSubject {
  * parallel and ONLY for gated requests, so the public fast path is untouched.
  *
  * FAIL CLOSED: if the KV is unavailable (`kv === undefined`) or a read THROWS, we
- * return true (revoked) — a revocation check we could not complete must deny, per
- * §10. A clean MISS (key absent) is "not revoked" for that dimension. This is the
+ * return true (revoked) — a revocation check we could not complete must deny.
+ * A clean MISS (key absent) is "not revoked" for that dimension. This is the
  * safe direction: the worst case of a stale/down denylist is an extra re-auth.
  */
 export async function isRevoked(
@@ -116,7 +116,7 @@ export async function isRevoked(
   subject: RevocationSubject,
 ): Promise<boolean> {
   // No denylist binding configured → we cannot prove the token is NOT revoked.
-  // Fail closed (§10): better an extra /authz round-trip than serving a banned
+  // Fail closed: better an extra /authz round-trip than serving a banned
   // viewer. A deployment that wants gated serving MUST wire the denylist KV.
   if (!kv) return true;
 

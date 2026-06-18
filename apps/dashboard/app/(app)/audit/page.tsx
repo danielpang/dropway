@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Audit log" };
 export const dynamic = "force-dynamic";
 
 /**
- * Audit log viewer (architecture §10 "audit logs" / §12 Phase 4).
+ * Audit log viewer.
  *
  * Owner/admin only — a paginated, newest-first view of app.audit_log for the
  * active org: who did what, to what, from where, and when. Access-mode /

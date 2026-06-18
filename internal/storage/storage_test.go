@@ -16,7 +16,7 @@ func TestKeys_AreContentAddressedAndPerOrg(t *testing.T) {
 		t.Errorf("ManifestKey = %q", got)
 	}
 	// The per-org prefix means the SAME content in two orgs lands at distinct
-	// keys — no cross-tenant dedup oracle (§10).
+	// keys — no cross-tenant dedup oracle.
 	if BlobKey("org-a", "sha") == BlobKey("org-b", "sha") {
 		t.Error("blob keys must differ across orgs for the same content")
 	}

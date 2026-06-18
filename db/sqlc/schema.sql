@@ -11,7 +11,7 @@
 --
 -- It is NOT applied to any database — goose owns migrations. Keep it in lock-step
 -- with db/migrations/app whenever a table/column the queries touch changes.
--- (ARCHITECTURE.md §8: sqlc → Go types from the Go-owned app schema.)
+-- (sqlc → Go types from the Go-owned app schema.)
 
 CREATE SCHEMA IF NOT EXISTS app;
 
@@ -38,7 +38,7 @@ CREATE TABLE app.org_usage (
 
 -- org_blobs: the per-org set of stored, content-addressed blobs (one row per
 -- distinct org_id+content_hash). SUM(size_bytes) is the org's dedup-aware storage;
--- org_usage.storage_bytes is the maintained running total (docs/pricing.md §5).
+-- org_usage.storage_bytes is the maintained running total.
 CREATE TABLE app.org_blobs (
     org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
     content_hash text NOT NULL,

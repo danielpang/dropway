@@ -105,7 +105,7 @@ func TestStorage_NotEnforcedByDefault(t *testing.T) {
 	}
 }
 
-// Seats are free: members are unlimited on EVERY plan (docs/pricing.md). The cloud
+// Seats are free: members are unlimited on EVERY plan. The cloud
 // provider must never 402 on the member resource, regardless of tier or count.
 func TestMembers_AlwaysUnlimited(t *testing.T) {
 	p := newProvider()

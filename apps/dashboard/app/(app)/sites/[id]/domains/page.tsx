@@ -27,7 +27,7 @@ export async function generateMetadata({
 }
 
 /**
- * Custom domains for a site (architecture §9, Cloudflare for SaaS). Owners/admins
+ * Custom domains for a site (Cloudflare for SaaS). Owners/admins
  * add a hostname; the Go API creates the custom hostname and returns the DNS DCV
  * record to publish. A per-domain poller hits GET /v1/domains/{id}/status to
  * advance verification + TLS; once both are good, the Go API writes the global

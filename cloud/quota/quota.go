@@ -2,18 +2,18 @@
 
 // Package quota (cloud) is the PROPRIETARY, hosted-only quota enforcer. It is
 // compiled only under the `cloud` build tag and is NOT part of the FSL/self-host
-// build (docs/ARCHITECTURE.md §14, cloud/LICENSE).
+// build (cloud/LICENSE).
 //
 // It implements the core quota.Provider PURE POLICY interface
-// (Allow(planTier, res, current)) with the seat-free per-ORG site bands from
-// docs/pricing.md ("pay for sites, not seats"):
+// (Allow(planTier, res, current)) with the seat-free per-ORG site bands
+// ("pay for sites, not seats"):
 //
 //	Free       : ≤ 10 sites/org   → 402 {next_tier: business}
 //	Pro        : ≤ 100 sites/org  → 402 {next_tier: enterprise}
 //	Enterprise : unlimited sites  (no site cap)
 //
 // SEATS ARE FREE: members are unlimited on every plan, so ResourceMemberPerOrg
-// always passes. Storage (bytes/org) keeps its own bands (§5) but is GATED OFF by
+// always passes. Storage (bytes/org) keeps its own bands but is GATED OFF by
 // default — it's metered, not enforced, until storage billing ships (toggle with
 // ENFORCE_STORAGE_QUOTA / NewProvider's enforceStorage). "Pro" is the public name
 // for the internal "business" plan tier.
@@ -39,7 +39,7 @@ const (
 	tierSales      PlanTier = "contact_sales"
 )
 
-// Per-ORG site caps (docs/pricing.md). These are the maximum EXISTING count;
+// Per-ORG site caps. These are the maximum EXISTING count;
 // creating one more is rejected when current >= cap. Enterprise is uncapped
 // (handled in orgSiteCap), so it has no constant here. Seats are free, so there
 // are no member caps.
@@ -48,7 +48,7 @@ const (
 	businessSitesCap = 100
 )
 
-// Per-org storage caps in BYTES (docs/pricing.md §3/§5). gib is binary (1<<30) to
+// Per-org storage caps in BYTES. gib is binary (1<<30) to
 // match how the byte counter + infra tooling measure; the values are tunable.
 const (
 	gib = int64(1) << 30
@@ -72,7 +72,7 @@ type Provider struct {
 	// enforceStorage gates the per-org STORAGE band. Default OFF (storage is metered
 	// but never blocks a deploy) — the only paid lever today is the site count. When
 	// false, AllowN(storage) always returns nil; the band code below is kept intact for
-	// when storage billing ships (config: ENFORCE_STORAGE_QUOTA → docs/pricing.md).
+	// when storage billing ships (config: ENFORCE_STORAGE_QUOTA).
 	enforceStorage bool
 }
 
@@ -113,7 +113,7 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 		}
 		capMax, next = max, nx
 	case corequota.ResourceMemberPerOrg:
-		// Seats are free: unlimited members on every plan (docs/pricing.md). The
+		// Seats are free: unlimited members on every plan. The
 		// seam stays so seat policy could be re-tightened here without a store change.
 		return nil
 	case corequota.ResourceStorageBytesPerOrg:
@@ -156,7 +156,7 @@ func (p *Provider) exceeded(res corequota.Resource, current, max int64, tier, ne
 }
 
 // orgSiteCap returns the per-ORG site cap, the tier to upgrade to, and whether the
-// tier is uncapped. The bands are seat-free (docs/pricing.md): Free 10 → Business
+// tier is uncapped. The bands are seat-free: Free 10 → Business
 // (Pro) 100 → Enterprise UNLIMITED. Enterprise has no self-serve upgrade above it,
 // so it returns unlimited=true and the caller never builds a 402.
 func orgSiteCap(tier PlanTier) (max int64, next PlanTier, unlimited bool) {

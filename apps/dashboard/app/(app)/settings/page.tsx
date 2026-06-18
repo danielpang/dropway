@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: "Organization settings" };
 export const dynamic = "force-dynamic";
 
 /**
- * Organization settings (architecture §5.4). The headline control is the
+ * Organization settings. The headline control is the
  * org-wide external-sharing policy: owners/admins can allow members to share
  * sites publicly or with external (non-org) emails. Disabling it downgrades any
  * existing external/public sites — the toggle confirms how many were affected.

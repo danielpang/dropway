@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
 # Dropway serving Worker — *.dropwaycontent.com (Cloudflare).
-# Phase 1: PUBLIC serve path only (JWT-free, cacheable). See README.md and
-# docs/ARCHITECTURE.md §3/§6.
+# Phase 1: PUBLIC serve path only (JWT-free, cacheable).
 #
 # This Worker is READ-ONLY against its bindings: KV (ROUTES) and R2 (BUCKET)
 # are projections the Go API is the sole writer of. The IDs below are
@@ -17,7 +16,7 @@ compatibility_date = "2026-06-01"
 # shared code; the Worker itself uses only Web-standard APIs.
 compatibility_flags = ["nodejs_compat"]
 
-# Observability: structured logs for edge serve decisions (§2.3).
+# Observability: structured logs for edge serve decisions.
 [observability]
 enabled = true
 
@@ -88,7 +87,7 @@ preview_bucket_name = "dropway-content-preview"
 # REVOKED: KV for the hard-revocation denylist (`revoked:user|site|org:<id>` →
 # { "min_iat": <unix seconds> }, written by the Go API on member removal / unshare
 # / external-sharing disable / suspension). If this binding is OMITTED the Worker
-# reuses the ROUTES namespace with the `revoked:` prefix (the §6 contract default),
+# reuses the ROUTES namespace with the `revoked:` prefix (the revocation contract default),
 # so gated revocation works out of the box. Supply a dedicated namespace only if
 # you want to isolate denylist writes from the route projection.
 #

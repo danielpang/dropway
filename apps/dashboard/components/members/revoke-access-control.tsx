@@ -16,8 +16,7 @@ import {
 import { revokeAccessAction } from "@/app/(app)/members/actions";
 
 /**
- * Org-wide "sign out everywhere" affordance (architecture §6 "Revocation story"
- * / §10 "Revocation under staleness"). Owner/admin only.
+ * Org-wide "sign out everywhere" affordance. Owner/admin only.
  *
  * Bumps the KV denylist `revoked:org:<id>.min_iat` so every edge token issued
  * before now is rejected at the serving Worker and the /authz exchange — every

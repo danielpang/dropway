@@ -1,6 +1,6 @@
 // Package manifest builds a content-addressed deploy manifest from a directory:
 // walk the tree, compute SHA-256 per file, and record path→hash plus size. This
-// is the client side of the deploy contract (docs/ARCHITECTURE.md §7.1): the CLI
+// is the client side of the deploy contract: the CLI
 // computes hashes locally so only missing blobs ever upload.
 //
 // The whole-deploy digest is computed by the SHARED root-level package

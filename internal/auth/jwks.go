@@ -1,6 +1,6 @@
 // Package auth implements verification of Better Auth-issued EdDSA JWTs against
 // a remote JWKS endpoint. This is the Phase-0 "JWKS/JWT spike" from the
-// architecture plan (docs/ARCHITECTURE.md §13): the Go API is the authz
+// architecture plan: the Go API is the authz
 // boundary, so it must verify every JWT itself with the algorithm pinned to
 // EdDSA, explicitly rejecting `none` and HMAC ("alg confusion") tokens, and
 // must survive key rotation by refreshing the JWKS on an unknown `kid`.
@@ -28,7 +28,7 @@ const allowedAlg = "EdDSA"
 // Claims is the verified token payload. Better Auth's JWT plugin carries the
 // subject (user id); org_id and role are injected via the organization plugin /
 // custom claims. Email/EmailVerified back the allowlist authz path (a grant is
-// honored only for a VERIFIED email — ARCHITECTURE.md §10 [HIGH]). These are a fast
+// honored only for a VERIFIED email — [HIGH]). These are a fast
 // hint — sensitive writes re-check live tables (the "confused-deputy guard").
 type Claims struct {
 	jwt.RegisteredClaims

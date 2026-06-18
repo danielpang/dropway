@@ -4,7 +4,7 @@
 // path into a content-addressed blob key. Side-effect-light and unit-testable
 // without a live edge (KV/R2 are injected as minimal interfaces in index.ts).
 //
-// Object layout (content-addressed, dedup — docs/ARCHITECTURE.md §3):
+// Object layout (content-addressed, dedup):
 //   - per-deploy manifest JSON at  manifests/<org_id>/<site_id>/<version_id>.json
 //     mapping each served request-path → { sha256, content_type }.
 //   - blobs at                      blobs/<org_id>/<sha256>

@@ -46,8 +46,8 @@ func ver(id, siteID string, no int32, current bool) db.ListVersionsForGCRow {
 	}
 }
 
-// TestGC_OrphanDeletedReferencedKeptCurrentUntouched is the core GC unit test
-// (ARCHITECTURE.md §12): with the in-memory fake, an orphan blob is deleted, a
+// TestGC_OrphanDeletedReferencedKeptCurrentUntouched is the core GC unit test:
+// with the in-memory fake, an orphan blob is deleted, a
 // referenced blob is kept, and the CURRENT version's blob is never touched.
 func TestGC_OrphanDeletedReferencedKeptCurrentUntouched(t *testing.T) {
 	ctx := context.Background()

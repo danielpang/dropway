@@ -12,12 +12,12 @@ import (
 // CollectRoutesForOrg returns every live (published) route for one org as a
 // host→RouteValue map. It runs under the org's RLS tenant context (no BYPASSRLS),
 // so it is safe to call on the request-path connection. This is the building
-// block of the "KV is rebuildable from Postgres" invariant (ARCHITECTURE.md §13
-// row 8): a caller that knows the set of org ids can wipe the edge projection and
+// block of the "KV is rebuildable from Postgres" invariant: a caller that knows
+// the set of org ids can wipe the edge projection and
 // replay these maps to fully restore serving.
 //
-// Cross-org rebuild is a system job; ARCHITECTURE.md §8 reserves true BYPASSRLS
-// for it. To keep the request-path connection non-bypass, the rebuild driver
+// Cross-org rebuild is a system job that reserves true BYPASSRLS.
+// To keep the request-path connection non-bypass, the rebuild driver
 // iterates org ids and calls this per org under that org's tenant context.
 func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[string]projection.RouteValue, error) {
 	t := Tenant{OrgID: orgID, UserID: orgID} // user id is unused by these reads; reuse org for a valid GUC
@@ -87,7 +87,7 @@ type RebuildResult struct {
 	Routes int
 }
 
-// RebuildAllOrgs is the DR drill (ARCHITECTURE.md §13 row 8): enumerate EVERY org
+// RebuildAllOrgs is the DR drill: enumerate EVERY org
 // (via the SECURITY DEFINER app.all_org_ids(), not a BYPASSRLS pool), collect each
 // org's live routes under its own RLS tenant context, and replay the whole set
 // through w.RebuildFromDB — restoring serving after a KV/D1 wipe. Postgres is

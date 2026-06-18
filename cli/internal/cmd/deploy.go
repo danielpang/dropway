@@ -1,6 +1,6 @@
 // Package cmd assembles the `dropway` CLI (cobra). Phase 1 ships `deploy`, which
-// implements the full folder → live URL flow against the API
-// (docs/ARCHITECTURE.md §7.1): walk + hash → (create site) → prepare → upload
+// implements the full folder → live URL flow against the API:
+// walk + hash → (create site) → prepare → upload
 // only-missing blobs to presigned URLs → finalize → publish. The dry run (no
 // --send) prints the plan without any network so it stays useful offline.
 package cmd
@@ -132,7 +132,7 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 
 // uploadMissing reads each missing blob's bytes from disk and PUTs them to the
 // presigned URL the server returned. Only blobs the server doesn't already have
-// are uploaded (only-changed-blob upload, §7.1). A blob may back multiple paths;
+// are uploaded (only-changed-blob upload). A blob may back multiple paths;
 // we find the first file with the matching hash.
 func uploadMissing(ctx context.Context, client api.Client, dir string, m *manifest.Manifest, prep *api.PrepareResponse) error {
 	// Index manifest entries by sha so we can locate a file path per missing sha.

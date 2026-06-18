@@ -66,7 +66,7 @@ function phaseLabel(p: DeployProgress): string {
 }
 
 /**
- * Folder drag-and-drop deploy (architecture §7.2). Drop a folder of static files
+ * Folder drag-and-drop deploy. Drop a folder of static files
  * (or pick one) and it goes live: the browser hashes every file, uploads only the
  * blobs the server doesn't already have directly to object storage, then finalizes
  * + publishes. Same backend contract as `dropway deploy`, authed by your session.

@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import type { AccessMode } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-/** The five selectable access shapes (architecture §6). */
+/** The five selectable access shapes. */
 const OPTIONS: {
   value: AccessSelection;
   label: string;

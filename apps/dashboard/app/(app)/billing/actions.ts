@@ -3,7 +3,7 @@
 import { api, ApiError, type BillingPlan, type CheckoutTier } from "@/lib/api";
 
 /**
- * Billing server actions (architecture §9, CLOUD-ONLY surface). These call the
+ * Billing server actions (CLOUD-ONLY surface). These call the
  * Go API's /v1/billing/* endpoints carrying the caller's EdDSA JWT; the API is
  * the authz boundary and independently re-checks owner/admin on every WRITE
  * (checkout/portal) — the dashboard's role gate is UX only, never trusted.
@@ -79,7 +79,7 @@ export type BillingPlanResult =
  * Read the org's current plan. Used by the billing page's "finalizing your
  * subscription…" poller after returning from Stripe: the entitlement lands via
  * the WEBHOOK, not the success redirect, so the page polls this until plan_tier
- * flips (architecture §9).
+ * flips.
  */
 export async function getBillingPlanAction(): Promise<BillingPlanResult> {
   try {

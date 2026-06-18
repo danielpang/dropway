@@ -1,6 +1,6 @@
 // Package middleware holds the Go API's HTTP middleware and the RLS tenant-context
-// helper. The Auth middleware is the front door of the authz boundary
-// (docs/ARCHITECTURE.md §3): it verifies the Bearer EdDSA JWT via internal/auth
+// helper. The Auth middleware is the front door of the authz boundary:
+// it verifies the Bearer EdDSA JWT via internal/auth
 // and stashes the verified *auth.Claims in the request context. The rlstx helper
 // (rlstx.go) opens a transaction and sets the per-request tenant GUCs that the
 // Postgres RLS policies read.

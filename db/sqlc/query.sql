@@ -8,7 +8,7 @@
 -- tenant GUCs (see internal/store + internal/middleware/rlstx), so RLS scopes
 -- each statement to the active org. These queries therefore carry NO explicit
 -- org filter beyond what RLS enforces, except where we deliberately re-derive a
--- resource's org for the confused-deputy guard (ARCHITECTURE.md §5).
+-- resource's org for the confused-deputy guard.
 
 -- ===========================================================================
 -- org provisioning
@@ -83,7 +83,7 @@ WHERE org_id = $1;
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':members'));
 
 -- ===========================================================================
--- storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
+-- storage metering: org_blobs ledger + org_usage counter
 -- ===========================================================================
 
 -- name: LockOrgStorageQuota :exec
@@ -257,7 +257,7 @@ WHERE host = $1;
 -- scopes the rows to the active org, so a caller only ever sees its own site's
 -- hosts. An access-mode / policy change must rewrite EVERY one of these routes
 -- (not just the canonical one), or a verified custom host keeps serving at the
--- OLD access_mode after the policy tightened (ARCHITECTURE.md §6 revocation).
+-- OLD access_mode after the policy tightened (revocation).
 SELECT host, org_id, site_id, created_at
 FROM app.host_routes
 WHERE site_id = $1
@@ -484,7 +484,7 @@ WHERE is_external = true;
 -- so an audit write can never land under the wrong tenant. actor_user is the verified
 -- user id (null for a deploy-token actor); actor_token is the deploy-token id when a
 -- token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
--- the request provenance (ARCHITECTURE.md §10 / §2.3).
+-- the request provenance.
 INSERT INTO app.audit_log (
     org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id
 )

@@ -9,7 +9,7 @@ export type AllowExternalActionResult =
   | { ok: false; message: string };
 
 /**
- * Toggle the org-wide `allow_external_sharing` policy (architecture §5.4). The
+ * Toggle the org-wide `allow_external_sharing` policy. The
  * Go API re-checks owner/admin and, when DISABLING, reconciles: it downgrades
  * public sites to org_only, revokes external-email grants, and rewrites the edge
  * routes — returning the count of downgraded sites so the UI can confirm the

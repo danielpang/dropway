@@ -1,8 +1,8 @@
 // Package storage is the object-store seam for content-addressed blobs and
-// immutable deploy manifests (docs/ARCHITECTURE.md §3 object layout, §7.1).
+// immutable deploy manifests.
 //
 // Object layout (content-addressed, per-org, dedup scoped to the org so a global
-// existence check can't become a cross-tenant content-confirmation oracle — §10):
+// existence check can't become a cross-tenant content-confirmation oracle):
 //
 //	blobs/<org_id>/<sha256>                                  -- one file's bytes
 //	manifests/<org_id>/<site_id>/<version_id>.json           -- the deploy manifest
@@ -32,7 +32,7 @@ var ErrNotFound = errors.New("storage: object not found")
 // GC overlapping an in-flight deploy could otherwise delete that deploy's just-
 // uploaded, not-yet-referenced blobs and corrupt it. The GC therefore refuses to
 // delete an orphan younger than GCPolicy.MinAge (presign TTL + safety margin),
-// using LastModified (ARCHITECTURE.md §12).
+// using LastModified.
 type BlobInfo struct {
 	SHA          string
 	LastModified time.Time
@@ -42,7 +42,7 @@ type BlobInfo struct {
 type Store interface {
 	// PresignPut returns a URL the client can PUT the blob's bytes to directly.
 	// The key is derived server-side from orgID + the server-validated sha256 —
-	// never a client-supplied path (§10). The URL expires after ttl.
+	// never a client-supplied path. The URL expires after ttl.
 	PresignPut(ctx context.Context, orgID, sha256 string, ttl time.Duration) (string, error)
 
 	// HeadBlob reports whether the blob already exists for this org (drives
@@ -68,7 +68,7 @@ type Store interface {
 	// ListBlobInfos returns every blob stored under the org's prefix
 	// (blobs/<org_id>/) as a {SHA, LastModified} pair. It is the input to the R2
 	// version GC: blobs no longer referenced by any retained deploy manifest are
-	// orphans (ARCHITECTURE.md §12 "R2 version GC"), but the GC only deletes an
+	// orphans ("R2 version GC"), but the GC only deletes an
 	// orphan OLDER than GCPolicy.MinAge — so the LastModified time is surfaced here
 	// to guard against deleting an in-flight deploy's just-uploaded (not-yet-
 	// referenced) blobs. It must paginate internally so a large org enumerates fully.
@@ -82,7 +82,7 @@ type Store interface {
 
 // BlobKey returns the canonical R2/S3 key for a blob. Exported so callers
 // (and tests) build keys consistently; the key is content-addressed and
-// per-org so dedup never leaks across tenants (§10).
+// per-org so dedup never leaks across tenants.
 func BlobKey(orgID, sha256 string) string {
 	return fmt.Sprintf("blobs/%s/%s", orgID, sha256)
 }

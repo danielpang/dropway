@@ -48,7 +48,7 @@ func resolveHost(ctx context.Context, tx pgx.Tx, host string) (ResolvedHost, err
 
 // MintViewer carries the VERIFIED viewer identity from the Better Auth JWT that
 // the /authz mint endpoint authorizes. EmailVerified must be true for an allowlist
-// match to be honored (ARCHITECTURE.md §10 [HIGH]).
+// match to be honored ([HIGH]).
 type MintViewer struct {
 	UserID        string
 	OrgID         string
@@ -58,7 +58,7 @@ type MintViewer struct {
 
 // MintDecision is the result of authorizing a mint: the site identity + the mode
 // the resulting edge token should carry, plus the canonical content host (so the
-// caller binds aud to exactly that host, never a free-form return URL — §10).
+// caller binds aud to exactly that host, never a free-form return URL).
 type MintDecision struct {
 	Host    string
 	SiteID  string
@@ -135,8 +135,8 @@ func (s *Store) AuthorizeMint(ctx context.Context, v MintViewer, host string) (M
 		// The JWT org_id claim must match the site's org (fast hint), AND the viewer
 		// must be a CURRENT member of the site's org per the live identity.member table.
 		// Membership is authoritative: a user removed from the org but still holding
-		// an unexpired JWT must NOT be able to mint an edge token (FIX 2 /
-		// ARCHITECTURE.md §6 "org-only → viewer ∈ member(site.org_id) (re-check)").
+		// an unexpired JWT must NOT be able to mint an edge token (FIX 2):
+		// org-only → viewer ∈ member(site.org_id) (re-check).
 		if v.OrgID != rh.OrgID {
 			return MintDecision{}, ErrNotOrgMember
 		}

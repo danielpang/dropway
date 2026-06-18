@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// Edge rate limiting + denial-of-wallet guard (docs/ARCHITECTURE.md §10
-// "[MEDIUM] Denial-of-wallet", §12 Phase-4 "edge rate limiting + denial-of-wallet
-// caps"). Two independent controls, both READ-ONLY-ish projections over KV so the
+// Edge rate limiting + denial-of-wallet guard ("[MEDIUM] Denial-of-wallet",
+// Phase-4 "edge rate limiting + denial-of-wallet caps"). Two independent
+// controls, both READ-ONLY-ish projections over KV so the
 // Worker stays a thin consumer:
 //
 //   1. A per-(host|IP) request RATE LIMITER. The PRIMARY limiter is Cloudflare's

@@ -103,7 +103,7 @@ func NewRealSignatureVerifier(webhookSecret string, prices PriceMap) RealSignatu
 
 // Verify constructs and verifies the event, then resolves it to our Event. A
 // signature/parse failure returns an error → the handler renders 400 and writes
-// nothing (only a signed webhook may mutate entitlement, §9).
+// nothing (only a signed webhook may mutate entitlement).
 //
 // We keep the timestamp tolerance check ON (replay protection) but set
 // IgnoreAPIVersionMismatch=true: the Stripe-Signature HMAC is the security
@@ -264,7 +264,7 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 // resolveOrgID resolves the org id from a Checkout client_reference_id first, then
 // metadata.org_id. (Resolving via the customer id is a DB lookup the webhook does
 // not need here because we always stamp org_id on creation; left as the documented
-// fallback order from §9.)
+// fallback order.)
 func resolveOrgID(clientReferenceID string, metadata map[string]string) string {
 	if clientReferenceID != "" {
 		return clientReferenceID

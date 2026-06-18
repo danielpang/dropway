@@ -32,7 +32,7 @@ import {
  * Named `identity` (not `auth`) to avoid colliding with Postgres providers that
  * reserve their own `auth` schema (e.g. Supabase's GoTrue).
  *
- * Architecture notes (see docs/ARCHITECTURE.md §2.2, §5, §8):
+ * Architecture notes:
  *  - Better Auth runs self-hosted inside the Next.js dashboard and OWNS + migrates
  *    its own identity tables in our Supabase Postgres. The Go API reads them for
  *    authz but never migrates them.
@@ -76,7 +76,7 @@ export const auth = betterAuth({
   // Postgres via a node-postgres Pool. Better Auth uses its built-in Kysely
   // adapter when handed a `Pool`, generating + migrating its own identity tables.
   //
-  // Better Auth OWNS the `identity` schema (architecture §5/§8): `databaseUrl()` is
+  // Better Auth OWNS the `identity` schema: `databaseUrl()` is
   // a PRIVILEGED connection (it must CREATE its tables), and `options` pins the
   // session search_path to `identity` so the adapter's UNqualified tables (user,
   // session, member, organization, …) are created in + read from `identity` —
@@ -209,7 +209,7 @@ export const auth = betterAuth({
         keyPairConfig: { alg: "EdDSA" },
       },
       jwt: {
-        // 5–15 min short-lived tokens (architecture §2.2). The verified token
+        // 5–15 min short-lived tokens. The verified token
         // carries the org/role claims the Go API uses for authz.
         expirationTime: "10m",
         // The Go API PINS iss + aud on every token. Stamp them from the SAME env it

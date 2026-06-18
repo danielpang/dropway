@@ -3,7 +3,7 @@ import "server-only";
 import { api, ApiError, type AuditEvent } from "@/lib/api";
 
 /**
- * Server-side read of the org's audit log (architecture §10 / §12 Phase 4).
+ * Server-side read of the org's audit log (Phase 4).
  *
  * The audit viewer (app/(app)/audit) is owner/admin only and shows recent
  * security-relevant events from app.audit_log (member removals, unshares,

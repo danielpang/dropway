@@ -99,7 +99,7 @@ type DowngradedRoute = RouteUpdate
 //     access).
 //
 // It returns the downgraded sites' new route values so the caller rewrites the KV
-// projection within the propagation window (ARCHITECTURE.md §5.4/§6). Enabling the
+// projection within the propagation window. Enabling the
 // policy needs no reconcile (it only widens what is permitted).
 func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled bool) (ReconcileResult, error) {
 	var res ReconcileResult
@@ -146,7 +146,7 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 			// Rewrite EVERY host of the site (canonical + verified custom domains),
 			// not just the canonical one — each has its own route:<host> KV entry, and
 			// a custom host left at 'public' keeps serving publicly after the policy
-			// tightened (FIX 1 / ARCHITECTURE.md §6 revocation).
+			// tightened (FIX 1).
 			hostRoutes, err := q.ListHostRoutesForSite(ctx, site.ID)
 			if err != nil {
 				return err

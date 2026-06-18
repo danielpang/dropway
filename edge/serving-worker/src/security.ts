@@ -3,10 +3,9 @@
 // Content-security response headers for EVERY response the Worker emits — served
 // tenant content (public + gated) AND the platform pages (404, link-expired,
 // 429, account-suspended). This is the Phase-4 edge hardening surface
-// (docs/ARCHITECTURE.md §10, "[MEDIUM] CSP / block service-worker registration
-// on content origins").
+// ("[MEDIUM] CSP / block service-worker registration on content origins").
 //
-// IMPORTANT framing (§10): CSP is NOT the tenant-isolation control here — the
+// IMPORTANT framing: CSP is NOT the tenant-isolation control here — the
 // separate PSL content domain (`*.dropwaycontent.com`) is. Hostile tenant JS
 // is already firewalled from the `app.dropway.dev` session by domain separation;
 // these headers are DEFENSE IN DEPTH that (a) stop MIME-confusion and referrer
@@ -83,7 +82,7 @@ export const PLATFORM_CSP =
  * Headers common to BOTH content and platform responses (the always-on baseline):
  *  - `X-Content-Type-Options: nosniff` — never MIME-sniff untrusted tenant bytes.
  *  - `Referrer-Policy: no-referrer` — never leak the (possibly unguessable)
- *    content URL to a third party (§10 HIGH: hashed/preview URLs only hide).
+ *    content URL to a third party (HIGH: hashed/preview URLs only hide).
  *  - `X-Frame-Options: DENY` — legacy clickjacking defense (CSP frame-ancestors
  *    is the modern one; both are sent).
  *  - `Cross-Origin-Opener-Policy: same-origin` — a tenant window can't get a
@@ -109,7 +108,7 @@ function baseSecurityHeaders(): Record<string, string> {
 }
 
 /**
- * Block service-worker registration on the content origin (§10 MEDIUM).
+ * Block service-worker registration on the content origin.
  *
  * A registered SW on a tenant host could persist arbitrary tenant JS across
  * navigations, intercept fetches, and survive a takedown — so we deny it in two
@@ -131,7 +130,7 @@ function baseSecurityHeaders(): Record<string, string> {
 /**
  * True when the request is a service-worker SCRIPT fetch (registration/update).
  * The browser sets `Service-Worker: script` on exactly these; refusing them blocks
- * SW registration on the content origin regardless of the request path (§10).
+ * SW registration on the content origin regardless of the request path.
  */
 export function isServiceWorkerRequest(request: Request): boolean {
   return request.headers.get("Service-Worker") === "script";
@@ -140,7 +139,7 @@ export function isServiceWorkerRequest(request: Request): boolean {
 /**
  * The conventional file names a browser will accept as a service-worker script
  * registered at the site root. We refuse to serve a SCRIPTABLE body at these
- * paths so a tenant can never register a SW on its content host (§10). Matching
+ * paths so a tenant can never register a SW on its content host. Matching
  * is on the final path segment, case-insensitively.
  */
 const SERVICE_WORKER_SCRIPTS = new Set([

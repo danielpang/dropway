@@ -1,5 +1,5 @@
-// Package store is the Go API's data-access layer over the Go-owned `app` schema
-// (docs/ARCHITECTURE.md §5/§8). It wraps the sqlc-generated queries (services/
+// Package store is the Go API's data-access layer over the Go-owned `app` schema.
+// It wraps the sqlc-generated queries (services/
 // api/internal/store/db) in a Store that, for every call, BEGINs a pgx
 // transaction, runs the SET LOCAL RLS tenant context from the verified claims
 // (the same set_config semantics as internal/middleware/rlstx), executes the
@@ -11,7 +11,7 @@
 // Go API connects as the non-BYPASSRLS `dropway_app` role; every tenant table is
 // FORCE RLS. The Go API is the PRIMARY authz layer and RLS is the backstop, so
 // sensitive writes here also re-derive a resource's org and assert it matches the
-// active tenant (the confused-deputy guard, §5/§10).
+// active tenant (the confused-deputy guard).
 package store
 
 import (
@@ -42,7 +42,7 @@ type Store struct {
 
 // New wraps a pgx pool with the open-core quota policy. The pool MUST connect as
 // the non-BYPASSRLS dropway_app role (the runtime DATABASE_URL), never a
-// superuser/bypass connection on a request path (§8 CI lint). quota is the pure
+// superuser/bypass connection on a request path (CI lint). quota is the pure
 // policy (Unlimited in OSS, the cloud hard-caps under -tags cloud); the Store
 // owns the race-safe mechanics (advisory lock + COUNT inside the create tx).
 func New(pool *pgxpool.Pool, q quota.Provider) *Store {
@@ -99,7 +99,7 @@ func (s *Store) withTxRaw(ctx context.Context, t Tenant, fn func(tx pgx.Tx, q *d
 
 var (
 	// ErrReservedSlug is returned when a requested slug is on the reserved
-	// blocklist (§10 reserved-slug blocklist).
+	// blocklist (reserved-slug blocklist).
 	ErrReservedSlug = errors.New("store: reserved slug")
 	// ErrSlugTaken is returned when (org, slug) already exists.
 	ErrSlugTaken = errors.New("store: slug already in use for this org")
@@ -113,7 +113,7 @@ var (
 	ErrHostTaken = errors.New("store: host already owned by another site")
 	// ErrExternalSharingDisabled is returned when an action would create external/
 	// public sharing while the org's allow_external_sharing policy is false — the
-	// DB external-sharing trigger (migration 0004) rejected it in depth (§5.4/§10).
+	// DB external-sharing trigger (migration 0004) rejected it in depth.
 	// A brand-new org is fully internal until an admin opts in.
 	ErrExternalSharingDisabled = errors.New("store: external sharing disabled for this org")
 )

@@ -2,7 +2,7 @@
 
 // This file is compiled into the DEFAULT (open-source, self-host) build. It
 // wires the no-op quota provider so the OSS binary has no caps and never imports
-// any code under cloud/ (docs/ARCHITECTURE.md §14.3). CI asserts the core has
+// any code under cloud/. CI asserts the core has
 // zero references into cloud/.
 package main
 
@@ -28,7 +28,7 @@ func quotaProviderName() string { return "unlimited (oss)" }
 
 // mountCloud is a NO-OP in the OSS/self-host build: there is no billing. So
 // /webhooks/stripe and /v1/billing/* simply do not exist in the self-host surface
-// (ARCHITECTURE.md §14). The cloud build replaces this (wire_cloud.go) to mount the
+// The cloud build replaces this (wire_cloud.go) to mount the
 // signature-verified Stripe webhook + the authed billing routes. The deps argument
 // is accepted for signature parity with the cloud variant and is unused here.
 func mountCloud(_ *chi.Mux, _ cloudDeps) {}

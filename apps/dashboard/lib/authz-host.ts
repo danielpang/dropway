@@ -1,5 +1,5 @@
 /**
- * Host + redirect validation for the /authz viewer exchange (architecture §6).
+ * Host + redirect validation for the /authz viewer exchange.
  *
  * The /authz route takes attacker-influenceable query params (`host`, `next`)
  * and ultimately 302s the browser to `https://<host>/__authz/callback?...&next=`.

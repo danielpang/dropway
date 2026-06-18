@@ -5,7 +5,7 @@ import type { OrgStatus } from "@/lib/api";
 
 /**
  * Non-dismissible account banner shown org-wide when billing has restricted the
- * account (architecture §9):
+ * account:
  *
  *  - over_limit — a downgrade (e.g. canceled to Free) left the org above its
  *    caps. The account is read-only / no-new-resources until they upgrade or

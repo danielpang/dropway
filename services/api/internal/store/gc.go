@@ -19,7 +19,7 @@ import (
 // finalized, so a GC overlapping an in-flight deploy would otherwise delete that
 // deploy's just-uploaded, not-yet-referenced blobs and corrupt it. We require an
 // orphan to be older than the presign TTL PLUS a 1h safety margin (covers clock
-// skew + a slow upload/commit) before it is eligible for deletion. (§12.)
+// skew + a slow upload/commit) before it is eligible for deletion.
 const DefaultGCMinAge = 15*time.Minute + time.Hour
 
 // GCPolicy configures the R2 version GC retention.
@@ -113,7 +113,7 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 		return res, err
 	}
 
-	// 5. Reconcile the storage ledger with the R2 deletes (docs/pricing.md §5): drop
+	// 5. Reconcile the storage ledger with the R2 deletes: drop
 	//    each deleted blob's org_blobs row and decrement the org's running total. The
 	//    R2 objects are already gone; a crash here leaves the counter slightly HIGH
 	//    until RecomputeOrgStorage reconciles — the safe direction (never under-counts

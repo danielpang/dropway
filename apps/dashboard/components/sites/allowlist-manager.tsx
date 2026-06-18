@@ -17,7 +17,7 @@ import type { AllowlistEntry } from "@/lib/api";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Manage a site's allowlist of viewer emails (architecture §6). Adding an email
+ * Manage a site's allowlist of viewer emails. Adding an email
  * the Go API deems "external" (not on an org-verified domain) is rejected unless
  * the org allows external sharing — the action surfaces that 403 as a message.
  * Each row shows whether the grant has been claimed (a verified account signed

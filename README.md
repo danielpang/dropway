@@ -82,9 +82,8 @@ control as first-class features.
 A **Next.js dashboard** (with Better Auth: Google / email / magic-link) is the control
 plane; a **Go API** is the system of record and the authorization boundary; a
 **Cloudflare Worker** serves content at the edge; **Postgres** (with row-level security
-per org) is the source of truth. The full design, covering domains, the RLS data model, edge auth,
-deploy flow, and billing, is in **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**, and the
-component + request-flow **[diagrams are in `docs/diagrams/`](docs/diagrams/)**.
+per org) is the source of truth. The component + request-flow
+**[diagrams are in `docs/diagrams/`](docs/diagrams/)**.
 
 ---
 
@@ -211,7 +210,6 @@ can self-host for free, plus an optional hosted SaaS for convenience and scale.
 
 ## Docs & status
 
-- **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**: the full system design.
 - **[`docs/diagrams/`](docs/diagrams/)**: component + sequence diagrams (sign-up,
   sign-in, deploy, gated access, LLM/MCP access).
 - **[`status.md`](status.md)**: build status, monorepo map, and the complete local-run

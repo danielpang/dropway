@@ -25,7 +25,7 @@ export const metadata: Metadata = { title: "Verifying access" };
 export const dynamic = "force-dynamic";
 
 /**
- * The viewer authz exchange (architecture §6). A gated content host's Worker
+ * The viewer authz exchange. A gated content host's Worker
  * 302s an unauthenticated request here as
  * `/authz?host=<content_host>&next=<path>`. This server route:
  *

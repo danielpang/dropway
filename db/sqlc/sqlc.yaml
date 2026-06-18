@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# sqlc configuration for the Go-owned `app` schema (ARCHITECTURE.md §8).
+# sqlc configuration for the Go-owned `app` schema.
 #
 # `schema.sql` is the Up-only DDL mirror of db/migrations/app (no goose
 # annotations, no DROPs); `query.sql` holds the typed queries. Generated Go lands

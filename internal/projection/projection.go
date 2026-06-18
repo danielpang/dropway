@@ -1,6 +1,6 @@
 // Package projection writes the edge routing projection — the KV value at
 // `route:<host>` that the Cloudflare serving Worker reads to resolve a host to a
-// live version and stream it from R2 (docs/ARCHITECTURE.md §3/§6/§8).
+// live version and stream it from R2.
 //
 // Postgres is authoritative; this projection is a REBUILDABLE cache. The Go API
 // is the ONLY writer (the Worker is read-only). RouteValue mirrors the single
@@ -21,7 +21,7 @@ import (
 // SchemaVersion is the version of THIS contract shape. It MUST equal
 // SCHEMA_VERSION in @dropway/contracts (contracts/src/index.ts) and the
 // `schema_version` enforced by kv-route.schema.json. Bump in lock-step on any
-// breaking change. (ARCHITECTURE.md §8, §13 row 11.)
+// breaking change.
 //
 // v1 → v2 (Phase 2): adds the optional `expires_at` (RFC3339) field so the
 // Worker can enforce public/unlisted link expiry at the edge from the RouteValue
@@ -98,7 +98,7 @@ func (v RouteValue) Validate() error {
 
 // Writer is the edge-projection surface. The Go API calls PutRoute on publish and
 // DeleteRoute on unshare/delete; RebuildFromDB re-pushes the entire projection
-// from Postgres (the DR drill / drift reconciler — §13 row 8).
+// from Postgres (the DR drill / drift reconciler).
 type Writer interface {
 	// PutRoute upserts the route value for host (e.g.
 	// "<org>--<app>.dropwaycontent.com").
@@ -114,7 +114,7 @@ type Writer interface {
 // exchange read (the edgerevoke contract). The Go API is the ONLY writer; readers
 // are read-only. Revoke is IDEMPOTENT — it takes max(existing, new) min_iat, so the
 // denylist only ever tightens — and a write FAILS CLOSED (a lost key just forces an
-// extra re-auth), so it is safe to retry and to rebuild (ARCHITECTURE.md §6/§10).
+// extra re-auth), so it is safe to retry and to rebuild.
 //
 // The production CloudflareKV and the dev/test Local writers both implement it on
 // the same KV namespace as the route projection (the "revoked:" prefix), so no
@@ -174,8 +174,8 @@ func HostForSite(orgSlug, appSlug string) string {
 	return orgSlug + "--" + appSlug + "." + ContentDomain
 }
 
-// ContentDomain is the registrable, PSL-listed content domain (ARCHITECTURE.md
-// §3) under which every tenant site is served. It is env-overridable via
+// ContentDomain is the registrable, PSL-listed content domain under which
+// every tenant site is served. It is env-overridable via
 // CONTENT_DOMAIN (default "dropwaycontent.com") so a self-host/dev deployment
 // can serve under its own apex without recompiling.
 var ContentDomain = envOr("CONTENT_DOMAIN", "dropwaycontent.com")

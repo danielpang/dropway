@@ -1,6 +1,6 @@
 //go:build integration
 
-// Phase-4 integration test (ARCHITECTURE.md §6/§10/§12/§13): audit logging, hard
+// Phase-4 integration test: audit logging, hard
 // revocation denylist, R2 version GC, and the DR projection rebuild — exercised
 // against real Postgres 16 (goose migrations as non-BYPASSRLS dropway_app) + MinIO.
 //
@@ -158,7 +158,7 @@ func TestIntegration_Phase4(t *testing.T) {
 	v2, blob2 := deployOneBlobVersion(t, ctx, st, obj, tA, gcSite.ID, "v2-content")
 	v3, blob3 := deployOneBlobVersion(t, ctx, st, obj, tA, gcSite.ID, "v3-content")
 
-	// STORAGE METER (docs/pricing.md §5): three distinct 10-byte blobs → 30 bytes.
+	// STORAGE METER: three distinct 10-byte blobs → 30 bytes.
 	const blobLen = int64(len("v1-content")) // 10; all three contents are 10 bytes
 	if got, err := st.OrgStorageBytes(ctx, tA); err != nil || got != 3*blobLen {
 		t.Fatalf("storage after 3 deploys = %d (err=%v), want %d", got, err, 3*blobLen)

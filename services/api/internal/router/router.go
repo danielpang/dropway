@@ -22,7 +22,7 @@ import (
 // mount additional routes onto it via mountCloud (the /webhooks/stripe webhook +
 // the authed /v1/billing/* group). The OSS build's mountCloud is a no-op, so the
 // returned mux is identical to the self-host surface — billing routes simply don't
-// exist there (ARCHITECTURE.md §14: self-host has no billing).
+// exist there (self-host has no billing).
 func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logger) *chi.Mux {
 	if baseLogger == nil {
 		baseLogger = slog.Default()
@@ -53,7 +53,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	r.Post("/v1/authz/password", api.AuthzPassword)
 
 	// Authenticated control-plane surface. Everything else under /v1 requires a
-	// verified EdDSA JWT (the authz boundary, §3), then ensure-org-provisioned.
+	// verified EdDSA JWT (the authz boundary), then ensure-org-provisioned.
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.Auth(verifier))
 		r.Use(api.EnsureOrgProvisioned)
@@ -70,7 +70,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 		// Hard revocation (Phase 4): admin/owner writes the edge denylist so a
 		// removed/banned member's edge tokens are rejected immediately, not just at
-		// the short TTL (ARCHITECTURE.md §6/§10).
+		// the short TTL.
 		r.Post("/members/{userId}/revoke", api.RevokeMember)
 
 		// Audit log (Phase 4): admin/owner reads the org's sensitive-action trail,

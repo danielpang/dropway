@@ -258,7 +258,7 @@ ON CONFLICT (id) DO NOTHING
 // tenant GUCs (see internal/store + internal/middleware/rlstx), so RLS scopes
 // each statement to the active org. These queries therefore carry NO explicit
 // org filter beyond what RLS enforces, except where we deliberately re-derive a
-// resource's org for the confused-deputy guard (ARCHITECTURE.md §5).
+// resource's org for the confused-deputy guard.
 // ===========================================================================
 // org provisioning
 // ===========================================================================
@@ -801,7 +801,7 @@ ORDER BY host
 // scopes the rows to the active org, so a caller only ever sees its own site's
 // hosts. An access-mode / policy change must rewrite EVERY one of these routes
 // (not just the canonical one), or a verified custom host keeps serving at the
-// OLD access_mode after the policy tightened (ARCHITECTURE.md §6 revocation).
+// OLD access_mode after the policy tightened (revocation).
 func (q *Queries) ListHostRoutesForSite(ctx context.Context, siteID string) ([]AppHostRoute, error) {
 	rows, err := q.db.Query(ctx, listHostRoutesForSite, siteID)
 	if err != nil {
@@ -1119,7 +1119,7 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
 `
 
 // ===========================================================================
-// storage metering (docs/pricing.md §5): org_blobs ledger + org_usage counter
+// storage metering: org_blobs ledger + org_usage counter
 // ===========================================================================
 // Serialize concurrent deploys' storage accounting for an org: a transaction-scoped
 // advisory lock keyed by hashtext(org||':storage'), so the GetOrgStorage → cap check
@@ -1497,7 +1497,7 @@ type WriteAuditLogParams struct {
 // so an audit write can never land under the wrong tenant. actor_user is the verified
 // user id (null for a deploy-token actor); actor_token is the deploy-token id when a
 // token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
-// the request provenance (ARCHITECTURE.md §10 / §2.3).
+// the request provenance.
 func (q *Queries) WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) (AppAuditLog, error) {
 	row := q.db.QueryRow(ctx, writeAuditLog,
 		arg.OrgID,

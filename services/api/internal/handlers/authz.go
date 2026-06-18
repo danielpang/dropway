@@ -18,7 +18,7 @@ import (
 )
 
 // EdgeJWKS serves the edge signer's public JWKS at GET /.well-known/edge-jwks
-// (docs/ARCHITECTURE.md edge-token spec). The Worker fetches this and pins
+// (edge-token spec). The Worker fetches this and pins
 // alg=EdDSA when verifying the host-scoped edge token. Unauthenticated + cacheable
 // (public keys). Separate keypair from Better Auth's user JWKS.
 func (a *API) EdgeJWKS(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +61,7 @@ type mintResponse struct {
 // sites must use /v1/authz/password instead.
 //
 // `next` is echoed by the caller only as a redirect target on the CONTENT host the
-// Worker controls — it is never used for authorization (no open-redirect; §10).
+// Worker controls — it is never used for authorization (no open-redirect).
 func (a *API) AuthzMint(w http.ResponseWriter, r *http.Request) {
 	claims, ok := middleware.ClaimsFromContext(r.Context())
 	if !ok {

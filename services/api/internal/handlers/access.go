@@ -114,7 +114,7 @@ func (a *API) SetSiteAccess(w http.ResponseWriter, r *http.Request) {
 	// denylist key (revoked:site:<id>). Every edge token for this site issued before
 	// now is invalidated immediately — the Worker + /authz reject it and force a
 	// re-auth against the NEW mode, rather than honoring the stale grant until the
-	// short TTL lapses (ARCHITECTURE.md §6/§10). Writing on every change is correct
+	// short TTL lapses. Writing on every change is correct
 	// and fail-closed: it only affects gated tokens, and a loosen-then-write at worst
 	// forces one harmless extra re-auth. Idempotent (max min_iat).
 	if a.Revoker != nil {

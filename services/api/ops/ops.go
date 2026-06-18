@@ -1,8 +1,6 @@
 // Package ops exposes the operator entrypoints for Dropway's Phase-4 maintenance
 // jobs — the R2 version GC and the DR projection rebuild — wrapped so the `dropway`
-// CLI (rooted at cli/, which cannot import services/api/internal/*) can drive them
-// (docs/ARCHITECTURE.md §12 R2 version GC, §13 row 8 KV/D1 rebuild-from-Postgres DR
-// drill).
+// CLI (rooted at cli/, which cannot import services/api/internal/*) can drive them.
 //
 // It builds the SAME non-BYPASSRLS store, S3/R2 storage, and KV/local projection
 // writers the API server uses from the SAME environment variables (config.Load),

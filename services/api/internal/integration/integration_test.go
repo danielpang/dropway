@@ -1,7 +1,7 @@
 //go:build integration
 
-// Package integration holds the Phase-1 end-to-end test (ARCHITECTURE.md §13
-// rows 2, 4, 8). It is gated behind the `integration` build tag so the default
+// Package integration holds the Phase-1 end-to-end test. It is gated behind the
+// `integration` build tag so the default
 // `go test ./...` stays hermetic; run it with:
 //
 //	go test -tags integration ./services/api/internal/integration/...
@@ -190,7 +190,7 @@ func TestIntegration_Phase1(t *testing.T) {
 
 	// --- External-sharing default-deny: a fresh org (allow_external_sharing
 	// defaults false) is blocked from creating a public site by the DB trigger,
-	// surfaced as ErrExternalSharingDisabled (§5.4 / §10 defense in depth). ---
+	// surfaced as ErrExternalSharingDisabled (defense in depth). ---
 	orgC := "33333333-3333-3333-3333-333333333333"
 	userC := "c0000000-0000-0000-0000-000000000002"
 	tC := store.Tenant{OrgID: orgC, UserID: userC}
@@ -202,7 +202,7 @@ func TestIntegration_Phase1(t *testing.T) {
 	}
 	// ...but the DEFAULT (empty access_mode) inherits the org's default_visibility =
 	// org_only (migration 0010), so a fresh INTERNAL org can create a site WITHOUT
-	// first enabling external sharing — the gap this fixes (§2.2 "default org-visible").
+	// first enabling external sharing — the gap this fixes ("default org-visible").
 	internalSite, err := st.CreateSite(ctx, tC, "gamma-internal", "")
 	if err != nil {
 		t.Fatalf("fresh internal org should create an org_only site by default, got %v", err)

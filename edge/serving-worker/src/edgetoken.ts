@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// Edge-token verification — the Worker side of the EDGE-TOKEN SPEC
-// (docs/ARCHITECTURE.md §6). The Go API "edge signer" mints a compact EdDSA JWT
+// Edge-token verification — the Worker side of the EDGE-TOKEN SPEC.
+// The Go API "edge signer" mints a compact EdDSA JWT
 // (a SEPARATE keypair from Better Auth's user JWT); this Worker verifies it with
 // `jose` against the public JWKS served at GET /.well-known/edge-jwks.
 //

@@ -5,8 +5,7 @@
 One command brings up the open-core data plane: **Postgres**, an **R2/S3-compatible
 object store (MinIO)**, and a one-shot **goose** migration runner, entirely offline,
 with **no Stripe, no quotas, and no caps** (`DROPWAY_CLOUD=false` selects the
-no-op/unlimited `QuotaProvider`). See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
-§13 (row 13) and §14 for the full self-host story.
+no-op/unlimited `QuotaProvider`).
 
 > The proprietary `cloud/` (Stripe + the 10-sites/5-members quota gate) and `ee/`
 > modules are **not** part of this build. Self-host is unlimited. The FSL *license*,
@@ -88,7 +87,7 @@ CONTENT_PORT=                  # empty → standard :443
 For per-tenant **origin isolation** (so one tenant's JS can never reach another tenant's
 cookies, or your dashboard's), serve content from a **separate registrable domain on
 the [Public Suffix List](https://publicsuffix.org/)**, never a subdomain of your
-dashboard. See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §3.
+dashboard.
 
 Two things to know:
 
@@ -155,12 +154,11 @@ How the pieces agree (all enforced, and a mismatch is a 401):
 **Production:** give `mcp.dropway.dev` a DNS record + TLS (front it with your edge/load
 balancer terminating TLS to `:8092`), set `MCP_PUBLIC_URL=https://mcp.dropway.dev` and
 `NEXT_PUBLIC_MCP_URL=https://mcp.dropway.dev`, and point `MCP_DASHBOARD_URL` at your
-dashboard origin (the browser-facing authorization server). See
-[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) §6 ("LLM access").
+dashboard origin (the browser-facing authorization server).
 
 ## Two database roles (why there are two URLs)
 
-Migrations and runtime use **different roles**, on purpose (ARCHITECTURE.md §5):
+Migrations and runtime use **different roles**, on purpose:
 
 - **`DATABASE_OWNER_URL`** is the privileged **owner/admin** role. Used **only** by the
   `migrate` step to create schemas, tables, policies, and the runtime role.

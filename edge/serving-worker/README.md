@@ -6,7 +6,7 @@ Cloudflare Worker that serves tenant static sites on `*.dropwaycontent.com`
 (the PSL-listed content domain, never a subdomain of the app/auth domain). It
 serves both the **PUBLIC** path (the 95% case: **JWT-free and cacheable**) and
 the **Phase-2 GATED** path (`password` | `allowlist` | `org_only`) via the
-host-scoped **edge token** plus `/authz` exchange (see `docs/ARCHITECTURE.md` §3/§6).
+host-scoped **edge token** plus `/authz` exchange.
 
 The Worker is a **thin router and a read-only consumer** of its bindings. The
 Go API (`api.dropway.dev`) is the real authz boundary and the **sole writer** of
@@ -92,12 +92,12 @@ isolate (5-min TTL; a transient JWKS outage falls back to the last-good keys).
 Every response (public, gated, **and** the platform 404/410/429/503 pages)
 carries defense-in-depth content-security headers; see **Edge hardening
 (Phase 4)** below. CSP is **not** the isolation control here. Domain/PSL
-separation is (§10).
+separation is.
 
 ## Edge hardening (Phase 4)
 
-Three launch-blocking controls live entirely at the edge (`docs/ARCHITECTURE.md`
-§10/§12). All are driven by injected KV/clock so they unit-test without a live
+Three launch-blocking controls live entirely at the edge. All are driven by
+injected KV/clock so they unit-test without a live
 edge (`src/security.ts`, `src/ratelimit.ts`, `src/revoke.ts`).
 
 ### 1. Content-security headers (every response)
@@ -120,7 +120,7 @@ images & fonts, `eval`/`blob:` workers, XHR/fetch to self + any `https:`) keeps
 working, while denying the dangerous primitives: `frame-ancestors 'none'`
 (clickjacking), `base-uri 'self'` + `form-action 'self'`, `object-src 'none'`.
 CSP is **defense in depth, not the isolation boundary** (the separate PSL
-content domain is, see §10), so we optimize for "static sites just work" and leave
+content domain is), so we optimize for "static sites just work" and leave
 a stricter per-site CSP as a future opt-in. `CONTENT_CSP` / `PLATFORM_CSP` are
 exported and the exact string is asserted in tests.
 
@@ -134,7 +134,7 @@ site** cannot embed a tenant resource as a subresource.
 `service-worker.js`, `ngsw-worker.js`, …) and the Worker **refuses to serve a
 scriptable body** at those paths (returns the platform 404), so a tenant can
 never register a service worker that would persist its JS, intercept fetches, or
-survive a takedown (§10 MEDIUM). Enforced on **both** the public and gated paths.
+survive a takedown. Enforced on **both** the public and gated paths.
 
 ### 3. Edge rate limiting + denial-of-wallet
 
@@ -155,7 +155,7 @@ survive a takedown (§10 MEDIUM). Enforced on **both** the public and gated path
 ### 4. Hard revocation: KV denylist / `min_iat` (gated path)
 
 After the edge token verifies, the gated path consults the **revocation
-denylist** (`src/revoke.ts`) per the §6 contract:
+denylist** (`src/revoke.ts`) per the revocation contract:
 
 ```
 revoked:user:<sub>   → { "min_iat": <unix seconds> }
@@ -212,7 +212,7 @@ type-check and tests resolve it without a build step.
 | `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only). Also the **default** denylist namespace (`revoked:*` keys) when `REVOKED` is unset. |
 | `BUCKET` | R2   | Single private bucket: `manifests/<org>/<site>/<version>.json` + `blobs/<org>/<sha256>`. |
 | `LIMITS` | KV   | **(Phase 4, optional)** rate-limiter counters (`rl:*`) + per-org status (`org_status:<org>`). Absent → rate limiting no-op + status check skipped. |
-| `REVOKED`| KV   | **(Phase 4, optional)** hard-revocation denylist (`revoked:user\|site\|org:*`). Absent → reuse `ROUTES` with the `revoked:` prefix (§6 contract default). |
+| `REVOKED`| KV   | **(Phase 4, optional)** hard-revocation denylist (`revoked:user\|site\|org:*`). Absent → reuse `ROUTES` with the `revoked:` prefix (revocation contract default). |
 
 ### Vars (`wrangler.toml [vars]`)
 

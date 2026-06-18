@@ -1,6 +1,6 @@
 // Package edgetoken mints and verifies the host-scoped EDGE TOKEN that gates
 // `password`/`allowlist`/`org_only` sites at the Cloudflare serving Worker
-// (docs/ARCHITECTURE.md §1/§6, Phase 2).
+// (Phase 2).
 //
 // The edge token is a compact EdDSA JWT signed by the Go API's "edge signer" — a
 // SEPARATE Ed25519 keypair from Better Auth's user JWT. The Worker verifies it

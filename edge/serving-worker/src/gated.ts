@@ -38,7 +38,7 @@ export interface GatedContent {
    * Build the success Response for the resolved request (manifest→blob), with
    * the SAME content headers the public path would use. The gated wrapper then
    * OVERRIDES Cache-Control to `private, no-store` so protected bytes never enter
-   * a shared cache (§10). For HEAD the body is already stripped by the caller.
+   * a shared cache. For HEAD the body is already stripped by the caller.
    */
   serveContent: () => Promise<Response>;
   /**
@@ -90,12 +90,12 @@ export async function serveGated(
     return redirectToAuthz(opts.cfg, url.host, nextPath);
   }
 
-  // HARD REVOCATION (§6 contract, Phase 4): the token verified, but a ban /
+  // HARD REVOCATION (Phase 4): the token verified, but a ban /
   // unshare / org-suspension may have invalidated it before its 15m exp. Consult
   // the KV denylist (revoked:user:<sub> / site:<site_id> / org:<orgId>); if any
   // min_iat > token.iat, treat the token as invalid → re-auth via /authz. The
   // org dimension comes from the ROUTE (authoritative), not a token claim. Fails
-  // CLOSED (a denylist read error → revoked → 302), per §10.
+  // CLOSED (a denylist read error → revoked → 302).
   const revoked = await isRevoked(content.revokedKV, {
     sub: claims.sub,
     siteId: claims.site_id,

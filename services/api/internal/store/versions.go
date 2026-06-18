@@ -14,7 +14,7 @@ import (
 )
 
 // BlobSize is one content-addressed blob's identity + server-observed size, used to
-// account per-org storage (docs/pricing.md §5). The handler passes the distinct
+// account per-org storage. The handler passes the distinct
 // blobs of the deploy (its sizeBySHA), so storage is metered dedup-aware.
 type BlobSize struct {
 	SHA  string
@@ -73,7 +73,7 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 			return err
 		}
 
-		// Storage metering + cap (docs/pricing.md §5). Account this deploy's NEW,
+		// Storage metering + cap. Account this deploy's NEW,
 		// dedup-aware blob bytes and enforce the per-org storage cap — race-safe under
 		// a per-org advisory lock (the same TOCTOU guard the site cap uses). OSS =
 		// Unlimited (always allowed); cloud = the byte bands. Runs only for a
@@ -114,8 +114,8 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 }
 
 // accountStorage records this deploy's DISTINCT blobs in the per-org ledger
-// (dedup-aware) and enforces the storage cap, inside the caller's deploy tx
-// (docs/pricing.md §5). It takes the per-org storage advisory lock, sums the
+// (dedup-aware) and enforces the storage cap, inside the caller's deploy tx.
+// It takes the per-org storage advisory lock, sums the
 // genuinely-NEW blob bytes (ON CONFLICT DO NOTHING → an already-stored blob isn't
 // re-counted), checks the cap against current+delta, then increments the running
 // total. delta==0 (every blob already stored) adds nothing and never trips the cap,
@@ -176,7 +176,7 @@ func (s *Store) OrgStorageBytes(ctx context.Context, t Tenant) (int64, error) {
 // SiteStorage is the LOGICAL storage of one site (the byte size of its current live
 // version) paired with the owning user. Logical = NOT deduplicated across
 // sites/versions (a file shipped by two sites counts in both), matching the
-// per-folder size model of Dropbox/Drive — see docs/pricing.md. The org's
+// per-folder size model of Dropbox/Drive. The org's
 // authoritative (deduplicated) footprint is OrgStorageBytes; these per-site/per-user
 // numbers are for display + attribution, not billing.
 type SiteStorage struct {
@@ -217,7 +217,7 @@ func (s *Store) ListSiteStorage(ctx context.Context, t Tenant) ([]SiteStorage, e
 }
 
 // RecomputeOrgStorage reconciles an org's running storage total to the authoritative
-// ledger sum (the cheap drift fix — docs/pricing.md §5.5). Run periodically; a
+// ledger sum (the cheap drift fix). Run periodically; a
 // deeper audit additionally lists R2 to prune ledger rows orphaned by a crashed GC.
 func (s *Store) RecomputeOrgStorage(ctx context.Context, t Tenant) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {

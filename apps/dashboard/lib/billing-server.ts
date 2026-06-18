@@ -3,7 +3,7 @@ import "server-only";
 import { api, ApiError, type OrgStatus } from "@/lib/api";
 
 /**
- * Server-side read of the org's billing-derived account state (architecture §9).
+ * Server-side read of the org's billing-derived account state.
  *
  * Drives the over-limit banner (app shell) and the read-only gating of
  * cost-creating actions like "New site". This is a UX MIRROR of server-side

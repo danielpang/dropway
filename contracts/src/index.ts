@@ -5,8 +5,7 @@
 // The KV route value is written ONLY by the Go API (on publish) and read by the
 // Cloudflare serving Worker. This module is the TypeScript side of that contract;
 // the authoritative shape lives in `kv-route.schema.json` and the Go side mirrors
-// it in services/api. A CI round-trip test asserts the three stay in lock-step
-// (ARCHITECTURE.md §8, §13 row 11).
+// it in services/api. A CI round-trip test asserts the three stay in lock-step.
 //
 // Deliberately dependency-free: the validator is hand-written so the Worker (which
 // runs on the Cloudflare runtime and wants a tiny bundle) and the Go-side test

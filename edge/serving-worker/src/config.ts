@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// Worker configuration for the Phase-2 gated serving path (docs/ARCHITECTURE.md
-// §6, edge-token spec). Everything the gated path needs that is environment- or
+// Worker configuration for the Phase-2 gated serving path (edge-token spec).
+// Everything the gated path needs that is environment- or
 // deployment-specific lives here so the serving logic stays pure and the values
 // are injected (env vars / wrangler vars) — never hard-coded secrets.
 //

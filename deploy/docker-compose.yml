@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# Dropway — one-command self-host stack (ARCHITECTURE.md §13 row 13, §14.4).
+# Dropway — one-command self-host stack.
 #
 # `docker compose -f deploy/docker-compose.yml up --build` builds and starts the
 # WHOLE local stack:
@@ -28,7 +28,6 @@
 #     `required: false`, so they run with or without them.
 #
 # Quickstart:  cp deploy/.env.example deploy/.env && docker compose -f deploy/docker-compose.yml up --build
-# See deploy/README.md for the full walkthrough (incl. the one-time Better Auth migration).
 
 name: dropway
 
@@ -152,7 +151,7 @@ services:
   # provider): an MCP client discovers the authorization server from this server's
   # /.well-known/oauth-protected-resource, the user logs in + approves in the
   # browser, and the resulting JWT access token is verified here against the
-  # platform JWKS. The audience/issuer contract MUST line up (ARCHITECTURE.md):
+  # platform JWKS. The audience/issuer contract MUST line up:
   #   * JWKS_URL       → the dashboard JWKS (internal compose URL) that signs tokens
   #   * JWT_ISSUER     → the jwt() plugin issuer; the oauth-provider stamps it as `iss`
   #   * MCP_PUBLIC_URL → this server's EXTERNAL url; it's the OAuth `resource`/`aud`,
@@ -212,7 +211,7 @@ services:
   # ONCE after first boot (`@better-auth/cli` is a separate package → pnpm dlx):
   #   docker compose -f deploy/docker-compose.yml exec dashboard \
   #     pnpm dlx @better-auth/cli@latest migrate --yes
-  # (See deploy/README.md.) The app migrations create an EMPTY `identity` schema as a
+  # The app migrations create an EMPTY `identity` schema as a
   # namespace + grant dropway_app SELECT on the identity tables (baseline); app rows attach
   # via app.org_meta (PK = Better Auth organization.id).
   #

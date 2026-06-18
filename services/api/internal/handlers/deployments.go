@@ -26,7 +26,7 @@ import (
 
 // ManifestFile is one file in a deploy: request-path → content hash (+ size +
 // content-type). The server derives the R2 blob key from the authenticated org +
-// this sha256 — never a client path (§10).
+// this sha256 — never a client path.
 type ManifestFile struct {
 	Path        string `json:"path"`
 	SHA256      string `json:"sha256"`
@@ -147,7 +147,7 @@ type finalizeResponse struct {
 }
 
 // FinalizeDeployment verifies every referenced blob is present AND its stored
-// bytes hash == the claimed sha256 (server-verify, §7.1/§10), writes the immutable
+// bytes hash == the claimed sha256 (server-verify), writes the immutable
 // per-deploy manifest to R2, and inserts the immutable site_version (status=ready,
 // next version_no). It returns the version id + a preview URL.
 func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +182,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Recompute the whole-deploy digest SERVER-SIDE from the manifest and reject a
-	// mismatch (§7.1 / FIX 2): the client digest is never trusted as an identifier.
+	// mismatch (FIX 2): the client digest is never trusted as an identifier.
 	// content_hash is the UNIQUE(site_id,content_hash) idempotency key, so a client
 	// that could forge it could short-circuit GetSiteVersionByContentHash and
 	// republish the wrong version. The server-derived value is what we persist.
@@ -236,7 +236,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The distinct content-addressed blobs (+ server-observed sizes) for the per-org
-	// storage meter (docs/pricing.md §5); dedup-aware accounting + the cap happen in
+	// storage meter; dedup-aware accounting + the cap happen in
 	// the store tx. sizeBySHA is already keyed by unique sha.
 	blobs := make([]store.BlobSize, 0, len(sizeBySHA))
 	for sha, n := range sizeBySHA {
@@ -283,7 +283,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		"size_bytes": totalSize,
 	})
 
-	// Preview URL enforces the SAME access tier as the live site (§7.1). It is the
+	// Preview URL enforces the SAME access tier as the live site. It is the
 	// canonical org-namespaced host with the per-version short id PREPENDED as a
 	// further single label: <shortid>--<orgSlug>--<appSlug>.<ContentDomain>, rendered
 	// with the configured scheme/port.
@@ -303,7 +303,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 // verifyBlob streams the stored blob, asserts its bytes hash == the key, and
 // returns the SERVER-OBSERVED byte length. A hash mismatch is a 400 (the client
 // lied about the content) — never trust the request-body hash without re-deriving
-// it from the stored bytes (§10). The returned size is the authoritative
+// it from the stored bytes. The returned size is the authoritative
 // size_bytes source (FIX 3), so size metering never trusts the client manifest.
 func (a *API) verifyBlob(r *http.Request, orgID, sha string) (int64, error) {
 	rc, err := a.Objects.GetBlob(r.Context(), orgID, sha)

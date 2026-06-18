@@ -5,7 +5,7 @@
 -- SQUASHED BASELINE. This single migration reproduces the EXACT schema that
 -- migrations 0001..0013 produced (verified by applying both to fresh databases
 -- and diffing pg_dump --schema-only output; they are identical). The original
--- 13 files were collapsed pre-launch for legibility -- see README.md in this dir.
+-- 13 files were collapsed pre-launch for legibility.
 --
 -- Scope: the `app` schema (owned by the Go API), the empty `identity` namespace
 -- (Better Auth owns + migrates its own tables into it), and the non-superuser,

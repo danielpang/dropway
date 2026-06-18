@@ -104,7 +104,7 @@ export async function preflightMembersAction(): Promise<MembersPreflightResult> 
 }
 
 /**
- * Hard-finalize a member removal (C2 / ARCHITECTURE.md §10). After the org plugin
+ * Hard-finalize a member removal (C2). After the org plugin
  * deletes the member row, removal MUST also:
  *   1. revoke the removed user's Better Auth sessions, so the jwt() plugin can't
  *      re-mint a fresh JWT they'd use to re-authorize at /authz; and

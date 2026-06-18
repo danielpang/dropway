@@ -1,6 +1,6 @@
 //go:build integration
 
-// RLS policy test suite (Phase 4, ARCHITECTURE.md §5/§10/§13 row 2): for EVERY
+// RLS policy test suite (Phase 4): for EVERY
 // app.* tenant table, assert tenant isolation as the non-BYPASSRLS dropway_app role:
 //
 //   - SELECT  : under org A's GUC, org B's rows are invisible (0 rows).

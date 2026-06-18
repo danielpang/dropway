@@ -847,7 +847,7 @@ describe("serve() gated path — edge-token verification", () => {
 
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("<h1>secret</h1>");
-      // Private + no-store; never written to the shared public cache (§10).
+      // Private + no-store; never written to the shared public cache.
       expect(res.headers.get("Cache-Control")).toBe(
         "private, no-store, max-age=0, must-revalidate",
       );

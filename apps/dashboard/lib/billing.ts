@@ -1,7 +1,7 @@
 import type { PlanTier } from "@/lib/api";
 
 /**
- * Display-only billing metadata for the dashboard (architecture §9).
+ * Display-only billing metadata for the dashboard.
  *
  * IMPORTANT: nothing here is an entitlement. The plan limits below are a
  * marketing/UX matrix; the REAL caps are enforced server-side in `cloud/quota`
@@ -61,7 +61,7 @@ export interface PlanFeatureRow {
 
 /**
  * The plan/limits matrix, free → Pro → Enterprise. Seat-free: you pay for SITES,
- * not seats (docs/pricing.md), so the lever is the per-ORG site count and team
+ * not seats, so the lever is the per-ORG site count and team
  * members are unlimited on every plan. Display-only; the REAL site cap is enforced
  * server-side in cloud/quota (ResourceSitePerOrg). The "Contact Sales" rung lives in
  * its own CTA, not this grid.

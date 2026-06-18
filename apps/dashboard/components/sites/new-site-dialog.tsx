@@ -49,7 +49,7 @@ const useIsomorphicLayoutEffect =
  * modal, reading the quota body the API returned (→ Stripe Checkout). On success
  * it navigates to the new site's detail page.
  *
- * When `readOnly` is set (org is over_limit / past_due / suspended per §9) the
+ * When `readOnly` is set (org is over_limit / past_due / suspended) the
  * trigger is DISABLED with an explanatory tooltip and the dialog can't open —
  * a UX mirror of the server-side restriction (the API would 402/403 anyway).
  */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // The gated serving path — `password` | `allowlist` | `org_only` (the /authz
-// EXCHANGE, docs/ARCHITECTURE.md §6). The Worker is a thin gate: it verifies the
+// EXCHANGE). The Worker is a thin gate: it verifies the
 // host-scoped EDGE TOKEN (cookie) and either serves the content (private, never
 // shared-cached) or bounces the viewer to the dashboard `/authz` exchange. It
 // NEVER reads the operator Better Auth JWT — only the edge token.
@@ -19,7 +19,7 @@
 //     └─ 302 → a SAFE same-host `next` path (open-redirect / off-host rejected)  ✅
 //
 // "Private cache-control, never shared cache" is enforced for every gated
-// response (the §10 cache-key-isolation invariant): the public Cache API and any
+// response (the cache-key-isolation invariant): the public Cache API and any
 // shared cache must never hold protected bytes.
 
 import type { RouteValue } from "./route";
@@ -39,7 +39,7 @@ export function isAuthzCallback(pathname: string): boolean {
   return pathname === AUTHZ_CALLBACK_PATH;
 }
 
-/** Headers that keep a gated response out of every shared/edge cache (§10). */
+/** Headers that keep a gated response out of every shared/edge cache. */
 function noStoreHeaders(): Headers {
   const h = new Headers(securityHeaders());
   // `private` + `no-store` + `must-revalidate`: never stored in caches.default,

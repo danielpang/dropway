@@ -1,5 +1,5 @@
-// Package handlers implements the Go API's HTTP endpoints (the system of record,
-// docs/ARCHITECTURE.md §3). Phase 1 ships the core publish/serve loop, DB-backed:
+// Package handlers implements the Go API's HTTP endpoints (the system of record).
+// Phase 1 ships the core publish/serve loop, DB-backed:
 // create/list/get sites, the deployments prepare→finalize→publish flow, and the
 // identity echo + health check. Every authenticated handler runs under the RLS
 // tenant context (via the store's tx-per-call SET LOCAL) and quota is checked at
@@ -43,7 +43,7 @@ type API struct {
 	// Revoker writes the hard-revocation denylist (revoked:user/site/org) the
 	// serving Worker + /authz read. Optional: when nil, hard revocation degrades to
 	// the short edge-token TTL only (the routes are still rewritten). In production
-	// it is the same Cloudflare KV writer as Projection (ARCHITECTURE.md §6/§10).
+	// it is the same Cloudflare KV writer as Projection.
 	Revoker EdgeRevoker
 
 	// RevocationReader reads the same denylist so the /authz mint path refuses to
@@ -56,7 +56,7 @@ type API struct {
 	// claim when the Better Auth identity.member table is unavailable. Default false
 	// (strict): admin-gated actions are DENIED when membership can't be confirmed
 	// live. A self-host pre-Better-Auth can opt in (ALLOW_JWT_ROLE_FALLBACK=true).
-	// See config.Config.AllowJWTRoleFallback / ARCHITECTURE.md §10 [LOW].
+	// See config.Config.AllowJWTRoleFallback ([LOW]).
 	AllowJWTRoleFallback bool
 
 	// ContentScheme / ContentPort shape the DISPLAY URLs the API returns for a site
@@ -117,7 +117,7 @@ func (a *API) Healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 // meResponse echoes the verified claims so the dashboard/CLI can confirm who the
-// token authenticates as (verification proof #3 in §13).
+// token authenticates as (verification proof #3).
 type meResponse struct {
 	UserID string `json:"user_id"`
 	OrgID  string `json:"org_id"`
@@ -187,12 +187,12 @@ func (a *API) requireDomains(w http.ResponseWriter) bool {
 
 // requireAdmin re-checks that the caller holds owner/admin in the active org by
 // reading the LIVE member table (not just the JWT role claim) — the gate for
-// access-policy / org-policy / role mutations (ARCHITECTURE.md §5.4/§10 [HIGH]).
+// access-policy / org-policy / role mutations ([HIGH]).
 // It writes a 403 and returns false on a non-admin, an empty membership, or any
 // re-check error.
 //
 // If the Better Auth identity.member table is unavailable (a self-host that hasn't run
-// Better Auth yet), the behavior is STRICT BY DEFAULT (ARCHITECTURE.md §10 [LOW]):
+// Better Auth yet), the behavior is STRICT BY DEFAULT ([LOW]):
 // admin-gated actions are DENIED rather than trusting the unverified JWT role
 // claim. A self-host pre-Better-Auth can opt back into the claim fallback by setting
 // AllowJWTRoleFallback (ALLOW_JWT_ROLE_FALLBACK=true), which logs the degradation.

@@ -38,7 +38,7 @@ export { type AccessMode };
  * True when a parsed route has expired as of `now` (default: current time). A
  * route with no `expires_at` (v1 values, or non-expiring v2 links) never expires.
  * Re-exported from the shared contract so the Worker enforces the SAME edge
- * expiry semantics the Go API serializes (public/unlisted link expiry, §6).
+ * expiry semantics the Go API serializes (public/unlisted link expiry).
  */
 export function isRouteExpired(value: RouteValue, now?: Date): boolean {
   return contractsIsRouteExpired(value, now);

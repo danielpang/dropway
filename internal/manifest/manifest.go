@@ -1,5 +1,5 @@
 // Package manifest holds the ONE source of truth for the whole-deploy content
-// digest (docs/ARCHITECTURE.md §7.1). Both the CLI (cli/internal/manifest, which
+// digest. Both the CLI (cli/internal/manifest, which
 // walks a directory and re-exports this) and the Go API server
 // (services/api/internal/handlers, which recomputes the digest from the request
 // manifest to reject a tampered client digest) call Digest here, so the digest

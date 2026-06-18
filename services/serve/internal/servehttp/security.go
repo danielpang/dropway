@@ -15,7 +15,7 @@ import (
 // Fonts) — the common case for a static host. The marginal cost is small: the policy
 // already allows 'unsafe-inline'/'unsafe-eval' for scripts and connect-src https: for
 // fetch, so blocking only external <script src> added little; and tenant ISOLATION is
-// enforced by per-origin/PSL separation, not CSP (ARCHITECTURE.md §10). object-src
+// enforced by per-origin/PSL separation, not CSP. object-src
 // stays 'none' and frame-ancestors 'none', so plugins and clickjacking are still shut.
 const ContentCSP = "default-src 'self'; " +
 	"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; " +

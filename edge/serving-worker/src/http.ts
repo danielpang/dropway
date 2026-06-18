@@ -3,13 +3,13 @@
 // HTTP response concerns for the public serve path: Content-Type derivation and
 // Cache-Control policy. Pure functions, unit-tested in test/serve.test.ts.
 //
-// Cache policy (docs/ARCHITECTURE.md §6, "Cache API for public only"):
+// Cache policy ("Cache API for public only"):
 //  - Content-addressed / hashed assets are immutable → cache hard + immutable.
 //  - HTML (and other non-hashed entry docs) get a SHORT TTL so a pointer flip
 //    (publish/rollback) is visible quickly while still cutting Class-B R2 ops.
 // Every public response also carries content-security hardening headers; the
 // public path NEVER sets `private`/`no-store` (that is reserved for gated tiers
-// in Phase 2 — the cache-key-isolation invariant in §10).
+// in Phase 2 — the cache-key-isolation invariant).
 //
 // The security headers themselves (CSP/COOP/CORP/nosniff/no-referrer/frame +
 // service-worker block) live in ./security and are shared with the platform
@@ -110,7 +110,7 @@ export function cacheControlFor(servedPath: string): string {
  * gated). Delegates to ./security so the CSP/COOP/CORP/nosniff/no-referrer/frame
  * + service-worker-block policy is defined in exactly one place and shared with
  * the platform pages. CSP is explicitly NOT the isolation control here
- * (domain/PSL separation is — §10); these are defense-in-depth.
+ * (domain/PSL separation is); these are defense-in-depth.
  *
  * Kept as a named export with the same signature so existing call sites
  * (index.ts, authz.ts) and tests need no change.

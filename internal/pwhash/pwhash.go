@@ -1,5 +1,5 @@
 // Package pwhash hashes and verifies site passwords for the `password` access
-// mode (docs/ARCHITECTURE.md §6). It wraps bcrypt: a salted, adaptive hash whose
+// mode. It wraps bcrypt: a salted, adaptive hash whose
 // CompareHashAndPassword is constant-time with respect to the hash, so a password
 // check does not leak timing about how much of the password matched. The plaintext
 // is NEVER stored — only the bcrypt hash goes into site_access_policy.password_hash.
@@ -59,7 +59,7 @@ func Verify(hash, password string) error {
 // dummyHash is a precomputed bcrypt hash (of a random value) used by DummyVerify to
 // burn an equivalent amount of CPU when there is no real hash to compare against —
 // so the password gate's response time does not reveal whether a host exists / is a
-// password site (a timing-oracle defense; ARCHITECTURE.md §10 denial-of-wallet /
+// password site (a timing-oracle defense; denial-of-wallet /
 // enumeration). The cost matches `cost` above.
 const dummyHash = "$2a$12$krlz5cRnRx/Y3iVv83Ch4.aueU0daM0BsggOa4QQfrsa1rY1FMe7W"
 

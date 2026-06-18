@@ -8,7 +8,7 @@ import (
 	"github.com/danielpang/dropway/internal/auth"
 )
 
-// The RLS tenant-context helper (docs/ARCHITECTURE.md §5, §8).
+// The RLS tenant-context helper.
 //
 // The Go API connects to Postgres as the non-BYPASSRLS `dropway_app` role, with
 // every tenant table under FORCE ROW LEVEL SECURITY. Isolation therefore depends
@@ -67,7 +67,7 @@ func SetTenantContext(ctx context.Context, tx TenantTx, userID, orgID string) er
 
 // SetTenantContextFromClaims is a convenience wrapper that derives the tenant
 // identifiers from verified JWT claims. Claims are a fast hint; sensitive writes
-// still re-check live tables (the confused-deputy guard in §5).
+// still re-check live tables (the confused-deputy guard).
 func SetTenantContextFromClaims(ctx context.Context, tx TenantTx, c *auth.Claims) error {
 	if c == nil {
 		return ErrMissingTenant

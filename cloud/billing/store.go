@@ -7,7 +7,7 @@ package billing
 // (billing.go) depends on through an interface, plus the SubscriptionStore writes
 // and the reads used by the billing page.
 //
-// THE ONE LEGITIMATE SYSTEM WRITE PATH (docs/ARCHITECTURE.md §9 / §14):
+// THE ONE LEGITIMATE SYSTEM WRITE PATH:
 // the webhook carries NO user JWT, yet it must UPDATE app.org_meta.plan_tier —
 // and app.org_meta is FORCE ROW LEVEL SECURITY with a tenant policy keyed on the
 // org id (id = current_setting('app.current_org_id')). So every method that
@@ -23,7 +23,7 @@ package billing
 // directly; only the cross-schema org_meta write needs the GUC.
 //
 // We connect as the SAME non-BYPASSRLS dropway_app pool the rest of the API uses
-// (the GUC scoping — not a privileged role — is the isolation, §9).
+// (the GUC scoping — not a privileged role — is the isolation).
 
 import (
 	"context"
@@ -37,7 +37,7 @@ import (
 	"github.com/danielpang/dropway/internal/projection"
 )
 
-// Free-tier cap mirrored from the cloud quota bands (docs/pricing.md). A read-only
+// Free-tier cap mirrored from the cloud quota bands. A read-only
 // downgrade sets org_status='over_limit' when the org now exceeds it, so the
 // dashboard shows the banner and new actions are blocked — but NO data is deleted.
 // Seats are free, so only the per-ORG site count gates over-limit.
@@ -79,7 +79,7 @@ var (
 )
 
 // ProcessEvent records the Stripe event id in the dedupe ledger AND applies the
-// entitlement change in ONE transaction (§9 idempotency + the lost-update fix). It
+// entitlement change in ONE transaction (idempotency + the lost-update fix). It
 // reports applied=false when the id was already present (a replay → no-op).
 //
 // THE ATOMICITY GUARANTEE (FIX 1): the ledger INSERT … ON CONFLICT (event_id) DO
@@ -122,7 +122,7 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 
 	// Apply the entitlement change INSIDE this same tx. The org-scoped writes set
 	// SET LOCAL app.current_org_id on tx so the cross-schema org_meta UPDATE is
-	// RLS-permitted and scoped to the event's own org (§9). If this errors, the
+	// RLS-permitted and scoped to the event's own org. If this errors, the
 	// deferred Rollback discards the just-inserted ledger row too. The adapter
 	// records the resulting (org, org_status) so we can project it to the edge AFTER
 	// the commit (the DB is authoritative; the KV flag is a best-effort projection).
@@ -218,7 +218,7 @@ func (t *txSubsStore) SetCanceled(ctx context.Context, orgID string) error {
 }
 
 // UpsertSubscription persists a paid entitlement. THIS IS THE ONLY WRITER OF
-// plan_tier (§9). In ONE tx it:
+// plan_tier. In ONE tx it:
 //
 //  1. SET LOCAL app.current_org_id = d.OrgID  (RLS scope for the org_meta write);
 //  2. UPSERT billing.subscriptions (ON CONFLICT (org_id) DO UPDATE …, org_status
@@ -269,7 +269,7 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 		switch {
 		case errors.Is(err, pgx.ErrNoRows), existing == "":
 			// No row (or somehow a blank one) to COALESCE from → unfulfillable. The
-			// handler maps this to a 400 so Stripe stops retrying (FIX 3 / §9).
+			// handler maps this to a 400 so Stripe stops retrying (FIX 3).
 			return fmt.Errorf("%w: subscription event for org %s has no stripe_customer_id and no existing row",
 				errUnfulfillableEvent, d.OrgID)
 		case err != nil:
@@ -313,7 +313,7 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 }
 
 // SetCanceled handles customer.subscription.deleted: a READ-ONLY downgrade to
-// Free (§9 — NEVER delete data). In one org-scoped tx it sets the subscription to
+// Free (NEVER delete data). In one org-scoped tx it sets the subscription to
 // plan_tier='free', status='canceled', drops org_meta.plan_tier to 'free', and
 // computes org_status: 'over_limit' if the org now exceeds the Free cap (> 10
 // sites in the org), else 'active'. The org keeps all its sites; they just become

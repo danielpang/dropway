@@ -29,7 +29,7 @@ func defaultOpsFactory(ctx context.Context) (opsRunner, error) {
 
 // newGCCmd builds `dropway gc`: the R2 version GC operator job. It deletes blobs no
 // longer referenced by any retained deployment manifest, honoring a retention policy
-// (keep current + last N versions per site), per ARCHITECTURE.md §12.
+// (keep current + last N versions per site).
 //
 // It is an OPERATOR command (not the deploy-token API path): it reads the deployment
 // env (DATABASE_URL + S3_*), connecting to Postgres as the non-BYPASSRLS dropway_app

@@ -44,17 +44,17 @@ function statusBadge(plan: BillingPlan) {
 }
 
 /**
- * Billing settings (architecture §9, CLOUD-ONLY). Owners/admins manage the org's
+ * Billing settings (CLOUD-ONLY). Owners/admins manage the org's
  * plan here:
  *  - current plan + status (read from GET /v1/billing → app.org_meta);
- *  - the §9 plan/limits matrix with the current tier highlighted;
+ *  - the plan/limits matrix with the current tier highlighted;
  *  - "Manage billing" → Stripe Billing Portal (self-serve seats/plan/cancel);
  *  - upgrade buttons → Stripe Checkout (the next self-serve tier), or Contact
  *    Sales above Enterprise.
  *
  * After returning from Stripe's success_url (`?checkout=success`) we DON'T trust
  * the redirect for entitlement — we show a "finalizing…" state that POLLS the
- * plan until the signed webhook flips plan_tier (§9). The Go API re-checks
+ * plan until the signed webhook flips plan_tier. The Go API re-checks
  * owner/admin on every write; the role gate here is UX only.
  *
  * On the OSS/self-host build /v1/billing 404s; we degrade to a "not available"
@@ -129,7 +129,7 @@ export default async function BillingPage({
         Returning from Stripe Checkout. The success_url redirect grants NOTHING:
         the entitlement (plan_tier) is written ONLY by the signed webhook, which
         may land a beat after the browser returns. So we poll the plan until it
-        flips, then re-render against the new plan (§9).
+        flips, then re-render against the new plan.
       */}
       {isCheckoutReturn && <FinalizingState previousTier={currentTier} />}
       {isCheckoutCancel && (
@@ -163,7 +163,7 @@ export default async function BillingPage({
                 {TIER_LABEL[currentTier]}
               </p>
             </div>
-            {/* Seat-free pricing (docs/pricing.md): team members are unlimited on
+            {/* Seat-free pricing: team members are unlimited on
                 every plan, so we don't surface a seat count — billing is a flat fee
                 per workspace and the upgrade lever is the per-org site count. */}
           </div>

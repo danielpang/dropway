@@ -29,7 +29,7 @@ export async function generateMetadata({
 }
 
 /**
- * Site access settings (architecture §6 + §5.4). Owner/admin set the access mode
+ * Site access settings. Owner/admin set the access mode
  * (public / unlisted / password / allowlist / org-only), an optional link
  * expiry, and — for allowlist — manage the per-site email list. Every write goes
  * to the Go API, which re-checks role and the org's external-sharing policy; a

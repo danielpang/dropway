@@ -1,7 +1,6 @@
 // Package api is the CLI's client for the Dropway control plane (api.dropway.dev).
 // The network calls are behind the Client interface so the deploy command's
-// plan/dry-run path runs without a live server and tests inject a fake
-// (docs/ARCHITECTURE.md §7.1).
+// plan/dry-run path runs without a live server and tests inject a fake.
 package api
 
 import (

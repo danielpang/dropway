@@ -184,7 +184,7 @@ func TestDeployFlow_PrepareFinalizePublish(t *testing.T) {
 }
 
 // TestFinalize_RejectsTamperedBlob proves the server re-derives the stored
-// bytes' hash and rejects content that doesn't match the claimed sha256 (§10).
+// bytes' hash and rejects content that doesn't match the claimed sha256.
 func TestFinalize_RejectsTamperedBlob(t *testing.T) {
 	fs := newFakeStore()
 	obj := storage.NewFake()

@@ -1,5 +1,5 @@
 // Package logx provides structured, request-correlated logging for the Go API
-// (docs/ARCHITECTURE.md §2.3 Observability: "request_id correlated edge→Go→
+// (Observability: "request_id correlated edge→Go→
 // Postgres"). It is a thin wrapper over the standard library's log/slog: the
 // HTTP layer stashes a per-request *slog.Logger (already tagged with the chi
 // request id) in the context, and handlers/stores retrieve it with FromContext.
@@ -37,7 +37,7 @@ func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
 // RequestIDHeader is the HTTP header that carries the request correlation id. The
 // Go API HONORS an inbound value (chi's RequestID middleware reuses it) and ECHOES
 // it on every response, so a caller / the edge Worker can propagate one id across
-// the whole edge→Go→Postgres path (ARCHITECTURE.md §2.3). It matches
+// the whole edge→Go→Postgres path. It matches
 // chimiddleware.RequestIDHeader's default.
 const RequestIDHeader = "X-Request-Id"
 

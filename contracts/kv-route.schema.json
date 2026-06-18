@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dropway.com/contracts/kv-route.schema.json",
   "title": "KVRouteValue",
-  "description": "The value stored at KV key `route:<host>` and read by the serving Worker. This is the single cross-language data contract between the Go API (the only writer) and the Cloudflare Worker (read-only). See ARCHITECTURE.md §3/§6/§8. Postgres is authoritative; this projection is fully rebuildable.",
+  "description": "The value stored at KV key `route:<host>` and read by the serving Worker. This is the single cross-language data contract between the Go API (the only writer) and the Cloudflare Worker (read-only). Postgres is authoritative; this projection is fully rebuildable.",
   "type": "object",
   "additionalProperties": false,
   "required": ["org_id", "site_id", "version_id", "access_mode", "schema_version"],

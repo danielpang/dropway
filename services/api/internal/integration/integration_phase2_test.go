@@ -1,6 +1,6 @@
 //go:build integration
 
-// Phase-2 integration test (ARCHITECTURE.md §5/§6/§9): access control & domains,
+// Phase-2 integration test: access control & domains,
 // exercised against real Postgres 16 + the goose app migrations as the
 // non-BYPASSRLS dropway_app role, plus a synthetic Better Auth `identity.member` table
 // the Go API reads for role re-checks.

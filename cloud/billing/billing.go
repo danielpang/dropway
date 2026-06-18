@@ -2,10 +2,10 @@
 
 // Package billing (cloud) is the PROPRIETARY, hosted-only Stripe integration. It
 // is compiled only under the `cloud` build tag and is NOT part of the FSL/
-// self-host build (docs/ARCHITECTURE.md §14, cloud/LICENSE).
+// self-host build (cloud/LICENSE).
 //
 // This file is the webhook handler skeleton. The architectural invariant it
-// encodes (§9): the paid entitlement (plan_tier) is written to the DB ONLY by a
+// encodes: the paid entitlement (plan_tier) is written to the DB ONLY by a
 // signature-verified webhook, never by the browser's success redirect. The
 // handler therefore (1) verifies the Stripe-Signature, (2) hands the verified
 // event to the store, which dedupes AND applies the entitlement change in a
@@ -61,7 +61,7 @@ type EventData struct {
 
 // isEntitledStatus reports whether a Stripe subscription status grants the paid
 // tier. `active`/`trialing` are entitled; `past_due` stays entitled through the
-// dunning grace (§9: it restricts NEW actions + shows a banner, but doesn't cut a
+// dunning grace (it restricts NEW actions + shows a banner, but doesn't cut a
 // paying customer's live sites). Every other status — `unpaid`, `incomplete`,
 // `incomplete_expired`, `paused`, `canceled`, or anything unrecognized — is NOT
 // entitled, so applyEvent downgrades to Free instead of granting the price's tier
@@ -84,7 +84,7 @@ type SignatureVerifier interface {
 }
 
 // EventProcessor records the Stripe event id in the dedupe ledger AND applies the
-// entitlement change for that event in ONE transaction (§9 idempotency + the
+// entitlement change for that event in ONE transaction (idempotency + the
 // lost-update fix). It reports applied=false when the id was already present (a
 // replay), in which case nothing was changed. Because the ledger INSERT and the
 // entitlement write share a transaction, a failed apply rolls BOTH back: the
@@ -102,7 +102,7 @@ type EventProcessor interface {
 
 // SubscriptionStore persists entitlement. UpsertSubscription is the ONLY place
 // plan_tier is written; SetCanceled handles customer.subscription.deleted by
-// downgrading to Free without destroying data (over-limit → read-only, §9). The
+// downgrading to Free without destroying data (over-limit → read-only). The
 // store's ProcessEvent dispatches to these inside the dedupe+apply transaction.
 type SubscriptionStore interface {
 	UpsertSubscription(ctx context.Context, d EventData) error
@@ -128,7 +128,7 @@ func NewHandler(v SignatureVerifier, p EventProcessor, log *slog.Logger) *Handle
 // events are small (a few KB).
 const maxBody = 1 << 20 // 1 MiB
 
-// ServeHTTP implements the webhook flow from §9:
+// ServeHTTP implements the webhook flow:
 //
 //  1. read + size-limit the body
 //  2. verify the Stripe-Signature (else 400 — never trust an unsigned body)
@@ -195,7 +195,7 @@ var errUnhandledEvent = errors.New("billing: unhandled event type")
 // Stripe customer id and there is no existing row to COALESCE from, which would
 // violate billing.subscriptions.stripe_customer_id NOT NULL). The handler maps it
 // to a 400 acknowledgment so Stripe stops retrying an event that will fail forever
-// (FIX 3 / §9). It is NOT used for transient DB errors, which must 500 and retry.
+// (FIX 3). It is NOT used for transient DB errors, which must 500 and retry.
 var errUnfulfillableEvent = errors.New("billing: event cannot be applied (permanent)")
 
 // errUnknownPrice is returned when a subscription event's price maps to no
@@ -209,7 +209,7 @@ var errUnknownPrice = errors.New("billing: subscription price is not mapped to a
 // called by the store INSIDE the dedupe+apply transaction (so dispatch + the
 // entitlement write + the ledger row commit or roll back together).
 //
-// Documented event → plan_tier mapping (§9 "Lifecycle webhooks → DB state"):
+// Documented event → plan_tier mapping ("Lifecycle webhooks → DB state"):
 //
 //	checkout.session.completed        → UpsertSubscription (first paid tier set)
 //	customer.subscription.created     → UpsertSubscription (tier from price)
@@ -233,7 +233,7 @@ func applyEvent(ctx context.Context, subs SubscriptionStore, log *slog.Logger, e
 		// M6: entitlement follows the live PAYING status. A non-entitled status
 		// (unpaid / incomplete_expired / paused / canceled-via-update / …) must NOT
 		// grant the paid tier — downgrade to Free (read-only over-limit), exactly as
-		// a subscription.deleted does (§9), never leave it active+paid.
+		// a subscription.deleted does, never leave it active+paid.
 		if !isEntitledStatus(ev.Data.Status) {
 			return subs.SetCanceled(ctx, ev.Data.OrgID)
 		}

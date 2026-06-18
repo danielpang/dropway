@@ -11,7 +11,7 @@ import (
 // TestRouteValue_RoundTrip_MatchesSchema asserts the Go RouteValue serializes to
 // EXACTLY the field set the cross-language contract requires
 // (contracts/kv-route.schema.json + @dropway/contracts). This is the Go side of
-// the §13 row-11 round-trip: the Worker (TS) parses the same JSON with
+// the round-trip: the Worker (TS) parses the same JSON with
 // parseKVRouteValue, which rejects unknown/missing fields and schema_version
 // drift.
 //

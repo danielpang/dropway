@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 /**
  * The PLATFORM-controlled password form for a password-protected site. It is
  * rendered on app.dropway.dev (NOT inside tenant content), so tenant JS can
- * never observe or script the password (architecture §6/§10 anti-phishing).
+ * never observe or script the password (anti-phishing).
  *
  * On submit it calls the server action, which mints an ANONYMOUS edge token via
  * the JWT-free Go endpoint and returns the content-host callback URL. We then do

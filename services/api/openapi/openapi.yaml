@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
 # Dropway control-plane API (api.dropway.dev) — the system of record and authz
-# boundary (docs/ARCHITECTURE.md §3). The dashboard generates its typed TS client
-# from THIS spec; the frontend's contract is the API, never the DB (§8). Keep this
+# boundary. The dashboard generates its typed TS client
+# from THIS spec; the frontend's contract is the API, never the DB. Keep this
 # accurate: every path/shape here is implemented in services/api/internal/handlers.
 #
 # Phase 1 surface: identity echo, sites CRUD (create/list/get), and the deploy
@@ -681,7 +681,7 @@ paths:
         "503": { $ref: "#/components/responses/Unavailable" }
 
   # ===========================================================================
-  # Billing (CLOUD-ONLY / PROPRIETARY — docs/ARCHITECTURE.md §9/§14).
+  # Billing (CLOUD-ONLY / PROPRIETARY).
   #
   # These paths exist ONLY in the hosted-cloud build (compiled under the `cloud`
   # Go build tag and mounted by mountCloud). The open-source / self-host build
@@ -703,7 +703,7 @@ paths:
         header. The handler (1) verifies the signature (else 400, no DB write),
         (2) dedupes by Stripe event id (replay → 200 no-op), (3) maps the event to
         a plan_tier change and persists it (the ONLY writer of plan_tier). This is
-        the source of truth for entitlement (§9). checkout.session.completed /
+        the source of truth for entitlement. checkout.session.completed /
         customer.subscription.created|updated → upsert subscription + raise
         plan_tier; customer.subscription.deleted → downgrade to Free + org_status
         (over_limit if the org now exceeds Free caps), NEVER deleting data.
@@ -768,7 +768,7 @@ paths:
         Session for {target_tier} with client_reference_id=org_id and
         metadata{org_id,target_tier} so the signed webhook can resolve + entitle the
         org. Returns the Stripe-hosted checkout_url. The success redirect grants
-        NOTHING — only the webhook flips plan_tier (§9).
+        NOTHING — only the webhook flips plan_tier.
       operationId: createCheckout
       tags: [billing-cloud]
       requestBody:

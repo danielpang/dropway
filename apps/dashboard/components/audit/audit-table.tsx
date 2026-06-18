@@ -9,7 +9,7 @@ import type { AuditEvent } from "@/lib/api";
 import { isSecurityAction } from "@/lib/audit-actions";
 
 /**
- * Renders a page of audit events as an accessible table (architecture §10/§12).
+ * Renders a page of audit events as an accessible table.
  * Columns: time, actor, action, target, ip. Access-mode / security-relevant
  * rows (revocations, unshares, role changes, sharing-policy flips …) are tinted
  * amber and flagged so an admin can scan for the events that matter.

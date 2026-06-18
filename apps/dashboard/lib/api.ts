@@ -9,7 +9,7 @@ import type { components, operations } from "@/lib/api-generated/schema";
 /**
  * Typed client for the Go control-plane API (api.dropway.dev).
  *
- * The dashboard's contract is the API, NEVER the database (architecture §8): it
+ * The dashboard's contract is the API, NEVER the database: it
  * calls the Go API for ALL business data, carrying a short-lived Better Auth
  * EdDSA JWT in the Authorization header. The Go API verifies that JWT and is the
  * authz boundary + system of record.
@@ -125,7 +125,7 @@ export type AllowExternalResult =
 // ---- Shared error envelope ------------------------------------------------
 
 /**
- * The 402 body the API returns when a hard cap is hit (architecture §9). This
+ * The 402 body the API returns when a hard cap is hit. This
  * mirrors Go's `quota.ExceededError` (internal/quota/quota.go) exactly — `limit`
  * is the resource STRING and there is no top-level `error` discriminator; the
  * 402 status is itself the signal. Sourced from the generated schema so it stays
@@ -134,7 +134,7 @@ export type AllowExternalResult =
 export type QuotaExceeded = components["schemas"]["QuotaExceeded"];
 export type QuotaResource = NonNullable<QuotaExceeded["limit"]>;
 
-// ---- Billing shapes (CLOUD-ONLY surface; §9/§14) --------------------------
+// ---- Billing shapes (CLOUD-ONLY surface) --------------------------
 //
 // These mirror the [CLOUD-ONLY] /v1/billing/* endpoints. On the OSS/self-host
 // build those routes don't exist (the API returns 404) — the dashboard treats a
@@ -485,7 +485,7 @@ export const api = {
     });
   },
 
-  // ---- Phase 3: billing (CLOUD-ONLY; §9). 404 on the self-host build. ------
+  // ---- Phase 3: billing (CLOUD-ONLY). 404 on the self-host build. ------
 
   /**
    * Read the org's current plan (any authenticated member). plan_tier is read
@@ -500,7 +500,7 @@ export const api = {
   /**
    * Start a Stripe Checkout session for {target_tier} (owner/admin → 403
    * otherwise). Returns the Stripe-hosted checkout_url to redirect the user to.
-   * The success redirect grants NOTHING — only the webhook flips plan_tier (§9).
+   * The success redirect grants NOTHING — only the webhook flips plan_tier.
    */
   createCheckout(input: {
     target_tier: CheckoutTier;

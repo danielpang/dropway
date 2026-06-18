@@ -241,7 +241,7 @@ func TestRevoke_SetAccessAlsoWritesSiteDenylist(t *testing.T) {
 		t.Fatalf("set access: %d %s", rr.Code, rr.Body)
 	}
 	if _, ok := rev.get(edgerevoke.KindSite, "site-3"); !ok {
-		t.Fatal("access tighten should ALSO write revoked:site (ARCHITECTURE.md §6)")
+		t.Fatal("access tighten should ALSO write revoked:site")
 	}
 }
 

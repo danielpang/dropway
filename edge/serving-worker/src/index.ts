@@ -2,7 +2,7 @@
 //
 // Dropway serving Worker — *.dropwaycontent.com (Cloudflare Workers, Module
 // syntax). Phase 1 implements the PUBLIC serve path only: the 95% case that is
-// JWT-free and cacheable (docs/ARCHITECTURE.md §3/§6).
+// JWT-free and cacheable.
 //
 // Request lifecycle (public), content-addressed layout:
 //   browser → PoP → resolve `route:<host>` from KV (ROUTES) →
@@ -86,7 +86,7 @@ export interface BucketLike {
 /**
  * Minimal KV binding for the route projection. The Worker reads the route value
  * as parsed JSON; the SAME namespace also backs the hard-revocation denylist
- * (`revoked:*` keys) per the §6 contract — Cloudflare KV's `get` supports both a
+ * (`revoked:*` keys) per the revocation contract — Cloudflare KV's `get` supports both a
  * typed-json read and a plain-string read, so we declare both overloads.
  */
 export interface RoutesKVLike {
@@ -131,7 +131,7 @@ export interface Env {
   /**
    * OPTIONAL (Phase 4) KV for the hard-revocation denylist (`revoked:user|site|
    * org:*` keys). When unset the Worker reuses the ROUTES namespace with the
-   * `revoked:` prefix (§6 contract). Read-only; the Go API is the sole writer.
+   * `revoked:` prefix (revocation contract). Read-only; the Go API is the sole writer.
    */
   REVOKED?: RevokedKVLike;
   /** OPTIONAL: rate-limit max requests per window (overrides DEFAULT_RATE_LIMIT). */
@@ -197,9 +197,9 @@ function statusKV(env: Env): StatusKVLike | undefined {
 
 /**
  * The KV backing the hard-revocation denylist. Prefers a dedicated REVOKED
- * binding; otherwise reuses the ROUTES namespace with the `revoked:` prefix (§6
- * contract — "reuse the ROUTES KV with a `revoked:` prefix, or a REVOKED
- * binding"). ROUTES is always present, so a gated deployment always has a
+ * binding; otherwise reuses the ROUTES namespace with the `revoked:` prefix
+ * (reuse the ROUTES KV with a `revoked:` prefix, or a REVOKED
+ * binding). ROUTES is always present, so a gated deployment always has a
  * denylist to consult (a missing `revoked:*` key is a clean miss → not revoked).
  */
 function revokedKV(env: Env): RevokedKVLike {
@@ -224,7 +224,7 @@ export async function serve(
     });
   }
 
-  // BLOCK SERVICE-WORKER REGISTRATION on the content origin (§10 MEDIUM), BEFORE
+  // BLOCK SERVICE-WORKER REGISTRATION on the content origin, BEFORE
   // the cache lookup — a SW-script fetch carries `Service-Worker: script` and must
   // be refused under ANY path (a warm cache entry must not be served back as a
   // registrable SW script). isServiceWorkerScript() (in resolveBlob) additionally
@@ -236,7 +236,7 @@ export async function serve(
   const url = new URL(request.url);
   const nowDate = opts.now ?? new Date();
 
-  // 0. EDGE RATE LIMITING (denial-of-wallet, §10/§12). Keyed by client IP (else
+  // 0. EDGE RATE LIMITING (denial-of-wallet). Keyed by client IP (else
   //    host), BEFORE the route lookup, so a flood is rejected without touching the
   //    route projection or R2. PREFER the native Rate Limiting binding (atomic —
   //    actually counts a single-IP flood); fall back to the KV counter (best-effort
@@ -273,7 +273,7 @@ export async function serve(
     return linkExpired();
   }
 
-  // 3. PER-ORG SUSPENSION / over-limit (denial-of-wallet, §10/§12). If the Go API
+  // 3. PER-ORG SUSPENSION / over-limit (denial-of-wallet). If the Go API
   //    has flagged this route's org as suspended (billing/abuse) or over-limit
   //    (quota/egress cap) in KV, serve a platform "account suspended" page instead
   //    of ANY tenant content — public or gated. Skipped (served) when no status KV
@@ -434,7 +434,7 @@ async function servePublic(
  * Build the body of a GATED (password/allowlist/org_only) success response —
  * the SAME manifest→blob resolution as the public path, but WITHOUT the public
  * Cache API and with the caller (gated module) overriding Cache-Control to
- * `private, no-store` (§10: protected bytes never enter a shared cache). Returns
+ * `private, no-store` (protected bytes never enter a shared cache). Returns
  * a 200 Response with content headers, or the appropriate 404 on a miss/drift.
  * `bodyFor` strips the body for HEAD. Never consults or writes any cache.
  */
@@ -491,7 +491,7 @@ async function resolveBlob(
     return { kind: "not-found", response: await notFound(route) };
   }
 
-  // BLOCK SERVICE-WORKER REGISTRATION on the content origin (§10 MEDIUM): refuse
+  // BLOCK SERVICE-WORKER REGISTRATION on the content origin: refuse
   // to serve a scriptable body at the conventional SW script paths (sw.js,
   // service-worker.js, …). A tenant therefore cannot register a SW that would
   // persist its JS, intercept fetches, or survive a takedown. We 404 (the same
@@ -638,8 +638,8 @@ async function notFound(
 
 /**
  * Platform "link expired" page — served when a public/unlisted route carries an
- * `expires_at` (v2 RouteValue) that is now past (docs/ARCHITECTURE.md §6, edge
- * link-expiry). 410 Gone is the right status (the resource intentionally no
+ * `expires_at` (v2 RouteValue) that is now past (edge link-expiry). 410 Gone is
+ * the right status (the resource intentionally no
  * longer exists at this URL). Never shared-cached so a future re-publish (new
  * expiry) is visible immediately.
  */
@@ -654,7 +654,7 @@ export function linkExpired(): Response {
 
 /**
  * Platform "Too Many Requests" page (429) — served when the edge rate limiter
- * trips (§10 denial-of-wallet). Carries `Retry-After` (seconds) so a well-behaved
+ * trips (denial-of-wallet). Carries `Retry-After` (seconds) so a well-behaved
  * client backs off, and `no-store` so the 429 is never cached as if it were the
  * site. Strict platform headers (our own page, no tenant content).
  */
@@ -670,8 +670,8 @@ export function tooManyRequests(retryAfterSeconds: number): Response {
 
 /**
  * Platform "account suspended / over limit" page — served INSTEAD of any tenant
- * content when the route's org is flagged suspended/over_limit in KV (§10/§12
- * denial-of-wallet + billing suspension). 503 with a short `Retry-After` (the
+ * content when the route's org is flagged suspended/over_limit in KV
+ * (denial-of-wallet + billing suspension). 503 with a short `Retry-After` (the
  * org may be reinstated) and `no-store` so a reinstatement is visible
  * immediately. The two statuses share one page with a status-specific line.
  */
@@ -714,7 +714,7 @@ const DEFAULT_404_HTML = `<!doctype html>
 /**
  * Platform-controlled "link expired" page (served on a past `expires_at`). Kept
  * static + self-contained (no tenant content, no scripts) — anti-phishing parity
- * with the password gate (§10): an expired link must show a platform page tenant
+ * with the password gate: an expired link must show a platform page tenant
  * JS can neither render nor script.
  */
 const LINK_EXPIRED_HTML = `<!doctype html>

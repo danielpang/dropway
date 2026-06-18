@@ -20,7 +20,7 @@ import { TIER_LABEL } from "@/lib/billing";
  * "Finalizing your subscription…" banner, shown after Stripe redirects back to
  * our success_url (`/billing?checkout=success`).
  *
- * CRITICAL (§9): the success redirect grants NOTHING. The paid entitlement
+ * CRITICAL: the success redirect grants NOTHING. The paid entitlement
  * (plan_tier) is written to the DB ONLY by the signature-verified Stripe webhook
  * — which arrives asynchronously and may land a beat AFTER the browser returns.
  * So we DON'T trust the redirect; we POLL GET /v1/billing until plan_tier flips

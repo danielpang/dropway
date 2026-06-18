@@ -8,7 +8,7 @@ import type { Role } from "@/lib/api";
 /**
  * Server-side helpers over Better Auth's Organization plugin (`auth.api`).
  *
- * Better Auth owns the membership tables (architecture §5); the dashboard reads
+ * Better Auth owns the membership tables; the dashboard reads
  * + mutates them through the plugin's server API, while the Go API independently
  * re-checks role for any privileged write (the confused-deputy guard). The
  * plugin's `auth.api.*` methods are loosely typed (inferred from endpoints), so

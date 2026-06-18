@@ -103,7 +103,7 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The hard-cap check (§9) happens INSIDE store.CreateSite's tx (advisory lock
+	// The hard-cap check happens INSIDE store.CreateSite's tx (advisory lock
 	// + COUNT → quota.Provider.Allow → INSERT), so it's race-safe. OSS = Unlimited;
 	// cloud returns a *quota.ExceededError that writeStoreError renders as 402.
 	// access_mode "" → store inherits the org's default_visibility (org_only).
@@ -278,11 +278,11 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: version does not belong to site", httpx.ErrBadRequest))
 	case errors.Is(err, store.ErrHostTaken):
 		// The global host (slug under the content domain) is already owned by
-		// another org/site — a cross-tenant collision (§6). 409 Conflict, not 400:
+		// another org/site — a cross-tenant collision. 409 Conflict, not 400:
 		// the request is well-formed, the resource just isn't available.
 		httpx.WriteError(w, fmt.Errorf("%w: site slug/host already in use", httpx.ErrConflict))
 	case errors.Is(err, store.ErrExternalSharingDisabled):
-		// The org's allow_external_sharing policy forbids a public site (§5.4).
+		// The org's allow_external_sharing policy forbids a public site.
 		httpx.WriteError(w, fmt.Errorf("%w: external sharing is disabled for this org; an admin must enable it", httpx.ErrForbidden))
 	case errors.Is(err, store.ErrInvalidMode):
 		httpx.WriteError(w, fmt.Errorf("%w: invalid access mode", httpx.ErrBadRequest))

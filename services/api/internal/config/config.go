@@ -45,7 +45,7 @@ type Config struct {
 	// unavailable (ALLOW_JWT_ROLE_FALLBACK). Default FALSE (strict): if membership/
 	// role can't be confirmed live, admin-gated actions are DENIED rather than
 	// trusting the claim. A self-host that hasn't migrated Better Auth yet can opt
-	// in by setting this true (ARCHITECTURE.md §10 [LOW]).
+	// in by setting this true ([LOW]).
 	AllowJWTRoleFallback bool
 
 	// S3 / R2 object storage for blobs + manifests. Optional in Phase 1 (the
@@ -91,8 +91,8 @@ type Config struct {
 
 	// ---- Cloud-only billing (Stripe). These are read ONLY by the cloud build's
 	// mountCloud (wire_cloud.go) to wire cloud/billing; the OSS build ignores them
-	// and never mounts /webhooks/stripe or /v1/billing (self-host has no billing,
-	// ARCHITECTURE.md §9/§14). They're declared here (not under a build tag) so the
+	// and never mounts /webhooks/stripe or /v1/billing (self-host has no billing).
+	// They're declared here (not under a build tag) so the
 	// single Config type is shared; documented cloud-only in deploy/.env.example. ----
 
 	// StripeSecretKey is the restricted Stripe API key (STRIPE_SECRET_KEY) used to
@@ -100,7 +100,7 @@ type Config struct {
 	StripeSecretKey string
 	// StripeWebhookSecret (STRIPE_WEBHOOK_SECRET) verifies the Stripe-Signature on
 	// the inbound /webhooks/stripe payload — the ONLY thing that may mutate the paid
-	// entitlement (§9).
+	// entitlement.
 	StripeWebhookSecret string
 	// StripePriceBusiness / StripePriceEnterprise are the Stripe Price ids for the
 	// self-serve tiers (STRIPE_PRICE_BUSINESS / STRIPE_PRICE_ENTERPRISE). They map
@@ -115,7 +115,7 @@ type Config struct {
 	// EnforceStorageQuota gates the cloud per-org STORAGE cap (ENFORCE_STORAGE_QUOTA).
 	// Defaults to FALSE: storage is metered/tracked but a deploy is never rejected for
 	// crossing a storage band — the only paid lever today is the per-org site count
-	// (docs/pricing.md). The cap code stays in cloud/quota; flip this to true once
+	// The cap code stays in cloud/quota; flip this to true once
 	// storage billing ships so an over-band org is held until it upgrades. No effect in
 	// the OSS build (Unlimited ignores it).
 	EnforceStorageQuota bool

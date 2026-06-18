@@ -19,7 +19,7 @@ export type PasswordAuthzResult =
 /**
  * Verify a viewer-submitted password for a password-protected site and, on
  * success, return the content-host callback URL carrying the minted ANONYMOUS
- * edge token (architecture §6). JWT-FREE — the password is the only credential,
+ * edge token. JWT-FREE — the password is the only credential,
  * so this calls the public /v1/authz/password endpoint (no viewer identity
  * leaks into the anonymous grant).
  *

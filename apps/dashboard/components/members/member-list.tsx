@@ -105,7 +105,7 @@ export function MemberList({
       });
       if (err) throw err;
       // Removal isn't complete until the removed user's access is actually revoked
-      // (C2 / ARCHITECTURE.md §10): kill their Better Auth sessions AND bump the edge
+      // (C2): kill their Better Auth sessions AND bump the edge
       // denylist so they can't keep viewing — or re-mint tokens for — gated sites on
       // a still-valid JWT. Do this BEFORE refreshing; a non-fatal failure here is
       // surfaced (the member row is already gone, but access revocation matters).
