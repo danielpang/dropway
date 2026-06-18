@@ -11,12 +11,16 @@ package apiclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/danielpang/dropway/internal/manifest"
 )
 
 // Client calls the Go API over HTTP.
@@ -76,6 +80,172 @@ func (c *Client) SetAccess(ctx context.Context, token, siteID, mode, password st
 		body["password"] = password
 	}
 	return c.do(ctx, http.MethodPut, "/v1/sites/"+siteID+"/access", token, body, nil)
+}
+
+// --- deploy -----------------------------------------------------------------
+
+// DeployFile is one file to publish: its served path + raw bytes (+ optional
+// content type, inferred from the extension when empty).
+type DeployFile struct {
+	Path        string
+	Data        []byte
+	ContentType string
+}
+
+// DeployResult summarizes a completed deploy.
+type DeployResult struct {
+	VersionID     string
+	LiveURL       string
+	FilesUploaded int
+	Published     bool
+}
+
+type manifestFile struct {
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
+// Deploy runs the full server-side deploy loop through the API under the user's
+// token: prepare (manifest → missing blobs + presigned PUT URLs) → upload the
+// missing blobs directly to the object store → finalize (the API re-hashes every
+// blob + verifies the digest) → publish (the API flips the live pointer and writes
+// the edge projection). Set publish=false to stage a version without going live.
+func (c *Client) Deploy(ctx context.Context, token, siteID string, files []DeployFile, publish bool) (DeployResult, error) {
+	if len(files) == 0 {
+		return DeployResult{}, fmt.Errorf("deploy: no files")
+	}
+
+	// Build the manifest + the sha→bytes map, and the digest input (path+sha only).
+	mf := make([]manifestFile, 0, len(files))
+	digestFiles := make([]manifest.File, 0, len(files))
+	bySHA := map[string][]byte{}
+	for _, f := range files {
+		sum := sha256.Sum256(f.Data)
+		sha := hex.EncodeToString(sum[:])
+		ct := f.ContentType
+		if ct == "" {
+			ct = contentTypeFor(f.Path)
+		}
+		mf = append(mf, manifestFile{Path: f.Path, SHA256: sha, Size: int64(len(f.Data)), ContentType: ct})
+		digestFiles = append(digestFiles, manifest.File{Path: f.Path, SHA256: sha})
+		bySHA[sha] = f.Data
+	}
+	digest := manifest.Digest(digestFiles)
+
+	// 1) prepare → which blobs are missing + where to PUT them.
+	var prep struct {
+		Missing []string          `json:"missing"`
+		Uploads map[string]string `json:"uploads"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/sites/"+siteID+"/deployments/prepare", token,
+		map[string]any{"manifest": mf}, &prep); err != nil {
+		return DeployResult{}, err
+	}
+
+	// 2) upload each missing blob to its presigned URL (raw PUT, URL is the credential).
+	for _, sha := range prep.Missing {
+		url := prep.Uploads[sha]
+		if url == "" {
+			return DeployResult{}, fmt.Errorf("deploy: no upload URL for blob %s", sha)
+		}
+		if err := c.uploadBlob(ctx, url, bySHA[sha]); err != nil {
+			return DeployResult{}, fmt.Errorf("deploy: upload %s: %w", sha, err)
+		}
+	}
+
+	// 3) finalize → the API verifies bytes + digest and records the version.
+	var fin struct {
+		VersionID string `json:"version_id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/sites/"+siteID+"/deployments", token,
+		map[string]any{"manifest": mf, "digest": digest}, &fin); err != nil {
+		return DeployResult{}, err
+	}
+
+	res := DeployResult{VersionID: fin.VersionID, FilesUploaded: len(prep.Missing)}
+	if !publish {
+		return res, nil
+	}
+
+	// 4) publish → flip the live pointer + write the edge projection.
+	var pub struct {
+		LiveURL string `json:"live_url"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/sites/"+siteID+"/publish", token,
+		map[string]string{"version_id": fin.VersionID}, &pub); err != nil {
+		return DeployResult{}, err
+	}
+	res.LiveURL = pub.LiveURL
+	res.Published = true
+	return res, nil
+}
+
+// uploadBlob PUTs raw bytes to a presigned URL. No Authorization (the URL is the
+// credential) and no Content-Type (it's not part of the SigV4 signature) — matching
+// the dashboard's browser upload.
+func (c *Client) uploadBlob(ctx context.Context, url string, data []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &Error{Status: resp.StatusCode, Message: "blob upload failed"}
+	}
+	return nil
+}
+
+// contentTypeFor infers a file's content type from its extension (mirrors the
+// dashboard's table). It only sets the served Content-Type; it is NOT part of the
+// deploy digest, so exact parity isn't load-bearing. Unknown → octet-stream.
+func contentTypeFor(path string) string {
+	ext := ""
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		ext = strings.ToLower(path[i+1:])
+	}
+	switch ext {
+	case "html", "htm":
+		return "text/html; charset=utf-8"
+	case "css":
+		return "text/css; charset=utf-8"
+	case "js", "mjs":
+		return "text/javascript; charset=utf-8"
+	case "json":
+		return "application/json"
+	case "svg":
+		return "image/svg+xml"
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "gif":
+		return "image/gif"
+	case "webp":
+		return "image/webp"
+	case "ico":
+		return "image/x-icon"
+	case "txt", "md":
+		return "text/plain; charset=utf-8"
+	case "xml":
+		return "application/xml"
+	case "wasm":
+		return "application/wasm"
+	case "woff2":
+		return "font/woff2"
+	case "woff":
+		return "font/woff"
+	case "pdf":
+		return "application/pdf"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // do issues a JSON request with the bearer token and decodes a 2xx JSON body into

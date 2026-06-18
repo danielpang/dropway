@@ -4,52 +4,45 @@
 
 ### A folder of files → a live, access-controlled URL in one command.
 
-Dropway turns any static site — an HTML/CSS report, a data dashboard, a React or
-Vite build, a docs site, an AI-generated page — into a **live, versioned, shareable
-URL** in seconds. Drag a folder into the dashboard, or run `dropway deploy ./dist`,
-and you get a real URL you control: share it with the whole internet, your whole
-company, a few specific people, or behind a password — and change your mind anytime.
+Dropway turns any static site,for ex: an HTML/CSS report, a data dashboard, a React or
+Vite build, a docs site, an AI-generated page into a **live, versioned, shareable
+URL** in seconds. Drag a folder into the dashboard, or upload via MCP,
+and you get a real URL you control: share it with the whole internet, your team and
+company, or a few specific people. Change your mind anytime.
 
-It's **open source and self-hostable**, with an optional hosted SaaS at [dropway.dev](https://dropway.dev). Think
+It's **open source and self-hostable**, with an optional hosted SaaS at [dropway.dev](https://dropway.dev).
 
-```sh
-dropway deploy ./dist
-# → https://acme-quarterly-report.dropwaycontent.com  (acme org-only, versioned, rollback-able)
-```
-
----
 
 ## Why teams need it
 
-**Building something is easy now. Sharing it — to exactly the right people, safely —
-is still annoying.** You've generated a report, a prototype, a dashboard, or a page,
-and your options are all bad:
+**Building something is easy now. Sharing it with the right people, safely
+is still difficult.** You've generated a report, a prototype, a dashboard, or a page,
+and your options aren't great:
 
 - **Email a zip / screenshot** → no live URL, instantly stale, impossible to update.
-- **Spin up S3 + CloudFront / a Vercel project** → IAM, build config, a new project
-  per artifact, and *no per-link access control* — it's public or it's nothing.
+- **Spin up S3 + CloudFront** → not simple for non-technical folks
+- **Vercel/ Netlify project** → requires access to Github, can't share with just your team
 - **Paste into a wiki** → loses the real layout, interactivity, and your CSS/JS.
 - **Internal file shares** → no link you can send someone outside the team, no expiry,
   no audit of who saw what.
 
-None of these let you say *"share this with **these three people**,"* or *"anyone at
-my company,"* or *"public, but password-protected,"* — and then **revoke it**, **roll
-back** a bad version, or put it on a **custom domain**.
+None of these options allow you to *"share this with **these three people**,"* or *"anyone at
+my company,"* or *"public, but password-protected,"* and then **revoke it**, or roll
+back a bad version.
 
-Dropway is that missing layer: **one command to publish, with sharing and access
+Dropway is that missing layer: **simple and quick to publish, with sharing and access
 control as first-class features.**
 
 ## What you get
 
-- **One-command deploy** — folder → live URL. No pipeline, no config (CLI *or*
-  drag-and-drop in the dashboard). Pre-built static output just works.
+- **Drag-and-drop to deploy** — folder → live URL. No pipeline, no config. Pre-built static output just works.
 - **Four sharing tiers, per site** — **public**, **password-protected**, **specific
   people** (email allowlist), or **anyone in your org**. Default-deny; you opt in.
 - **Multi-tenant orgs** — teams, roles (owner/admin/member), and an org-wide policy
   that can forbid sharing outside the company entirely.
 - **Immutable, versioned deploys** — every deploy is content-addressed; **instant
   rollback** to any previous version.
-- **Custom domains** + **expiring share links** + a full **audit log** of who shared
+- **Audit log** of who shared
   and accessed what.
 - **Immediate revocation** — remove a member or unshare a site and their access is
   cut at the edge right away, not whenever a token happens to expire.
@@ -62,14 +55,13 @@ control as first-class features.**
   **only** through the authenticated **Dropway MCP server** (OAuth 2.1; connect it to
   Claude, Cursor, or Codex), so your access control holds for AI exactly as it does for
   people. Owners/admins can switch MCP access off per org in Settings.
-- **No surprise bandwidth bills** — content is served from Cloudflare R2 (free egress),
-  so heavy traffic doesn't translate into a heavy invoice.
-- **Open source + self-hostable** — run the whole thing yourself, unlimited, for free.
+- **Open source + self-hostable** — self-host or use our service at [dropway.dev](https://dropway.dev)
 
 ## Who it's for
 
 - **Engineers & data/analytics teams** sharing generated reports, notebooks-as-HTML,
-  benchmark dashboards, and one-off tools — internally or with a client.
+  benchmark dashboards, and one-off tools. Internally or with a client.
+- **Financial/ accounting professionals** can share analysis and reports.
 - **Designers & PMs** sharing static prototypes, design specs, and review builds with
   the exact stakeholders who should see them, password-protected if needed.
 - **AI app / agent builders** that generate websites and need to hand a user a real,
@@ -80,7 +72,7 @@ control as first-class features.**
 ## How it works (at a glance)
 
 ```
-  dropway deploy ./dist  ─▶  Go API (system of record + authz)  ─▶  R2 (content-addressed blobs)
+  upload files in dashboard  ─▶  Go API (system of record + authz)  ─▶  R2/minIO  (blob storage)
                                        │ writes a rebuildable routing projection
                                        ▼
    browser ─▶ Cloudflare edge Worker (*.dropwaycontent.com) ─▶ streams your site
@@ -122,7 +114,7 @@ docker compose -f deploy/docker-compose.yml exec dashboard \
 ```
 
 Then open **http://localhost:3000**, sign up, create an org, create a site, and deploy
-your first folder. Self-host is **unlimited** — no caps, no Stripe, no account needed.
+your first folder.
 
 ### Use your own Postgres / object store
 
@@ -166,14 +158,15 @@ Public-Suffix-List isolation rule, and the `https` requirement for gated sites) 
 ### Connect an AI tool (MCP)
 
 Dropway ships an **OAuth-protected MCP server** (the `mcp` service, `http://localhost:8092`
-locally) so an LLM agent can browse and read your sites — list sites, read or download a
-site's files — and, when wired to the API, **manage** them too: create a site and change a
-site's sharing settings (owner/admin only, same rules as the dashboard). **Public** sites
+locally) so an LLM agent can browse and read your sites: list sites, read or download a
+site's files. You can also use the MCP server to create a site, deploy +
+publish files to it, and change a site's sharing settings (owner/admin only, same rules
+as the dashboard). Public sites
 are also readable by crawlers via an auto-served [`llms.txt`](https://llmstxt.org/);
-**gated** sites (org-only / allowlist / password) are reachable by an LLM **only** through
-an authorized MCP connection — your access control holds for AI exactly as it does for people.
+**gated** sites (org-only / allowlist / password) are reachable by an LLM only through
+an authorized MCP connection, your access control holds for AI exactly as it does for people.
 
-Add it to your AI tool as a custom connector using the MCP URL — the dashboard shows
+Add it to your AI tool as a custom connector using the MCP URL, the dashboard shows
 copy-paste steps under **Settings → LLM access (MCP) → Connect**. The short version:
 
 | Tool | How |
@@ -206,7 +199,7 @@ Full local-dev reference (build flavors, the edge Worker, migrating by hand) liv
 
 ## Open source + hosted (open-core)
 
-Dropway follows the **Supabase / PostHog** model: a source-available codebase anyone
+Dropway follows popular Dev tools model: a source-available codebase anyone
 can self-host for free, plus an optional hosted SaaS for convenience and scale.
 
 - The **core** is under the **[Functional Source License (FSL-1.1-Apache-2.0)](LICENSE)** —

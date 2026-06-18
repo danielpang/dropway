@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"unicode/utf8"
@@ -47,6 +48,7 @@ type Blobs interface {
 type ControlPlane interface {
 	CreateSite(ctx context.Context, token, slug, accessMode string) (apiclient.Site, error)
 	SetAccess(ctx context.Context, token, siteID, mode, password string) error
+	Deploy(ctx context.Context, token, siteID string, files []apiclient.DeployFile, publish bool) (apiclient.DeployResult, error)
 }
 
 // Service holds the tool dependencies.
@@ -133,6 +135,25 @@ type setAccessIn struct {
 type setAccessOut struct {
 	Slug string `json:"slug"`
 	Mode string `json:"mode"`
+}
+
+type deployFileIn struct {
+	Path        string `json:"path" jsonschema:"the served path, e.g. 'index.html' or 'assets/app.js'"`
+	Text        string `json:"text,omitempty" jsonschema:"the file contents as text (use this OR base64)"`
+	Base64      string `json:"base64,omitempty" jsonschema:"the file contents as base64, for binary files"`
+	ContentType string `json:"content_type,omitempty" jsonschema:"optional MIME type; inferred from the path when omitted"`
+}
+type deploySiteIn struct {
+	Site    string         `json:"site" jsonschema:"the site slug (from list_sites or create_site)"`
+	Files   []deployFileIn `json:"files" jsonschema:"the files to publish; include an index.html for the site root"`
+	Publish *bool          `json:"publish,omitempty" jsonschema:"publish (go live) after upload; default true. false stages a version without going live"`
+}
+type deploySiteOut struct {
+	Site          string `json:"site"`
+	VersionID     string `json:"version_id"`
+	FilesUploaded int    `json:"files_uploaded" jsonschema:"how many new blobs were uploaded (unchanged files are skipped)"`
+	Published     bool   `json:"published"`
+	LiveURL       string `json:"live_url,omitempty"`
 }
 
 // --- Exported (testable) logic ----------------------------------------------
@@ -284,6 +305,47 @@ func (svc *Service) SetAccess(ctx context.Context, t store.Tenant, token, slug, 
 	return setAccessOut{Slug: slug, Mode: mode}, nil
 }
 
+// DeploySite uploads files to a site and (by default) publishes them, via the Go
+// API's deploy loop. The slug is resolved to its id under RLS first (confirming the
+// site is in the caller's org); the rest runs in the API (blob verification, version
+// record, edge projection on publish).
+func (svc *Service) DeploySite(ctx context.Context, t store.Tenant, token, slug string, files []deployFileIn, publish bool) (deploySiteOut, error) {
+	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+	if err != nil {
+		return deploySiteOut{}, err
+	}
+	if len(files) == 0 {
+		return deploySiteOut{}, errors.New("mcp/tools: deploy requires at least one file")
+	}
+	df := make([]apiclient.DeployFile, 0, len(files))
+	for _, f := range files {
+		var data []byte
+		switch {
+		case f.Base64 != "":
+			b, derr := base64.StdEncoding.DecodeString(f.Base64)
+			if derr != nil {
+				return deploySiteOut{}, fmt.Errorf("mcp/tools: file %q has invalid base64: %w", f.Path, derr)
+			}
+			data = b
+		default:
+			data = []byte(f.Text) // text (possibly empty) when no base64 given
+		}
+		df = append(df, apiclient.DeployFile{Path: f.Path, Data: data, ContentType: f.ContentType})
+	}
+
+	res, err := svc.API.Deploy(ctx, token, site.ID, df, publish)
+	if err != nil {
+		return deploySiteOut{}, err
+	}
+	return deploySiteOut{
+		Site:          slug,
+		VersionID:     res.VersionID,
+		FilesUploaded: res.FilesUploaded,
+		Published:     res.Published,
+		LiveURL:       res.LiveURL,
+	}, nil
+}
+
 type manifestEntry struct {
 	SHA256      string `json:"sha256"`
 	ContentType string `json:"content_type"`
@@ -339,6 +401,10 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		Name:        "set_site_access",
 		Description: "Change a site's sharing/permissions. Args: site (slug), mode ('public'|'org_only'|'password'|'allowlist'), password (only for mode=password). Owner/admin only.",
 	}, svc.setAccessHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "deploy_site",
+		Description: "Upload files to a site and publish them (go live). Args: site (slug), files ([{path, text or base64, content_type?}]), publish (default true). Include an index.html for the site root. Returns the live URL.",
+	}, svc.deploySiteHandler)
 }
 
 func (svc *Service) listSitesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, _ listSitesIn) (*mcpsdk.CallToolResult, listSitesOut, error) {
@@ -396,5 +462,22 @@ func (svc *Service) setAccessHandler(ctx context.Context, _ *mcpsdk.CallToolRequ
 		return nil, setAccessOut{}, ErrNoToken
 	}
 	out, err := svc.SetAccess(ctx, t, token, in.Site, in.Mode, in.Password)
+	return nil, out, err
+}
+
+func (svc *Service) deploySiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in deploySiteIn) (*mcpsdk.CallToolResult, deploySiteOut, error) {
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, deploySiteOut{}, ErrNoTenant
+	}
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, deploySiteOut{}, ErrNoToken
+	}
+	publish := true
+	if in.Publish != nil {
+		publish = *in.Publish
+	}
+	out, err := svc.DeploySite(ctx, t, token, in.Site, in.Files, publish)
 	return nil, out, err
 }

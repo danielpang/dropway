@@ -129,9 +129,10 @@ across services or token verification fails:
 
 **Read vs write tools.** The read tools (`list_sites`, `list_files`, `read_file`,
 `download_site`) run off the RLS-scoped store. The write tools (`create_site`,
-`set_site_access`) call the Go API over HTTP with the forwarded token, so they reuse the
-API's quota, admin re-check (`set_site_access` is owner/admin only), edge-route
-projection, revocation, and audit — the API stays the only projection writer. For the
+`set_site_access`, `deploy_site` — upload files + publish) call the Go API over HTTP with
+the forwarded token, so they reuse the API's quota, admin re-check (`set_site_access` is
+owner/admin only), deploy verification, edge-route projection, revocation, and audit —
+the API stays the only projection writer. For the
 API to accept the forwarded token it reads `MCP_PUBLIC_URL` and adds it to the verifier's
 accepted audiences. Unset `API_URL` on the `mcp` service → it runs **read-only** (the
 write tools aren't registered).

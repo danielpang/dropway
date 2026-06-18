@@ -96,8 +96,8 @@ export default function OAuthConsentPage() {
           <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
             <p className="font-medium text-foreground">This will let the tool:</p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>List and read the files of your deployed sites</li>
-              <li>Create new sites in your organization</li>
+              <li>List, read, and download the files of your deployed sites</li>
+              <li>Create new sites and deploy/publish files to them</li>
               <li>
                 Change a site&rsquo;s sharing settings (owners/admins only)
               </li>

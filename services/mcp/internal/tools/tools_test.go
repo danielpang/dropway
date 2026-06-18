@@ -59,6 +59,12 @@ type fakeAPI struct {
 
 	setToken, setSiteID, setMode, setPassword string
 	setErr                                     error
+
+	deployToken, deploySiteID string
+	deployFiles               []apiclient.DeployFile
+	deployPublish             bool
+	deployResp                apiclient.DeployResult
+	deployErr                 error
 }
 
 func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
@@ -71,6 +77,13 @@ func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) 
 func (f *fakeAPI) SetAccess(_ context.Context, token, siteID, mode, password string) error {
 	f.setToken, f.setSiteID, f.setMode, f.setPassword = token, siteID, mode, password
 	return f.setErr
+}
+func (f *fakeAPI) Deploy(_ context.Context, token, siteID string, files []apiclient.DeployFile, publish bool) (apiclient.DeployResult, error) {
+	f.deployToken, f.deploySiteID, f.deployFiles, f.deployPublish = token, siteID, files, publish
+	if f.deployErr != nil {
+		return apiclient.DeployResult{}, f.deployErr
+	}
+	return f.deployResp, nil
 }
 
 const manifestJSON = `{"schema_version":1,"files":{
@@ -345,5 +358,98 @@ func TestSetAccess_PasswordForwarded(t *testing.T) {
 	}
 	if api.setMode != "password" || api.setPassword != "hunter2" {
 		t.Errorf("password mode not forwarded: %+v", api)
+	}
+}
+
+// --- deploy_site ------------------------------------------------------------
+
+func TestDeploySite_DecodesAndForwards(t *testing.T) {
+	api := &fakeAPI{deployResp: apiclient.DeployResult{
+		VersionID: "v1", LiveURL: "https://acme--docs.dropwaycontent.com", FilesUploaded: 2, Published: true,
+	}}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
+		API:   api,
+	}
+	files := []deployFileIn{
+		{Path: "index.html", Text: "<h1>hi</h1>"},
+		{Path: "logo.png", Base64: "AAEC"}, // 3 bytes: 0x00 0x01 0x02
+	}
+	out, err := svc.DeploySite(context.Background(), tnt, "tok-9", "docs", files, true)
+	if err != nil {
+		t.Fatalf("DeploySite: %v", err)
+	}
+	// Slug resolved to id, token + publish forwarded.
+	if api.deploySiteID != "site-1" || api.deployToken != "tok-9" || !api.deployPublish {
+		t.Errorf("forwarded args wrong: %+v", api)
+	}
+	// Files decoded: text → raw bytes, base64 → decoded bytes.
+	if len(api.deployFiles) != 2 {
+		t.Fatalf("want 2 files, got %d", len(api.deployFiles))
+	}
+	if string(api.deployFiles[0].Data) != "<h1>hi</h1>" {
+		t.Errorf("text file not decoded: %q", api.deployFiles[0].Data)
+	}
+	if want := []byte{0x00, 0x01, 0x02}; !bytes.Equal(api.deployFiles[1].Data, want) {
+		t.Errorf("base64 file decoded wrong: %v, want %v", api.deployFiles[1].Data, want)
+	}
+	// Result mapped from the API.
+	if out.VersionID != "v1" || out.LiveURL == "" || out.FilesUploaded != 2 || !out.Published {
+		t.Errorf("result not mapped: %+v", out)
+	}
+}
+
+func TestDeploySite_StageWithoutPublish(t *testing.T) {
+	api := &fakeAPI{deployResp: apiclient.DeployResult{VersionID: "v2", Published: false}}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
+		API:   api,
+	}
+	out, err := svc.DeploySite(context.Background(), tnt, "tok", "docs", []deployFileIn{{Path: "index.html", Text: "x"}}, false)
+	if err != nil {
+		t.Fatalf("DeploySite: %v", err)
+	}
+	if api.deployPublish {
+		t.Error("publish=false should be forwarded")
+	}
+	if out.Published || out.LiveURL != "" {
+		t.Errorf("staged deploy should not be published: %+v", out)
+	}
+}
+
+func TestDeploySite_InvalidBase64(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
+		API:   api,
+	}
+	_, err := svc.DeploySite(context.Background(), tnt, "tok", "docs", []deployFileIn{{Path: "x", Base64: "!!!notb64"}}, true)
+	if err == nil {
+		t.Fatal("expected an invalid-base64 error")
+	}
+	if api.deploySiteID != "" {
+		t.Error("API must not be called when a file fails to decode")
+	}
+}
+
+func TestDeploySite_NoFiles(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
+		API:   api,
+	}
+	if _, err := svc.DeploySite(context.Background(), tnt, "tok", "docs", nil, true); err == nil {
+		t.Fatal("expected an error for an empty file set")
+	}
+}
+
+func TestDeploySite_UnknownSite(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	if _, err := svc.DeploySite(context.Background(), tnt, "tok", "ghost", []deployFileIn{{Path: "i", Text: "x"}}, true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if api.deploySiteID != "" {
+		t.Error("API must not be called for an unknown site")
 	}
 }
