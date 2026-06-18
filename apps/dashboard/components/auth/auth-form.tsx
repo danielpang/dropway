@@ -4,6 +4,7 @@ import * as React from "react";
 import { Loader2, Mail, Sparkles } from "lucide-react";
 
 import { GoogleIcon } from "@/components/icons";
+import { TermsDialog } from "@/components/legal/terms-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -59,6 +60,9 @@ export function AuthForm({
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
+  // Terms consent, required for the email + magic-link sign-up paths. Google is
+  // gated by an implied-consent note instead (it redirects before we could block).
+  const [agreed, setAgreed] = React.useState(false);
 
   const [pending, setPending] = React.useState<Pending>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -97,6 +101,10 @@ export function AuthForm({
     reset();
     setTouched(true);
     if (!emailValid || !passwordValid || !nameValid) return;
+    if (isSignUp && !agreed) {
+      setError("Please agree to the Terms and Conditions to create an account.");
+      return;
+    }
 
     setPending("email");
     try {
@@ -139,6 +147,10 @@ export function AuthForm({
     setTouched(true);
     if (!emailValid) {
       setError("Enter a valid email to receive a magic link.");
+      return;
+    }
+    if (isSignUp && !agreed) {
+      setError("Please agree to the Terms and Conditions to create an account.");
       return;
     }
     setPending("magic");
@@ -184,6 +196,13 @@ export function AuthForm({
           )}
           Continue with Google
         </Button>
+
+        {isSignUp && (
+          <p className="text-center text-xs leading-snug text-muted-foreground">
+            Signing up with Google means you agree to the{" "}
+            <TermsDialog />.
+          </p>
+        )}
 
         <div className="flex items-center gap-3 py-1">
           <span className="h-px flex-1 bg-border" aria-hidden />
@@ -264,11 +283,30 @@ export function AuthForm({
             )}
           </div>
 
+          {isSignUp && (
+            <div className="flex items-start gap-2.5">
+              <input
+                id="agree-terms"
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                disabled={busy}
+                className="mt-0.5 size-4 shrink-0 rounded border-border accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              />
+              <label
+                htmlFor="agree-terms"
+                className="text-sm leading-snug text-muted-foreground"
+              >
+                I have read and agree to the <TermsDialog />.
+              </label>
+            </div>
+          )}
+
           <Button
             type="submit"
             variant="secondary"
             className="w-full"
-            disabled={busy}
+            disabled={busy || (isSignUp && !agreed)}
             aria-busy={pending === "email"}
           >
             {pending === "email" ? (
@@ -286,7 +324,7 @@ export function AuthForm({
           variant="ghost"
           className="w-full"
           onClick={onMagicLink}
-          disabled={busy}
+          disabled={busy || (isSignUp && !agreed)}
           aria-busy={pending === "magic"}
         >
           {pending === "magic" ? (

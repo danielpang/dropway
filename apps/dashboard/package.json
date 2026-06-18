@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "gen:api": "openapi-typescript ../../services/api/openapi/openapi.yaml -o lib/api-generated/schema.ts"
+    "gen:api": "openapi-typescript ../../services/api/openapi/openapi.yaml -o lib/api-generated/schema.ts",
+    "gen:terms": "node scripts/gen-terms-pdf.mjs"
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",

@@ -1,0 +1,93 @@
+{
+  "version": "1.0",
+  "updated": "2026-06-18",
+  "updatedLabel": "June 18, 2026",
+  "intro": "These Terms and Conditions (the \"Terms\") are a legal agreement between you and Daniel Pang, operating as Dropway (\"Dropway\", \"we\", \"us\"), covering your access to and use of the Dropway service, including the hosted dashboard, the API, the CLI, and the MCP server (together, the \"Service\"). By creating an account or using the Service you agree to these Terms. If you do not agree, do not use the Service.",
+  "sections": [
+    {
+      "heading": "1. The Service",
+      "body": [
+        "Dropway turns a folder of static files into a live, access-controlled URL. You can deploy through the dashboard, the CLI, or the MCP server, and you control who can see each site.",
+        "Dropway is also open source. You may self-host the software under the Functional Source License (FSL), separately from these Terms. These Terms govern the hosted Service that we operate for you; the FSL governs the source code itself."
+      ]
+    },
+    {
+      "heading": "2. Your account",
+      "body": [
+        "You are responsible for your account, for keeping your credentials secure, and for all activity that happens under your account or your organization. Tell us promptly if you believe your account has been used without your permission.",
+        "You must provide accurate information and be old enough to enter into a binding contract in your jurisdiction."
+      ]
+    },
+    {
+      "heading": "3. Acceptable use and content rules",
+      "body": [
+        "You are responsible for everything you upload, deploy, or serve through the Service (your \"Content\").",
+        "Your Content must not contain, link to, or distribute anything illegal, nor anything that depicts, promotes, or incites violence. This includes, without limitation, child sexual abuse material, content that facilitates terrorism or violent extremism, threats, incitement to violence, malware, phishing, or content that infringes someone else's rights.",
+        "If we find Content that violates these rules, or use of the Service that does, we may remove or disable the affected sites and deactivate or terminate the responsible accounts, with or without notice, at our discretion. Where it is appropriate or required, we may also report the matter to the relevant authorities.",
+        "We may, but are not obligated to, review Content. Removing Content or deactivating an account does not waive any other rights we have."
+      ]
+    },
+    {
+      "heading": "4. Your Content and ownership",
+      "body": [
+        "You keep all ownership of your Content. We do not claim ownership of anything you upload.",
+        "You grant us a limited, worldwide, non-exclusive license to host, store, copy, transmit, and display your Content, solely so that we can operate and provide the Service to you (for example, serving your site to the visitors you have allowed). This license ends when you delete the Content or close your account, except for backups that age out on our normal schedule."
+      ]
+    },
+    {
+      "heading": "5. Public sites and automated crawlers",
+      "body": [
+        "Access to each site is controlled by the visibility you choose. Private, organization-only, password, and allowlist sites are restricted to the people you authorize.",
+        "If you set a site to public, anyone on the internet can reach it, including automated clients such as search engine crawlers and AI agents. Once a site is public, third parties may access, copy, index, or crawl it, and a public site may be collected by an AI crawler for training or other purposes. We do not control and are not responsible for what independent third parties do with content you have chosen to make public. If you do not want this, keep the site private."
+      ]
+    },
+    {
+      "heading": "6. Privacy and how we use data",
+      "body": [
+        "We do not sell your personal data, and we do not sell your Content.",
+        "We do not provide your Content to train large language models or other AI systems. The one exception is outside our control: if you make a site public, an independent AI crawler could reach and collect it the same way it would reach any public web page (see the section on public sites above).",
+        "We use the data you give us only to operate, secure, support, and improve the Service. We may use third-party infrastructure providers (for example, for hosting, storage, payments, and email) to run the Service, and we share data with them only to the extent needed for those functions."
+      ]
+    },
+    {
+      "heading": "7. Plans, billing, and fair use",
+      "body": [
+        "Dropway offers a free plan and paid plans. Paid plans are billed in advance on a recurring basis until canceled. Fees are non-refundable except where required by law.",
+        "Plan limits (for example, the number of sites per workspace) apply to your account. If you exceed a limit, we may ask you to upgrade or may restrict new actions until you are back within the limit. We do not delete your data for going over a limit; existing sites stay available to read while your account is over the limit."
+      ]
+    },
+    {
+      "heading": "8. Service availability",
+      "body": [
+        "We work to keep the Service available and reliable, but we provide it on an \"as is\" and \"as available\" basis. We may change, suspend, or discontinue parts of the Service, and we may perform maintenance that causes downtime.",
+        "If you need guaranteed availability, a self-hosted deployment or an enterprise agreement may be a better fit."
+      ]
+    },
+    {
+      "heading": "9. Disclaimers and limitation of liability",
+      "body": [
+        "To the fullest extent permitted by law, the Service is provided without warranties of any kind, whether express or implied, including merchantability, fitness for a particular purpose, and non-infringement.",
+        "To the fullest extent permitted by law, Dropway will not be liable for any indirect, incidental, special, consequential, or punitive damages, or for any loss of data, revenue, or profits. Our total liability for any claim relating to the Service is limited to the amount you paid us for the Service in the three months before the event giving rise to the claim."
+      ]
+    },
+    {
+      "heading": "10. Termination",
+      "body": [
+        "You may stop using the Service and close your account at any time. We may suspend or terminate your access if you breach these Terms, if your use poses a risk to the Service or to others, or as otherwise described in these Terms.",
+        "On termination, your right to use the Service ends. We may delete your Content after a reasonable period, so export anything you want to keep before closing your account."
+      ]
+    },
+    {
+      "heading": "11. Changes to these Terms",
+      "body": [
+        "We may update these Terms from time to time. When we make material changes, we will update the \"Last updated\" date and, where appropriate, give you additional notice. Your continued use of the Service after a change takes effect means you accept the updated Terms."
+      ]
+    },
+    {
+      "heading": "12. Contact",
+      "body": [
+        "Questions about these Terms? Reach us at legal@dropway.dev."
+      ]
+    }
+  ]
+}

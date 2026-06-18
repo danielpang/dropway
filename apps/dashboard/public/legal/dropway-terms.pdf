@@ -1,0 +1,154 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 3 /Kids [4 0 R 6 0 R 8 0 R] >>
+endobj
+3 0 obj
+<< /Length 4013 >>
+stream
+BT /F2 18 Tf 1 0 0 1 56 711 Tm (Dropway Terms and Conditions) Tj ET
+BT /F1 9 Tf 1 0 0 1 56 692 Tm (Version 1.0 Last updated June 18, 2026) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 670 Tm (These Terms and Conditions \(the "Terms"\) are a legal agreement between you and) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 656 Tm (Daniel Pang, operating as Dropway \("Dropway", "we", "us"\), covering your access to) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 642 Tm (and use of the Dropway service, including the hosted dashboard, the API, the CLI,) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 628 Tm (and the MCP server \(together, the "Service"\). By creating an account or using the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 614 Tm (Service you agree to these Terms. If you do not agree, do not use the Service.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 591 Tm (1. The Service) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 573 Tm (Dropway turns a folder of static files into a live, access-controlled URL. You can) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 559 Tm (deploy through the dashboard, the CLI, or the MCP server, and you control who can) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 545 Tm (see each site.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 525 Tm (Dropway is also open source. You may self-host the software under the Functional) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 511 Tm (Source License \(FSL\), separately from these Terms. These Terms govern the hosted) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 497 Tm (Service that we operate for you; the FSL governs the source code itself.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 470 Tm (2. Your account) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 452 Tm (You are responsible for your account, for keeping your credentials secure, and for) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 438 Tm (all activity that happens under your account or your organization. Tell us promptly) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 424 Tm (if you believe your account has been used without your permission.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 404 Tm (You must provide accurate information and be old enough to enter into a binding) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 390 Tm (contract in your jurisdiction.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 363 Tm (3. Acceptable use and content rules) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 345 Tm (You are responsible for everything you upload, deploy, or serve through the Service) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 331 Tm (\(your "Content"\).) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 311 Tm (Your Content must not contain, link to, or distribute anything illegal, nor) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 297 Tm (anything that depicts, promotes, or incites violence. This includes, without) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 283 Tm (limitation, child sexual abuse material, content that facilitates terrorism or) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 269 Tm (violent extremism, threats, incitement to violence, malware, phishing, or content) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 255 Tm (that infringes someone else's rights.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 235 Tm (If we find Content that violates these rules, or use of the Service that does, we) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 221 Tm (may remove or disable the affected sites and deactivate or terminate the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 207 Tm (responsible accounts, with or without notice, at our discretion. Where it is) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 193 Tm (appropriate or required, we may also report the matter to the relevant authorities.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 173 Tm (We may, but are not obligated to, review Content. Removing Content or deactivating) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 159 Tm (an account does not waive any other rights we have.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 132 Tm (4. Your Content and ownership) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 114 Tm (You keep all ownership of your Content. We do not claim ownership of anything you) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 100 Tm (upload.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 80 Tm (You grant us a limited, worldwide, non-exclusive license to host, store, copy,) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 66 Tm (transmit, and display your Content, solely so that we can operate and provide the) Tj ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> /Contents 3 0 R >>
+endobj
+5 0 obj
+<< /Length 4218 >>
+stream
+BT /F1 10 Tf 1 0 0 1 56 722 Tm (Service to you \(for example, serving your site to the visitors you have allowed\).) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 708 Tm (This license ends when you delete the Content or close your account, except for) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 694 Tm (backups that age out on our normal schedule.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 667 Tm (5. Public sites and automated crawlers) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 649 Tm (Access to each site is controlled by the visibility you choose. Private,) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 635 Tm (organization-only, password, and allowlist sites are restricted to the people you) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 621 Tm (authorize.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 601 Tm (If you set a site to public, anyone on the internet can reach it, including) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 587 Tm (automated clients such as search engine crawlers and AI agents. Once a site is) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 573 Tm (public, third parties may access, copy, index, or crawl it, and a public site may) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 559 Tm (be collected by an AI crawler for training or other purposes. We do not control and) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 545 Tm (are not responsible for what independent third parties do with content you have) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 531 Tm (chosen to make public. If you do not want this, keep the site private.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 504 Tm (6. Privacy and how we use data) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 486 Tm (We do not sell your personal data, and we do not sell your Content.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 466 Tm (We do not provide your Content to train large language models or other AI systems.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 452 Tm (The one exception is outside our control: if you make a site public, an independent) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 438 Tm (AI crawler could reach and collect it the same way it would reach any public web) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 424 Tm (page \(see the section on public sites above\).) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 404 Tm (We use the data you give us only to operate, secure, support, and improve the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 390 Tm (Service. We may use third-party infrastructure providers \(for example, for hosting,) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 376 Tm (storage, payments, and email\) to run the Service, and we share data with them only) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 362 Tm (to the extent needed for those functions.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 335 Tm (7. Plans, billing, and fair use) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 317 Tm (Dropway offers a free plan and paid plans. Paid plans are billed in advance on a) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 303 Tm (recurring basis until canceled. Fees are non-refundable except where required by) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 289 Tm (law.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 269 Tm (Plan limits \(for example, the number of sites per workspace\) apply to your account.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 255 Tm (If you exceed a limit, we may ask you to upgrade or may restrict new actions until) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 241 Tm (you are back within the limit. We do not delete your data for going over a limit;) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 227 Tm (existing sites stay available to read while your account is over the limit.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 200 Tm (8. Service availability) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 182 Tm (We work to keep the Service available and reliable, but we provide it on an "as is") Tj ET
+BT /F1 10 Tf 1 0 0 1 56 168 Tm (and "as available" basis. We may change, suspend, or discontinue parts of the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 154 Tm (Service, and we may perform maintenance that causes downtime.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 134 Tm (If you need guaranteed availability, a self-hosted deployment or an enterprise) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 120 Tm (agreement may be a better fit.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 93 Tm (9. Disclaimers and limitation of liability) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 75 Tm (To the fullest extent permitted by law, the Service is provided without warranties) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 61 Tm (of any kind, whether express or implied, including merchantability, fitness for a) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> /Contents 5 0 R >>
+endobj
+7 0 obj
+<< /Length 1964 >>
+stream
+BT /F1 10 Tf 1 0 0 1 56 722 Tm (particular purpose, and non-infringement.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 702 Tm (To the fullest extent permitted by law, Dropway will not be liable for any) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 688 Tm (indirect, incidental, special, consequential, or punitive damages, or for any loss) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 674 Tm (of data, revenue, or profits. Our total liability for any claim relating to the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 660 Tm (Service is limited to the amount you paid us for the Service in the three months) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 646 Tm (before the event giving rise to the claim.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 619 Tm (10. Termination) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 601 Tm (You may stop using the Service and close your account at any time. We may suspend) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 587 Tm (or terminate your access if you breach these Terms, if your use poses a risk to the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 573 Tm (Service or to others, or as otherwise described in these Terms.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 553 Tm (On termination, your right to use the Service ends. We may delete your Content) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 539 Tm (after a reasonable period, so export anything you want to keep before closing your) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 525 Tm (account.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 498 Tm (11. Changes to these Terms) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 480 Tm (We may update these Terms from time to time. When we make material changes, we will) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 466 Tm (update the "Last updated" date and, where appropriate, give you additional notice.) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 452 Tm (Your continued use of the Service after a change takes effect means you accept the) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 438 Tm (updated Terms.) Tj ET
+BT /F2 11 Tf 1 0 0 1 56 411 Tm (12. Contact) Tj ET
+BT /F1 10 Tf 1 0 0 1 56 393 Tm (Questions about these Terms? Reach us at legal@dropway.dev.) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> /Contents 7 0 R >>
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+10 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000004192 00000 n 
+0000004329 00000 n 
+0000008599 00000 n 
+0000008736 00000 n 
+0000010752 00000 n 
+0000010889 00000 n 
+0000010957 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R >>
+startxref
+11031
+%%EOF
