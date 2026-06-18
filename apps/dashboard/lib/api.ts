@@ -29,6 +29,8 @@ export type ManifestFile = components["schemas"]["ManifestFile"];
 export type AccessMode = NonNullable<Site["access_mode"]>;
 export type Role = NonNullable<Me["role"]>;
 export type Member = components["schemas"]["Member"];
+/** One user's logical (non-deduplicated) storage total in the org, in bytes. */
+export type UserStorage = components["schemas"]["UserStorage"];
 export type AllowlistEntry = components["schemas"]["AllowlistEntry"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
@@ -337,6 +339,16 @@ export const api = {
   async listMembers(): Promise<Member[]> {
     const body = await apiFetch<{ members?: Member[] }>("/v1/members");
     return body.members ?? [];
+  },
+
+  /**
+   * Logical storage usage per user for the caller org (the members-page usage
+   * column). Each user's total is the sum of their sites' current-version sizes;
+   * NOT deduplicated. Users with no sites are omitted (treat as 0).
+   */
+  async storageUsage(): Promise<UserStorage[]> {
+    const body = await apiFetch<{ users?: UserStorage[] }>("/v1/storage");
+    return body.users ?? [];
   },
 
   /**

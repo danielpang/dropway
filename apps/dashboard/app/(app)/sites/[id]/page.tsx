@@ -17,6 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api, ApiError, type Site } from "@/lib/api";
+import { formatBytes } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -151,6 +152,9 @@ export default async function SiteDetailPage({
         <CardContent className="space-y-2 text-sm">
           <Detail label="Version id" value={site.current_version_id ?? "—"} mono />
           <Detail label="Site id" value={site.id ?? id} mono />
+          {/* Logical storage = this site's current-version size (not deduplicated
+              across sites). 0 before the first deploy. */}
+          <Detail label="Storage" value={formatBytes(site.storage_bytes ?? 0)} />
           <Detail
             label="Created"
             value={
@@ -169,6 +173,7 @@ export default async function SiteDetailPage({
           <CardDescription>
             Drag &amp; drop a folder of static files to {isLive ? "ship a new version" : "go live"}.
             Only changed files upload, and your folder is live the moment it finishes.
+            Prefer the terminal? Upload the same folder with the CLI below.
           </CardDescription>
         </CardHeader>
         <CardContent>

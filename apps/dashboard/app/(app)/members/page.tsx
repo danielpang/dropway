@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { api } from "@/lib/api";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Members" };
@@ -41,6 +42,15 @@ export default async function MembersPage() {
   }
 
   const manage = canManage(org.myRole);
+
+  // Logical storage per user (each member's sites' current-version sizes), keyed by
+  // user id for the member rows. Best-effort: a failure just renders everyone at 0.
+  const storageByUser = await api
+    .storageUsage()
+    .then((rows) =>
+      Object.fromEntries(rows.map((r) => [r.user_id ?? "", r.bytes ?? 0])),
+    )
+    .catch(() => ({}) as Record<string, number>);
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -92,6 +102,7 @@ export default async function MembersPage() {
             organizationId={org.organizationId}
             myUserId={org.myUserId}
             canManage={manage}
+            storageByUser={storageByUser}
           />
         </CardContent>
       </Card>

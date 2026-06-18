@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Trash2 } from "lucide-react";
+import { HardDrive, Loader2, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { finalizeMemberRemovalAction } from "@/app/(app)/members/actions";
 import type { Role } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import type { OrgMember } from "@/lib/org";
+import { formatBytes } from "@/lib/utils";
 
 function describeError(err: unknown): string {
   if (typeof err === "object" && err !== null) {
@@ -56,11 +57,18 @@ export function MemberList({
   organizationId,
   myUserId,
   canManage,
+  storageByUser = {},
 }: {
   members: OrgMember[];
   organizationId: string;
   myUserId: string | null;
   canManage: boolean;
+  /**
+   * Logical storage (bytes) per user id — the sum of each member's sites'
+   * current-version sizes. Missing users render as 0. NOT deduplicated across
+   * users: a file two people upload counts for both, like a Dropbox/Drive folder.
+   */
+  storageByUser?: Record<string, number>;
 }) {
   const router = useRouter();
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -169,6 +177,13 @@ export function MemberList({
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
+                <span
+                  className="hidden items-center gap-1.5 text-xs tabular-nums text-muted-foreground sm:inline-flex"
+                  title="Storage used by this member's sites (logical, not deduplicated)"
+                >
+                  <HardDrive className="size-3.5" aria-hidden />
+                  {formatBytes(storageByUser[member.userId] ?? 0)}
+                </span>
                 {canEditThis ? (
                   <Select
                     aria-label={`Role for ${member.email || member.name}`}

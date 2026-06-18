@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 
 describe("cn (clsx + tailwind-merge)", () => {
   it("joins plain class strings", () => {
@@ -39,5 +39,26 @@ describe("cn (clsx + tailwind-merge)", () => {
   it("returns an empty string when given nothing meaningful", () => {
     expect(cn()).toBe("");
     expect(cn(false, null, undefined)).toBe("");
+  });
+});
+
+describe("formatBytes (human storage sizes)", () => {
+  it("renders whole bytes without decimals", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(512)).toBe("512 B");
+  });
+
+  it("scales to KB/MB/GB with one decimal (decimal units)", () => {
+    expect(formatBytes(1000)).toBe("1.0 KB");
+    expect(formatBytes(1500)).toBe("1.5 KB");
+    expect(formatBytes(4096)).toBe("4.1 KB");
+    expect(formatBytes(1_000_000)).toBe("1.0 MB");
+    expect(formatBytes(2_500_000_000)).toBe("2.5 GB");
+  });
+
+  it("treats 0, negatives, and non-finite input as 0 B", () => {
+    expect(formatBytes(-5)).toBe("0 B");
+    expect(formatBytes(NaN)).toBe("0 B");
+    expect(formatBytes(Infinity)).toBe("0 B");
   });
 });

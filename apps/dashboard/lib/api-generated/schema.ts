@@ -118,6 +118,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Logical storage usage per user for the caller org
+         * @description Per-user LOGICAL storage for the active org: each user's total is the sum of their sites' current-version sizes. "Logical" means NOT deduplicated (a file shipped by two users counts for both — the per-folder model of Dropbox/Drive). Display-only attribution for the members page, NOT an entitlement; the authoritative deduplicated org footprint is metered separately. Users with no sites are omitted (render as 0). Any org member may read it (org-scoped).
+         */
+        get: operations["storageUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/allow-external-sharing": {
         parameters: {
             query?: never;
@@ -515,8 +535,20 @@ export interface components {
             current_version_id?: string | null;
             /** Format: uri */
             live_url?: string;
+            /**
+             * Format: int64
+             * @description The site's LOGICAL storage in bytes: the size of its current live version (0 before the first deploy). "Logical" means NOT deduplicated across sites/versions — the per-folder size you'd expect from Dropbox or Drive, not the org's billed footprint.
+             */
+            storage_bytes?: number;
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description One user's logical storage total in the org (bytes). */
+        UserStorage: {
+            /** Format: uuid */
+            user_id?: string;
+            /** Format: int64 */
+            bytes?: number;
         };
         Version: {
             /** Format: uuid */
@@ -812,6 +844,29 @@ export interface operations {
                 content: {
                     "application/json": {
                         members?: components["schemas"]["Member"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    storageUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-user logical storage, sorted by user id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        users?: components["schemas"]["UserStorage"][];
                     };
                 };
             };
