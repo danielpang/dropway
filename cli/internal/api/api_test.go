@@ -113,16 +113,5 @@ func TestHTTPClient_ErrorBody(t *testing.T) {
 	}
 }
 
-func TestContentTypeFor(t *testing.T) {
-	cases := map[string]string{
-		"index.html": "text/html",
-		"app.js":     "javascript",
-		"data.json":  "json",
-		"x.unknown":  "application/octet-stream",
-	}
-	for path, want := range cases {
-		if got := contentTypeFor(path); !strings.Contains(got, want) {
-			t.Errorf("contentTypeFor(%q) = %q, want substring %q", path, got, want)
-		}
-	}
-}
+// Content-type inference now lives in the shared internal/contenttype package
+// (tested there); the CLI deploy path uses contenttype.ForPath.

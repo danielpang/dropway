@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/danielpang/dropway/cli/internal/manifest"
+	"github.com/danielpang/dropway/internal/contenttype"
 )
 
 // ManifestFile is one file in a deploy: request-path → content hash (+ size +
@@ -189,7 +190,7 @@ func ManifestFromBuild(m *manifest.Manifest) []ManifestFile {
 			Path:        e.Path,
 			SHA256:      e.SHA256,
 			Size:        e.Size,
-			ContentType: contentTypeFor(e.Path),
+			ContentType: contenttype.ForPath(e.Path),
 		}
 	}
 	return out

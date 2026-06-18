@@ -42,20 +42,8 @@ func TestManifestFromBuild(t *testing.T) {
 
 // TestContentTypeFor_FallbackTable covers the explicit fallback switch the stdlib
 // mime table can miss (the cases that exercise the non-stdlib branch).
-func TestContentTypeFor_FallbackTable(t *testing.T) {
-	cases := map[string]string{
-		"app.mjs":          "text/javascript",
-		"x.wasm":           "application/wasm",
-		"site.webmanifest": "application/manifest+json",
-		"NoExtAtAll":       "application/octet-stream",
-		"archive.tar.zst":  "application/octet-stream", // unknown → default
-	}
-	for path, want := range cases {
-		if got := contentTypeFor(path); !strings.Contains(got, want) {
-			t.Errorf("contentTypeFor(%q) = %q, want substring %q", path, got, want)
-		}
-	}
-}
+// Content-type inference moved to the shared internal/contenttype package (tested
+// there); the deploy path uses contenttype.ForPath.
 
 // TestHTTPClient_ErrorBodies asserts every endpoint surfaces a non-2xx with the
 // status code so a deploy fails loudly instead of proceeding on a bad response.

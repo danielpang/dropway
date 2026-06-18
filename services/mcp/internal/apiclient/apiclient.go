@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielpang/dropway/internal/contenttype"
 	"github.com/danielpang/dropway/internal/manifest"
 )
 
@@ -126,7 +127,7 @@ func (c *Client) Deploy(ctx context.Context, token, siteID string, files []Deplo
 		sha := hex.EncodeToString(sum[:])
 		ct := f.ContentType
 		if ct == "" {
-			ct = contentTypeFor(f.Path)
+			ct = contenttype.ForPath(f.Path)
 		}
 		mf = append(mf, manifestFile{Path: f.Path, SHA256: sha, Size: int64(len(f.Data)), ContentType: ct})
 		digestFiles = append(digestFiles, manifest.File{Path: f.Path, SHA256: sha})
@@ -202,51 +203,6 @@ func (c *Client) uploadBlob(ctx context.Context, url string, data []byte) error 
 	return nil
 }
 
-// contentTypeFor infers a file's content type from its extension (mirrors the
-// dashboard's table). It only sets the served Content-Type; it is NOT part of the
-// deploy digest, so exact parity isn't load-bearing. Unknown → octet-stream.
-func contentTypeFor(path string) string {
-	ext := ""
-	if i := strings.LastIndex(path, "."); i >= 0 {
-		ext = strings.ToLower(path[i+1:])
-	}
-	switch ext {
-	case "html", "htm":
-		return "text/html; charset=utf-8"
-	case "css":
-		return "text/css; charset=utf-8"
-	case "js", "mjs":
-		return "text/javascript; charset=utf-8"
-	case "json":
-		return "application/json"
-	case "svg":
-		return "image/svg+xml"
-	case "png":
-		return "image/png"
-	case "jpg", "jpeg":
-		return "image/jpeg"
-	case "gif":
-		return "image/gif"
-	case "webp":
-		return "image/webp"
-	case "ico":
-		return "image/x-icon"
-	case "txt", "md":
-		return "text/plain; charset=utf-8"
-	case "xml":
-		return "application/xml"
-	case "wasm":
-		return "application/wasm"
-	case "woff2":
-		return "font/woff2"
-	case "woff":
-		return "font/woff"
-	case "pdf":
-		return "application/pdf"
-	default:
-		return "application/octet-stream"
-	}
-}
 
 // do issues a JSON request with the bearer token and decodes a 2xx JSON body into
 // out (nil to ignore). Non-2xx → *Error with the API's message.
