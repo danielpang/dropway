@@ -443,6 +443,27 @@ func TestDeploySite_NoFiles(t *testing.T) {
 	}
 }
 
+// The deploy_site input schema must publish `files` as a plain "array" and
+// `publish` as a plain "boolean" — NOT "[null, …]" unions, which some MCP clients
+// coerce to strings (the array/bool then fails validation). Regression guard.
+func TestDeploySite_SchemaHasPlainTypes(t *testing.T) {
+	s := inputSchema[deploySiteIn]()
+	files := s.Properties["files"]
+	if files == nil || files.Type != "array" || len(files.Types) != 0 {
+		t.Fatalf("files type = %q / %v, want plain \"array\"", files.Type, files.Types)
+	}
+	if files.Items == nil || files.Items.Type != "object" {
+		t.Fatalf("files.items should be an object schema, got %+v", files.Items)
+	}
+	pub := s.Properties["publish"]
+	if pub == nil || pub.Type != "boolean" || len(pub.Types) != 0 {
+		t.Fatalf("publish type = %q / %v, want plain \"boolean\"", pub.Type, pub.Types)
+	}
+	if s.Type != "object" {
+		t.Fatalf("top-level type = %q, want object", s.Type)
+	}
+}
+
 func TestDeploySite_UnknownSite(t *testing.T) {
 	api := &fakeAPI{}
 	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}

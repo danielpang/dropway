@@ -17,6 +17,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
@@ -369,6 +370,63 @@ func (svc *Service) manifestEntries(ctx context.Context, orgID string, site stor
 
 // --- SDK registration -------------------------------------------------------
 
+// inputSchema builds the JSON Schema for a tool input and collapses nilable Go
+// types down to plain types. The SDK infers a Go slice as {"type":["null","array"]}
+// and a *bool as {"type":["null","boolean"]} (both kinds are nilable). Some MCP
+// clients can't serialize a union-typed argument and coerce it to a string before
+// sending — so e.g. deploy_site's `files` array arrived as a string and failed
+// validation ("has type string, want one of null, array"). Publishing plain single
+// types ("array", "boolean") fixes that. Used for any tool whose input has a slice
+// or pointer field; scalar-only inputs are unaffected.
+func inputSchema[In any]() *jsonschema.Schema {
+	s, err := jsonschema.For[In](nil)
+	if err != nil {
+		// Schema generation is deterministic over a fixed type; a failure here is a
+		// programming error, surfaced at startup rather than per request.
+		panic(err)
+	}
+	dropNullUnions(s)
+	return s
+}
+
+// dropNullUnions rewrites every "[null, T]" type union in the schema tree to plain
+// "T" (and drops "null" from larger unions), recursing into nested schemas.
+func dropNullUnions(s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	if len(s.Types) > 0 {
+		keep := make([]string, 0, len(s.Types))
+		for _, t := range s.Types {
+			if t != "null" {
+				keep = append(keep, t)
+			}
+		}
+		if len(keep) == 1 {
+			s.Type, s.Types = keep[0], nil
+		} else {
+			s.Types = keep
+		}
+	}
+	dropNullUnions(s.Items)
+	dropNullUnions(s.AdditionalProperties)
+	for _, p := range s.Properties {
+		dropNullUnions(p)
+	}
+	for _, p := range s.PrefixItems {
+		dropNullUnions(p)
+	}
+	for _, p := range s.AnyOf {
+		dropNullUnions(p)
+	}
+	for _, p := range s.OneOf {
+		dropNullUnions(p)
+	}
+	for _, p := range s.Defs {
+		dropNullUnions(p)
+	}
+}
+
 // Register wires the tools onto the MCP server. The read tools are always present;
 // the WRITE tools (create_site, set_site_access) are registered only when a control-
 // plane client is configured (the MCP server has an API_URL).
@@ -404,6 +462,9 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "deploy_site",
 		Description: "Upload files to a site and publish them (go live). Args: site (slug), files ([{path, text or base64, content_type?}]), publish (default true). Include an index.html for the site root. Returns the live URL.",
+		// Explicit schema so `files` is a plain array and `publish` a plain boolean
+		// (not "[null, …]" unions that some clients coerce to strings).
+		InputSchema: inputSchema[deploySiteIn](),
 	}, svc.deploySiteHandler)
 }
 
