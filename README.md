@@ -166,10 +166,12 @@ Public-Suffix-List isolation rule, and the `https` requirement for gated sites) 
 ### Connect an AI tool (MCP)
 
 Dropway ships an **OAuth-protected MCP server** (the `mcp` service, `http://localhost:8092`
-locally) so an LLM agent can browse and read your sites. **Public** sites are also readable
-by crawlers via an auto-served [`llms.txt`](https://llmstxt.org/); **gated** sites
-(org-only / allowlist / password) are reachable by an LLM **only** through an authorized MCP
-connection — your access control holds for AI exactly as it does for people.
+locally) so an LLM agent can browse and read your sites — list sites, read or download a
+site's files — and, when wired to the API, **manage** them too: create a site and change a
+site's sharing settings (owner/admin only, same rules as the dashboard). **Public** sites
+are also readable by crawlers via an auto-served [`llms.txt`](https://llmstxt.org/);
+**gated** sites (org-only / allowlist / password) are reachable by an LLM **only** through
+an authorized MCP connection — your access control holds for AI exactly as it does for people.
 
 Add it to your AI tool as a custom connector using the MCP URL — the dashboard shows
 copy-paste steps under **Settings → LLM access (MCP) → Connect**. The short version:

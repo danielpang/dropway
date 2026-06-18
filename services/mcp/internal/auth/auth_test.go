@@ -24,19 +24,23 @@ func (f fakeVerifier) Verify(_ context.Context, _ string) (*coreauth.Claims, err
 
 const resourceMeta = "https://mcp.dropway.dev/.well-known/oauth-protected-resource"
 
-// nextRecorder records whether the wrapped handler ran + the tenant it saw.
+// nextRecorder records whether the wrapped handler ran + the tenant/token it saw.
 func nextRecorder(seen *store_Tenant) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if t, ok := TenantFromContext(r.Context()); ok {
 			seen.set, seen.OrgID, seen.UserID = true, t.OrgID, t.UserID
+		}
+		if tok, ok := TokenFromContext(r.Context()); ok {
+			seen.token = tok
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 }
 
 type store_Tenant struct {
-	set            bool
-	OrgID, UserID  string
+	set           bool
+	OrgID, UserID string
+	token         string
 }
 
 func do(h http.Handler, authHeader string) *httptest.ResponseRecorder {
@@ -96,5 +100,9 @@ func TestMiddleware_ValidTokenInjectsTenant(t *testing.T) {
 	}
 	if !seen.set || seen.OrgID != "org-7" {
 		t.Errorf("tenant should be injected with OrgID=org-7; got %+v", seen)
+	}
+	// The raw token must be stashed for the write tools to forward to the Go API.
+	if seen.token != "the-token" {
+		t.Errorf("token should be in context for forwarding; got %q", seen.token)
 	}
 }

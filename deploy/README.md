@@ -125,6 +125,16 @@ across services or token verification fails:
 | `MCP_PORT` | port the server listens on | `8092` | `8092` (behind your TLS edge) |
 | `MCP_PUBLIC_URL` | the server's external URL — used as the OAuth **resource/audience** | `http://localhost:8092` | `https://mcp.dropway.dev` |
 | `NEXT_PUBLIC_MCP_URL` | the URL the dashboard's Connect modal displays | `http://localhost:8092` | `https://mcp.dropway.dev` |
+| `API_URL` (on `mcp`) | the Go API the write tools call (forwarding the user's token) | `http://api:8080` | your internal api URL |
+
+**Read vs write tools.** The read tools (`list_sites`, `list_files`, `read_file`,
+`download_site`) run off the RLS-scoped store. The write tools (`create_site`,
+`set_site_access`) call the Go API over HTTP with the forwarded token, so they reuse the
+API's quota, admin re-check (`set_site_access` is owner/admin only), edge-route
+projection, revocation, and audit — the API stays the only projection writer. For the
+API to accept the forwarded token it reads `MCP_PUBLIC_URL` and adds it to the verifier's
+accepted audiences. Unset `API_URL` on the `mcp` service → it runs **read-only** (the
+write tools aren't registered).
 
 How the pieces agree (all enforced — a mismatch is a 401):
 

@@ -24,6 +24,16 @@ type Config struct {
 	JWTIssuer   string
 	JWTAudience string
 
+	// MCPAudience (MCP_PUBLIC_URL) is the Dropway MCP server's resource URL. When
+	// set, the API ALSO accepts OAuth access tokens minted for the MCP resource
+	// (aud=MCP_PUBLIC_URL), so the MCP server can forward a user's token to perform
+	// control-plane writes (create site / change access) — reusing the API's quota,
+	// admin re-check, edge-projection, revocation, and audit (the API stays the only
+	// projection writer). The token's iss is the same as a dashboard JWT, and
+	// admin-gating re-checks the live member table from org+user, so no extra claims
+	// are needed. Empty → MCP-token writes are not accepted.
+	MCPAudience string
+
 	// Cloud selects the hosted build's quota/billing enforcement at runtime
 	// (DROPWAY_CLOUD). The OSS binary ignores this — the cloud provider is only
 	// linked in under the `cloud` build tag — but it's surfaced here so the
@@ -123,6 +133,7 @@ func Load() (Config, error) {
 		JWKSURL:              os.Getenv("JWKS_URL"),
 		JWTIssuer:            os.Getenv("JWT_ISSUER"),
 		JWTAudience:          os.Getenv("JWT_AUDIENCE"),
+		MCPAudience:          os.Getenv("MCP_PUBLIC_URL"),
 		Cloud:                parseBool(os.Getenv("DROPWAY_CLOUD")),
 		AllowJWTRoleFallback: parseBool(os.Getenv("ALLOW_JWT_ROLE_FALLBACK")),
 

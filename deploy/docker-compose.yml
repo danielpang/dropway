@@ -179,6 +179,10 @@ services:
       DASHBOARD_URL: ${MCP_DASHBOARD_URL:-http://localhost:3000}
       # This server's external URL == the OAuth resource/audience. Browser-reachable.
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:8092}
+      # The Go API (internal compose URL) the write tools (create_site / set_site_access)
+      # call, forwarding the user's token. The API accepts the MCP audience (it reads
+      # MCP_PUBLIC_URL too). Unset → the MCP server is read-only.
+      API_URL: ${MCP_API_URL:-http://api:8080}
     ports:
       - "${MCP_PORT:-8092}:8092"
     depends_on:

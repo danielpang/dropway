@@ -96,8 +96,11 @@ export default function OAuthConsentPage() {
           <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
             <p className="font-medium text-foreground">This will let the tool:</p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>List the sites in your organization</li>
-              <li>Read the files of your deployed sites</li>
+              <li>List and read the files of your deployed sites</li>
+              <li>Create new sites in your organization</li>
+              <li>
+                Change a site&rsquo;s sharing settings (owners/admins only)
+              </li>
             </ul>
             {scopes.length > 0 && (
               <p className="mt-3 font-mono text-xs text-muted-foreground">

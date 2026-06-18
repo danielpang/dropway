@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -141,7 +142,15 @@ func run(baseLogger *slog.Logger) error {
 	// The EdDSA JWT verifier is the authz boundary. Prime the JWKS at startup so
 	// the first request doesn't pay the fetch; a failure here is non-fatal (it
 	// lazily refreshes on first use / unknown kid).
-	verifier := auth.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.JWTAudience)
+	var vopts []auth.Option
+	if cfg.MCPAudience != "" {
+		// Also accept OAuth access tokens minted for the MCP resource, so the MCP
+		// server can forward a user's token for control-plane writes. Both URL forms
+		// (with/without a trailing slash) since clients canonicalize differently.
+		base := strings.TrimRight(cfg.MCPAudience, "/")
+		vopts = append(vopts, auth.WithExtraAudiences(base, base+"/"))
+	}
+	verifier := auth.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.JWTAudience, vopts...)
 	primeCtx, cancelPrime := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := verifier.Prime(primeCtx); err != nil {
 		slog.Warn("priming JWKS failed; will refresh lazily", "err", err)

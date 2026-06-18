@@ -9,6 +9,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
 )
 
@@ -48,6 +49,28 @@ func (f *fakeBlobs) GetBlob(_ context.Context, _, sha string) (io.ReadCloser, er
 		return nil, store.ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+// fakeAPI records the control-plane calls the write tools make.
+type fakeAPI struct {
+	createToken, createSlug, createMode string
+	createResp                          apiclient.Site
+	createErr                           error
+
+	setToken, setSiteID, setMode, setPassword string
+	setErr                                     error
+}
+
+func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
+	f.createToken, f.createSlug, f.createMode = token, slug, accessMode
+	if f.createErr != nil {
+		return apiclient.Site{}, f.createErr
+	}
+	return f.createResp, nil
+}
+func (f *fakeAPI) SetAccess(_ context.Context, token, siteID, mode, password string) error {
+	f.setToken, f.setSiteID, f.setMode, f.setPassword = token, siteID, mode, password
+	return f.setErr
 }
 
 const manifestJSON = `{"schema_version":1,"files":{
@@ -177,5 +200,150 @@ func TestReadFile_NotLive(t *testing.T) {
 	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}}
 	if _, err := svc.ReadFile(context.Background(), tnt, "draft", "index.html"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for non-live site, got %v", err)
+	}
+}
+
+// --- download_site ----------------------------------------------------------
+
+func TestDownloadSite_AllFiles(t *testing.T) {
+	bin := []byte{0xff, 0xd8, 0xff, 0x00}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
+		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{
+			"aaa": []byte("<h1>hi</h1>"),
+			"bbb": []byte("console.log(1)"),
+			"ccc": bin,
+		}},
+	}
+	out, err := svc.DownloadSite(context.Background(), tnt, "docs")
+	if err != nil {
+		t.Fatalf("DownloadSite: %v", err)
+	}
+	if out.Truncated {
+		t.Fatal("should not be truncated")
+	}
+	if len(out.Files) != 3 {
+		t.Fatalf("want 3 files, got %d", len(out.Files))
+	}
+	// Sorted by path: assets/app.js, index.html, logo.png.
+	if out.Files[0].Path != "assets/app.js" || out.Files[1].Path != "index.html" || out.Files[2].Path != "logo.png" {
+		t.Fatalf("files not sorted: %+v", out.Files)
+	}
+	if out.Files[1].Text != "<h1>hi</h1>" || out.Files[1].Size != len("<h1>hi</h1>") {
+		t.Errorf("index.html wrong: %+v", out.Files[1])
+	}
+	if out.Files[2].Base64 == "" || out.Files[2].Text != "" {
+		t.Errorf("binary file should be base64: %+v", out.Files[2])
+	}
+}
+
+func TestDownloadSite_Truncated(t *testing.T) {
+	orig := maxDownloadBytes
+	maxDownloadBytes = 12 // tiny cap
+	defer func() { maxDownloadBytes = orig }()
+
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
+		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{
+			"aaa": []byte("0123456789"),    // 10 bytes (assets/app.js? no — index.html=aaa)
+			"bbb": []byte("0123456789ABC"), // 13 bytes
+			"ccc": []byte("xx"),
+		}},
+	}
+	out, err := svc.DownloadSite(context.Background(), tnt, "docs")
+	if err != nil {
+		t.Fatalf("DownloadSite: %v", err)
+	}
+	if !out.Truncated {
+		t.Fatal("expected Truncated=true past the size cap")
+	}
+	// First file (assets/app.js → bbb, 13 bytes) already exceeds the 12-byte cap → nothing fits.
+	if len(out.Files) != 0 {
+		t.Fatalf("expected 0 files under a 12-byte cap, got %d: %+v", len(out.Files), out.Files)
+	}
+}
+
+func TestDownloadSite_NotLive(t *testing.T) {
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}}
+	out, err := svc.DownloadSite(context.Background(), tnt, "draft")
+	if err != nil {
+		t.Fatalf("DownloadSite: %v", err)
+	}
+	if len(out.Files) != 0 || out.Truncated {
+		t.Errorf("non-live site should download nothing: %+v", out)
+	}
+}
+
+// --- create_site ------------------------------------------------------------
+
+func TestCreateSite_ForwardsAndMaps(t *testing.T) {
+	api := &fakeAPI{createResp: apiclient.Site{Slug: "blog", AccessMode: "org_only", URL: "https://acme--blog.dropwaycontent.com"}}
+	svc := &Service{API: api}
+	out, err := svc.CreateSite(context.Background(), "tok-123", "blog", "org_only")
+	if err != nil {
+		t.Fatalf("CreateSite: %v", err)
+	}
+	if api.createToken != "tok-123" || api.createSlug != "blog" || api.createMode != "org_only" {
+		t.Errorf("API not called with the right args: %+v", api)
+	}
+	if out.Slug != "blog" || out.AccessMode != "org_only" || out.URL == "" {
+		t.Errorf("result not mapped from the API response: %+v", out)
+	}
+}
+
+func TestCreateSite_APIErrorPropagates(t *testing.T) {
+	api := &fakeAPI{createErr: &apiclient.Error{Status: 402, Message: "site limit reached"}}
+	svc := &Service{API: api}
+	_, err := svc.CreateSite(context.Background(), "tok", "blog", "")
+	if err == nil {
+		t.Fatal("expected the API error to propagate")
+	}
+}
+
+// --- set_site_access --------------------------------------------------------
+
+func TestSetAccess_ResolvesSlugToID(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-xyz", Slug: "docs"}}},
+		API:   api,
+	}
+	out, err := svc.SetAccess(context.Background(), tnt, "tok-7", "docs", "public", "")
+	if err != nil {
+		t.Fatalf("SetAccess: %v", err)
+	}
+	if api.setSiteID != "site-xyz" {
+		t.Errorf("slug not resolved to id: setSiteID=%q, want site-xyz", api.setSiteID)
+	}
+	if api.setToken != "tok-7" || api.setMode != "public" {
+		t.Errorf("API not called with the right args: %+v", api)
+	}
+	if out.Slug != "docs" || out.Mode != "public" {
+		t.Errorf("result wrong: %+v", out)
+	}
+}
+
+func TestSetAccess_UnknownSiteDoesNotCallAPI(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	if _, err := svc.SetAccess(context.Background(), tnt, "tok", "ghost", "public", ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
+	}
+	if api.setSiteID != "" {
+		t.Error("API must not be called when the slug doesn't resolve")
+	}
+}
+
+func TestSetAccess_PasswordForwarded(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
+		API:   api,
+	}
+	if _, err := svc.SetAccess(context.Background(), tnt, "tok", "docs", "password", "hunter2"); err != nil {
+		t.Fatalf("SetAccess: %v", err)
+	}
+	if api.setMode != "password" || api.setPassword != "hunter2" {
+		t.Errorf("password mode not forwarded: %+v", api)
 	}
 }

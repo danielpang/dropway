@@ -26,6 +26,7 @@ import (
 
 	coreauth "github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	mcpauth "github.com/danielpang/dropway/services/mcp/internal/auth"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
 	"github.com/danielpang/dropway/services/mcp/internal/tools"
@@ -71,6 +72,16 @@ func main() {
 		coreauth.WithExtraAudiences(publicURL+"/"))
 	st := store.New(pool)
 	svc := &tools.Service{Store: st, Blobs: objStore}
+
+	// Control-plane WRITE tools (create_site, set_site_access) call the Go API,
+	// forwarding the user's token (the API accepts the MCP audience). Without an
+	// API_URL the server stays read-only and those tools are not registered.
+	if apiURL := os.Getenv("API_URL"); apiURL != "" {
+		svc.API = apiclient.New(apiURL)
+		log.Info("control-plane write tools enabled", "api_url", apiURL)
+	} else {
+		log.Info("API_URL not set — MCP server is read-only (no create_site/set_site_access)")
+	}
 
 	mux := newMux(verifier, st, svc, publicURL, dashboardURL)
 

@@ -24,6 +24,7 @@ type tokenVerifier interface {
 }
 
 type tenantKey struct{}
+type tokenKey struct{}
 
 // WithTenant returns ctx carrying the authenticated tenant.
 func WithTenant(ctx context.Context, t store.Tenant) context.Context {
@@ -34,6 +35,19 @@ func WithTenant(ctx context.Context, t store.Tenant) context.Context {
 func TenantFromContext(ctx context.Context) (store.Tenant, bool) {
 	t, ok := ctx.Value(tenantKey{}).(store.Tenant)
 	return t, ok
+}
+
+// WithToken returns ctx carrying the raw verified bearer token, so write tools can
+// forward it to the Go API (which accepts the MCP audience) to perform mutations
+// under the user's identity.
+func WithToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, tokenKey{}, token)
+}
+
+// TokenFromContext returns the raw bearer token set by Middleware.
+func TokenFromContext(ctx context.Context) (string, bool) {
+	tok, ok := ctx.Value(tokenKey{}).(string)
+	return tok, ok
 }
 
 // Middleware validates the bearer token and injects the tenant, then calls next.
@@ -57,7 +71,8 @@ func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) 
 			unauthorized(w, resourceMetadataURL, "token has no organization")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithTenant(r.Context(), t)))
+		ctx := WithToken(WithTenant(r.Context(), t), tok)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
