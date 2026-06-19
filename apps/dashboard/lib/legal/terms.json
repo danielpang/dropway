@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "updated": "2026-06-18",
-  "updatedLabel": "June 18, 2026",
+  "updated": "2026-06-19",
+  "updatedLabel": "June 19, 2026",
   "intro": "These Terms and Conditions (the \"Terms\") are a legal agreement between you and Daniel Pang, operating as Dropway (\"Dropway\", \"we\", \"us\"), covering your access to and use of the Dropway service, including the hosted dashboard, the API, the CLI, and the MCP server (together, the \"Service\"). By creating an account or using the Service you agree to these Terms. If you do not agree, do not use the Service.",
   "sections": [
     {
@@ -50,43 +50,54 @@
       ]
     },
     {
-      "heading": "7. Plans, billing, and fair use",
+      "heading": "7. Security",
+      "body": [
+        "We protect your account and your Content with industry-standard security controls. Traffic to and from the Service is encrypted in transit with TLS, and sensitive data is encrypted at rest.",
+        "Passwords are never stored in plain text. Account passwords and the passwords you set on password-protected sites are kept only as salted, one-way hashes that we cannot reverse, so a database breach would not expose them.",
+        "We keep our software dependencies up to date as part of routine maintenance. When a dependency has a known vulnerability (a published CVE), we prioritize upgrading it as quickly as possible to keep the Service protected.",
+        "If you believe you have found a security vulnerability in Dropway, please report it privately through our GitHub repository's security advisories (https://github.com/danielpang/dropway/security) so we can investigate and address it promptly."
+      ]
+    },
+    {
+      "heading": "8. Plans, billing, and fair use",
       "body": [
         "Dropway offers a free plan and paid plans. Paid plans are billed in advance on a recurring basis until canceled. Fees are non-refundable except where required by law.",
         "Plan limits (for example, the number of sites per workspace) apply to your account. If you exceed a limit, we may ask you to upgrade or may restrict new actions until you are back within the limit. We do not delete your data for going over a limit; existing sites stay available to read while your account is over the limit."
       ]
     },
     {
-      "heading": "8. Service availability",
+      "heading": "9. Service availability",
       "body": [
         "We work to keep the Service available and reliable, but we provide it on an \"as is\" and \"as available\" basis. We may change, suspend, or discontinue parts of the Service, and we may perform maintenance that causes downtime.",
+        "While we strive to maximize uptime, we do not guarantee that the Service will be uninterrupted, timely, or error-free, and we are not liable for any downtime, interruption, delay, or unavailability of the Service. This includes, in particular, downtime caused by the third-party dependencies we rely on to operate the Service — such as hosting, storage, content-delivery, DNS, payment, and email providers, and other upstream networks or infrastructure — which are outside our control. When a dependency is down or degraded, the Service may be unavailable through no fault of ours, and we are not responsible for any resulting loss.",
+        "We do not offer a service-level agreement on the standard plans. Any uptime commitment, if offered, will be set out in a separate written agreement.",
         "If you need guaranteed availability, a self-hosted deployment or an enterprise agreement may be a better fit."
       ]
     },
     {
-      "heading": "9. Disclaimers and limitation of liability",
+      "heading": "10. Disclaimers and limitation of liability",
       "body": [
         "To the fullest extent permitted by law, the Service is provided without warranties of any kind, whether express or implied, including merchantability, fitness for a particular purpose, and non-infringement.",
         "To the fullest extent permitted by law, Dropway will not be liable for any indirect, incidental, special, consequential, or punitive damages, or for any loss of data, revenue, or profits. Our total liability for any claim relating to the Service is limited to the amount you paid us for the Service in the three months before the event giving rise to the claim."
       ]
     },
     {
-      "heading": "10. Termination",
+      "heading": "11. Termination",
       "body": [
         "You may stop using the Service and close your account at any time. We may suspend or terminate your access if you breach these Terms, if your use poses a risk to the Service or to others, or as otherwise described in these Terms.",
         "On termination, your right to use the Service ends. We may delete your Content after a reasonable period, so export anything you want to keep before closing your account."
       ]
     },
     {
-      "heading": "11. Changes to these Terms",
+      "heading": "12. Changes to these Terms",
       "body": [
         "We may update these Terms from time to time. When we make material changes, we will update the \"Last updated\" date and, where appropriate, give you additional notice. Your continued use of the Service after a change takes effect means you accept the updated Terms."
       ]
     },
     {
-      "heading": "12. Contact",
+      "heading": "13. Contact",
       "body": [
-        "Questions about these Terms? Reach us at legal@dropway.dev."
+        "Questions about these Terms? Contact us through our form at https://forms.gle/vDvNzdfrKRvtGYPG8."
       ]
     }
   ]
