@@ -1,38 +1,33 @@
-# Dropway MCP server — Fly.io deploy manifest (app: dropway-mcp).
+# fly.toml app configuration file generated for dropway-mcp-prod on 2026-06-19T16:41:25Z
 #
-# Committed so Fly can deploy from CI (GitHub Actions → flyctl). Non-secret deploy
-# config only — NO credentials. Secrets are set with `fly secrets set`
-# (DATABASE_URL, JWKS_URL, JWT_ISSUER, MCP_PUBLIC_URL, ...).
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# Build context is the REPO ROOT, so deploy from the repo root with:
-#   fly deploy --config fly.mcp.toml
 
-app = "dropway-mcp"
-primary_region = "iad"   # match the API / Supabase region
+app = 'dropway-mcp-prod'
+primary_region = 'iad'
 
 [build]
-  dockerfile = "services/mcp/Dockerfile"
+  dockerfile = 'services/mcp/Dockerfile'
 
 [http_service]
   internal_port = 8092
   force_https = true
-  # Low-traffic but on the OAuth path; keep one machine up to avoid cold starts.
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = false
   min_machines_running = 1
 
   [http_service.concurrency]
-    type = "requests"
-    soft_limit = 100
+    type = 'requests'
     hard_limit = 150
+    soft_limit = 100
 
-[[http_service.checks]]
-  method = "GET"
-  path = "/healthz"
-  interval = "15s"
-  timeout = "2s"
-  grace_period = "10s"
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'
