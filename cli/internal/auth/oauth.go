@@ -243,7 +243,8 @@ func credsFromToken(apiBase, tokenURL, clientID, resource string, tok *tokenResp
 }
 
 // callbackHandler serves the loopback redirect: it validates state, captures the
-// code, and shows the user a small "you can close this tab" page.
+// code, and shows the user a branded "you can close this tab" page that mirrors the
+// dashboard's OAuth success screen.
 func callbackHandler(state string, codeCh chan<- string, errCh chan<- error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/callback" {
@@ -252,31 +253,66 @@ func callbackHandler(state string, codeCh chan<- string, errCh chan<- error) htt
 		}
 		q := r.URL.Query()
 		if e := q.Get("error"); e != "" {
-			writeDone(w, "Authorization failed. You can close this tab.")
+			writeResult(w, false, "Authorization failed",
+				"Dropway couldn't complete sign-in. You can close this tab and try `dropway login` again.")
 			errCh <- fmt.Errorf("login: authorization error: %s", e)
 			return
 		}
 		if q.Get("state") != state {
-			writeDone(w, "Authorization failed (state mismatch). You can close this tab.")
+			writeResult(w, false, "Authorization failed",
+				"The sign-in response didn't match this request. You can close this tab and try `dropway login` again.")
 			errCh <- fmt.Errorf("login: state mismatch")
 			return
 		}
 		code := q.Get("code")
 		if code == "" {
-			writeDone(w, "Authorization failed (no code). You can close this tab.")
+			writeResult(w, false, "Authorization failed",
+				"No authorization code was returned. You can close this tab and try `dropway login` again.")
 			errCh <- fmt.Errorf("login: no authorization code")
 			return
 		}
-		writeDone(w, "Signed in to Dropway. You can close this tab and return to the CLI.")
+		writeResult(w, true, "Authorization successful",
+			"Dropway is now connected to your CLI. You can close this tab and return to your terminal.")
 		codeCh <- code
 	})
 }
 
-func writeDone(w http.ResponseWriter, msg string) {
+// writeResult renders the loopback landing page — a branded card echoing the
+// dashboard's /oauth/consent success screen (emerald check on success, amber on
+// failure). Self-contained HTML + inline CSS with light/dark support, since this is
+// served by the CLI's transient loopback server (no app assets available).
+func writeResult(w http.ResponseWriter, ok bool, title, msg string) {
+	accent := "#d97706"          // amber-600 (failure)
+	tint := "rgba(217,119,6,.12)"
+	icon := `<path d="M18 6 6 18M6 6l12 12"/>` // X
+	if ok {
+		accent = "#059669" // emerald-600 (success)
+		tint = "rgba(5,150,105,.12)"
+		icon = `<path d="M20 6 9 17l-5-5"/>` // check
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, "<!doctype html><meta charset=utf-8><title>Dropway</title>"+
-		"<body style=\"font:16px system-ui;display:grid;place-items:center;height:100vh;margin:0\">"+
-		"<p>"+msg+"</p></body>")
+	_, _ = io.WriteString(w, `<!doctype html><html lang=en><head><meta charset=utf-8>`+
+		`<meta name=viewport content="width=device-width,initial-scale=1"><title>Dropway</title>`+
+		`<style>
+:root{color-scheme:light dark;--bg:#fafafa;--card:#fff;--border:#e5e5e5;--fg:#0a0a0a;--muted:#737373;--brand:#6d28d9}
+@media(prefers-color-scheme:dark){:root{--bg:#0a0a0a;--card:#111;--border:#262626;--fg:#fafafa;--muted:#a1a1aa;--brand:#8b5cf6}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);
+font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
+.card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--border);border-radius:14px;
+padding:32px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.badge{display:inline-grid;place-items:center;width:44px;height:44px;border-radius:12px;
+background:`+tint+`;color:`+accent+`;margin-bottom:16px}
+.brand{display:inline-flex;align-items:center;gap:8px;margin-bottom:20px;font-weight:600;letter-spacing:-.01em}
+.brand b{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:var(--brand);
+color:#fff;font-size:12px;font-weight:700}
+h1{font-size:19px;margin:0 0 6px;letter-spacing:-.02em}
+p{margin:0;color:var(--muted)}
+</style></head><body><div class=card>`+
+		`<span class=brand><b>D</b>Dropway</span>`+
+		`<div class=badge><svg width=24 height=24 viewBox="0 0 24 24" fill=none stroke=currentColor `+
+		`stroke-width=2.5 stroke-linecap=round stroke-linejoin=round>`+icon+`</svg></div>`+
+		`<h1>`+title+`</h1><p>`+msg+`</p></div></body></html>`)
 }
 
 // --- tiny HTTP helpers ------------------------------------------------------
