@@ -22,6 +22,8 @@ test("returning user: sign in (no onboarding) reaches a working dashboard", asyn
   await page.locator("#name").fill("Returning User");
   await page.locator("#email").fill(email);
   await page.locator("#password").fill(password);
+  // Consent to the Terms is required before the sign-up button enables.
+  await page.locator("#agree-terms").check();
   await page.getByRole("button", { name: "Sign up with email" }).click();
   await page.waitForURL(/\/onboarding/, { timeout: 30_000 });
   await page.locator("#org-name").fill(`Returning Org ${stamp}`);

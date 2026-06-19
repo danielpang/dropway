@@ -28,6 +28,8 @@ test("new user: sign up → org → site → drag-and-drop deploy goes live", as
   await page.locator("#name").fill("E2E Tester");
   await page.locator("#email").fill(email);
   await page.locator("#password").fill(password);
+  // Consent to the Terms is required before the sign-up button enables.
+  await page.locator("#agree-terms").check();
   await page.getByRole("button", { name: "Sign up with email" }).click();
 
   // 2. A new user has no org, so the (app) layout redirects to onboarding.
