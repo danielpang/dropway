@@ -58,8 +58,8 @@ simple = { limit = 600, period = 60 }
 # Replace `id` / `preview_id` with the real namespace IDs.
 [[kv_namespaces]]
 binding = "ROUTES"
-id = "REPLACE_WITH_ROUTES_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
+id = "fb5abe1ea19e481bb18373cfd590cc40"
+preview_id = "c4936c9929424c74959758e5ae4e4fa9"
 
 # R2: the single private bucket holding all tenant content, content-addressed:
 #   manifests/<org_id>/<site_id>/<version_id>.json  (per-deploy path → sha256 map)
@@ -78,10 +78,11 @@ preview_bucket_name = "dropway-content-development"
 # limiting is a no-op (fail open) and the org-status check is skipped. Uncomment
 # and fill the IDs to enable (a separate namespace from ROUTES is recommended so
 # high-churn counters don't contend with the route projection).
-#
-# [[kv_namespaces]]
-# binding = "LIMITS"
-# id = "REPLACE_WITH_LIMITS_KV_NAMESPACE_ID"
+[[kv_namespaces]]
+binding = "LIMITS"
+id = "8fb5e7ec221e4386a40c9805e010cdbf"
+# No LIMITS_preview namespace exists; `wrangler dev` would need one. Create it with
+# `wrangler kv namespace create LIMITS --preview` and set its id here if you run dev.
 # preview_id = "REPLACE_WITH_LIMITS_KV_PREVIEW_NAMESPACE_ID"
 #
 # REVOKED: KV for the hard-revocation denylist (`revoked:user|site|org:<id>` →
@@ -100,7 +101,6 @@ preview_bucket_name = "dropway-content-development"
 # The Worker answers for every tenant subdomain on the PSL content domain.
 # Commented out so `wrangler deploy` doesn't fail before the zone/route exist;
 # the infra agent enables this once `dropwaycontent.com` is on Cloudflare.
-#
-# [[routes]]
-# pattern = "*.dropwaycontent.com/*"
-# zone_name = "dropwaycontent.com"
+[[routes]]
+pattern = "*.dropwaycontent.com/*"
+zone_name = "dropwaycontent.com"
