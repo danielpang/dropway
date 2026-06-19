@@ -25,14 +25,31 @@ export default function OAuthConsentPage() {
   const [pending, setPending] = React.useState<null | "accept" | "deny">(null);
   const [error, setError] = React.useState<string | null>(null);
   const [scopes, setScopes] = React.useState<string[]>([]);
+  // Which client is asking — drives the copy so a CLI login doesn't read "MCP".
+  // Determined from the authorize request the provider forwards here: MCP requests
+  // scope=mcp (resource = the MCP server URL); the CLI requests scope=offline_access
+  // (resource = the API URL). Falls back to a generic label if neither matches.
+  const [client, setClient] = React.useState<"mcp" | "cli" | "generic">("generic");
   // When set, authorization succeeded → show the branded confirmation, then redirect
-  // back to the AI client (the URL the provider returned).
+  // back to the client (the URL the provider returned: the AI tool, or the CLI's
+  // loopback callback).
   const [doneURL, setDoneURL] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const p = new URLSearchParams(window.location.search);
-    const scope = p.get("scope");
-    if (scope) setScopes(scope.split(/[ +]/).filter(Boolean));
+    const scopeList = (p.get("scope") ?? "").split(/[ +]/).filter(Boolean);
+    setScopes(scopeList);
+    const norm = (u: string | null | undefined) => (u ?? "").replace(/\/+$/, "");
+    const resource = norm(p.get("resource"));
+    const mcpUrl = norm(process.env.NEXT_PUBLIC_MCP_URL);
+    const apiUrl = norm(process.env.NEXT_PUBLIC_API_URL);
+    if (scopeList.includes("mcp") || (mcpUrl && resource === mcpUrl)) {
+      setClient("mcp");
+    } else if ((apiUrl && resource === apiUrl) || scopeList.includes("offline_access")) {
+      setClient("cli");
+    } else {
+      setClient("generic");
+    }
   }, []);
 
   // Hand control back to the AI client after the success screen has had a moment to
@@ -72,10 +89,24 @@ export default function OAuthConsentPage() {
 
   const busy = pending !== null;
 
+  // Per-client copy so a CLI sign-in doesn't claim to be MCP (and vice versa).
+  const heading =
+    client === "mcp"
+      ? "Authorize MCP access"
+      : client === "cli"
+        ? "Authorize CLI access"
+        : "Authorize access";
+  const intro =
+    client === "mcp"
+      ? "An AI tool is requesting access to your Dropway organization through the Model Context Protocol."
+      : client === "cli"
+        ? "The Dropway CLI is requesting access to your Dropway organization."
+        : "An application is requesting access to your Dropway organization.";
+
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-4">
       {doneURL ? (
-        <SuccessCard redirectURL={doneURL} />
+        <SuccessCard redirectURL={doneURL} client={client} />
       ) : (
         <div className="w-full space-y-6 rounded-xl border border-border bg-card p-8 shadow-sm">
           <div className="flex flex-col items-center gap-3 text-center">
@@ -83,13 +114,8 @@ export default function OAuthConsentPage() {
               <ShieldCheck className="size-6" aria-hidden />
             </span>
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold tracking-tight">
-                Authorize MCP access
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                An AI tool is requesting access to your Dropway organization through
-                the Model Context Protocol.
-              </p>
+              <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
+              <p className="text-sm text-muted-foreground">{intro}</p>
             </div>
           </div>
 
@@ -152,7 +178,20 @@ export default function OAuthConsentPage() {
  * same card/token styling as the consent screen so the success moment matches the
  * rest of the app.
  */
-function SuccessCard({ redirectURL }: { redirectURL: string }) {
+function SuccessCard({
+  redirectURL,
+  client,
+}: {
+  redirectURL: string;
+  client: "mcp" | "cli" | "generic";
+}) {
+  const body =
+    client === "cli"
+      ? "Dropway is now connected to your CLI. You can close this tab and return to your terminal."
+      : client === "mcp"
+        ? "Dropway is now connected to your AI tool. You can return to it and close this window."
+        : "Authorization complete. You can close this tab.";
+  const linkLabel = client === "cli" ? "Return to the CLI" : "Return to your app";
   return (
     <div
       className="w-full space-y-6 rounded-xl border border-border bg-card p-8 text-center shadow-sm"
@@ -167,10 +206,7 @@ function SuccessCard({ redirectURL }: { redirectURL: string }) {
           <h1 className="text-xl font-semibold tracking-tight">
             Authorization successful
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Dropway is now connected to your AI tool. You can return to it and
-            close this window.
-          </p>
+          <p className="text-sm text-muted-foreground">{body}</p>
         </div>
       </div>
 
@@ -185,7 +221,7 @@ function SuccessCard({ redirectURL }: { redirectURL: string }) {
           href={redirectURL}
           className="font-medium text-primary underline-offset-4 hover:underline"
         >
-          Return to your app
+          {linkLabel}
         </a>
       </p>
     </div>
