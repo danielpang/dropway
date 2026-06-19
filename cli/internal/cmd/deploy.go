@@ -61,7 +61,10 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 			// 2. Without --send, print the plan and stop (a dry run by design).
 			if !send {
 				printPlan(out, files)
-				fmt.Fprintln(out, "\n(dry run — pass --send to upload; run `dropway login` first)")
+				fmt.Fprintln(out, "\nThis was a dry run — nothing was uploaded and no site was created.")
+				fmt.Fprintln(out, "To deploy for real, sign in once with `dropway login`, then re-run with --send:")
+				fmt.Fprintf(out, "  dropway deploy %q --new --site <slug> --send   # create a new site\n", dir)
+				fmt.Fprintf(out, "  dropway deploy %q --site-id <id> --send        # deploy to an existing site\n", dir)
 				return nil
 			}
 
@@ -117,7 +120,11 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 			if err != nil {
 				return fmt.Errorf("publish: %w", err)
 			}
-			fmt.Fprintf(out, "\nLive at %s\n", pub.LiveURL)
+			if pub.LiveURL == "" {
+				fmt.Fprintln(out, "\n✓ Deploy successful (the API returned no live URL — check the dashboard)")
+				return nil
+			}
+			fmt.Fprintf(out, "\n✓ Deploy successful\n  Live at %s\n", pub.LiveURL)
 			return nil
 		},
 	}
