@@ -1,0 +1,42 @@
+# Dropway Go API — Fly.io deploy manifest (app: dropway-api).
+#
+# Committed so Fly can deploy from CI (GitHub Actions → flyctl). It holds only
+# non-secret deploy config — NO credentials. All secrets are set out-of-band with
+# `fly secrets set` (DATABASE_URL, S3_*, CF_*, EDGE_SIGNING_KEY, JWT_*, ...) and
+# never live in this file.
+#
+# Build context is the REPO ROOT (the Go module spans the whole repo), so run
+# `fly deploy` FROM THE REPO ROOT (this file is read by default).
+
+app = "dropway-api"
+primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US East)
+
+[build]
+  dockerfile = "services/api/Dockerfile"
+  # Hosted/cloud build (Stripe billing + cloud quota bands). Leave commented for OSS.
+  # [build.args]
+  #   DROPWAY_BUILD_TAGS = "cloud"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Always-on control plane: keep one machine up (no cold starts on the auth path).
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  method = "GET"
+  path = "/healthz"
+  interval = "15s"
+  timeout = "2s"
+  grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
