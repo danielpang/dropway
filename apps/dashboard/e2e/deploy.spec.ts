@@ -28,6 +28,8 @@ test("new user: sign up → org → site → drag-and-drop deploy goes live", as
   await page.locator("#name").fill("E2E Tester");
   await page.locator("#email").fill(email);
   await page.locator("#password").fill(password);
+  // Consent to the Terms is required before the sign-up button enables.
+  await page.locator("#agree-terms").check();
   await page.getByRole("button", { name: "Sign up with email" }).click();
 
   // 2. A new user has no org, so the (app) layout redirects to onboarding.
@@ -57,11 +59,12 @@ test("new user: sign up → org → site → drag-and-drop deploy goes live", as
   });
 
   // The site's live URL is now present (both in the dropzone success state and the
-  // page's "Live URL" card, which router.refresh() repopulated) and points at the
-  // site's content host. The badge also flips Live.
-  const liveHref = `https://${siteSlug}.dropwaycontent.com`;
+  // page's "Live URL" card, which router.refresh() repopulated). The content host is
+  // ORG-NAMESPACED (<orgSlug>--<slug>.<domain>) and the domain/scheme/port vary by
+  // environment (localhost in dev, the content domain in prod), so match the
+  // org-namespaced slug rather than a fixed URL. The badge also flips Live.
   await expect(
-    page.locator(`a[href="${liveHref}"]`).first(),
+    page.locator(`a[href*="--${siteSlug}."]`).first(),
   ).toBeVisible();
   await expect(page.getByText("Live", { exact: true })).toBeVisible();
 });
