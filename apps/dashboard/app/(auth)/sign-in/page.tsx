@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 
 import { AuthForm } from "@/components/auth/auth-form";
 import { auth } from "@/lib/auth";
+import { landingUrl } from "@/lib/env";
 import { safeNextPath } from "@/lib/authz-host";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -24,5 +25,7 @@ export default async function SignInPage({
   const session = await auth.api.getSession({ headers: await headers() });
   if (session) redirect(callbackURL);
 
-  return <AuthForm mode="sign-in" callbackURL={callbackURL} />;
+  return (
+    <AuthForm mode="sign-in" callbackURL={callbackURL} landingUrl={landingUrl()} />
+  );
 }

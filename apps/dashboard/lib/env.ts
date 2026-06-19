@@ -47,6 +47,17 @@ export function betterAuthUrl(): string {
 }
 
 /**
+ * Marketing/landing site URL (e.g. https://www.dropway.dev) the auth screens link
+ * back to via a "Back to landing page" control. UNSET → no link is rendered, since
+ * a self-host typically has no separate marketing site (the dashboard IS the site).
+ * NEXT_PUBLIC_ so the client AuthForm can read it after it's passed down from the
+ * server page.
+ */
+export function landingUrl(): string | undefined {
+  return process.env.NEXT_PUBLIC_LANDING_URL || undefined;
+}
+
+/**
  * The `iss` / `aud` Better Auth stamps on the JWTs the Go API verifies. The API
  * PINS both (internal/auth/jwks.go: WithIssuer/WithAudience), and Better Auth
  * otherwise defaults BOTH to its baseURL — so the API rejects the token (aud =
