@@ -79,6 +79,36 @@ export function safeNextPath(raw: string | null | undefined): string {
 }
 
 /**
+ * The Better Auth OAuth provider redirects an UNauthenticated user to the configured
+ * loginPage (`/sign-in`) with the pending `/oauth2/authorize` request forwarded as
+ * query params, expecting the login page to resume the flow after sign-in. (An
+ * already-authenticated user skips this and goes straight to `/oauth/consent`.) This
+ * detects that handoff and rebuilds the authorize URL so the auth screens can send the
+ * user BACK to it — now authenticated → consent → the client's redirect_uri — instead
+ * of dropping them on the dashboard (which strands the CLI/MCP loopback wait).
+ *
+ * Returns a same-origin authorize path, or undefined when this isn't an OAuth login.
+ * Safe against open redirects: it only ever targets our own `/api/auth/oauth2/authorize`,
+ * which re-validates `redirect_uri` against the registered client.
+ */
+export function oauthResumePath(
+  params: Record<string, string | string[] | undefined>,
+): string | undefined {
+  const isStr = (k: string): boolean =>
+    typeof params[k] === "string" && params[k] !== "";
+  // These three together identify the forwarded authorize request.
+  if (!(isStr("client_id") && isStr("redirect_uri") && isStr("response_type"))) {
+    return undefined;
+  }
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (typeof v === "string") qs.set(k, v);
+    else if (Array.isArray(v)) for (const item of v) qs.append(k, item);
+  }
+  return `/api/auth/oauth2/authorize?${qs.toString()}`;
+}
+
+/**
  * Build the content-host callback URL the browser is redirected to after a
  * successful mint. The Worker's `/__authz/callback` verifies the token
  * (aud == host), sets the `__Host-edge` cookie, and 302s to `next`.

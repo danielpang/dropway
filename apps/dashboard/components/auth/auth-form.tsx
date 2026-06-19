@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Loader2, Mail, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Mail, Sparkles } from "lucide-react";
 
 import { GoogleIcon } from "@/components/icons";
 import { TermsDialog } from "@/components/legal/terms-dialog";
@@ -45,6 +45,7 @@ export function AuthForm({
   mode,
   callbackURL = DEFAULT_CALLBACK_URL,
   requireEmailVerification = false,
+  landingUrl,
 }: {
   mode: Mode;
   callbackURL?: string;
@@ -54,6 +55,11 @@ export function AuthForm({
    * go straight to the app instead of a dead-end "check your inbox" screen.
    */
   requireEmailVerification?: boolean;
+  /**
+   * Marketing/landing site URL for the "Back to landing page" link. Omitted (a
+   * self-host with no separate marketing site) → the link is not rendered.
+   */
+  landingUrl?: string;
 }) {
   const isSignUp = mode === "sign-up";
 
@@ -354,16 +360,29 @@ export function AuthForm({
         )}
       </CardContent>
 
-      <CardFooter className="justify-center">
+      <CardFooter className="flex-col gap-3">
         <p className="text-sm text-muted-foreground">
           {isSignUp ? "Already have an account? " : "New to Dropway? "}
           <a
-            href={isSignUp ? "/sign-in" : "/sign-up"}
+            href={`${isSignUp ? "/sign-in" : "/sign-up"}${
+              callbackURL && callbackURL !== DEFAULT_CALLBACK_URL
+                ? `?callbackURL=${encodeURIComponent(callbackURL)}`
+                : ""
+            }`}
             className="font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
           >
             {isSignUp ? "Sign in" : "Create one"}
           </a>
         </p>
+        {landingUrl && (
+          <a
+            href={landingUrl}
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+            Back to landing page
+          </a>
+        )}
       </CardFooter>
     </Card>
   );

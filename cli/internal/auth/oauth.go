@@ -69,12 +69,18 @@ func Login(ctx context.Context, apiBase string, open Opener) (*Credentials, erro
 	}
 
 	// Loopback listener first, so we register the exact redirect URI we'll serve.
+	// Bind the IPv4 loopback explicitly; `localhost` resolves to it.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("login: open loopback listener: %w", err)
 	}
 	defer ln.Close()
-	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", ln.Addr().(*net.TCPAddr).Port)
+	// Use the `localhost` hostname, NOT the bare 127.0.0.1 IP literal: the Dropway
+	// authorization server (Better Auth's OAuth provider) accepts a `localhost`
+	// loopback redirect but rejects a sole 127.0.0.1 redirect with invalid_redirect,
+	// which would dead-end the browser before consent. The listener above still binds
+	// 127.0.0.1, and localhost resolves to the loopback, so the callback still lands here.
+	redirectURI := fmt.Sprintf("http://localhost:%d/callback", ln.Addr().(*net.TCPAddr).Port)
 
 	clientID, err := registerClient(ctx, as.RegistrationEndpoint, redirectURI)
 	if err != nil {
