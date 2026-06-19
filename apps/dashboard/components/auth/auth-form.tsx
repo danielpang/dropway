@@ -364,7 +364,11 @@ export function AuthForm({
         <p className="text-sm text-muted-foreground">
           {isSignUp ? "Already have an account? " : "New to Dropway? "}
           <a
-            href={isSignUp ? "/sign-in" : "/sign-up"}
+            href={`${isSignUp ? "/sign-in" : "/sign-up"}${
+              callbackURL && callbackURL !== DEFAULT_CALLBACK_URL
+                ? `?callbackURL=${encodeURIComponent(callbackURL)}`
+                : ""
+            }`}
             className="font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
           >
             {isSignUp ? "Sign in" : "Create one"}
