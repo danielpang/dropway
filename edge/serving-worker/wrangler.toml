@@ -69,7 +69,7 @@ preview_id = "REPLACE_WITH_ROUTES_KV_PREVIEW_NAMESPACE_ID"
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "dropway-content"
-preview_bucket_name = "dropway-content-preview"
+preview_bucket_name = "dropway-content-development"
 
 # --- Phase 4 hardening bindings (OPTIONAL) -----------------------------------
 # LIMITS: KV for the edge rate-limiter counters (`rl:*`) AND the per-org
