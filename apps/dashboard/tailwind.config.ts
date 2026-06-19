@@ -17,7 +17,9 @@ const config: Config = {
   theme: {
     container: {
       center: true,
-      padding: "2rem",
+      // Responsive gutters: tight on phones (2rem each side would eat ~17% of a
+      // 375px viewport), opening up on larger screens.
+      padding: { DEFAULT: "1rem", sm: "1.5rem", lg: "2rem" },
       screens: { "2xl": "1400px" },
     },
     extend: {

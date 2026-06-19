@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { MainNav } from "@/components/main-nav";
+import { MobileNav } from "@/components/mobile-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
@@ -58,18 +59,24 @@ export default async function AppLayout({
             </span>
             Dropway
           </Link>
-          <div className="flex items-center gap-2">
+          {/* Desktop: full nav + actions inline. */}
+          <div className="hidden items-center gap-2 md:flex">
             <MainNav admin={isAdmin} />
             <span className="mx-1 h-5 w-px bg-border" aria-hidden />
             <ThemeToggle />
             <SignOutButton />
+          </div>
+          {/* Mobile: theme toggle + the nav/actions collapsed into a menu. */}
+          <div className="flex items-center gap-1 md:hidden">
+            <ThemeToggle />
+            <MobileNav admin={isAdmin} />
           </div>
         </div>
       </header>
 
       <OverLimitBanner status={orgStatus} />
 
-      <main className="container flex-1 py-10">{children}</main>
+      <main className="container flex-1 py-6 sm:py-10">{children}</main>
     </div>
   );
 }
