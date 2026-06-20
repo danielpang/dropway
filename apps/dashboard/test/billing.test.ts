@@ -17,8 +17,9 @@ import {
 import { isRestricted } from "@/lib/billing-server";
 
 describe("nextTier (upgrade ladder)", () => {
-  it("walks free → business → enterprise → contact_sales", () => {
-    expect(nextTier("free")).toBe("business");
+  it("walks free → pro → business → enterprise → contact_sales", () => {
+    expect(nextTier("free")).toBe("pro");
+    expect(nextTier("pro")).toBe("business");
     expect(nextTier("business")).toBe("enterprise");
     expect(nextTier("enterprise")).toBe("contact_sales");
   });
@@ -31,13 +32,14 @@ describe("nextTier (upgrade ladder)", () => {
 });
 
 describe("isCheckoutTier (self-serve vs contact-sales)", () => {
-  it("is true only for the self-serve paid tiers", () => {
+  it("is true only for the self-serve paid tiers (pro, business)", () => {
+    expect(isCheckoutTier("pro")).toBe(true);
     expect(isCheckoutTier("business")).toBe(true);
-    expect(isCheckoutTier("enterprise")).toBe(true);
   });
 
-  it("is false for free, contact_sales, and nullish/garbage inputs", () => {
+  it("is false for free, enterprise (Custom), contact_sales, and nullish/garbage inputs", () => {
     expect(isCheckoutTier("free")).toBe(false);
+    expect(isCheckoutTier("enterprise")).toBe(false); // Enterprise is Contact Sales
     expect(isCheckoutTier("contact_sales")).toBe(false);
     expect(isCheckoutTier(undefined)).toBe(false);
     expect(isCheckoutTier(null)).toBe(false);
@@ -46,15 +48,16 @@ describe("isCheckoutTier (self-serve vs contact-sales)", () => {
 });
 
 describe("TIER_LABEL + matrix tables", () => {
-  it("labels every display tier (business is presented as 'Pro')", () => {
+  it("labels every display tier (keys now match labels one-to-one)", () => {
     expect(TIER_LABEL.free).toBe("Free");
-    expect(TIER_LABEL.business).toBe("Pro");
+    expect(TIER_LABEL.pro).toBe("Pro");
+    expect(TIER_LABEL.business).toBe("Business");
     expect(TIER_LABEL.enterprise).toBe("Enterprise");
     expect(TIER_LABEL.contact_sales).toBe("Enterprise+");
   });
 
-  it("MATRIX_TIERS is the three concrete plan tiers in display order", () => {
-    expect(MATRIX_TIERS).toEqual(["free", "business", "enterprise"]);
+  it("MATRIX_TIERS is the four concrete plan tiers in display order", () => {
+    expect(MATRIX_TIERS).toEqual(["free", "pro", "business", "enterprise"]);
   });
 
   it("every PLAN_MATRIX row has a value for each concrete tier", () => {
@@ -62,21 +65,23 @@ describe("TIER_LABEL + matrix tables", () => {
     for (const row of PLAN_MATRIX) {
       expect(typeof row.label).toBe("string");
       for (const tier of MATRIX_TIERS) {
-        // No missing cells — the grid must render fully for all three columns.
+        // No missing cells — the grid must render fully for all four columns.
         expect(typeof row.values[tier]).toBe("string");
         expect(row.values[tier].length).toBeGreaterThan(0);
       }
     }
   });
 
-  it("encodes the seat-free per-org bands (10/100/unlimited sites, unlimited members)", () => {
+  it("encodes the seat-free per-org bands (10/100/unlimited/unlimited sites, unlimited members)", () => {
     const sites = PLAN_MATRIX.find((r) => r.label === "Sites / workspace");
     const members = PLAN_MATRIX.find((r) => r.label === "Team members");
     expect(sites?.values.free).toBe("Up to 10");
-    expect(sites?.values.business).toBe("Up to 100");
+    expect(sites?.values.pro).toBe("Up to 100");
+    expect(sites?.values.business).toBe("Unlimited");
     expect(sites?.values.enterprise).toBe("Unlimited");
     // Seats are free on every plan.
     expect(members?.values.free).toBe("Unlimited");
+    expect(members?.values.pro).toBe("Unlimited");
     expect(members?.values.business).toBe("Unlimited");
     expect(members?.values.enterprise).toBe("Unlimited");
   });
