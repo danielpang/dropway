@@ -22,8 +22,8 @@ import { api, ApiError, type BillingPlan, type PlanTier } from "@/lib/api";
 import { TIER_LABEL } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
-/** Sales contact for the "Custom" Enterprise tier. */
-const SALES_MAILTO = "mailto:sales@dropway.dev";
+/** Sales contact for the "Custom" Enterprise tier (the same Google Form as dropway.dev). */
+const SALES_URL = "https://forms.gle/vDvNzdfrKRvtGYPG8";
 
 /** Tier order, so we can offer every self-serve plan ABOVE the current one. */
 const TIER_RANK: Record<PlanTier, number> = {
@@ -194,7 +194,7 @@ export default async function BillingPage({
               <UpgradeButton key={tier} targetTier={tier} />
             ))}
             {currentTier !== "enterprise" && (
-              <ContactSalesButton salesUrl={SALES_MAILTO} />
+              <ContactSalesButton salesUrl={SALES_URL} />
             )}
           </div>
         </CardContent>
@@ -213,7 +213,9 @@ export default async function BillingPage({
         <p className="text-xs text-muted-foreground">
           Need more than Enterprise?{" "}
           <Button asChild variant="link" className="h-auto p-0 text-xs">
-            <Link href={SALES_MAILTO}>Talk to sales</Link>
+            <Link href={SALES_URL} target="_blank" rel="noopener noreferrer">
+              Talk to sales
+            </Link>
           </Button>
           .
         </p>
