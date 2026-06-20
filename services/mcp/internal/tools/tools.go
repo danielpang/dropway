@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"unicode/utf8"
 
@@ -468,7 +469,17 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	}, svc.deploySiteHandler)
 }
 
+// logTool emits a structured record of a tool invocation — the authenticated
+// tenant (user + org) plus any tool-specific metadata (site, path, mode, …). This
+// is the per-call audit trail of MCP activity; keep the attrs cheap (no payloads).
+func logTool(ctx context.Context, tool string, attrs ...any) {
+	t, _ := auth.TenantFromContext(ctx)
+	base := []any{"tool", tool, "user_id", t.UserID, "org_id", t.OrgID}
+	slog.Info("mcp tool call", append(base, attrs...)...)
+}
+
 func (svc *Service) listSitesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, _ listSitesIn) (*mcpsdk.CallToolResult, listSitesOut, error) {
+	logTool(ctx, "list_sites")
 	t, ok := auth.TenantFromContext(ctx)
 	if !ok {
 		return nil, listSitesOut{}, ErrNoTenant
@@ -478,6 +489,7 @@ func (svc *Service) listSitesHandler(ctx context.Context, _ *mcpsdk.CallToolRequ
 }
 
 func (svc *Service) listFilesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in listFilesIn) (*mcpsdk.CallToolResult, listFilesOut, error) {
+	logTool(ctx, "list_files", "site", in.Site)
 	t, ok := auth.TenantFromContext(ctx)
 	if !ok {
 		return nil, listFilesOut{}, ErrNoTenant
@@ -487,6 +499,7 @@ func (svc *Service) listFilesHandler(ctx context.Context, _ *mcpsdk.CallToolRequ
 }
 
 func (svc *Service) readFileHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in readFileIn) (*mcpsdk.CallToolResult, readFileOut, error) {
+	logTool(ctx, "read_file", "site", in.Site, "path", in.Path)
 	t, ok := auth.TenantFromContext(ctx)
 	if !ok {
 		return nil, readFileOut{}, ErrNoTenant
@@ -496,6 +509,7 @@ func (svc *Service) readFileHandler(ctx context.Context, _ *mcpsdk.CallToolReque
 }
 
 func (svc *Service) downloadSiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in downloadSiteIn) (*mcpsdk.CallToolResult, downloadSiteOut, error) {
+	logTool(ctx, "download_site", "site", in.Site)
 	t, ok := auth.TenantFromContext(ctx)
 	if !ok {
 		return nil, downloadSiteOut{}, ErrNoTenant
@@ -505,6 +519,7 @@ func (svc *Service) downloadSiteHandler(ctx context.Context, _ *mcpsdk.CallToolR
 }
 
 func (svc *Service) createSiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in createSiteIn) (*mcpsdk.CallToolResult, createSiteOut, error) {
+	logTool(ctx, "create_site", "slug", in.Slug, "access_mode", in.AccessMode)
 	token, ok := auth.TokenFromContext(ctx)
 	if !ok || token == "" {
 		return nil, createSiteOut{}, ErrNoToken
@@ -514,6 +529,7 @@ func (svc *Service) createSiteHandler(ctx context.Context, _ *mcpsdk.CallToolReq
 }
 
 func (svc *Service) setAccessHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in setAccessIn) (*mcpsdk.CallToolResult, setAccessOut, error) {
+	logTool(ctx, "set_site_access", "site", in.Site, "mode", in.Mode)
 	t, ok := auth.TenantFromContext(ctx)
 	if !ok {
 		return nil, setAccessOut{}, ErrNoTenant
@@ -527,6 +543,7 @@ func (svc *Service) setAccessHandler(ctx context.Context, _ *mcpsdk.CallToolRequ
 }
 
 func (svc *Service) deploySiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in deploySiteIn) (*mcpsdk.CallToolResult, deploySiteOut, error) {
+	logTool(ctx, "deploy_site", "site", in.Site, "files", len(in.Files))
 	t, ok := auth.TenantFromContext(ctx)
 	if !ok {
 		return nil, deploySiteOut{}, ErrNoTenant

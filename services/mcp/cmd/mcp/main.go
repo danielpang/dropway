@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -144,7 +145,30 @@ func requireMCPEnabled(st *store.Store, next http.Handler) http.Handler {
 			return
 		}
 		enabled, err := st.MCPEnabled(r.Context(), t)
-		if err != nil || !enabled {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			// No app.org_meta row for this org yet. The row is created lazily by the
+			// Go API's ensure-org-provisioned step (on the first API-backed tool call),
+			// so a brand-new org — or one that has only ever used the dashboard — may
+			// not have it when MCP is first connected. mcp_enabled DEFAULTS to true, so
+			// a MISSING row means "not provisioned / not killed", NOT "disabled". Treat
+			// it as enabled and let the request through; the first tool call provisions
+			// it. (Previously this 403'd silently — the cause of "auth with the MCP
+			// server failed" right after a successful OAuth.)
+			slog.Info("mcp: no org_meta row yet, allowing (default-enabled)",
+				"org_id", t.OrgID, "user_id", t.UserID, "path", r.URL.Path)
+		case err != nil:
+			// A genuine lookup error (RLS / connectivity / query) — distinct from the
+			// missing-row case above. Log it so it's diagnosable rather than a silent 403.
+			slog.Warn("mcp auth: org_meta check failed (returning 403)",
+				"err", err.Error(), "org_id", t.OrgID, "user_id", t.UserID, "path", r.URL.Path)
+			http.Error(w, "403 Forbidden: could not resolve organization access.",
+				http.StatusForbidden)
+			return
+		case !enabled:
+			// Explicit admin/owner kill-switch.
+			slog.Warn("mcp auth: MCP disabled for org (returning 403)",
+				"org_id", t.OrgID, "path", r.URL.Path)
 			http.Error(w, "403 Forbidden: MCP access is disabled for this organization.",
 				http.StatusForbidden)
 			return

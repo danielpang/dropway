@@ -61,6 +61,11 @@ func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := bearer(r)
 		if tok == "" {
+			// Normal first step of the flow: an unauthenticated client gets a 401 +
+			// RFC 9728 pointer and then starts OAuth. Logged so the connection attempt
+			// is visible in the trace (not an error).
+			slog.Info("mcp auth: unauthenticated request → 401 challenge",
+				"method", r.Method, "path", r.URL.Path)
 			unauthorized(w, resourceMetadataURL, "missing bearer token")
 			return
 		}
@@ -81,6 +86,8 @@ func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) 
 			unauthorized(w, resourceMetadataURL, "token has no organization")
 			return
 		}
+		slog.Info("mcp auth: token verified",
+			"user_id", t.UserID, "org_id", t.OrgID, "path", r.URL.Path)
 		ctx := WithToken(WithTenant(r.Context(), t), tok)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
