@@ -46,6 +46,12 @@ type Store struct{ pool *pgxpool.Pool }
 // New builds a Store over an existing pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+// Ping verifies the database is reachable (acquires a connection and round-trips).
+// Used by /healthz so a misconfigured or unreachable DATABASE_URL fails the health
+// check — and thus the deploy — instead of silently serving 403s on every DB-backed
+// request (the exact failure mode that hid a wrong DATABASE_URL in production).
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
 // withTx runs fn inside a tx with the tenant RLS context set. Read-only here, so
 // it always rolls back (no writes to commit) — RLS still applies to the reads.
 func (s *Store) withTx(ctx context.Context, t Tenant, fn func(pgx.Tx) error) error {

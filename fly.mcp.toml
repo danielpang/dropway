@@ -22,11 +22,15 @@ primary_region = "iad"   # match the API / Supabase region
     soft_limit = 100
     hard_limit = 150
 
+# /healthz now round-trips the database (see services/mcp/cmd/mcp/main.go), so a
+# misconfigured/unreachable DATABASE_URL fails the check and the deploy instead of
+# silently 403ing every request. Run it once a minute (not every 15s) to keep the
+# DB round-trip cheap; timeout has headroom over the handler's 3s DB-ping budget.
 [[http_service.checks]]
   method = "GET"
   path = "/healthz"
-  interval = "15s"
-  timeout = "2s"
+  interval = "60s"
+  timeout = "5s"
   grace_period = "10s"
 
 [[vm]]
