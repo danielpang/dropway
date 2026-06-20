@@ -14,6 +14,7 @@ import {
   jwtAudience,
   jwtIssuer,
   mcpResourceUrl,
+  MCP_URL,
   requireEmailVerification,
 } from "@/lib/env";
 
@@ -267,9 +268,18 @@ export const auth = betterAuth({
       // mcp-remote) URL-canonicalize the resource and append a "/"
       // ("http://host" → "http://host/"). The Go API audience (jwtAudience) is also
       // registered so the CLI's `dropway login` can request a token the API accepts.
+      // Also register the connect-URL forms (MCP_URL = NEXT_PUBLIC_MCP_URL, the
+      // ".../mcp" endpoint shown in the Connect modal). The RFC 9728 metadata
+      // advertises the BARE resource (mcpResourceUrl), so a compliant client sends
+      // that — but some clients (Claude's built-in connector) use the connection URL
+      // itself as the RFC 8707 resource, i.e. ".../mcp". Without these the issued
+      // token's aud wouldn't match and the MCP server 401s. The MCP verifier accepts
+      // the same set (services/mcp WithExtraAudiences).
       validAudiences: [
         mcpResourceUrl(),
         mcpResourceUrl() + "/",
+        MCP_URL,
+        MCP_URL + "/",
         jwtAudience(),
         jwtAudience() + "/",
       ],
