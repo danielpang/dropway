@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUpRight, Check, Sparkles } from "lucide-react";
+import { ArrowUpRight, Check } from "lucide-react";
 
 import {
   ContactSalesButton,
@@ -85,12 +85,14 @@ export function ChangePlanDrawer({
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>
-        <Sparkles aria-hidden />
-        {triggerLabel}
-      </Button>
+      <Button onClick={() => setOpen(true)}>{triggerLabel}</Button>
 
-      <Sheet open={open} onOpenChange={setOpen} label="Change subscription plan">
+      <Sheet
+        open={open}
+        onOpenChange={setOpen}
+        label="Change subscription plan"
+        className="max-w-5xl"
+      >
         <SheetHeader>
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
@@ -112,7 +114,8 @@ export function ChangePlanDrawer({
         </SheetHeader>
 
         <SheetBody>
-          <div className="grid gap-4 sm:grid-cols-2">
+          {/* One column per plan, side by side (stacks on narrow viewports). */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {MATRIX_TIERS.map((tier) => (
               <PlanCard key={tier} tier={tier} currentTier={currentTier} />
             ))}
