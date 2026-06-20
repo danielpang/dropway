@@ -33,13 +33,13 @@ export function AuditPagination({
       <p aria-live="polite">
         {total != null ? (
           <>
-            Showing <span className="text-foreground">{from}</span>–
+            Showing <span className="text-foreground">{from}</span> to{" "}
             <span className="text-foreground">{to}</span> of{" "}
             <span className="text-foreground">{total}</span>
           </>
         ) : count > 0 ? (
           <>
-            Showing <span className="text-foreground">{from}</span>–
+            Showing <span className="text-foreground">{from}</span> to{" "}
             <span className="text-foreground">{to}</span>
           </>
         ) : (

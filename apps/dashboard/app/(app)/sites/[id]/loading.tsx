@@ -14,8 +14,8 @@ import {
  * Instant route-level loading UI for the site detail page. Next.js renders this
  * as the Suspense fallback the moment a site is clicked, so the page's structure
  * paints immediately while the (force-dynamic) server component fetches the site
- * over the API. The static scaffolding — back link, card titles and descriptions
- * — is real; only the data-dependent content (slug, badges, live URL, version
+ * over the API. The static scaffolding (back link, card titles and descriptions)
+ * is real; only the data-dependent content (slug, badges, live URL, version
  * details) is skeletoned, mirroring the layout of page.tsx so the swap-in is
  * seamless and doesn't shift.
  */
@@ -99,7 +99,7 @@ export default function SiteDetailLoading() {
         <CardHeader>
           <CardTitle className="text-base">More ways to deploy</CardTitle>
           <CardDescription>
-            Connect an AI assistant once, then just ask it to deploy — it calls
+            Connect an AI assistant once, then just ask it to deploy, it calls
             deploy_site and hands back the live URL.
           </CardDescription>
           <Skeleton className="mt-2 h-10 w-full rounded-lg" />

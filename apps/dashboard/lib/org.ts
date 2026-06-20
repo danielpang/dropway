@@ -17,7 +17,7 @@ import type { Role } from "@/lib/api";
 
 /** A member of the active org, enriched with the user's identity. */
 export interface OrgMember {
-  /** The `member` row id — the handle for role/remove mutations. */
+  /** The `member` row id, the handle for role/remove mutations. */
   id: string;
   userId: string;
   email: string;
@@ -40,7 +40,7 @@ export interface ActiveOrg {
   organizationId: string;
   name: string | null;
   slug: string | null;
-  /** The viewer's user id — so the UI can refuse self-demotion / self-removal. */
+  /** The viewer's user id, so the UI can refuse self-demotion / self-removal. */
   myUserId: string | null;
   myRole: Role;
   members: OrgMember[];
@@ -139,7 +139,7 @@ export function canManage(role: Role): boolean {
 }
 
 /**
- * Resolve ONLY the viewer's role in the active org — a lightweight alternative
+ * Resolve ONLY the viewer's role in the active org, a lightweight alternative
  * to loadActiveOrg() for the app shell, which just needs to decide whether to
  * show admin-only nav (e.g. the Audit link). Uses the org plugin's
  * getActiveMember (a single member-row read) and degrades to "member" on any

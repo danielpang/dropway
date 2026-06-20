@@ -7,7 +7,7 @@ import { MATRIX_TIERS, PLAN_MATRIX, TIER_LABEL } from "@/lib/billing";
 
 /**
  * The plan/limits matrix, highlighting the org's current
- * tier. Display-only — the real caps are enforced server-side in cloud/quota,
+ * tier. Display-only, the real caps are enforced server-side in cloud/quota,
  * and paying raises them automatically once the webhook syncs plan_tier. The
  * matrix simply makes "what does upgrading get me" legible.
  */

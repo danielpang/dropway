@@ -17,7 +17,7 @@ export default async function SignInPage({
   const sp = await searchParams;
   // When the Better Auth OAuth provider sends an unauthenticated user here to sign in
   // (CLI `dropway login` / MCP connect), resume that authorize flow after sign-in so
-  // it reaches the consent screen — otherwise the loopback client waits forever.
+  // it reaches the consent screen, otherwise the loopback client waits forever.
   // Otherwise, a caller (e.g. the /authz viewer exchange) can ask us to return the
   // user to where they came from. Validate it to a same-site path so it can never be
   // an open redirect; default to the dashboard.

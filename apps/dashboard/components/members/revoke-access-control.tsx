@@ -19,7 +19,7 @@ import { revokeAccessAction } from "@/app/(app)/members/actions";
  * Org-wide "sign out everywhere" affordance. Owner/admin only.
  *
  * Bumps the KV denylist `revoked:org:<id>.min_iat` so every edge token issued
- * before now is rejected at the serving Worker and the /authz exchange — every
+ * before now is rejected at the serving Worker and the /authz exchange, every
  * viewer of every gated site in the org is forced to re-authenticate. The short
  * (15m) token TTL is the backstop; this makes revocation immediate.
  *

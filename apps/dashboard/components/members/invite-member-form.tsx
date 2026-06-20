@@ -24,8 +24,8 @@ function describeError(err: unknown): string {
 
 /**
  * Invite a teammate to the active org via Better Auth's Organization plugin
- * (`organization.inviteMember`). Only `admin`/`member` are invitable roles here
- * — `owner` is the creator and isn't assignable through an invite. The Go API
+ * (`organization.inviteMember`). Only `admin`/`member` are invitable roles here,
+ * `owner` is the creator and isn't assignable through an invite. The Go API
  * still re-checks the caller is owner/admin, so this form is a convenience gate.
  */
 export function InviteMemberForm({

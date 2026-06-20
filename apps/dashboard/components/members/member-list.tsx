@@ -48,7 +48,7 @@ const ROLE_VARIANT: Record<Role, "default" | "secondary" | "muted"> = {
 
 /**
  * The org's member rows. Owners/admins can change a member's role
- * (`updateMemberRole`) or remove them (`removeMember`) — but never their own row
+ * (`updateMemberRole`) or remove them (`removeMember`), but never their own row
  * (no self-demotion / self-removal footgun). The `owner` role isn't assignable
  * here (ownership transfer is a separate, owner-only flow).
  */
@@ -64,7 +64,7 @@ export function MemberList({
   myUserId: string | null;
   canManage: boolean;
   /**
-   * Logical storage (bytes) per user id — the sum of each member's sites'
+   * Logical storage (bytes) per user id, the sum of each member's sites'
    * current-version sizes. Missing users render as 0. NOT deduplicated across
    * users: a file two people upload counts for both, like a Dropbox/Drive folder.
    */
@@ -106,7 +106,7 @@ export function MemberList({
       if (err) throw err;
       // Removal isn't complete until the removed user's access is actually revoked
       // (C2): kill their Better Auth sessions AND bump the edge
-      // denylist so they can't keep viewing — or re-mint tokens for — gated sites on
+      // denylist so they can't keep viewing, or re-mint tokens for, gated sites on
       // a still-valid JWT. Do this BEFORE refreshing; a non-fatal failure here is
       // surfaced (the member row is already gone, but access revocation matters).
       const revoked = await finalizeMemberRemovalAction({ userId: removing.userId });

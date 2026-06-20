@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 /**
  * Minimal, dependency-free tooltip (the dashboard has no @radix-ui/react-tooltip
  * in its dependency set). Shows `label` on hover AND keyboard focus of the
- * trigger, and exposes it to assistive tech via aria-describedby — so a disabled
+ * trigger, and exposes it to assistive tech via aria-describedby, so a disabled
  * control's reason is announced, not just shown on hover.
  *
  * Note: a natively `disabled` button does not fire pointer/focus events, so wrap

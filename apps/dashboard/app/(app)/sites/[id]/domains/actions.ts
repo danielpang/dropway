@@ -30,7 +30,7 @@ export async function addDomainAction(input: {
   if (hostname.endsWith(".dropwaycontent.com")) {
     return {
       ok: false,
-      message: "That's a platform domain — add your own custom domain instead.",
+      message: "That's a platform domain. Add your own custom domain instead.",
     };
   }
 
@@ -90,7 +90,7 @@ export async function removeDomainAction(input: {
         };
       }
       if (err.status === 404) {
-        // Already gone — treat as success so the row clears.
+        // Already gone, treat as success so the row clears.
         return { ok: true };
       }
       return { ok: false, message: "Could not remove the domain. Try again." };

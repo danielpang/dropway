@@ -16,8 +16,7 @@ import { cn } from "@/lib/utils";
  * "Connect" instructions for the Dropway MCP server. An authenticated MCP client
  * (Claude Cowork, Claude Code, Cursor, Codex) adds the MCP URL as a custom
  * connector; on first use the client hits the server, gets a 401 pointing at the
- * dashboard authorization server (RFC 9728/8414), and runs a browser OAuth flow —
- * the user signs in and approves "Authorize MCP access". After that the client can
+ * dashboard authorization server (RFC 9728/8414), and runs a browser OAuth flow, * the user signs in and approves "Authorize MCP access". After that the client can
  * list the org's sites and read their files (scoped to the org by RLS, honoring each
  * site's sharing settings). The only thing the user needs to paste is the URL below.
  *
@@ -124,7 +123,7 @@ function CoworkSteps({ url }: { url: string }) {
         .
       </li>
       <li>
-        Dropway now appears as a connector — Claude can list your sites and read
+        Dropway now appears as a connector. Claude can list your sites and read
         their files on request.
       </li>
     </Steps>
@@ -142,7 +141,7 @@ function ClaudeCodeSteps({ url }: { url: string }) {
         <Kbd>Authenticate</Kbd>.
       </li>
       <li>
-        Your browser opens — sign in to Dropway and approve{" "}
+        Your browser opens. Sign in to Dropway and approve{" "}
         <span className="font-medium text-foreground">
           &ldquo;Authorize MCP access&rdquo;
         </span>
@@ -166,7 +165,7 @@ function CursorSteps({ url }: { url: string }) {
       </li>
       <CodeBlock text={config} />
       <li>
-        Cursor detects the server and opens your browser to authorize — sign in
+        Cursor detects the server and opens your browser to authorize. Sign in
         to Dropway and approve{" "}
         <span className="font-medium text-foreground">
           &ldquo;Authorize MCP access&rdquo;
@@ -187,7 +186,7 @@ function CodexSteps({ url }: { url: string }) {
       <CodeBlock text={config} />
       <li>
         Start Codex. It connects over streamable HTTP and opens your browser to
-        authorize — sign in to Dropway and approve{" "}
+        authorize. Sign in to Dropway and approve{" "}
         <span className="font-medium text-foreground">
           &ldquo;Authorize MCP access&rdquo;
         </span>

@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
  *
  * On submit it calls the server action, which mints an ANONYMOUS edge token via
  * the JWT-free Go endpoint and returns the content-host callback URL. We then do
- * a full cross-origin navigation to that URL — the Worker verifies the token,
+ * a full cross-origin navigation to that URL, the Worker verifies the token,
  * sets the `__Host-edge` cookie on the content host, and forwards to `next`.
  */
 export function PasswordGate({ host, next }: { host: string; next: string }) {

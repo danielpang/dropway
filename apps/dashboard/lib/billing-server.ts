@@ -7,7 +7,7 @@ import { api, ApiError, type OrgStatus } from "@/lib/api";
  *
  * Drives the over-limit banner (app shell) and the read-only gating of
  * cost-creating actions like "New site". This is a UX MIRROR of server-side
- * enforcement — the Go API / cloud quota gate is the real boundary; this just
+ * enforcement, the Go API / cloud quota gate is the real boundary; this just
  * lets the dashboard show the restriction honestly instead of letting the user
  * hit a 402/403 blindly.
  *

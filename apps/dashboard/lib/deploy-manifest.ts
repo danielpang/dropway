@@ -1,9 +1,9 @@
 /**
- * Pure, browser-side manifest logic for folder deploy — extracted from the deploy
+ * Pure, browser-side manifest logic for folder deploy, extracted from the deploy
  * orchestration so it can be unit-tested in isolation (no server-action imports).
  *
  * The whole-deploy digest here MUST stay byte-exact with Go's internal/manifest.Digest
- * (sort by path; sha256 over `<sha256>  <path>\n` lines — two spaces, trailing
+ * (sort by path; sha256 over `<sha256>  <path>\n` lines, two spaces, trailing
  * newline), or the server rejects every finalize with a 400. See deploy-manifest.test.ts.
  */
 
@@ -24,7 +24,7 @@ export interface BuiltManifest {
 }
 
 // ---- Content-type guess (mirrors cli/internal/api/content_type.go intent) -----
-// Only affects the Content-Type the deployed site is SERVED with — it's not part
+// Only affects the Content-Type the deployed site is SERVED with, it's not part
 // of the digest or size verification, so exact CLI parity isn't required; a sane
 // table for web assets plus the browser's own guess (file.type) is enough.
 const EXT_CONTENT_TYPE: Record<string, string> = {
@@ -79,7 +79,7 @@ function byPath(a: { path: string }, b: { path: string }): number {
 }
 
 /**
- * Whole-deploy content address — byte-exact match to Go's internal/manifest.Digest:
+ * Whole-deploy content address, byte-exact match to Go's internal/manifest.Digest:
  * sort by path, then sha256 over the concatenation of `<sha256>  <path>\n` lines
  * (EXACTLY two spaces, trailing newline). The server recomputes this and 400s on
  * mismatch, so it must be identical.
@@ -121,8 +121,7 @@ export async function buildManifest(
 /**
  * Walk the items from a drop event. Uses webkitGetAsEntry to recurse the dropped
  * directory tree. When a SINGLE folder is dropped, its CONTENTS become the site
- * root (so dropping `mysite/` yields "index.html", not "mysite/index.html") —
- * matching `dropway deploy ./dist`, which walks inside the folder.
+ * root (so dropping `mysite/` yields "index.html", not "mysite/index.html"), * matching `dropway deploy ./dist`, which walks inside the folder.
  */
 export async function collectDataTransferItems(
   items: DataTransferItemList,
@@ -168,7 +167,7 @@ function entryFile(entry: FileSystemFileEntry): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
-/** readEntries is paginated — call it until it returns an empty batch. */
+/** readEntries is paginated, call it until it returns an empty batch. */
 function readDir(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
   const reader = dir.createReader();
   return new Promise((resolve, reject) => {

@@ -20,7 +20,7 @@ import {
 
 // NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
 // module top level. The `@better-auth/cli migrate` step loads THIS config under a
-// plain-Node (jiti) loader — not the Next.js bundler — and lib/email.ts starts with
+// plain-Node (jiti) loader, not the Next.js bundler, and lib/email.ts starts with
 // `import "server-only"`, which only resolves under Next. A top-level import here
 // would make `Cannot find module 'server-only'` break the one-time auth migration
 // (CI + every fresh self-host). Deferring it keeps the config import graph free of
@@ -28,7 +28,7 @@ import {
 // Next runtime.
 
 /**
- * Better Auth server instance — the authoritative owner of the `identity` schema
+ * Better Auth server instance, the authoritative owner of the `identity` schema
  * (user/session/account/verification/jwks/organization/member/invitation).
  * Named `identity` (not `auth`) to avoid colliding with Postgres providers that
  * reserve their own `auth` schema (e.g. Supabase's GoTrue).
@@ -52,7 +52,7 @@ const authPool = new Pool({
 });
 
 /**
- * The user's first organization id — the default "active org" for a new session AND
+ * The user's first organization id, the default "active org" for a new session AND
  * the org stamped into MCP OAuth access tokens (customAccessTokenClaims below), so the
  * MCP resource server can scope RLS straight from the token. Best-effort: returns
  * undefined on a lookup error or a user with no membership.
@@ -80,8 +80,7 @@ export const auth = betterAuth({
   // Better Auth OWNS the `identity` schema: `databaseUrl()` is
   // a PRIVILEGED connection (it must CREATE its tables), and `options` pins the
   // session search_path to `identity` so the adapter's UNqualified tables (user,
-  // session, member, organization, …) are created in + read from `identity` —
-  // exactly where the Go API reads them (identity.member) for authz.
+  // session, member, organization, …) are created in + read from `identity`, // exactly where the Go API reads them (identity.member) for authz.
   database: authPool,
 
   // Set the user's first organization as the session's ACTIVE org on every new
@@ -155,7 +154,7 @@ export const auth = betterAuth({
   advanced: {
     cookiePrefix: "dropway",
     // Secure cookies (and the `__Secure-` name prefix Better Auth adds with them)
-    // require an HTTPS origin — browsers REJECT them over http://. Drive this off
+    // require an HTTPS origin, browsers REJECT them over http://. Drive this off
     // the deployment's actual scheme, not NODE_ENV: a self-host served over plain
     // http (e.g. http://<lan-ip>:3000) with NODE_ENV=production would otherwise set
     // a `__Secure-` cookie the browser drops, silently breaking login. https origin
@@ -181,7 +180,7 @@ export const auth = betterAuth({
       // Go API + DB CHECK/trigger; this plugin provides the membership tables.
       allowUserToCreateOrganization: true,
       // The AUTHORITATIVE members_per_org cap is the Go API preflight the invite
-      // path calls (open-core: OSS unlimited, cloud per-tier — H8). This only LIFTS
+      // path calls (open-core: OSS unlimited, cloud per-tier, H8). This only LIFTS
       // Better Auth's restrictive default membershipLimit (100), which would
       // otherwise break an Enterprise org (cap 1000) and cap an unlimited self-host.
       // Keep it well above any tier cap so it never spuriously blocks.
@@ -210,7 +209,7 @@ export const auth = betterAuth({
         keyPairConfig: { alg: "EdDSA" },
       },
       jwt: {
-        // 5–15 min short-lived tokens. The verified token
+        // 5 to 15 min short-lived tokens. The verified token
         // carries the org/role claims the Go API uses for authz.
         expirationTime: "10m",
         // The Go API PINS iss + aud on every token. Stamp them from the SAME env it
@@ -220,7 +219,7 @@ export const auth = betterAuth({
         issuer: jwtIssuer(),
         audience: jwtAudience(),
         // CUSTOM CLAIMS the Go API reads (internal/auth/jwks.go Claims): `org_id` is
-        // the user's ACTIVE organization — REQUIRED for the per-request RLS tenant
+        // the user's ACTIVE organization, REQUIRED for the per-request RLS tenant
         // context (without it the API 500s "claims missing org_id"). email/
         // email_verified back the allowlist authz path. `role` is intentionally
         // omitted: it's a hint the API re-checks LIVE against identity.member, so a stale
@@ -237,14 +236,14 @@ export const auth = betterAuth({
     // the MCP URL as a custom connector → discovers this AS → the user signs in and
     // approves on /oauth/consent → the client receives a JWT access token. The token
     // carries `org_id` (customAccessTokenClaims), which the MCP resource server reads
-    // to scope RLS — the same claim shape the Go verifier already expects.
+    // to scope RLS, the same claim shape the Go verifier already expects.
     oauthProvider({
       loginPage: "/sign-in",
       consentPage: "/oauth/consent",
       // After login, BEFORE consent, force a user with no organization through
       // onboarding so the minted token always carries org_id. The dashboard's
       // (app) layout has its own onboarding gate, but the OAuth authorize flow
-      // (CLI `dropway login` / MCP connect) BYPASSES that layout — so a first-time
+      // (CLI `dropway login` / MCP connect) BYPASSES that layout, so a first-time
       // user, classically a Google-SSO signup, would otherwise reach consent with no
       // org and get a token with org_id="" that the API/MCP reject ("token has no
       // organization"). shouldRedirect → true sends them to /onboarding (carrying the
@@ -260,7 +259,7 @@ export const auth = betterAuth({
         },
       },
       // The scopes a client may request. We keep the OIDC defaults (so this stays a
-      // valid OIDC provider — "openid" is required for that) and add a custom "mcp"
+      // valid OIDC provider, "openid" is required for that) and add a custom "mcp"
       // scope: the MCP server advertises scopes_supported:["mcp"] in its RFC 9728
       // metadata, so MCP clients request scope=mcp; it must be a registered scope or
       // the authorize step 400s with invalid_scope. DCR clients inherit this list as
@@ -268,7 +267,7 @@ export const auth = betterAuth({
       scopes: ["openid", "profile", "email", "offline_access", "mcp"],
       // Dynamic Client Registration (RFC 7591) is REQUIRED for the MCP "paste a
       // URL" UX: an MCP client (Claude/Cursor/Codex) self-registers a client_id
-      // anonymously the first time it hits the server — the user has no client
+      // anonymously the first time it hits the server, the user has no client
       // credentials to enter, they authenticate later in the browser authorize
       // step. Enabling this also publishes `registration_endpoint` in the AS
       // metadata, which MCP clients discover and call. Without unauthenticated DCR
@@ -281,7 +280,7 @@ export const auth = betterAuth({
       // the token's `aud` then equals that resource (which the MCP Go verifier
       // pins). Compliant MCP clients read the resource from the server's RFC 9728
       // metadata, which advertises exactly this URL. `iss` is the jwt() plugin's
-      // issuer (jwtIssuer()) — the same value the MCP verifier expects. We register
+      // issuer (jwtIssuer()), the same value the MCP verifier expects. We register
       // BOTH the bare and trailing-slash forms because some MCP clients (e.g.
       // mcp-remote) URL-canonicalize the resource and append a "/"
       // ("http://host" → "http://host/"). The Go API audience (jwtAudience) is also
@@ -289,7 +288,7 @@ export const auth = betterAuth({
       // Also register the connect-URL forms (MCP_URL = NEXT_PUBLIC_MCP_URL, the
       // ".../mcp" endpoint shown in the Connect modal). The RFC 9728 metadata
       // advertises the BARE resource (mcpResourceUrl), so a compliant client sends
-      // that — but some clients (Claude's built-in connector) use the connection URL
+      // that, but some clients (Claude's built-in connector) use the connection URL
       // itself as the RFC 8707 resource, i.e. ".../mcp". Without these the issued
       // token's aud wouldn't match and the MCP server 401s. The MCP verifier accepts
       // the same set (services/mcp WithExtraAudiences).

@@ -20,8 +20,8 @@ export const NAV_LINKS: NavLink[] = [
 
 /**
  * Reference docs (the in-app MCP + CLI pages). Kept separate from NAV_LINKS so
- * they render as their own group — after a divider on desktop, in their own
- * section in the mobile menu — rather than mixing in with the org's app sections.
+ * they render as their own group, after a divider on desktop, in their own
+ * section in the mobile menu, rather than mixing in with the org's app sections.
  */
 export const DOCS_LINKS: NavLink[] = [
   { href: "/mcp", label: "MCP", match: "/mcp" },
@@ -46,7 +46,7 @@ export function isNavActive(pathname: string, match: string): boolean {
  * prefix (so /sites/[id] keeps "Sites" lit). Client component for `usePathname`.
  *
  * `admin` controls visibility of admin-only entries (the Audit log). This is a
- * convenience gate — the audit page itself re-checks owner/admin server-side and
+ * convenience gate, the audit page itself re-checks owner/admin server-side and
  * the Go API independently enforces the role on /v1/audit.
  */
 export function MainNav({ admin = false }: { admin?: boolean }) {

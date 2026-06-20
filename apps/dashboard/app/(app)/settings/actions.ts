@@ -12,7 +12,7 @@ export type AllowExternalActionResult =
  * Toggle the org-wide `allow_external_sharing` policy. The
  * Go API re-checks owner/admin and, when DISABLING, reconciles: it downgrades
  * public sites to org_only, revokes external-email grants, and rewrites the edge
- * routes — returning the count of downgraded sites so the UI can confirm the
+ * routes, returning the count of downgraded sites so the UI can confirm the
  * blast radius. Enabling only widens what's permitted (no reconcile).
  */
 export async function setAllowExternalSharingAction(input: {

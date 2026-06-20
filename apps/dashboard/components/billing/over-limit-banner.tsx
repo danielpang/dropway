@@ -7,15 +7,15 @@ import type { OrgStatus } from "@/lib/api";
  * Non-dismissible account banner shown org-wide when billing has restricted the
  * account:
  *
- *  - over_limit — a downgrade (e.g. canceled to Free) left the org above its
+ *  - over_limit, a downgrade (e.g. canceled to Free) left the org above its
  *    caps. The account is read-only / no-new-resources until they upgrade or
  *    reduce usage. Data is NEVER deleted.
- *  - past_due — a payment failed and dunning lapsed; new actions are restricted
+ *  - past_due, a payment failed and dunning lapsed; new actions are restricted
  *    until billing is fixed.
  *
  * It is intentionally NOT dismissible: the restriction persists until the org
  * resolves billing, and it links straight to /billing. The matching write
- * restrictions are enforced server-side by the Go API / cloud quota gate — this
+ * restrictions are enforced server-side by the Go API / cloud quota gate, this
  * banner (and the disabled "New site" control) is the honest UI mirror.
  */
 export function OverLimitBanner({ status }: { status: OrgStatus }) {
@@ -38,7 +38,7 @@ export function OverLimitBanner({ status }: { status: OrgStatus }) {
         </span>
         <span className="text-muted-foreground">
           {isPastDue
-            ? "Update your payment method to restore full access — your sites stay online."
+            ? "Update your payment method to restore full access. Your sites stay online."
             : "Creating new sites and members is paused until you upgrade or reduce usage. Your data is safe."}
         </span>
         <Link

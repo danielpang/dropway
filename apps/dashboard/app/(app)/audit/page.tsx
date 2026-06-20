@@ -15,13 +15,13 @@ export const dynamic = "force-dynamic";
 /**
  * Audit log viewer.
  *
- * Owner/admin only — a paginated, newest-first view of app.audit_log for the
+ * Owner/admin only, a paginated, newest-first view of app.audit_log for the
  * active org: who did what, to what, from where, and when. Access-mode /
  * security-relevant rows (revocations, unshares, sharing-policy flips, role
  * changes) are highlighted so an admin can scan for the events that matter.
  *
  * Two boundaries gate this:
- *   1. UI role gate (here) — non-admins never see the page.
+ *   1. UI role gate (here), non-admins never see the page.
  *   2. The Go API independently RLS-scopes rows to the org AND re-checks the
  *      owner/admin role on /v1/audit (this UI gate is convenience, not the
  *      security boundary).
@@ -115,7 +115,7 @@ function Header() {
         Audit log
       </h1>
       <p className="text-muted-foreground">
-        A record of security-relevant actions in your organization — sharing
+        A record of security-relevant actions in your organization: sharing
         changes, member and role changes, and access revocations. Highlighted
         rows are access-mode or security-sensitive.
       </p>

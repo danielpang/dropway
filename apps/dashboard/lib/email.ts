@@ -8,7 +8,7 @@ import { mailFrom, mailSmtpUrl } from "@/lib/env";
  * Vendor-neutral transactional email seam.
  *
  * Better Auth's auth flows (email verification, password reset, magic link) call
- * `sendEmail` to deliver a link. We send over SMTP — a universal interface, so a
+ * `sendEmail` to deliver a link. We send over SMTP, a universal interface, so a
  * self-host can point MAIL_SMTP_URL at anything (their own server, Gmail, SES,
  * Mailgun, Postmark, Resend's SMTP, or the bundled local Mailpit) with no hard
  * dependency on a specific vendor SDK.
@@ -27,13 +27,13 @@ import { mailFrom, mailSmtpUrl } from "@/lib/env";
 export type EmailMessage = {
   to: string;
   subject: string;
-  /** Plain-text body (always set — the link must survive HTML-stripping clients). */
+  /** Plain-text body (always set, the link must survive HTML-stripping clients). */
   text: string;
   /** Optional HTML body; falls back to `text` when absent. */
   html?: string;
 };
 
-// Lazily build a single pooled transport — reused across requests (and kept out
+// Lazily build a single pooled transport, reused across requests (and kept out
 // of module init so importing this file never opens a socket when mail is off).
 let cached: Transporter | null = null;
 
@@ -66,7 +66,7 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
       html: msg.html ?? msg.text,
     });
   } catch (err) {
-    // Recover — never let a mail failure surface as an auth-flow 500.
+    // Recover, never let a mail failure surface as an auth-flow 500.
     // eslint-disable-next-line no-console
     console.error(`[email] failed to send to ${msg.to}: ${String(err)}`);
   }

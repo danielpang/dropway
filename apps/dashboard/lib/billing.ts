@@ -6,7 +6,7 @@ import type { PlanTier } from "@/lib/api";
  * IMPORTANT: nothing here is an entitlement. The plan limits below are a
  * marketing/UX matrix; the REAL caps are enforced server-side in `cloud/quota`
  * (the OSS build is unlimited) and the authoritative `plan_tier` is written to
- * the DB ONLY by the signature-verified Stripe webhook — never by the browser.
+ * the DB ONLY by the signature-verified Stripe webhook, never by the browser.
  * This module just renders the ladder and maps a tier to its "next" upgrade
  * target so the 402 modal and the billing page agree on copy.
  */
@@ -89,7 +89,7 @@ export const PLAN_MATRIX: PlanFeatureRow[] = [
   },
   {
     label: "Custom domains",
-    values: { free: "—", business: "Included", enterprise: "Included" },
+    values: { free: "Not included", business: "Included", enterprise: "Included" },
   },
   {
     label: "Version history & instant rollback",
@@ -97,11 +97,11 @@ export const PLAN_MATRIX: PlanFeatureRow[] = [
   },
   {
     label: "SSO / SAML & SCIM",
-    values: { free: "—", business: "—", enterprise: "Included" },
+    values: { free: "Not included", business: "Not included", enterprise: "Included" },
   },
   {
     label: "Audit logs & advanced RBAC",
-    values: { free: "—", business: "—", enterprise: "Included" },
+    values: { free: "Not included", business: "Not included", enterprise: "Included" },
   },
   {
     label: "Support",

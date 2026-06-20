@@ -21,14 +21,14 @@ import { TIER_LABEL } from "@/lib/billing";
  * our success_url (`/billing?checkout=success`).
  *
  * CRITICAL: the success redirect grants NOTHING. The paid entitlement
- * (plan_tier) is written to the DB ONLY by the signature-verified Stripe webhook
- * — which arrives asynchronously and may land a beat AFTER the browser returns.
+ * (plan_tier) is written to the DB ONLY by the signature-verified Stripe webhook,
+ * which arrives asynchronously and may land a beat AFTER the browser returns.
  * So we DON'T trust the redirect; we POLL GET /v1/billing until plan_tier flips
  * off the tier the user had at checkout time. Once it flips we refresh the
  * server component so the whole page re-renders against the new plan.
  *
  * We give up polling after a bounded window and show a gentle "still working"
- * message with a manual refresh — the webhook is reliable but can be delayed,
+ * message with a manual refresh, the webhook is reliable but can be delayed,
  * and we never want to spin forever.
  */
 
@@ -36,7 +36,7 @@ const POLL_INTERVAL_MS = 2_500;
 const MAX_ATTEMPTS = 24; // ~60s of polling, then fall back to a manual refresh.
 
 export function FinalizingState({
-  /** The plan the org had BEFORE checkout — we wait for plan_tier to move off it. */
+  /** The plan the org had BEFORE checkout, we wait for plan_tier to move off it. */
   previousTier,
 }: {
   previousTier: PlanTier;
@@ -141,7 +141,7 @@ export function FinalizingState({
         <div className="space-y-1">
           <CardTitle className="text-base">Finalizing your subscription…</CardTitle>
           <CardDescription>
-            Payment received. We&rsquo;re activating your plan — this completes
+            Payment received. We&rsquo;re activating your plan. This completes
             when Stripe confirms it with us (a moment after the redirect). No
             need to refresh.
           </CardDescription>

@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 
 /**
  * In-app MCP reference. Mirrors the dropway-www /mcp page so the content matches,
- * but renders inside the authenticated app shell — signed-in users get the docs
+ * but renders inside the authenticated app shell, signed-in users get the docs
  * without being bounced to the marketing site. The connector URL is derived from
  * the same MCP_URL env the Settings "Connect" dialog uses.
  */

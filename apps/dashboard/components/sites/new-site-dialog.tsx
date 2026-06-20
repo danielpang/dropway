@@ -22,8 +22,8 @@ import type { QuotaExceeded } from "@/lib/api";
 
 /**
  * A slug is a single DNS label: lowercase alphanumerics + hyphens. Used to
- * normalize the field on EVERY keystroke, so it must keep a single TRAILING hyphen
- * — otherwise typing "my-docs" loses the "-" the instant it's typed (it's trailing
+ * normalize the field on EVERY keystroke, so it must keep a single TRAILING hyphen,
+ * otherwise typing "my-docs" loses the "-" the instant it's typed (it's trailing
  * until the next char) and a hyphenated slug becomes impossible. Leading hyphens and
  * runs are still collapsed; a stray trailing hyphen is caught by SLUG_RE on submit.
  */
@@ -50,15 +50,14 @@ const useIsomorphicLayoutEffect =
  * it navigates to the new site's detail page.
  *
  * When `readOnly` is set (org is over_limit / past_due / suspended) the
- * trigger is DISABLED with an explanatory tooltip and the dialog can't open —
- * a UX mirror of the server-side restriction (the API would 402/403 anyway).
+ * trigger is DISABLED with an explanatory tooltip and the dialog can't open, * a UX mirror of the server-side restriction (the API would 402/403 anyway).
  */
 export function NewSiteDialog({
   readOnly = false,
   orgSlug = null,
 }: {
   readOnly?: boolean;
-  /** The active org's slug — content hosts are `<org-slug>--<site-slug>.dropwaycontent.com`. */
+  /** The active org's slug, content hosts are `<org-slug>--<site-slug>.dropwaycontent.com`. */
   orgSlug?: string | null;
 }) {
   const router = useRouter();
@@ -75,7 +74,7 @@ export function NewSiteDialog({
   const slugValid = SLUG_RE.test(slug);
 
   // The slug field reformats its value (slugify) on every keystroke, and a controlled
-  // input resets the caret to the END whenever its value is set programmatically — so
+  // input resets the caret to the END whenever its value is set programmatically, so
   // editing mid-string would fling the cursor to the end after each character. Capture
   // the intended caret offset on change and restore it once the DOM has the new value.
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -166,7 +165,7 @@ export function NewSiteDialog({
         <DialogHeader>
           <DialogTitle>Create a new site</DialogTitle>
           <DialogDescription>
-            Pick a slug — combined with your org slug it becomes your
+            Pick a slug. Combined with your org slug, it becomes your
             site&rsquo;s subdomain. You can deploy content from the CLI right
             after.
           </DialogDescription>

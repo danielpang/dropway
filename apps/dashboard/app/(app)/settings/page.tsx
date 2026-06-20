@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
  * Organization settings. The headline control is the
  * org-wide external-sharing policy: owners/admins can allow members to share
  * sites publicly or with external (non-org) emails. Disabling it downgrades any
- * existing external/public sites — the toggle confirms how many were affected.
+ * existing external/public sites, the toggle confirms how many were affected.
  * The Go API is the authz boundary and re-checks owner/admin on the write.
  */
 export default async function OrgSettingsPage() {
@@ -43,7 +43,7 @@ export default async function OrgSettingsPage() {
 
   // Render the toggles in their LIVE state (H10), not hardcoded defaults. On a
   // transient API error fall back to the safe defaults (external sharing OFF; MCP
-  // ON, its column default) — the steady-state values show on the next load.
+  // ON, its column default), the steady-state values show on the next load.
   const policy = await api
     .getOrgPolicy()
     .catch(() => ({ allow_external_sharing: false, mcp_enabled: true }));

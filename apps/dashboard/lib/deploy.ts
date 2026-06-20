@@ -1,5 +1,5 @@
 /**
- * Browser-side folder deploy — the drag-and-drop equivalent of `dropway deploy`.
+ * Browser-side folder deploy, the drag-and-drop equivalent of `dropway deploy`.
  *
  * Runs ENTIRELY in the browser (it reads the dropped files, which only exist
  * client-side) and mirrors the CLI's contract so the Go API accepts it unchanged:
@@ -12,7 +12,7 @@
  *   6. finalize → immutable version                                       (server action)
  *   7. publish  → flip the live pointer                                   (server action)
  *
- * Steps 1–3 live in lib/deploy-manifest.ts (pure + unit-tested). The two JSON
+ * Steps 1 to 3 live in lib/deploy-manifest.ts (pure + unit-tested). The two JSON
  * round-trips go through server actions so the Better Auth JWT never leaves the
  * server; only the blob BYTES upload from the browser, straight to the store.
  */
@@ -67,7 +67,7 @@ async function runPool<T>(
 
 /**
  * Run a full folder deploy: hash → prepare → upload missing blobs → finalize →
- * publish (drop → live). Reports progress through onProgress. Never throws — a
+ * publish (drop → live). Reports progress through onProgress. Never throws, a
  * failure resolves to `{ ok: false, message }` (plus `quota` on a storage 402).
  */
 export async function deployFolder(opts: {
@@ -80,19 +80,18 @@ export async function deployFolder(opts: {
     return { ok: false, message: "That folder has no files to deploy." };
   }
 
-  // 1–3. hash + manifest + digest (the heavy local step).
+  // 1 to 3. hash + manifest + digest (the heavy local step).
   const { manifest, digest, byHash } = await buildManifest(files, (done, total) =>
     onProgress?.({ phase: "hashing", done, total }),
   );
 
-  // 4. prepare — discover missing blobs + presigned URLs.
+  // 4. prepare, discover missing blobs + presigned URLs.
   onProgress?.({ phase: "preparing" });
   const prep = await prepareDeploymentAction({ siteId, manifest });
   if (!prep.ok) return { ok: false, message: prep.message };
 
   // 5. upload each missing blob directly to object storage. The PUT body is a raw
-  // ArrayBuffer (NOT a File/Blob) so the browser sends NO Content-Type header —
-  // the presigned URL signs only {Bucket,Key}, so a Content-Type would risk a
+  // ArrayBuffer (NOT a File/Blob) so the browser sends NO Content-Type header, // the presigned URL signs only {Bucket,Key}, so a Content-Type would risk a
   // SigV4 mismatch. No Authorization either (the URL is the credential).
   const missing = prep.missing;
   onProgress?.({ phase: "uploading", done: 0, total: missing.length });
@@ -114,14 +113,14 @@ export async function deployFolder(opts: {
     };
   }
 
-  // 6. finalize — server re-verifies every blob + the digest, creates the version.
+  // 6. finalize, server re-verifies every blob + the digest, creates the version.
   onProgress?.({ phase: "finalizing" });
   const fin = await finalizeDeploymentAction({ siteId, manifest, digest });
   if (!fin.ok) return { ok: false, message: fin.message, quota: fin.quota };
 
   const versionId = fin.version.version_id ?? "";
 
-  // 7. publish — drop → live.
+  // 7. publish, drop → live.
   onProgress?.({ phase: "publishing" });
   const pub = await publishVersionAction({ siteId, versionId });
   if (!pub.ok) return { ok: false, message: pub.message };

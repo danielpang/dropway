@@ -7,7 +7,7 @@ export type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement>;
 
 /**
  * Token-driven native <select>. Dependency-free (no @radix-ui/react-select in
- * the dashboard's set) but styled to match Input — a custom chevron, a visible
+ * the dashboard's set) but styled to match Input, a custom chevron, a visible
  * focus ring in both themes, and the same height/radius. Native semantics keep
  * it fully keyboard- and screen-reader-accessible.
  */

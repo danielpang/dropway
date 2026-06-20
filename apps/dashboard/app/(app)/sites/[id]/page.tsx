@@ -46,7 +46,7 @@ export default async function SiteDetailPage({
 }) {
   const { id } = await params;
 
-  // Fire all three reads concurrently — they don't depend on one another, so
+  // Fire all three reads concurrently, they don't depend on one another, so
   // awaiting them in series needlessly tripled this page's time-to-render (each
   // call is its own API round-trip preceded by a JWT mint). getSite still gates
   // rendering (its 404 → not-found), but me()/listVersions() are kicked off in
@@ -171,7 +171,7 @@ export default async function SiteDetailPage({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          <Detail label="Version id" value={site.current_version_id ?? "—"} mono />
+          <Detail label="Version id" value={site.current_version_id ?? "None"} mono />
           <Detail label="Site id" value={site.id ?? id} mono />
           {/* Logical storage = this site's current-version size (not deduplicated
               across sites). 0 before the first deploy. */}
@@ -181,7 +181,7 @@ export default async function SiteDetailPage({
             value={
               site.created_at
                 ? new Date(site.created_at).toLocaleString()
-                : "—"
+                : "Unknown"
             }
           />
         </CardContent>

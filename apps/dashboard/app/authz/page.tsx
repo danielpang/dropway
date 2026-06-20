@@ -29,15 +29,15 @@ export const dynamic = "force-dynamic";
  * 302s an unauthenticated request here as
  * `/authz?host=<content_host>&next=<path>`. This server route:
  *
- *  1. Requires a Better Auth session — else bounces to sign-in and returns here.
+ *  1. Requires a Better Auth session, else bounces to sign-in and returns here.
  *  2. Validates `host` (must be a real content host) + `next` (a same-site path)
  *     to close the open-redirect / token-exfiltration hole.
  *  3. Attempts to MINT a host-scoped edge token for the viewer (org_only /
- *     allowlist). The Go API re-checks the LIVE tables — claims are only a hint.
+ *     allowlist). The Go API re-checks the LIVE tables, claims are only a hint.
  *      - success → 302 to `https://<host>/__authz/callback?token=&next=`, where
  *        the Worker sets the `__Host-edge` cookie and forwards to `next`.
  *      - 400 → the site is PASSWORD mode → render the platform password form
- *        (this origin, NOT tenant content — anti-phishing).
+ *        (this origin, NOT tenant content, anti-phishing).
  *      - 403 → a clear "you don't have access" page.
  *      - 404 → an "unknown link" page (also covers a forged custom host).
  *
@@ -86,7 +86,7 @@ export default async function AuthzPage({
       redirect(callbackUrl(host, token, next));
     }
   } catch (err) {
-    // `redirect()` throws a control-flow signal — re-throw so Next handles it.
+    // `redirect()` throws a control-flow signal, re-throw so Next handles it.
     if (!(err instanceof ApiError)) throw err;
 
     if (err.status === 400) {
@@ -119,7 +119,7 @@ export default async function AuthzPage({
       );
     }
 
-    // 401 here means the session token didn't satisfy the API — re-auth.
+    // 401 here means the session token didn't satisfy the API, re-auth.
     if (err.status === 401) {
       const returnTo = `/authz?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
       redirect(`/sign-in?callbackURL=${encodeURIComponent(returnTo)}`);
@@ -128,7 +128,7 @@ export default async function AuthzPage({
     throw err;
   }
 
-  // Mint returned no token but didn't error — treat as a transient failure.
+  // Mint returned no token but didn't error, treat as a transient failure.
   return (
     <Outcome
       icon={ShieldX}
