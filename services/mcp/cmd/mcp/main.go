@@ -120,7 +120,19 @@ func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, pu
 	resourceMetaURL := publicURL + "/.well-known/oauth-protected-resource"
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		// Verify the DB is actually reachable, not just that the process is up. A
+		// wrong/unreachable DATABASE_URL would otherwise pass health (the process
+		// runs fine) while every DB-backed request 403s — exactly how a misconfigured
+		// DSN hid in production. Failing health here makes a bad DSN fail the deploy
+		// loudly instead. Short timeout so a slow DB can't wedge the check.
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := st.Ping(ctx); err != nil {
+			slog.Warn("healthz: database ping failed", "err", err.Error())
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/.well-known/oauth-protected-resource",
