@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /*
- * Semantic theme tokens as CSS variables — one set, both themes (Vercel/Cursor
+ * Semantic theme tokens as CSS variables, one set, both themes (Vercel/Cursor
  * aesthetic: near-monochrome neutrals + a single near-black/near-white accent).
  * tailwind.config.ts maps these to color utilities. WCAG-AA contrast holds in
  * both :root (light) and .dark. Values are HSL channels (consumed via
@@ -83,7 +83,7 @@
   /*
    * Mobile guarantee: never scroll the page horizontally. `clip` (not `hidden`)
    * stops a stray wide child from forcing a horizontal scrollbar WITHOUT making
-   * the element a scroll container — so the sticky app header keeps sticking and
+   * the element a scroll container, so the sticky app header keeps sticking and
    * vertical scrolling is unaffected. Set on BOTH html and body: the viewport
    * takes its overflow from one or the other depending on propagation rules, so
    * clamping both is the reliable backstop. Real layout fixes (responsive grids,
@@ -124,7 +124,7 @@
   }
 }
 
-/* Respect users who prefer reduced motion — disable transitions/animations. */
+/* Respect users who prefer reduced motion, disable transitions/animations. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

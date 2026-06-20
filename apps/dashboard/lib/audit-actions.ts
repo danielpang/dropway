@@ -19,7 +19,7 @@ const SECURITY_ACTION_PATTERNS: RegExp[] = [
   /external[_.]sharing/i,
   // Matches the canonical Go actions site.access_change AND site.access_mode*
   // (the `_change` suffix has no word boundary after "access", so a plain
-  // /\.access\b/ silently missed site.access_change — audit MEDIUM).
+  // /\.access\b/ silently missed site.access_change, audit MEDIUM).
   /access[_.](mode|change)/i,
   /\.access[_.]/i,
   /allowlist/i,

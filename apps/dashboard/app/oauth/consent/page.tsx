@@ -7,12 +7,12 @@ import { oauthConsentClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 
 /**
- * OAuth consent screen — the "Authorize MCP access" step of the MCP browser flow.
+ * OAuth consent screen, the "Authorize MCP access" step of the MCP browser flow.
  * The OAuth provider (lib/auth.ts oauthProvider) redirects an authenticated user
  * here with the pending authorization in the session; the user approves or denies.
  *
  * On approval we show a branded "Authorization successful" confirmation (this is the
- * ONE page Dropway serves in the OAuth flow — the terminal "close this window" page
+ * ONE page Dropway serves in the OAuth flow, the terminal "close this window" page
  * belongs to the client, e.g. mcp-remote or Claude), then follow the redirect the
  * provider hands back (auth code → the AI client). The brief confirmation gives the
  * user an on-theme success moment before control returns to their tool.
@@ -25,7 +25,7 @@ export default function OAuthConsentPage() {
   const [pending, setPending] = React.useState<null | "accept" | "deny">(null);
   const [error, setError] = React.useState<string | null>(null);
   const [scopes, setScopes] = React.useState<string[]>([]);
-  // Which client is asking — drives the copy so a CLI login doesn't read "MCP".
+  // Which client is asking, drives the copy so a CLI login doesn't read "MCP".
   // Determined from the authorize request the provider forwards here: MCP requests
   // scope=mcp (resource = the MCP server URL); the CLI requests scope=offline_access
   // (resource = the API URL). Falls back to a generic label if neither matches.
@@ -74,7 +74,7 @@ export default function OAuthConsentPage() {
       }
       // The provider returns the redirect under `redirect_uri` on ACCEPT (the auth-code
       // redirect back to the client) and `url` on DENY (the access_denied error redirect).
-      // (Older versions used `url` for both — reading only that silently dropped the accept
+      // (Older versions used `url` for both, reading only that silently dropped the accept
       // redirect to /dashboard, so the client never got its code: MCP/CLI auth "failed".)
       const data = res?.data as
         | { redirect_uri?: string; url?: string }
@@ -84,7 +84,7 @@ export default function OAuthConsentPage() {
         // Show the branded success screen; the effect above performs the redirect.
         setDoneURL(url);
       } else {
-        // Deny: no success screen — follow the provider's error redirect immediately.
+        // Deny: no success screen, follow the provider's error redirect immediately.
         window.location.href = url;
       }
     } catch {
@@ -179,7 +179,7 @@ export default function OAuthConsentPage() {
 }
 
 /**
- * The on-theme "Authorization successful" confirmation — the Dropway-branded
+ * The on-theme "Authorization successful" confirmation, the Dropway-branded
  * counterpart to the AI client's own "you may close this window" page. Reuses the
  * same card/token styling as the consent screen so the success moment matches the
  * rest of the app.

@@ -35,7 +35,7 @@ function tierLabel(tier: string | undefined): string {
  *
  *  - next_tier is a self-serve tier (business / enterprise) → "Upgrade to X"
  *    POSTs /v1/billing/checkout {target_tier} and redirects to the Stripe-hosted
- *    checkout_url. (The success redirect grants NOTHING — only the signed
+ *    checkout_url. (The success redirect grants NOTHING, only the signed
  *    webhook flips plan_tier; the billing page polls for that.)
  *  - next_tier === 'contact_sales' (above Enterprise) → no checkout; show a
  *    Contact Sales CTA linking to the API-provided sales_url.
@@ -101,8 +101,8 @@ export function UpgradeModal({
 
       <DialogBody>
         <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border text-sm">
-          <Stat label="In use" value={String(quota.current ?? "—")} />
-          <Stat label="Included" value={String(quota.max ?? "—")} />
+          <Stat label="In use" value={String(quota.current ?? "None")} />
+          <Stat label="Included" value={String(quota.max ?? "None")} />
         </dl>
 
         {isContactSales ? (
@@ -160,7 +160,7 @@ export function UpgradeModal({
             {`Upgrade to ${tierLabel(checkoutTier)}`}
           </Button>
         ) : (
-          // No machine next_tier (shouldn't normally happen) — degrade to a
+          // No machine next_tier (shouldn't normally happen), degrade to a
           // link to the billing page so the user can still self-serve.
           <Button asChild>
             <a href="/billing">View plans</a>

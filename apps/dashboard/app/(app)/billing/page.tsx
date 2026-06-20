@@ -53,7 +53,7 @@ function statusBadge(plan: BillingPlan) {
  *    Sales above Enterprise.
  *
  * After returning from Stripe's success_url (`?checkout=success`) we DON'T trust
- * the redirect for entitlement — we show a "finalizing…" state that POLLS the
+ * the redirect for entitlement, we show a "finalizing…" state that POLLS the
  * plan until the signed webhook flips plan_tier. The Go API re-checks
  * owner/admin on every write; the role gate here is UX only.
  *
@@ -72,7 +72,7 @@ export default async function BillingPage({
   const manage = org ? canManage(org.myRole) : false;
 
   // Read the authoritative plan. A 404 means the cloud build isn't present
-  // (self-host) — billing simply doesn't apply.
+  // (self-host), billing simply doesn't apply.
   let plan: BillingPlan | null = null;
   try {
     plan = await api.getBilling();
@@ -134,7 +134,7 @@ export default async function BillingPage({
       {isCheckoutReturn && <FinalizingState previousTier={currentTier} />}
       {isCheckoutCancel && (
         <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          Checkout canceled — no changes were made to your plan.
+          Checkout canceled. No changes were made to your plan.
         </div>
       )}
 
@@ -164,7 +164,7 @@ export default async function BillingPage({
               </p>
             </div>
             {/* Seat-free pricing: team members are unlimited on
-                every plan, so we don't surface a seat count — billing is a flat fee
+                every plan, so we don't surface a seat count, billing is a flat fee
                 per workspace and the upgrade lever is the per-org site count. */}
           </div>
 
@@ -194,7 +194,7 @@ export default async function BillingPage({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold tracking-tight">Plans &amp; limits</h2>
           <p className="text-sm text-muted-foreground">
-            Upgrading raises your limits automatically — caps are enforced live
+            Upgrading raises your limits automatically. Caps are enforced live
             against your current plan.
           </p>
         </div>

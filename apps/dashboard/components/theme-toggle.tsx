@@ -9,7 +9,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 
 /**
  * Small theme toggle. Cycles system -> light -> dark (default is "system", which
- * follows the device's prefers-color-scheme — set in layout.tsx). Renders a stable
+ * follows the device's prefers-color-scheme, set in layout.tsx). Renders a stable
  * placeholder until mounted to avoid a hydration mismatch (theme is unknown on the
  * server). The icon reflects the explicit choice; the tooltip names the current
  * mode and the cycle order so the three states (incl. the System "monitor" icon)
@@ -39,7 +39,7 @@ export function ThemeToggle() {
         : "Dark";
   // Until mounted the theme is unknown; show a neutral hint.
   const label = mounted
-    ? `Theme: ${currentLabel} — click to switch (System → Light → Dark)`
+    ? `Theme: ${currentLabel}. Click to switch (System → Light → Dark)`
     : "Switch theme (System → Light → Dark)";
 
   return (

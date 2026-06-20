@@ -22,8 +22,8 @@ export function AuditTable({ events }: { events: AuditEvent[] }) {
   if (events.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-        No audit events yet. Security-relevant actions — sharing changes, member
-        removals, access revocations — will appear here as they happen.
+        No audit events yet. Security-relevant actions like sharing changes,
+        member removals, and access revocations will appear here as they happen.
       </div>
     );
   }
@@ -124,17 +124,17 @@ function AuditRow({ event }: { event: AuditEvent }) {
       </td>
       <td className="px-3 py-2.5">
         <span className="block max-w-[16rem] truncate text-foreground" title={event.target ?? undefined}>
-          {event.target ?? <span className="text-muted-foreground">—</span>}
+          {event.target ?? <span className="text-muted-foreground">None</span>}
         </span>
       </td>
       <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
-        {event.ip ?? "—"}
+        {event.ip ?? "None"}
       </td>
     </tr>
   );
 }
 
-/** Collapsible jsonb metadata — kept out of the way until an admin expands it. */
+/** Collapsible jsonb metadata, kept out of the way until an admin expands it. */
 function MetadataDetails({ metadata }: { metadata: Record<string, unknown> }) {
   return (
     <details className="mt-1 text-xs text-muted-foreground">
@@ -165,7 +165,7 @@ function Timestamp({ iso }: { iso: string | undefined }) {
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
 
-  if (!iso) return <span>—</span>;
+  if (!iso) return <span>Unknown</span>;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return <span title={iso}>{iso}</span>;
 

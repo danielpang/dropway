@@ -19,11 +19,11 @@ export type PasswordAuthzResult =
 /**
  * Verify a viewer-submitted password for a password-protected site and, on
  * success, return the content-host callback URL carrying the minted ANONYMOUS
- * edge token. JWT-FREE — the password is the only credential,
+ * edge token. JWT-FREE, the password is the only credential,
  * so this calls the public /v1/authz/password endpoint (no viewer identity
  * leaks into the anonymous grant).
  *
- * `host`/`next` are re-validated here (defense in depth — never trust the values
+ * `host`/`next` are re-validated here (defense in depth, never trust the values
  * the hidden form fields carried back) so the redirect target can't be tampered.
  */
 export async function submitPasswordAction(input: {
@@ -50,7 +50,7 @@ export async function submitPasswordAction(input: {
     return { ok: true, redirectTo: callbackUrl(host, token, next) };
   } catch (err) {
     if (err instanceof ApiError) {
-      // A generic message for 401 (wrong password / unknown host — no oracle)
+      // A generic message for 401 (wrong password / unknown host, no oracle)
       // and 403 (expired link); never reveal which.
       if (err.status === 401) {
         return { ok: false, message: "Incorrect password." };

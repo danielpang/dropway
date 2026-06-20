@@ -22,7 +22,7 @@ export type PublishActionResult =
 
 /**
  * Publish (or roll back to) a version via POST /v1/sites/{id}/publish. Rollback
- * is just publishing an older version_id — the Go API flips the live pointer and
+ * is just publishing an older version_id, the Go API flips the live pointer and
  * rewrites the edge routing projection. Re-renders the site page on success.
  */
 export async function publishVersionAction(input: {
@@ -90,7 +90,7 @@ export async function prepareDeploymentAction(input: {
   manifest: ManifestFile[];
 }): Promise<PrepareDeployActionResult> {
   if (!input.manifest.length) {
-    return { ok: false, message: "Nothing to deploy — the folder has no files." };
+    return { ok: false, message: "Nothing to deploy. The folder has no files." };
   }
   try {
     const res = await api.prepareDeployment(input.siteId, {

@@ -31,7 +31,7 @@ type State =
 /**
  * A single forward-moving percentage across the whole deploy, so the bar never
  * stalls or jumps backwards between phases (hash → prepare → upload → finalize →
- * publish). Hashing owns 0–40%, uploading 45–85%, the tail the rest.
+ * publish). Hashing owns 0 to 40%, uploading 45 to 85%, the tail the rest.
  */
 function overallPercent(p: DeployProgress): number {
   switch (p.phase) {
@@ -101,7 +101,7 @@ export function DeployDropzone({
         setState({
           status: "error",
           message:
-            "No files found — drop a folder of static files (with an index.html at its root).",
+            "No files found. Drop a folder of static files (with an index.html at its root).",
         });
         return;
       }
@@ -257,7 +257,7 @@ export function DeployDropzone({
                 Drag &amp; drop your website folder here
               </p>
               <p className="text-xs text-muted-foreground">
-                Static files only — make sure there&rsquo;s an{" "}
+                Static files only. Make sure there&rsquo;s an{" "}
                 <code className="font-mono">index.html</code> at the folder root.
                 {isLive ? " This replaces the live version instantly." : ""}
               </p>

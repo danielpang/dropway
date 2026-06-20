@@ -3,7 +3,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Minimal determinate progress bar. `value` is 0–100; out-of-range is clamped.
+ * Minimal determinate progress bar. `value` is 0 to 100; out-of-range is clamped.
  * Token-driven (bg-secondary track, bg-primary fill) so it matches both themes.
  */
 export function Progress({

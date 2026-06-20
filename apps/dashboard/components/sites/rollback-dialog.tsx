@@ -22,7 +22,7 @@ import { cn, formatBytes } from "@/lib/utils";
  * Rollback (re-publish) affordance on the site detail page. Instead of asking for a
  * version id, it shows the site's deploy history (fetched server-side and passed in)
  * and lets the user pick a version to make live. Publishing an older version IS the
- * rollback in Phase 1 — the API flips the live pointer and the URL updates instantly.
+ * rollback in Phase 1, the API flips the live pointer and the URL updates instantly.
  */
 export function RollbackDialog({
   siteId,
@@ -83,7 +83,7 @@ export function RollbackDialog({
           <DialogTitle>Version history</DialogTitle>
           <DialogDescription>
             Pick a version to make live. Rolling back is just publishing an
-            earlier version — the live URL flips instantly.
+            earlier version. The live URL flips instantly.
           </DialogDescription>
         </DialogHeader>
 
@@ -136,7 +136,7 @@ export function RollbackDialog({
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">
                           {v.created_at
                             ? new Date(v.created_at).toLocaleString()
-                            : "—"}
+                            : "Unknown"}
                           {typeof v.size_bytes === "number" &&
                             ` · ${formatBytes(v.size_bytes)}`}
                         </p>

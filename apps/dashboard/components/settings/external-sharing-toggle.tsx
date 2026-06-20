@@ -18,8 +18,8 @@ import { Switch } from "@/components/ui/switch";
 
 /**
  * The org `allow_external_sharing` toggle. Enabling widens what's permitted and
- * applies immediately. Disabling is destructive to existing shares — it
- * downgrades public sites to org-only and revokes external grants — so it goes
+ * applies immediately. Disabling is destructive to existing shares, it
+ * downgrades public sites to org-only and revokes external grants, so it goes
  * through a confirmation dialog first, then reports how many sites were
  * downgraded (the count the Go API returns from the reconcile).
  *
@@ -141,7 +141,7 @@ export function ExternalSharingToggle({
             This downgrades every public site in your organization to org-only
             and revokes any external (non-org) allowlist grants. Already-shared
             external links will stop working. This can&rsquo;t be undone
-            automatically — you&rsquo;d re-share each site.
+            automatically. You&rsquo;d re-share each site.
           </DialogDescription>
         </DialogHeader>
         <DialogBody />

@@ -31,7 +31,7 @@ export async function generateMetadata({
 /**
  * Site access settings. Owner/admin set the access mode
  * (public / unlisted / password / allowlist / org-only), an optional link
- * expiry, and — for allowlist — manage the per-site email list. Every write goes
+ * expiry, and, for allowlist, manage the per-site email list. Every write goes
  * to the Go API, which re-checks role and the org's external-sharing policy; a
  * member who lands here sees a read-only view with the live access state.
  */
@@ -54,7 +54,7 @@ export default async function SiteAccessSettingsPage({
   const manage = org ? canManage(org.myRole) : false;
   const mode = site.access_mode ?? "public";
 
-  // Only fetch the allowlist when it's relevant (allowlist mode) — and tolerate
+  // Only fetch the allowlist when it's relevant (allowlist mode), and tolerate
   // a non-admin 403 by degrading to an empty list.
   let allowlist: AllowlistEntry[] = [];
   if (mode === "allowlist") {

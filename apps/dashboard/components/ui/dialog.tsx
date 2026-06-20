@@ -22,7 +22,7 @@ interface DialogProps {
   children: React.ReactNode;
   /** Optional aria-label when there is no visible DialogTitle. */
   label?: string;
-  /** Extra classes for the panel — e.g. a wider `max-w-*` override (default max-w-md). */
+  /** Extra classes for the panel, e.g. a wider `max-w-*` override (default max-w-md). */
   className?: string;
 }
 
@@ -43,7 +43,7 @@ export function Dialog({
   // Keep the latest onOpenChange in a ref so the focus-management effect below can
   // depend ONLY on `open`. Parents routinely pass an inline onOpenChange (a fresh
   // function identity every render); if it were in that effect's deps, every parent
-  // re-render — e.g. each keystroke in a field INSIDE the dialog — would tear down
+  // re-render, e.g. each keystroke in a field INSIDE the dialog, would tear down
   // and re-run the effect, which restores focus to the trigger and then moves it to
   // the panel's first focusable, yanking focus out of the input on every character.
   // Reading onOpenChange through a ref decouples the effect from its identity.
@@ -55,7 +55,7 @@ export function Dialog({
   React.useEffect(() => setMounted(true), []);
 
   // Escape to close + body scroll lock + focus management. Depends ONLY on `open`,
-  // so it runs when the dialog opens/closes — never on an unrelated re-render — and
+  // so it runs when the dialog opens/closes, never on an unrelated re-render, and
   // therefore never steals focus from a field the user is typing into.
   React.useEffect(() => {
     if (!open) return;

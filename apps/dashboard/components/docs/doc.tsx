@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 /**
  * Shared primitives for the in-app reference pages (/mcp, /cli). Ported from the
  * dropway-www docs components so the content reads identically, minus the
- * marketing-only scroll-reveal animation — these render inside the authenticated
+ * marketing-only scroll-reveal animation, these render inside the authenticated
  * app shell, which already supplies the header and chrome.
  */
 

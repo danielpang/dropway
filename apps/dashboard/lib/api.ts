@@ -48,7 +48,7 @@ export type EdgeToken = components["schemas"]["EdgeToken"];
 //
 // TODO(phase4): once /v1/audit and /v1/orgs/revoke-access land in openapi.yaml,
 // run `pnpm gen:api` and replace these with
-//   components["schemas"]["AuditEvent"] etc. — the runtime methods below already
+//   components["schemas"]["AuditEvent"] etc., the runtime methods below already
 // degrade gracefully (404 → "not supported on this build") so no UI changes are
 // needed when that happens.
 
@@ -126,7 +126,7 @@ export type AllowExternalResult =
 
 /**
  * The 402 body the API returns when a hard cap is hit. This
- * mirrors Go's `quota.ExceededError` (internal/quota/quota.go) exactly — `limit`
+ * mirrors Go's `quota.ExceededError` (internal/quota/quota.go) exactly, `limit`
  * is the resource STRING and there is no top-level `error` discriminator; the
  * 402 status is itself the signal. Sourced from the generated schema so it stays
  * in lockstep with the spec.
@@ -137,7 +137,7 @@ export type QuotaResource = NonNullable<QuotaExceeded["limit"]>;
 // ---- Billing shapes (CLOUD-ONLY surface) --------------------------
 //
 // These mirror the [CLOUD-ONLY] /v1/billing/* endpoints. On the OSS/self-host
-// build those routes don't exist (the API returns 404) — the dashboard treats a
+// build those routes don't exist (the API returns 404), the dashboard treats a
 // 404 here as "no billing / unlimited" and simply hides the upgrade affordances.
 
 /** The org's authoritative plan (GET /v1/billing). plan_tier comes from app.org_meta. */
@@ -233,7 +233,7 @@ async function apiFetch<T>(
 }
 
 /**
- * Like apiFetch but JWT-FREE — for the password-mode authz exchange, whose Go
+ * Like apiFetch but JWT-FREE, for the password-mode authz exchange, whose Go
  * endpoint is `security: []` (the password is the only credential and the minted
  * token's sub is anonymous). Deliberately omits the Authorization header so the
  * viewer's dashboard identity never leaks into an anonymous content grant.
@@ -315,7 +315,7 @@ export const api = {
   /**
    * Prepare a deployment: send the file manifest (path/sha256/size/content_type),
    * get back the blobs the org doesn't already have plus a presigned PUT URL for
-   * each. The browser uploads those blobs DIRECTLY to object storage — the bytes
+   * each. The browser uploads those blobs DIRECTLY to object storage, the bytes
    * never pass through this API (only the manifest of hashes does).
    */
   prepareDeployment(
@@ -475,7 +475,7 @@ export const api = {
   },
 
   /**
-   * Mint an anonymous edge token for a password-protected site. JWT-FREE — the
+   * Mint an anonymous edge token for a password-protected site. JWT-FREE, the
    * password is the only credential. 401 → wrong password / unknown host.
    */
   authzPassword(input: { host: string; password: string }): Promise<EdgeToken> {
@@ -490,7 +490,7 @@ export const api = {
   /**
    * Read the org's current plan (any authenticated member). plan_tier is read
    * from app.org_meta (authoritative) and is mirrored from the signed Stripe
-   * webhook — NOT from any browser redirect. Drives the plan banner + CTAs.
+   * webhook, NOT from any browser redirect. Drives the plan banner + CTAs.
    * On the OSS build this 404s; callers treat that as "no billing".
    */
   getBilling(): Promise<BillingPlan> {
@@ -500,7 +500,7 @@ export const api = {
   /**
    * Start a Stripe Checkout session for {target_tier} (owner/admin → 403
    * otherwise). Returns the Stripe-hosted checkout_url to redirect the user to.
-   * The success redirect grants NOTHING — only the webhook flips plan_tier.
+   * The success redirect grants NOTHING, only the webhook flips plan_tier.
    */
   createCheckout(input: {
     target_tier: CheckoutTier;
@@ -526,7 +526,7 @@ export const api = {
   // These hit endpoints that may not exist yet on every build (see the type
   // note above). A 404 is mapped to ApiError(status=404) and the server loaders
   // (lib/audit.ts) treat that as "feature not available", degrading the UI
-  // instead of crashing — exactly like the billing 404 → "no billing" path.
+  // instead of crashing, exactly like the billing 404 → "no billing" path.
 
   /**
    * List the caller org's recent audit events (owner/admin only → 403). The Go
@@ -573,7 +573,7 @@ export const api = {
 
   /**
    * Members-cap preflight (H8): the invite flow calls this BEFORE inviting. The Go
-   * API answers per its (OSS-unlimited or cloud-per-tier) policy — resolving with
+   * API answers per its (OSS-unlimited or cloud-per-tier) policy, resolving with
    * `{allowed:true}` when the org has room, or throwing an ApiError with status 402
    * (the quota-exceeded upgrade body) when it is at/over its member cap. Keeping the
    * cap decision in the Go API preserves the open-core boundary (the cloud caps

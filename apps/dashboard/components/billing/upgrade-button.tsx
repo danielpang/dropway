@@ -10,7 +10,7 @@ import { TIER_LABEL } from "@/lib/billing";
 
 /**
  * Billing-page upgrade button: starts Checkout for a self-serve tier and
- * redirects to the Stripe-hosted URL. Same path as the 402 modal's CTA — the
+ * redirects to the Stripe-hosted URL. Same path as the 402 modal's CTA, the
  * success redirect grants nothing; the webhook flips plan_tier and the page's
  * poller (FinalizingState) picks it up.
  */

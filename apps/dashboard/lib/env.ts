@@ -14,7 +14,7 @@ function requireServer(): void {
 /**
  * Postgres connection string Better Auth uses for its identity tables. Better Auth
  * OWNS + migrates the `identity` schema, so it connects with a PRIVILEGED role (DDL +
- * DML on the identity schema) — distinct from the Go API's restricted, non-BYPASSRLS
+ * DML on the identity schema), distinct from the Go API's restricted, non-BYPASSRLS
  * `dropway_app` DATABASE_URL, which only needs SELECT on auth.* for authz reads.
  *
  * Prefers BETTER_AUTH_DATABASE_URL; falls back to DATABASE_URL for a single-role
@@ -60,7 +60,7 @@ export function landingUrl(): string | undefined {
 /**
  * The `iss` / `aud` Better Auth stamps on the JWTs the Go API verifies. The API
  * PINS both (internal/auth/jwks.go: WithIssuer/WithAudience), and Better Auth
- * otherwise defaults BOTH to its baseURL — so the API rejects the token (aud =
+ * otherwise defaults BOTH to its baseURL, so the API rejects the token (aud =
  * dashboard URL, not the API). Reading the SAME JWT_ISSUER / JWT_AUDIENCE env the
  * API verifies against makes the two agree by construction.
  */
@@ -89,7 +89,7 @@ export function requireEmailVerification(): boolean {
  * SMTP connection URL the dashboard sends transactional mail through
  * (verification, password reset, magic links). SMTP is a vendor-neutral seam:
  * point it at your own server, Gmail, SES, Mailgun, Postmark, Resend's SMTP, or
- * the bundled local Mailpit — no hard dependency on any one provider.
+ * the bundled local Mailpit, no hard dependency on any one provider.
  *
  * UNSET → email is a no-op (the message is logged, not sent). That keeps a
  * no-email self-host working: signups succeed and the link is recoverable from
@@ -119,7 +119,7 @@ export function googleClientSecret(): string {
 
 /**
  * Base URL of the Go API (api.dropway.dev) the dashboard calls for ALL business
- * data, carrying a short-lived Better Auth EdDSA JWT — it never opens a Postgres
+ * data, carrying a short-lived Better Auth EdDSA JWT, it never opens a Postgres
  * connection for business data.
  *
  * SERVER-side (RSC / server actions) prefers the runtime, non-public `API_URL` env:
@@ -146,7 +146,7 @@ export const MCP_URL: string =
   process.env.NEXT_PUBLIC_MCP_URL ?? "http://localhost:8092";
 
 /**
- * The MCP server's canonical resource identifier — the `aud` an OAuth access token
+ * The MCP server's canonical resource identifier, the `aud` an OAuth access token
  * for the MCP server must carry, and what the dashboard registers as a valid
  * audience so the @better-auth/oauth-provider plugin issues a JWT (not opaque) access
  * token for it. MUST equal both (a) the `resource` the MCP server advertises in its

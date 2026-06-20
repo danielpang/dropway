@@ -6,11 +6,11 @@ import { api, ApiError, type BillingPlan, type CheckoutTier } from "@/lib/api";
  * Billing server actions (CLOUD-ONLY surface). These call the
  * Go API's /v1/billing/* endpoints carrying the caller's EdDSA JWT; the API is
  * the authz boundary and independently re-checks owner/admin on every WRITE
- * (checkout/portal) — the dashboard's role gate is UX only, never trusted.
+ * (checkout/portal), the dashboard's role gate is UX only, never trusted.
  *
  * Server actions can't throw rich typed errors across the boundary, so each
  * returns a discriminated union the client maps to a redirect or an inline
- * message. CRITICAL: none of these grant entitlement — they only START a
+ * message. CRITICAL: none of these grant entitlement, they only START a
  * Stripe-hosted flow. plan_tier flips ONLY via the signed webhook.
  */
 
@@ -47,7 +47,7 @@ export type PortalActionResult =
 
 /**
  * Open the Stripe Billing Portal for the org's existing Customer. A 409 means
- * the org has never checked out (no Stripe customer yet) — the UI should route
+ * the org has never checked out (no Stripe customer yet), the UI should route
  * the user to Checkout instead of the portal.
  */
 export async function createPortalAction(): Promise<PortalActionResult> {
@@ -62,7 +62,7 @@ export async function createPortalAction(): Promise<PortalActionResult> {
       return {
         ok: false,
         kind: "no_customer",
-        message: "No subscription yet — start a plan first to manage billing.",
+        message: "No subscription yet. Start a plan first to manage billing.",
       };
     }
     return { ok: false, kind: "error", message: writeErrorMessage(err) };

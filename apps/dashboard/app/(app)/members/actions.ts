@@ -8,7 +8,7 @@ import { auth } from "@/lib/auth";
 /**
  * Result of a hard-revocation ("sign out / revoke access everywhere") write.
  * `unavailable` is the graceful path for builds where the Go API's Phase-4
- * /v1/orgs/revoke-access endpoint isn't present yet (404) — the UI shows an
+ * /v1/orgs/revoke-access endpoint isn't present yet (404), the UI shows an
  * "not available on this deployment" note instead of an error.
  */
 export type RevokeActionResult =
@@ -134,6 +134,6 @@ export async function finalizeMemberRemovalAction(input: {
     // membership re-check in force (gated access is revoked); it only leaves a ≤10m
     // dashboard-JWT window. Fall through to the authoritative denylist write.
   }
-  // 2. Edge denylist write — the authoritative, edge-enforced revocation.
+  // 2. Edge denylist write, the authoritative, edge-enforced revocation.
   return revokeAccessAction({ kind: "user", id: input.userId });
 }

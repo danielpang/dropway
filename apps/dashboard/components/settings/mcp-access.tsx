@@ -22,9 +22,9 @@ import { Switch } from "@/components/ui/switch";
  * The org "Allow MCP access" control plus the "Connect an AI tool" launcher.
  *
  * The toggle (owner/admin only) flips org_meta.mcp_enabled via PATCH /v1/orgs/mcp.
- * Disabling cuts off the Dropway MCP server for the whole org immediately — the
+ * Disabling cuts off the Dropway MCP server for the whole org immediately, the
  * resource server re-checks the flag per request, so already-connected tools stop
- * working at once — so it goes through a confirmation first.
+ * working at once, so it goes through a confirmation first.
  *
  * The "Connect" button is available to every member (anyone can wire up their own AI
  * tool); it opens the per-tool instructions. When MCP is disabled org-wide the
@@ -80,7 +80,7 @@ export function McpAccess({
 
   return (
     <div className="space-y-4">
-      {/* Connect launcher — available to everyone. */}
+      {/* Connect launcher, available to everyone. */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <p className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -107,7 +107,7 @@ export function McpAccess({
         </Button>
       </div>
 
-      {/* Org-wide toggle — owner/admin only. */}
+      {/* Org-wide toggle, owner/admin only. */}
       {canManage ? (
         <div className="flex items-start justify-between gap-4 border-t border-border pt-4">
           <div className="space-y-1">

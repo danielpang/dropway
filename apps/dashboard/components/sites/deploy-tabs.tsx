@@ -16,7 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * "More ways to deploy" — a tabbed panel offering the two non-dashboard deploy
+ * "More ways to deploy", a tabbed panel offering the two non-dashboard deploy
  * paths. Defaults to MCP (Deploy via an AI assistant) because most users are
  * non-technical and will ship from a chat tool before reaching for a terminal;
  * the CLI tab carries the slug-aware commands. Each tab links to its full
@@ -45,7 +45,7 @@ export function DeployTabs({
         <CardTitle className="text-base">More ways to deploy</CardTitle>
         <CardDescription>
           {tab === "mcp"
-            ? "Connect an AI assistant once, then just ask it to deploy — it calls deploy_site and hands back the live URL."
+            ? "Connect an AI assistant once, then just ask it to deploy, it calls deploy_site and hands back the live URL."
             : "Prefer the terminal? Push the same folder with one command. Each deploy prints a version id you can publish or roll back to."}
         </CardDescription>
         <div

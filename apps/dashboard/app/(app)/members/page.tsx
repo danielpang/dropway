@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
  * and pending invitations from Better Auth (which owns the membership tables),
  * with invite / role-change / remove controls gated to owner & admin. The Go API
  * independently re-checks role on every privileged write, so a non-admin who
- * forged a request is still rejected server-side — this UI gate is convenience,
+ * forged a request is still rejected server-side, this UI gate is convenience,
  * not the security boundary.
  */
 export default async function MembersPage() {
@@ -133,7 +133,7 @@ export default async function MembersPage() {
               Security
             </CardTitle>
             <CardDescription>
-              Revoke access in an emergency — for example after a removed member,
+              Revoke access in an emergency, for example after a removed member,
               a leaked link, or a suspected breach.
             </CardDescription>
           </CardHeader>

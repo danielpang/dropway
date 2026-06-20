@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 /**
  * "Manage billing" → opens the Stripe Billing Portal. POSTs /v1/billing/portal
  * and full-page-redirects to the portal_url. A 409 (no Stripe customer yet)
- * means the org has never paid — we surface the inline hint and leave them on
+ * means the org has never paid, we surface the inline hint and leave them on
  * the page to pick a plan instead.
  *
  * `hasSubscription` lets the caller render this only when a portal makes sense;

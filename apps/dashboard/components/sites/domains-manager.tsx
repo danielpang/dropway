@@ -325,7 +325,7 @@ function DomainCard({
 
       {active && (
         <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
-          Live — your site now serves from this domain.
+          Live. Your site now serves from this domain.
         </p>
       )}
       {pollError && (

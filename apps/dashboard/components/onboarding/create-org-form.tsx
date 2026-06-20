@@ -16,8 +16,7 @@ import { Label } from "@/components/ui/label";
 import { authClient, oauthConsentClient } from "@/lib/auth-client";
 
 /**
- * True when this onboarding render is part of an in-progress OAuth authorize flow —
- * i.e. the provider's postLogin hook redirected an org-less user here (carrying the
+ * True when this onboarding render is part of an in-progress OAuth authorize flow, * i.e. the provider's postLogin hook redirected an org-less user here (carrying the
  * signed authorize query). Detected by the signed-query markers the provider appends
  * (`client_id` + `sig`). When set, we resume the flow after org creation instead of
  * landing on the dashboard.

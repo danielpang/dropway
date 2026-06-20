@@ -13,7 +13,7 @@
  *    hostile shapes (ports, userinfo, paths, wildcards) so we never build a URL
  *    pointing somewhere we didn't intend.
  *  - `next` must be a SAME-SITE PATH (begins with a single "/", not "//" or
- *    "/\"), never an absolute URL — otherwise the post-auth redirect on the
+ *    "/\"), never an absolute URL, otherwise the post-auth redirect on the
  *    content host could be pointed off-site.
  */
 
@@ -31,7 +31,7 @@ const HOST_FORBIDDEN_RE = /[/\\:@?#*\s[\]]/;
  * Validate a content host. Returns the normalized (lowercased) host, or null if
  * it is not a syntactically valid hostname. A valid host is either under the
  * platform content suffix or any other registrable domain (a custom domain the
- * Go API may recognize) — but never a bare IP, a host with a port/userinfo/path,
+ * Go API may recognize), but never a bare IP, a host with a port/userinfo/path,
  * or a wildcard.
  */
 export function normalizeContentHost(raw: string | null | undefined): string | null {
@@ -84,7 +84,7 @@ export function safeNextPath(raw: string | null | undefined): string {
  * query params, expecting the login page to resume the flow after sign-in. (An
  * already-authenticated user skips this and goes straight to `/oauth/consent`.) This
  * detects that handoff and rebuilds the authorize URL so the auth screens can send the
- * user BACK to it — now authenticated → consent → the client's redirect_uri — instead
+ * user BACK to it, now authenticated → consent → the client's redirect_uri, instead
  * of dropping them on the dashboard (which strands the CLI/MCP loopback wait).
  *
  * Returns a same-origin authorize path, or undefined when this isn't an OAuth login.
@@ -114,7 +114,7 @@ export function oauthResumePath(
  * (aud == host), sets the `__Host-edge` cookie, and 302s to `next`.
  *
  * The scheme + optional port come from the PUBLIC content config (CONTENT_SCHEME /
- * CONTENT_PORT), NOT the host param — `host` is deliberately port-less (ports are
+ * CONTENT_PORT), NOT the host param, `host` is deliberately port-less (ports are
  * rejected as an open-redirect guard), so a non-default content port (e.g. a local
  * http self-host on :8090) must be supplied from trusted server config. Production
  * is https on the default port (both env vars unset → `https://<host>/…`); a local

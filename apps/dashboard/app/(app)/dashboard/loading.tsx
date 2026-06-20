@@ -3,8 +3,8 @@ import { Card } from "@/components/ui/card";
 
 /**
  * Instant loading UI for the sites list. Next.js renders this as the Suspense
- * fallback the moment /dashboard is requested — e.g. when the header logo is
- * clicked — so the page structure paints immediately while the (force-dynamic)
+ * fallback the moment /dashboard is requested, e.g. when the header logo is
+ * clicked, so the page structure paints immediately while the (force-dynamic)
  * server component fetches the sites list, billing state, and active org over the
  * API. The static heading is real; everything that needs a network round-trip
  * (the "New site" button, which depends on billing + org slug, and each site

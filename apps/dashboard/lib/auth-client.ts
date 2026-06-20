@@ -26,7 +26,7 @@ export const authClient = createAuthClient({
 
 /**
  * A dedicated client for the OAuth consent screen. `disableDefaultFetchPlugins`
- * drops Better Auth's `redirectPlugin` — the ONLY default fetch plugin — which would
+ * drops Better Auth's `redirectPlugin`, the ONLY default fetch plugin, which would
  * otherwise auto-navigate the browser the instant `oauth2.consent` resolves.
  * `oauth2.consent` returns the destination as `{ redirect_uri }` on accept (the
  * auth-code redirect back to the client) and `{ url }` on deny (the access_denied
