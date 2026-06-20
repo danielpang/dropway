@@ -241,6 +241,24 @@ export const auth = betterAuth({
     oauthProvider({
       loginPage: "/sign-in",
       consentPage: "/oauth/consent",
+      // After login, BEFORE consent, force a user with no organization through
+      // onboarding so the minted token always carries org_id. The dashboard's
+      // (app) layout has its own onboarding gate, but the OAuth authorize flow
+      // (CLI `dropway login` / MCP connect) BYPASSES that layout — so a first-time
+      // user, classically a Google-SSO signup, would otherwise reach consent with no
+      // org and get a token with org_id="" that the API/MCP reject ("token has no
+      // organization"). shouldRedirect → true sends them to /onboarding (carrying the
+      // signed OAuth query); after they create the org, the page calls /oauth2/continue
+      // (postLogin:true) to resume → consent → the client. consentReferenceId is unused
+      // (we don't tie consent to a scope reference id), so it returns undefined.
+      postLogin: {
+        page: "/onboarding",
+        consentReferenceId: async () => undefined,
+        shouldRedirect: async ({ user }) => {
+          const orgId = await firstOrgId(user.id);
+          return !orgId;
+        },
+      },
       // The scopes a client may request. We keep the OIDC defaults (so this stays a
       // valid OIDC provider — "openid" is required for that) and add a custom "mcp"
       // scope: the MCP server advertises scopes_supported:["mcp"] in its RFC 9728

@@ -13,7 +13,20 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { authClient } from "@/lib/auth-client";
+import { authClient, oauthConsentClient } from "@/lib/auth-client";
+
+/**
+ * True when this onboarding render is part of an in-progress OAuth authorize flow —
+ * i.e. the provider's postLogin hook redirected an org-less user here (carrying the
+ * signed authorize query). Detected by the signed-query markers the provider appends
+ * (`client_id` + `sig`). When set, we resume the flow after org creation instead of
+ * landing on the dashboard.
+ */
+function inOAuthFlow(): boolean {
+  if (typeof window === "undefined") return false;
+  const p = new URLSearchParams(window.location.search);
+  return p.has("client_id") && p.has("sig");
+}
 
 /** Turn a display name into a URL-safe org slug (lowercase, hyphenated). */
 function slugify(value: string): string {
@@ -73,6 +86,22 @@ export function CreateOrgForm({ suggestedName }: { suggestedName: string }) {
       // Make the new org the active tenant for subsequent requests.
       if (data?.id) {
         await authClient.organization.setActive({ organizationId: data.id });
+      }
+
+      // If we got here mid-OAuth (the provider's postLogin hook sent an org-less user
+      // through onboarding), resume the authorize flow now that an org exists, instead
+      // of dropping the user on the dashboard and stranding the MCP/CLI client. The
+      // oauthProviderClient fetch plugin auto-attaches the signed oauth_query from this
+      // page's URL; /oauth2/continue re-enters authorize (org now present) → consent.
+      if (inOAuthFlow()) {
+        const res = await oauthConsentClient.oauth2.continue({ postLogin: true });
+        const next = (res?.data as { redirect_uri?: string; url?: string } | undefined);
+        const url = next?.redirect_uri ?? next?.url;
+        if (url) {
+          window.location.href = url;
+          return;
+        }
+        // Fall through to the dashboard if the provider returned no redirect.
       }
       window.location.assign("/dashboard");
     } catch (err) {
