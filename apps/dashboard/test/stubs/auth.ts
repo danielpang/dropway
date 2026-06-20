@@ -10,5 +10,11 @@ export const auth = {
     async getToken(): Promise<{ token: string } | null> {
       return null;
     },
+    // lib/session.ts (pulled in transitively by lib/api.ts) calls this, but only
+    // inside an async helper — never at import time — so a null-returning stub is
+    // enough for the pure exports under test to load.
+    async getSession(): Promise<null> {
+      return null;
+    },
   },
 };
