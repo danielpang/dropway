@@ -122,6 +122,9 @@ func (h *Handlers) requireOwnerAdmin(w http.ResponseWriter, r *http.Request) (or
 type checkoutRequest struct {
 	TargetTier string `json:"target_tier"` // "pro" | "business" | "enterprise"
 	Seats      int64  `json:"seats,omitempty"`
+	// LocalCurrency opts into Adaptive Pricing (local-currency presentment). Default
+	// false → billed in USD, the customer's bank handles FX.
+	LocalCurrency bool `json:"local_currency,omitempty"`
 }
 
 // Checkout starts a Stripe Checkout Session for the org's target tier and returns
@@ -183,6 +186,7 @@ func (h *Handlers) Checkout(w http.ResponseWriter, r *http.Request) {
 		Metadata:          map[string]string{"org_id": orgID, "target_tier": string(target)},
 		SuccessURL:        h.dashboardURL + "/billing?status=processing",
 		CancelURL:         h.dashboardURL + "/billing?status=canceled",
+		LocalCurrency:     req.LocalCurrency,
 	})
 	if err != nil {
 		h.log.Error("create checkout session failed", "org_id", orgID, "err", err)

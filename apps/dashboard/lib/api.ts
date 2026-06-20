@@ -565,6 +565,7 @@ export const api = {
   createCheckout(input: {
     target_tier: CheckoutTier;
     seats?: number;
+    local_currency?: boolean;
   }): Promise<CheckoutResult> {
     return apiFetch<CheckoutResult>("/v1/billing/checkout", {
       method: "POST",

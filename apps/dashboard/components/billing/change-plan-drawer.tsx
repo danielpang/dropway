@@ -11,6 +11,7 @@ import { ManageBillingButton } from "@/components/billing/manage-billing-button"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetBody, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import type { CheckoutTier, PlanTier } from "@/lib/api";
 import {
   MATRIX_TIERS,
@@ -82,6 +83,8 @@ export function ChangePlanDrawer({
   triggerLabel?: string;
 }) {
   const [open, setOpen] = React.useState(false);
+  // Default USD (the customer's bank does FX); opt into local-currency presentment.
+  const [localCurrency, setLocalCurrency] = React.useState(false);
 
   return (
     <>
@@ -114,10 +117,37 @@ export function ChangePlanDrawer({
         </SheetHeader>
 
         <SheetBody>
+          {/* Currency choice: local-currency presentment (Adaptive Pricing) vs USD. */}
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+            <div className="space-y-0.5">
+              <p
+                id="local-currency-label"
+                className="text-sm font-medium text-foreground"
+              >
+                Pay in my local currency
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {localCurrency
+                  ? "Stripe converts from USD and charges your local currency."
+                  : "Billed in USD; your bank handles the conversion."}
+              </p>
+            </div>
+            <Switch
+              checked={localCurrency}
+              onCheckedChange={setLocalCurrency}
+              aria-labelledby="local-currency-label"
+            />
+          </div>
+
           {/* One column per plan, side by side (stacks on narrow viewports). */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {MATRIX_TIERS.map((tier) => (
-              <PlanCard key={tier} tier={tier} currentTier={currentTier} />
+              <PlanCard
+                key={tier}
+                tier={tier}
+                currentTier={currentTier}
+                localCurrency={localCurrency}
+              />
             ))}
           </div>
         </SheetBody>
@@ -129,9 +159,11 @@ export function ChangePlanDrawer({
 function PlanCard({
   tier,
   currentTier,
+  localCurrency,
 }: {
   tier: PlanTier;
   currentTier: PlanTier;
+  localCurrency: boolean;
 }) {
   const action = planAction(tier, currentTier);
   const isCurrent = action === "current";
@@ -163,7 +195,7 @@ function PlanCard({
       <p className="mt-1 text-sm text-muted-foreground">{POSITIONING[tier]}</p>
 
       <div className="mt-4">
-        <PlanCta tier={tier} action={action} />
+        <PlanCta tier={tier} action={action} localCurrency={localCurrency} />
       </div>
 
       <ul className="mt-5 space-y-2 text-sm">
@@ -181,9 +213,11 @@ function PlanCard({
 function PlanCta({
   tier,
   action,
+  localCurrency,
 }: {
   tier: PlanTier;
   action: ReturnType<typeof planAction>;
+  localCurrency: boolean;
 }) {
   switch (action) {
     case "current":
@@ -193,7 +227,13 @@ function PlanCta({
         </Button>
       );
     case "upgrade":
-      return <UpgradeButton targetTier={tier as CheckoutTier} block />;
+      return (
+        <UpgradeButton
+          targetTier={tier as CheckoutTier}
+          block
+          localCurrency={localCurrency}
+        />
+      );
     case "contact":
       return <ContactSalesButton salesUrl={SALES_URL} block />;
     case "downgrade":

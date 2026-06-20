@@ -40,8 +40,13 @@ import (
 // Free-tier cap mirrored from the cloud quota bands. A read-only
 // downgrade sets org_status='over_limit' when the org now exceeds it, so the
 // dashboard shows the banner and new actions are blocked — but NO data is deleted.
-// Seats are free, so only the per-ORG site count gates over-limit.
-const freeSitesPerOrgCap = 10
+// Seats are free, so only the per-ORG site count gates over-limit. The per-tier
+// caps mirror cloud/quota's bands so a DOWNGRADE that leaves the org over the new
+// tier's cap flags 'over_limit' (read-only). Business/Enterprise are uncapped.
+const (
+	freeSitesPerOrgCap = 10
+	proSitesPerOrgCap  = 100
+)
 
 // BillingStore is the pgx-backed persistence. Construct with NewStore.
 type BillingStore struct {
@@ -191,12 +196,14 @@ func (t *txSubsStore) UpsertSubscription(ctx context.Context, d EventData) error
 	if err := setOrgContext(ctx, t.tx, d.OrgID); err != nil {
 		return err
 	}
-	if err := upsertSubscriptionTx(ctx, t.tx, d); err != nil {
+	status, err := upsertSubscriptionTx(ctx, t.tx, d)
+	if err != nil {
 		return err
 	}
-	// A healthy active subscription resets org_status to 'active' (clears any edge
-	// block) — mirrors the 'active' the UPSERT writes.
-	t.orgID, t.orgStatus = d.OrgID, "active"
+	// org_status is computed from the NEW tier's cap: a paid→paid downgrade that
+	// leaves the org over the lower tier's site cap is 'over_limit' (read-only);
+	// otherwise 'active' (which clears any prior edge block). Project whichever.
+	t.orgID, t.orgStatus = d.OrgID, status
 	return nil
 }
 
@@ -232,13 +239,17 @@ func (s *BillingStore) UpsertSubscription(ctx context.Context, d EventData) erro
 	if d.OrgID == "" {
 		return errors.New("billing: UpsertSubscription with empty OrgID")
 	}
+	var status string
 	if err := s.inOrgTx(ctx, d.OrgID, func(tx pgx.Tx) error {
-		return upsertSubscriptionTx(ctx, tx, d)
+		st, err := upsertSubscriptionTx(ctx, tx, d)
+		status = st
+		return err
 	}); err != nil {
 		return err
 	}
-	// A healthy active subscription clears any edge block (best-effort, post-commit).
-	s.projectOrgStatus(ctx, d.OrgID, "active")
+	// Project the computed state (over_limit on a downgrade past the new cap, else
+	// active) so the edge blocks/clears accordingly (best-effort, post-commit).
+	s.projectOrgStatus(ctx, d.OrgID, status)
 	return nil
 }
 
@@ -252,7 +263,7 @@ func (s *BillingStore) UpsertSubscription(ctx context.Context, d EventData) erro
 // We detect that case up front and return errUnfulfillableEvent so the handler 400s
 // (a permanent acknowledgment) instead of looping. When a row already exists we
 // keep its customer id via COALESCE(NULLIF(...)) and proceed.
-func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
+func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (string, error) {
 	tier := d.PlanTier
 	if tier == "" {
 		tier = TierFree
@@ -270,18 +281,32 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 		case errors.Is(err, pgx.ErrNoRows), existing == "":
 			// No row (or somehow a blank one) to COALESCE from → unfulfillable. The
 			// handler maps this to a 400 so Stripe stops retrying (FIX 3).
-			return fmt.Errorf("%w: subscription event for org %s has no stripe_customer_id and no existing row",
+			return "", fmt.Errorf("%w: subscription event for org %s has no stripe_customer_id and no existing row",
 				errUnfulfillableEvent, d.OrgID)
 		case err != nil:
-			return fmt.Errorf("billing: probe existing customer for %s: %w", d.OrgID, err)
+			return "", fmt.Errorf("billing: probe existing customer for %s: %w", d.OrgID, err)
 		}
+	}
+
+	// Account state follows the NEW tier's cap. An upgrade (or any in-cap org)
+	// resolves to 'active'; a DOWNGRADE (e.g. Business→Pro) that leaves the org over
+	// the lower tier's site cap is 'over_limit' (read-only) — symmetric with the
+	// cancel-to-Free path, so existing sites past the cap go read-only too (the live
+	// quota check already blocks creating NEW ones).
+	over, err := orgExceedsCapsForTier(ctx, tx, d.OrgID, tier)
+	if err != nil {
+		return "", err
+	}
+	orgStatus := "active"
+	if over {
+		orgStatus = "over_limit"
 	}
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO billing.subscriptions
 		   (org_id, stripe_customer_id, stripe_subscription_id, plan_tier,
 		    seats, status, cancel_at_period_end, current_period_end, org_status)
-		 VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7, $8, 'active')
+		 VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (org_id) DO UPDATE SET
 		    stripe_customer_id     = COALESCE(NULLIF(EXCLUDED.stripe_customer_id, ''), billing.subscriptions.stripe_customer_id),
 		    stripe_subscription_id = COALESCE(EXCLUDED.stripe_subscription_id, billing.subscriptions.stripe_subscription_id),
@@ -294,12 +319,12 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 		    status                 = EXCLUDED.status,
 		    cancel_at_period_end   = EXCLUDED.cancel_at_period_end,
 		    current_period_end     = EXCLUDED.current_period_end,
-		    org_status             = 'active',
+		    org_status             = EXCLUDED.org_status,
 		    updated_at             = now()`,
 		d.OrgID, d.StripeCustomerID, d.StripeSubscriptionID, string(tier),
-		d.Seats, normalizeStatus(d.Status), d.CancelAtPeriodEnd, periodEnd(d.CurrentPeriodEnd),
+		d.Seats, normalizeStatus(d.Status), d.CancelAtPeriodEnd, periodEnd(d.CurrentPeriodEnd), orgStatus,
 	); err != nil {
-		return fmt.Errorf("billing: upsert subscription %s: %w", d.OrgID, err)
+		return "", fmt.Errorf("billing: upsert subscription %s: %w", d.OrgID, err)
 	}
 
 	// The only writer of plan_tier — RLS-scoped to d.OrgID by the GUC the caller set.
@@ -307,9 +332,9 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) error {
 		`UPDATE app.org_meta SET plan_tier = $1 WHERE id = $2`,
 		string(tier), d.OrgID,
 	); err != nil {
-		return fmt.Errorf("billing: update org_meta.plan_tier %s: %w", d.OrgID, err)
+		return "", fmt.Errorf("billing: update org_meta.plan_tier %s: %w", d.OrgID, err)
 	}
-	return nil
+	return orgStatus, nil
 }
 
 // SetCanceled handles customer.subscription.deleted: a READ-ONLY downgrade to
@@ -341,7 +366,7 @@ func (s *BillingStore) SetCanceled(ctx context.Context, orgID string) error {
 // the atomic ProcessEvent path (FIX 1). It returns the computed org_status
 // ('over_limit' or 'active') so the caller can project it to the edge.
 func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error) {
-	over, err := orgExceedsFreeCaps(ctx, tx, orgID)
+	over, err := orgExceedsCapsForTier(ctx, tx, orgID, TierFree)
 	if err != nil {
 		return "", err
 	}
@@ -495,18 +520,39 @@ func setOrgContext(ctx context.Context, tx pgx.Tx, orgID string) error {
 	return nil
 }
 
-// orgExceedsFreeCaps reports whether, after a downgrade to Free, the org would be
-// over the Free cap: the ORG owns > 10 sites (pooled across all members). Seats are
-// free, so members never push an org over-limit. The sites read is RLS-scoped (the
-// GUC is set on the tx), matching the per-org cap the quota provider enforces.
-func orgExceedsFreeCaps(ctx context.Context, tx pgx.Tx, orgID string) (bool, error) {
+// siteCapForTier returns the per-org site cap for a tier and whether the tier is
+// capped at all. Mirrors cloud/quota's bands (Free 10 / Pro 100; Business and
+// Enterprise unlimited); kept here so the billing store can compute over-limit
+// without importing the quota policy package.
+func siteCapForTier(tier PlanTier) (limit int64, capped bool) {
+	switch tier {
+	case TierFree:
+		return freeSitesPerOrgCap, true
+	case TierPro:
+		return proSitesPerOrgCap, true
+	default: // business, enterprise: unlimited
+		return 0, false
+	}
+}
+
+// orgExceedsCapsForTier reports whether the ORG currently owns more sites (pooled
+// across all members) than `tier`'s per-org cap — used to set org_status to
+// 'over_limit' (read-only) when a downgrade or a cancel leaves it over the new
+// tier's band. Uncapped tiers (Business/Enterprise) never exceed. Seats are free,
+// so members never push an org over-limit. The sites read is RLS-scoped (the GUC is
+// set on the tx), matching the per-org cap the quota provider enforces.
+func orgExceedsCapsForTier(ctx context.Context, tx pgx.Tx, orgID string, tier PlanTier) (bool, error) {
+	limit, capped := siteCapForTier(tier)
+	if !capped {
+		return false, nil
+	}
 	var sites int64
 	if err := tx.QueryRow(ctx,
 		`SELECT count(*) FROM app.sites WHERE org_id = $1`, orgID,
 	).Scan(&sites); err != nil {
 		return false, fmt.Errorf("billing: count sites for over-limit check: %w", err)
 	}
-	return sites > freeSitesPerOrgCap, nil
+	return sites > limit, nil
 }
 
 // isUndefinedTable reports a Postgres "relation does not exist" (SQLSTATE 42P01),

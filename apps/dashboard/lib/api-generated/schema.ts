@@ -1577,6 +1577,8 @@ export interface operations {
                      * @description Seats (defaults to 1).
                      */
                     seats?: number;
+                    /** @description Enable Adaptive Pricing (local-currency presentment; Stripe converts from USD). Default false = billed in USD, the customer's bank does the FX. */
+                    local_currency?: boolean;
                 };
             };
         };

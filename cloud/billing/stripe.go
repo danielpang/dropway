@@ -296,6 +296,11 @@ type CheckoutParams struct {
 	Metadata          map[string]string
 	SuccessURL        string
 	CancelURL         string
+	// LocalCurrency turns on Stripe Adaptive Pricing for the session: the customer
+	// is presented and charged in their local currency (Stripe converts from the
+	// USD price). When false the session stays USD and the customer's bank does the
+	// FX. Set explicitly so behavior doesn't depend on the account-level default.
+	LocalCurrency bool
 }
 
 // StripeClient is the narrow surface the Checkout/Portal handlers depend on, so
@@ -363,6 +368,12 @@ func (c *realStripeClient) CreateCheckoutSession(p CheckoutParams) (string, erro
 			Price:    stripe.String(p.PriceID),
 			Quantity: stripe.Int64(qty),
 		}},
+		// Adaptive Pricing: enabled → local-currency presentment (Stripe converts
+		// from USD); disabled → plain USD (bank does FX). Set explicitly either way
+		// so the customer's choice wins over the account-level default.
+		AdaptivePricing: &stripe.CheckoutSessionAdaptivePricingParams{
+			Enabled: stripe.Bool(p.LocalCurrency),
+		},
 	}
 	for k, val := range p.Metadata {
 		params.AddMetadata(k, val)

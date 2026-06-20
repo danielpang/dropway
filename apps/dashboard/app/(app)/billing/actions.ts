@@ -26,11 +26,14 @@ export type CheckoutActionResult =
 export async function createCheckoutAction(input: {
   targetTier: CheckoutTier;
   seats?: number;
+  /** Opt into Adaptive Pricing (local-currency presentment) vs USD. */
+  localCurrency?: boolean;
 }): Promise<CheckoutActionResult> {
   try {
     const { checkout_url } = await api.createCheckout({
       target_tier: input.targetTier,
       ...(input.seats ? { seats: input.seats } : {}),
+      ...(input.localCurrency ? { local_currency: true } : {}),
     });
     if (!checkout_url) {
       return { ok: false, message: "Stripe did not return a checkout URL. Try again." };

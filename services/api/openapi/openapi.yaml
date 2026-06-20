@@ -781,6 +781,7 @@ paths:
               properties:
                 target_tier: { type: string, enum: [pro, business, enterprise] }
                 seats: { type: integer, format: int64, minimum: 1, description: "Seats (defaults to 1)." }
+                local_currency: { type: boolean, description: "Enable Adaptive Pricing (local-currency presentment; Stripe converts from USD). Default false = billed in USD, the customer's bank does the FX." }
       responses:
         "200":
           description: A Stripe Checkout Session URL to redirect the user to.

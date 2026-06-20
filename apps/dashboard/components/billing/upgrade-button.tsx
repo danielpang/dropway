@@ -21,6 +21,7 @@ export function UpgradeButton({
   block,
   label,
   variant,
+  localCurrency,
 }: {
   targetTier: CheckoutTier;
   className?: string;
@@ -29,6 +30,8 @@ export function UpgradeButton({
   /** Override the default "Upgrade to {tier}" label. */
   label?: string;
   variant?: React.ComponentProps<typeof Button>["variant"];
+  /** Opt into Adaptive Pricing (local-currency presentment) for this checkout. */
+  localCurrency?: boolean;
 }) {
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -36,7 +39,7 @@ export function UpgradeButton({
   async function onClick() {
     setError(null);
     setPending(true);
-    const result = await createCheckoutAction({ targetTier });
+    const result = await createCheckoutAction({ targetTier, localCurrency });
     if (result.ok) {
       window.location.href = result.checkoutUrl;
       return;
