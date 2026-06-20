@@ -45,25 +45,35 @@ export default async function SiteDetailPage({
 }) {
   const { id } = await params;
 
+  // Fire all three reads concurrently — they don't depend on one another, so
+  // awaiting them in series needlessly tripled this page's time-to-render (each
+  // call is its own API round-trip preceded by a JWT mint). getSite still gates
+  // rendering (its 404 → not-found), but me()/listVersions() are kicked off in
+  // parallel and only awaited after, so they overlap instead of queueing.
+  const sitePromise = api.getSite(id);
+  // Custom domains are only offered when the server has a real provider configured
+  // (Cloudflare for SaaS). Hidden in self-host/dev where they can't be verified.
+  const customDomainsPromise = api
+    .me()
+    .then((me) => me.custom_domains_enabled ?? false)
+    .catch(() => false);
+  // Deploy history for the rollback picker (newest first). Best-effort: an empty
+  // list just renders the dialog's "no versions yet" state.
+  const versionsPromise = api.listVersions(id).catch(() => []);
+
   let site: Site;
   try {
-    site = await api.getSite(id);
+    site = await sitePromise;
   } catch (err) {
     // 404 (absent or invisible under the tenant) → Next.js not-found page.
     if (err instanceof ApiError && err.status === 404) notFound();
     throw err;
   }
 
-  // Custom domains are only offered when the server has a real provider configured
-  // (Cloudflare for SaaS). Hidden in self-host/dev where they can't be verified.
-  const customDomainsEnabled = await api
-    .me()
-    .then((me) => me.custom_domains_enabled ?? false)
-    .catch(() => false);
-
-  // Deploy history for the rollback picker (newest first). Best-effort: an empty
-  // list just renders the dialog's "no versions yet" state.
-  const versions = await api.listVersions(id).catch(() => []);
+  const [customDomainsEnabled, versions] = await Promise.all([
+    customDomainsPromise,
+    versionsPromise,
+  ]);
 
   const isLive = Boolean(site.current_version_id);
   const liveUrl = site.live_url ?? `https://${site.slug}.dropwaycontent.com`;
@@ -137,13 +147,13 @@ export default async function SiteDetailPage({
               href={liveUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
-              {liveUrl}
-              <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 break-all">{liveUrl}</span>
+              <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
             </a>
           ) : (
-            <div className="rounded-md border border-dashed border-border px-3 py-2 font-mono text-sm text-muted-foreground">
+            <div className="break-all rounded-md border border-dashed border-border px-3 py-2 font-mono text-sm text-muted-foreground">
               {liveUrl}
             </div>
           )}

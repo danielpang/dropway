@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 
 /** Signs out the current session and returns to the sign-in surface. */
-export function SignOutButton() {
+export function SignOutButton({ className }: { className?: string }) {
   const [pending, setPending] = React.useState(false);
 
   async function onClick() {
@@ -26,6 +26,7 @@ export function SignOutButton() {
       size="sm"
       onClick={onClick}
       disabled={pending}
+      className={className}
     >
       <LogOut aria-hidden />
       Sign out

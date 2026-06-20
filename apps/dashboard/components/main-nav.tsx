@@ -6,9 +6,10 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 /** Top-level app sections. `match` is the path prefix used for active state. */
-type NavLink = { href: string; label: string; match: string; admin?: boolean };
+export type NavLink = { href: string; label: string; match: string; admin?: boolean };
 
-const LINKS: NavLink[] = [
+/** Shared by the desktop nav and the mobile menu so they never drift. */
+export const NAV_LINKS: NavLink[] = [
   { href: "/dashboard", label: "Sites", match: "/dashboard" },
   { href: "/members", label: "Members", match: "/members" },
   // Audit is owner/admin only (the page also re-gates server-side).
@@ -16,6 +17,19 @@ const LINKS: NavLink[] = [
   { href: "/billing", label: "Billing", match: "/billing" },
   { href: "/settings", label: "Settings", match: "/settings" },
 ];
+
+/**
+ * Whether a nav link is the active section for the current path. Matches the
+ * exact path or any sub-route, and treats /sites/* as part of the Sites
+ * ("/dashboard") section so a site detail page keeps Sites lit.
+ */
+export function isNavActive(pathname: string, match: string): boolean {
+  return (
+    pathname === match ||
+    pathname.startsWith(`${match}/`) ||
+    (match === "/dashboard" && pathname.startsWith("/sites"))
+  );
+}
 
 /**
  * Primary navigation in the app shell. Highlights the active section by path
@@ -27,15 +41,12 @@ const LINKS: NavLink[] = [
  */
 export function MainNav({ admin = false }: { admin?: boolean }) {
   const pathname = usePathname();
-  const links = LINKS.filter((link) => !link.admin || admin);
+  const links = NAV_LINKS.filter((link) => !link.admin || admin);
 
   return (
     <nav className="flex items-center gap-1" aria-label="Primary">
       {links.map((link) => {
-        const active =
-          pathname === link.match || pathname.startsWith(`${link.match}/`) ||
-          // /sites/* belongs to the Sites section.
-          (link.match === "/dashboard" && pathname.startsWith("/sites"));
+        const active = isNavActive(pathname, link.match);
         return (
           <Link
             key={link.href}
