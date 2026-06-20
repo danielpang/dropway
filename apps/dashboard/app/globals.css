@@ -83,6 +83,15 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+    /*
+     * Mobile guarantee: never scroll the page horizontally. `clip` (not `hidden`)
+     * stops a stray wide child from forcing a horizontal scrollbar WITHOUT making
+     * the body a scroll container — so the sticky app header keeps sticking and
+     * vertical scrolling is unaffected. Real layout fixes (responsive grids,
+     * min-w-0 truncation, wrapping URLs) keep content on-screen; this is the
+     * backstop so nothing can ever reintroduce a sideways scroll.
+     */
+    overflow-x: clip;
   }
 }
 

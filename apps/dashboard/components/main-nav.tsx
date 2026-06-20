@@ -19,6 +19,16 @@ export const NAV_LINKS: NavLink[] = [
 ];
 
 /**
+ * Reference docs (the in-app MCP + CLI pages). Kept separate from NAV_LINKS so
+ * they render as their own group — after a divider on desktop, in their own
+ * section in the mobile menu — rather than mixing in with the org's app sections.
+ */
+export const DOCS_LINKS: NavLink[] = [
+  { href: "/mcp", label: "MCP", match: "/mcp" },
+  { href: "/cli", label: "CLI", match: "/cli" },
+];
+
+/**
  * Whether a nav link is the active section for the current path. Matches the
  * exact path or any sub-route, and treats /sites/* as part of the Sites
  * ("/dashboard") section so a site detail page keeps Sites lit.
@@ -43,27 +53,31 @@ export function MainNav({ admin = false }: { admin?: boolean }) {
   const pathname = usePathname();
   const links = NAV_LINKS.filter((link) => !link.admin || admin);
 
+  function renderLink(link: NavLink) {
+    const active = isNavActive(pathname, link.match);
+    return (
+      <Link
+        key={link.href}
+        href={link.href}
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          active
+            ? "bg-secondary text-secondary-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {link.label}
+      </Link>
+    );
+  }
+
   return (
     <nav className="flex items-center gap-1" aria-label="Primary">
-      {links.map((link) => {
-        const active = isNavActive(pathname, link.match);
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              active
-                ? "bg-secondary text-secondary-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {link.label}
-          </Link>
-        );
-      })}
+      {links.map(renderLink)}
+      <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+      {DOCS_LINKS.map(renderLink)}
     </nav>
   );
 }

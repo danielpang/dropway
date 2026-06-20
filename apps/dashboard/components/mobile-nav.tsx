@@ -7,7 +7,7 @@ import { Menu, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { SignOutButton } from "@/components/sign-out-button";
-import { NAV_LINKS, isNavActive } from "@/components/main-nav";
+import { DOCS_LINKS, NAV_LINKS, isNavActive, type NavLink } from "@/components/main-nav";
 import { cn } from "@/lib/utils";
 
 /**
@@ -53,6 +53,27 @@ export function MobileNav({ admin = false }: { admin?: boolean }) {
     };
   }, [open]);
 
+  function renderItem(link: NavLink) {
+    const active = isNavActive(pathname, link.match);
+    return (
+      <Link
+        key={link.href}
+        href={link.href}
+        role="menuitem"
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "rounded-md px-3 py-2 text-sm font-medium transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          active
+            ? "bg-secondary text-secondary-foreground"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        )}
+      >
+        {link.label}
+      </Link>
+    );
+  }
+
   return (
     <div ref={containerRef} className="relative">
       <Button
@@ -74,26 +95,12 @@ export function MobileNav({ admin = false }: { admin?: boolean }) {
           className="absolute right-0 top-full z-50 mt-2 w-52 origin-top-right rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-lg animate-fade-in"
         >
           <nav className="flex flex-col">
-            {links.map((link) => {
-              const active = isNavActive(pathname, link.match);
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  role="menuitem"
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                    active
-                      ? "bg-secondary text-secondary-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
+            {links.map(renderItem)}
+          </nav>
+          <div className="my-1.5 h-px bg-border" aria-hidden />
+          {/* Reference docs (MCP + CLI), in their own group. */}
+          <nav className="flex flex-col" aria-label="Reference">
+            {DOCS_LINKS.map(renderItem)}
           </nav>
           <div className="my-1.5 h-px bg-border" aria-hidden />
           <SignOutButton className="w-full justify-start" />

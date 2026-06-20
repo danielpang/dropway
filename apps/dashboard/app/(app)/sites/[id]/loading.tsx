@@ -94,14 +94,15 @@ export default function SiteDetailLoading() {
         </CardContent>
       </Card>
 
-      {/* Or deploy via CLI */}
+      {/* More ways to deploy (MCP / CLI tabs) */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Or deploy via CLI</CardTitle>
+          <CardTitle className="text-base">More ways to deploy</CardTitle>
           <CardDescription>
-            Prefer the terminal? Push the same folder with one command. Each
-            deploy prints a version id you can publish or roll back to.
+            Connect an AI assistant once, then just ask it to deploy — it calls
+            deploy_site and hands back the live URL.
           </CardDescription>
+          <Skeleton className="mt-2 h-10 w-full rounded-lg" />
         </CardHeader>
         <CardContent>
           <Skeleton className="h-24 w-full" />
