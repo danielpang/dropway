@@ -7,6 +7,7 @@ import { createCheckoutAction } from "@/app/(app)/billing/actions";
 import { Button } from "@/components/ui/button";
 import type { CheckoutTier } from "@/lib/api";
 import { TIER_LABEL } from "@/lib/billing";
+import { cn } from "@/lib/utils";
 
 /**
  * Billing-page upgrade button: starts Checkout for a self-serve tier and
@@ -17,9 +18,17 @@ import { TIER_LABEL } from "@/lib/billing";
 export function UpgradeButton({
   targetTier,
   className,
+  block,
+  label,
+  variant,
 }: {
   targetTier: CheckoutTier;
   className?: string;
+  /** Stretch the button to fill its container (cards, table cells). */
+  block?: boolean;
+  /** Override the default "Upgrade to {tier}" label. */
+  label?: string;
+  variant?: React.ComponentProps<typeof Button>["variant"];
 }) {
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -37,10 +46,16 @@ export function UpgradeButton({
   }
 
   return (
-    <div className={className}>
-      <Button onClick={onClick} disabled={pending} aria-busy={pending}>
+    <div className={cn(block && "w-full", className)}>
+      <Button
+        onClick={onClick}
+        disabled={pending}
+        aria-busy={pending}
+        variant={variant}
+        className={cn(block && "w-full")}
+      >
         {pending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-        {`Upgrade to ${TIER_LABEL[targetTier]}`}
+        {label ?? `Upgrade to ${TIER_LABEL[targetTier]}`}
       </Button>
       {error && (
         <p role="alert" className="mt-2 text-sm text-destructive">
@@ -52,16 +67,31 @@ export function UpgradeButton({
 }
 
 /** Top-of-ladder CTA: link out to sales (no self-serve checkout above Enterprise). */
-export function ContactSalesButton({ salesUrl }: { salesUrl?: string }) {
+export function ContactSalesButton({
+  salesUrl,
+  className,
+  block,
+}: {
+  salesUrl?: string;
+  className?: string;
+  /** Stretch the button to fill its container (cards, table cells). */
+  block?: boolean;
+}) {
+  const blockCls = block ? "w-full" : undefined;
   if (!salesUrl) {
     return (
-      <Button variant="outline" disabled title="Sales contact not configured">
+      <Button
+        variant="outline"
+        disabled
+        title="Sales contact not configured"
+        className={cn(blockCls, className)}
+      >
         Contact sales
       </Button>
     );
   }
   return (
-    <Button asChild variant="outline">
+    <Button asChild variant="outline" className={cn(blockCls, className)}>
       <a href={salesUrl} target="_blank" rel="noopener noreferrer">
         Contact sales
         <ArrowUpRight aria-hidden />

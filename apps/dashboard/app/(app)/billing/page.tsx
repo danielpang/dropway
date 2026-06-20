@@ -2,13 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CreditCard, ShieldAlert, Sparkles } from "lucide-react";
 
+import { ChangePlanDrawer } from "@/components/billing/change-plan-drawer";
 import { FinalizingState } from "@/components/billing/finalizing-state";
 import { ManageBillingButton } from "@/components/billing/manage-billing-button";
 import { PlanMatrix } from "@/components/billing/plan-matrix";
-import {
-  ContactSalesButton,
-  UpgradeButton,
-} from "@/components/billing/upgrade-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,19 +16,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api, ApiError, type BillingPlan, type PlanTier } from "@/lib/api";
-import { TIER_LABEL } from "@/lib/billing";
+import { SALES_URL, TIER_LABEL } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
-
-/** Sales contact for the "Custom" Enterprise tier (the same Google Form as dropway.dev). */
-const SALES_URL = "https://forms.gle/vDvNzdfrKRvtGYPG8";
-
-/** Tier order, so we can offer every self-serve plan ABOVE the current one. */
-const TIER_RANK: Record<PlanTier, number> = {
-  free: 0,
-  pro: 1,
-  business: 2,
-  enterprise: 3,
-};
 
 export const metadata: Metadata = { title: "Billing" };
 export const dynamic = "force-dynamic";
@@ -105,12 +91,6 @@ export default async function BillingPage({
   }
 
   const currentTier: PlanTier = plan.plan_tier ?? "free";
-  // Self-serve tiers strictly above the current one, so a Free org can jump
-  // straight to Business, not just the next rung. Enterprise is "Custom" (Contact
-  // Sales), so it isn't a self-serve checkout option.
-  const upgradeTiers = (["pro", "business"] as const).filter(
-    (t) => TIER_RANK[t] > TIER_RANK[currentTier],
-  );
   const isCheckoutReturn = checkoutReturn === "success";
   const isCheckoutCancel = checkoutReturn === "cancel";
 
@@ -185,16 +165,12 @@ export default async function BillingPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Paid orgs manage/switch/cancel via the Stripe portal; free orgs have
-                no Stripe customer yet, so they lead straight with the upgrade
-                options. Every self-serve plan above the current one is offered, plus
-                Contact Sales for the "Custom" Enterprise tier. */}
+            {/* Paid orgs manage/switch/cancel via the Stripe portal. A single
+                "Upgrade" opens the change-plan drawer (every tier + the right CTA);
+                Enterprise has nothing higher, so it only gets Manage billing. */}
             {currentTier !== "free" && <ManageBillingButton />}
-            {upgradeTiers.map((tier) => (
-              <UpgradeButton key={tier} targetTier={tier} />
-            ))}
             {currentTier !== "enterprise" && (
-              <ContactSalesButton salesUrl={SALES_URL} />
+              <ChangePlanDrawer currentTier={currentTier} />
             )}
           </div>
         </CardContent>
@@ -209,7 +185,7 @@ export default async function BillingPage({
             against your current plan.
           </p>
         </div>
-        <PlanMatrix currentTier={currentTier} />
+        <PlanMatrix currentTier={currentTier} canManage />
         <p className="text-xs text-muted-foreground">
           Need more than Enterprise?{" "}
           <Button asChild variant="link" className="h-auto p-0 text-xs">

@@ -169,3 +169,30 @@ export const PLAN_MATRIX: PlanFeatureRow[] = [
 
 /** The plan tiers in matrix order (columns of the grid). */
 export const MATRIX_TIERS: PlanTier[] = ["free", "pro", "business", "enterprise"];
+
+/**
+ * Sales/contact form for the "Custom" Enterprise tier — the same Google Form
+ * dropway.dev links to, so the dashboard and marketing site stay consistent.
+ */
+export const SALES_URL = "https://forms.gle/vDvNzdfrKRvtGYPG8";
+
+/** Low → high tier order, for comparing a tier against the org's current one. */
+const TIER_ORDER: PlanTier[] = ["free", "pro", "business", "enterprise"];
+
+/**
+ * What CTA a given tier offers relative to the org's CURRENT tier:
+ *  - "current"   → the org is already on it (no action)
+ *  - "upgrade"   → a higher self-serve tier (Pro/Business) → Stripe Checkout
+ *  - "contact"   → a higher "Custom" tier (Enterprise) → Contact Sales
+ *  - "downgrade" → a lower tier (handled via the Stripe Billing Portal)
+ * Shared by the change-plan drawer cards and the plan-matrix CTA row so they
+ * never disagree.
+ */
+export type PlanAction = "current" | "upgrade" | "contact" | "downgrade";
+
+export function planAction(tier: PlanTier, current: PlanTier): PlanAction {
+  if (tier === current) return "current";
+  const higher = TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(current);
+  if (!higher) return "downgrade";
+  return tier === "enterprise" ? "contact" : "upgrade";
+}

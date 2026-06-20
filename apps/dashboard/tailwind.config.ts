@@ -72,10 +72,16 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(4px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        "slide-in-right": {
+          from: { transform: "translateX(100%)" },
+          to: { transform: "translateX(0)" },
+        },
       },
       animation: {
         // Subtle, gated by prefers-reduced-motion in globals.css.
         "fade-in": "fade-in 0.4s ease-out both",
+        // Side-drawer entrance (Sheet); also reduced-motion-gated.
+        "slide-in-right": "slide-in-right 0.25s ease-out both",
       },
     },
   },

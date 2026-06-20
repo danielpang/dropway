@@ -6,6 +6,7 @@ import { CreditCard, Loader2 } from "lucide-react";
 
 import { createPortalAction } from "@/app/(app)/billing/actions";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * "Manage billing" → opens the Stripe Billing Portal. POSTs /v1/billing/portal
@@ -18,8 +19,16 @@ import { Button } from "@/components/ui/button";
  */
 export function ManageBillingButton({
   variant = "outline",
+  block,
+  label = "Manage billing",
+  hideIcon,
 }: {
   variant?: "default" | "outline";
+  /** Stretch to fill its container (drawer cards). */
+  block?: boolean;
+  /** Override the default "Manage billing" label (e.g. "Downgrade to Pro"). */
+  label?: string;
+  hideIcon?: boolean;
 }) {
   const router = useRouter();
   const [pending, setPending] = React.useState(false);
@@ -46,19 +55,20 @@ export function ManageBillingButton({
   }
 
   return (
-    <div className="space-y-2">
+    <div className={cn("space-y-2", block && "w-full")}>
       <Button
         variant={variant}
         onClick={onClick}
         disabled={pending}
         aria-busy={pending}
+        className={cn(block && "w-full")}
       >
         {pending ? (
           <Loader2 className="animate-spin" aria-hidden />
-        ) : (
+        ) : hideIcon ? null : (
           <CreditCard aria-hidden />
         )}
-        Manage billing
+        {label}
       </Button>
       {error && (
         <p role="alert" className="text-sm text-destructive">
