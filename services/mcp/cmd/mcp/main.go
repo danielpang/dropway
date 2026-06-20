@@ -64,12 +64,16 @@ func main() {
 	}
 
 	// The bearer token is a Better-Auth-issued OAuth access token whose audience is
-	// this MCP resource (publicURL); verify it against the platform JWKS. Accept the
-	// trailing-slash form too: some MCP clients (e.g. mcp-remote) URL-canonicalize the
-	// resource and append "/", so the issued token's aud can be publicURL+"/". The
-	// dashboard registers both forms in validAudiences for the same reason.
+	// this MCP resource (publicURL); verify it against the platform JWKS. Accept
+	// several canonical forms of the resource the client may have requested:
+	//   - publicURL          the bare RFC 9728 resource we advertise
+	//   - publicURL+"/"      clients that append a trailing slash (e.g. mcp-remote)
+	//   - publicURL+"/mcp"   clients that use the connection URL (".../mcp") as the
+	//   - publicURL+"/mcp/"  RFC 8707 resource (e.g. Claude's built-in connector)
+	// The dashboard registers the same set in validAudiences so the issued token's aud
+	// matches whatever form the client sent.
 	verifier := coreauth.NewVerifier(jwksURL, issuer, publicURL,
-		coreauth.WithExtraAudiences(publicURL+"/"))
+		coreauth.WithExtraAudiences(publicURL+"/", publicURL+"/mcp", publicURL+"/mcp/"))
 	st := store.New(pool)
 	svc := &tools.Service{Store: st, Blobs: objStore}
 
