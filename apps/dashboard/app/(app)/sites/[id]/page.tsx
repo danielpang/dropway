@@ -5,7 +5,7 @@ import { ArrowLeft, ExternalLink, Globe, Link2, Settings } from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
-import { DeployInstructions } from "@/components/sites/deploy-instructions";
+import { DeployTabs } from "@/components/sites/deploy-tabs";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api, ApiError, type Site } from "@/lib/api";
+import { MCP_URL } from "@/lib/env";
 import { formatBytes } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -201,19 +202,11 @@ export default async function SiteDetailPage({
         </CardContent>
       </Card>
 
-      {/* Or deploy via CLI */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Or deploy via CLI</CardTitle>
-          <CardDescription>
-            Prefer the terminal? Push the same folder with one command. Each deploy
-            prints a version id you can publish or roll back to.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DeployInstructions slug={site.slug ?? id} />
-        </CardContent>
-      </Card>
+      {/* Or deploy via MCP / CLI (tabbed; MCP-first for non-technical users) */}
+      <DeployTabs
+        slug={site.slug ?? id}
+        mcpConnectorUrl={`${MCP_URL.replace(/\/$/, "")}/mcp`}
+      />
     </div>
   );
 }
