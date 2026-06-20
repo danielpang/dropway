@@ -5,6 +5,8 @@ import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
 import { API_URL } from "@/lib/env";
+import { getCurrentSession } from "@/lib/session";
+import { TokenCache, tokenCacheKey } from "@/lib/token-cache";
 import type { components, operations } from "@/lib/api-generated/schema";
 
 /**
@@ -189,23 +191,55 @@ export class ApiError extends Error {
 
 // ---- Auth: fetch a fresh EdDSA JWT for the active session -----------------
 
-/**
- * Mints/fetches the short-lived EdDSA JWT for the current Better Auth session.
- * The jwt() plugin exposes a `getToken` server action; we forward the request
- * cookies so it resolves the caller's session.
- *
- * Wrapped in React `cache()` so the JWT is minted AT MOST ONCE per server
- * request, no matter how many endpoints a page touches. A single dashboard
- * render fans out to several API calls (sites + billing + org, each its own
- * round-trip); without this, each one independently re-ran the EdDSA signing.
- * The token is valid for ~10m, so reusing one mint across a millisecond-long
- * render is always safe. cache() is request-scoped, so concurrent requests
- * never share a token.
- */
-const bearerToken = cache(async (): Promise<string | null> => {
+/** Mint a fresh EdDSA JWT for the caller's session (the costly path: a jwks
+ * read + private-key decrypt + sign inside Better Auth). Forwards the request
+ * cookies so the jwt() plugin resolves the caller's session. */
+async function mintBearerToken(): Promise<string | null> {
   const requestHeaders = await headers();
   const result = await auth.api.getToken({ headers: requestHeaders });
   return result?.token ?? null;
+}
+
+/**
+ * Cross-request reuse of recently-minted tokens, scoped to one server instance.
+ * Together with the per-request `cache()` below, this means a burst of page
+ * loads by the same user shares a single mint for the cache TTL instead of
+ * re-signing on every navigation. See lib/token-cache.ts for the safety
+ * argument (TTL ≪ token expiry; keyed by session + active org).
+ */
+const tokenCache = new TokenCache();
+
+/**
+ * The short-lived EdDSA JWT for the current Better Auth session.
+ *
+ * Two layers of reuse, both preserving the exact same token semantics:
+ *  - React `cache()` memoizes the result for the CURRENT request, so a page that
+ *    fans out to several endpoints (sites + billing + org) mints/looks-up once
+ *    rather than per call. cache() is request-scoped, so requests never share.
+ *  - `tokenCache` reuses a still-valid token ACROSS requests for a short window,
+ *    avoiding a jwks read + decrypt + sign on every page load. Keyed by session
+ *    id + active org so a different user — or an org switch — always re-mints.
+ *
+ * Falls back to an uncached mint when there's no resolvable session id to key on.
+ */
+const bearerToken = cache(async (): Promise<string | null> => {
+  const session = await getCurrentSession();
+  const sessionId =
+    (session?.session as { id?: string } | undefined)?.id ?? null;
+  const activeOrgId =
+    (session?.session as { activeOrganizationId?: string | null } | undefined)
+      ?.activeOrganizationId ?? null;
+
+  // No resolvable session id → can't form a safe per-user key; mint directly.
+  if (!sessionId) return mintBearerToken();
+
+  const key = tokenCacheKey(sessionId, activeOrgId);
+  const cached = tokenCache.get(key);
+  if (cached) return cached;
+
+  const minted = await mintBearerToken();
+  if (minted) tokenCache.set(key, minted);
+  return minted;
 });
 
 // ---- Core fetch wrapper ---------------------------------------------------
