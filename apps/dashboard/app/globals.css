@@ -80,18 +80,25 @@
     @apply border-border;
   }
 
+  /*
+   * Mobile guarantee: never scroll the page horizontally. `clip` (not `hidden`)
+   * stops a stray wide child from forcing a horizontal scrollbar WITHOUT making
+   * the element a scroll container — so the sticky app header keeps sticking and
+   * vertical scrolling is unaffected. Set on BOTH html and body: the viewport
+   * takes its overflow from one or the other depending on propagation rules, so
+   * clamping both is the reliable backstop. Real layout fixes (responsive grids,
+   * min-w-0 truncation, wrapping code/URLs) keep content on-screen; this just
+   * guarantees nothing can ever reintroduce a sideways scroll.
+   */
+  html {
+    overflow-x: clip;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
-    /*
-     * Mobile guarantee: never scroll the page horizontally. `clip` (not `hidden`)
-     * stops a stray wide child from forcing a horizontal scrollbar WITHOUT making
-     * the body a scroll container — so the sticky app header keeps sticking and
-     * vertical scrolling is unaffected. Real layout fixes (responsive grids,
-     * min-w-0 truncation, wrapping URLs) keep content on-screen; this is the
-     * backstop so nothing can ever reintroduce a sideways scroll.
-     */
     overflow-x: clip;
+    max-width: 100%;
   }
 }
 

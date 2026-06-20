@@ -62,7 +62,13 @@ export function CodeBlock({
           )}
         </button>
       </div>
-      <pre className="overflow-x-auto px-4 py-3.5 font-mono text-[0.82rem] leading-relaxed text-foreground">
+      {/*
+        Wrap long lines instead of scrolling them horizontally: on mobile a
+        horizontally-scrolling code block reads as a page-level sideways scroll.
+        whitespace-pre-wrap keeps real newlines; [overflow-wrap:anywhere] breaks
+        otherwise-unbreakable tokens (long URLs) so nothing extends past the card.
+      */}
+      <pre className="whitespace-pre-wrap px-4 py-3.5 font-mono text-[0.82rem] leading-relaxed text-foreground [overflow-wrap:anywhere]">
         <code>{code}</code>
       </pre>
     </div>
