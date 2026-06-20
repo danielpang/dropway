@@ -120,7 +120,7 @@ func (h *Handlers) requireOwnerAdmin(w http.ResponseWriter, r *http.Request) (or
 
 // checkoutRequest is the POST /v1/billing/checkout body.
 type checkoutRequest struct {
-	TargetTier string `json:"target_tier"` // "business" | "enterprise"
+	TargetTier string `json:"target_tier"` // "pro" | "business" | "enterprise"
 	Seats      int64  `json:"seats,omitempty"`
 }
 

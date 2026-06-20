@@ -631,7 +631,7 @@ export interface components {
         /** @description [CLOUD-ONLY] The org's current plan (GET /v1/billing). plan_tier is read from app.org_meta (authoritative). */
         BillingPlan: {
             /** @enum {string} */
-            plan_tier?: "free" | "business" | "enterprise";
+            plan_tier?: "free" | "pro" | "business" | "enterprise";
             /**
              * @description Stripe subscription status (omitted if no subscription row).
              * @enum {string}
@@ -1571,7 +1571,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    target_tier: "business" | "enterprise";
+                    target_tier: "pro" | "business" | "enterprise";
                     /**
                      * Format: int64
                      * @description Seats (defaults to 1).

@@ -30,6 +30,7 @@ type PlanTier string
 
 const (
 	TierFree       PlanTier = "free"
+	TierPro        PlanTier = "pro"
 	TierBusiness   PlanTier = "business"
 	TierEnterprise PlanTier = "enterprise"
 )

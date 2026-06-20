@@ -28,17 +28,19 @@ import (
 func timeFromUnix(unix int64) time.Time { return time.Unix(unix, 0).UTC() }
 
 // PriceMap resolves a Stripe price id to a PlanTier. It is built from the
-// STRIPE_PRICE_BUSINESS / STRIPE_PRICE_ENTERPRISE env vars so we never hard-code
-// price ids, and inverted so the webhook can map a subscription's price → tier.
+// STRIPE_PRICE_PRO / STRIPE_PRICE_BUSINESS / STRIPE_PRICE_ENTERPRISE env vars so we
+// never hard-code price ids, and inverted so the webhook can map a subscription's
+// price → tier.
 type PriceMap struct {
+	pro        string
 	business   string
 	enterprise string
 }
 
-// NewPriceMap builds the price→tier map from the two configured price ids (either
-// may be empty in dev; an unmatched price then resolves to Free).
-func NewPriceMap(businessPrice, enterprisePrice string) PriceMap {
-	return PriceMap{business: businessPrice, enterprise: enterprisePrice}
+// NewPriceMap builds the price→tier map from the configured price ids (any may be
+// empty in dev; an unmatched price then resolves to Free).
+func NewPriceMap(proPrice, businessPrice, enterprisePrice string) PriceMap {
+	return PriceMap{pro: proPrice, business: businessPrice, enterprise: enterprisePrice}
 }
 
 // TierFor maps a Stripe price id to a PlanTier; unknown/empty → Free. Kept for
@@ -64,6 +66,8 @@ func (m PriceMap) TierForChecked(priceID string) (PlanTier, bool) {
 		return TierEnterprise, true
 	case priceID == m.business && m.business != "":
 		return TierBusiness, true
+	case priceID == m.pro && m.pro != "":
+		return TierPro, true
 	default:
 		return TierFree, false
 	}
@@ -72,6 +76,8 @@ func (m PriceMap) TierForChecked(priceID string) (PlanTier, bool) {
 // PriceFor maps a target PlanTier to the configured Stripe price id (for Checkout).
 func (m PriceMap) PriceFor(tier PlanTier) (string, bool) {
 	switch tier {
+	case TierPro:
+		return m.pro, m.pro != ""
 	case TierBusiness:
 		return m.business, m.business != ""
 	case TierEnterprise:

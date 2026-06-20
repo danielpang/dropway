@@ -24,11 +24,11 @@ func TestFreeTier_SiteCap(t *testing.T) {
 	if ex.Max != 10 || ex.Current != 10 {
 		t.Errorf("max/current = %d/%d, want 10/10", ex.Max, ex.Current)
 	}
-	if ex.PlanTier != "free" || ex.NextTier != "business" {
-		t.Errorf("tiers = %q→%q, want free→business", ex.PlanTier, ex.NextTier)
+	if ex.PlanTier != "free" || ex.NextTier != "pro" {
+		t.Errorf("tiers = %q→%q, want free→pro", ex.PlanTier, ex.NextTier)
 	}
 	if ex.UpgradeURL == "" {
-		t.Error("free→business should carry an upgrade_url")
+		t.Error("free→pro should carry an upgrade_url")
 	}
 	if ex.SalesURL != "" {
 		t.Error("free tier should not carry a sales_url")
@@ -45,22 +45,31 @@ func TestStorageCap_Bands(t *testing.T) {
 	const gib = int64(1) << 30
 	p := newProvider()
 
-	// Free: filling EXACTLY to the 5 GiB cap is allowed; one byte over → 402 business.
+	// Free: filling EXACTLY to the 5 GiB cap is allowed; one byte over → 402 pro.
 	if err := p.AllowN("free", corequota.ResourceStorageBytesPerOrg, 0, 5*gib); err != nil {
 		t.Fatalf("free: exactly 5 GiB should be allowed: %v", err)
 	}
 	err := p.AllowN("free", corequota.ResourceStorageBytesPerOrg, 4*gib, 1*gib+1)
 	ex, ok := corequota.AsExceeded(err)
-	if !ok || ex.PlanTier != "free" || ex.NextTier != "business" || ex.Max != 5*gib {
+	if !ok || ex.PlanTier != "free" || ex.NextTier != "pro" || ex.Max != 5*gib {
 		t.Fatalf("free storage over-cap = %v (ex=%+v)", err, ex)
 	}
 
-	// Business: 100 GiB cap; over → enterprise.
-	if err := p.AllowN("business", corequota.ResourceStorageBytesPerOrg, 0, 100*gib); err != nil {
-		t.Fatalf("business: 100 GiB should be allowed: %v", err)
+	// Pro: 100 GiB cap; over → business.
+	if err := p.AllowN("pro", corequota.ResourceStorageBytesPerOrg, 0, 100*gib); err != nil {
+		t.Fatalf("pro: 100 GiB should be allowed: %v", err)
+	}
+	if proEx, ok := corequota.AsExceeded(
+		p.AllowN("pro", corequota.ResourceStorageBytesPerOrg, 100*gib, 1)); !ok || proEx.NextTier != "business" {
+		t.Fatalf("pro storage over-cap should point to business")
+	}
+
+	// Business: 250 GiB cap; over → enterprise.
+	if err := p.AllowN("business", corequota.ResourceStorageBytesPerOrg, 0, 250*gib); err != nil {
+		t.Fatalf("business: 250 GiB should be allowed: %v", err)
 	}
 	if bizEx, ok := corequota.AsExceeded(
-		p.AllowN("business", corequota.ResourceStorageBytesPerOrg, 100*gib, 1)); !ok || bizEx.NextTier != "enterprise" {
+		p.AllowN("business", corequota.ResourceStorageBytesPerOrg, 250*gib, 1)); !ok || bizEx.NextTier != "enterprise" {
 		t.Fatalf("business storage over-cap should point to enterprise")
 	}
 }
@@ -90,8 +99,9 @@ func TestStorage_NotEnforcedByDefault(t *testing.T) {
 		tier           string
 		current, delta int64
 	}{
-		{"free", 4 * gib, 100 * gib},      // way past the 5 GiB Free band
-		{"business", 100 * gib, 50 * gib}, // past the 100 GiB Pro band
+		{"free", 4 * gib, 100 * gib},  // way past the 5 GiB Free band
+		{"pro", 100 * gib, 50 * gib},  // past the 100 GiB Pro band
+		{"business", 250 * gib, 1 * gib}, // past the 250 GiB Business band
 		{"enterprise", 500 * gib, 1 * gib},
 	}
 	for _, c := range cases {

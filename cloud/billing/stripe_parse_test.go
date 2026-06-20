@@ -18,7 +18,7 @@ import (
 )
 
 func newVerifier() RealSignatureVerifier {
-	return NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	return NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 }
 
 // resolveData returns an empty EventData (no error) when the event carries no data

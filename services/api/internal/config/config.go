@@ -102,9 +102,12 @@ type Config struct {
 	// the inbound /webhooks/stripe payload — the ONLY thing that may mutate the paid
 	// entitlement.
 	StripeWebhookSecret string
-	// StripePriceBusiness / StripePriceEnterprise are the Stripe Price ids for the
-	// self-serve tiers (STRIPE_PRICE_BUSINESS / STRIPE_PRICE_ENTERPRISE). They map
-	// a checkout target_tier → price and a webhook subscription price → plan_tier.
+	// StripePricePro / StripePriceBusiness / StripePriceEnterprise are the Stripe
+	// Price ids for the self-serve tiers (STRIPE_PRICE_PRO / STRIPE_PRICE_BUSINESS /
+	// STRIPE_PRICE_ENTERPRISE). They map a checkout target_tier → price and a webhook
+	// subscription price → plan_tier. STRIPE_PRICE_PRO is the $25 tier; STRIPE_PRICE_BUSINESS
+	// is the $150 unlimited-sites tier.
+	StripePricePro        string
 	StripePriceBusiness   string
 	StripePriceEnterprise string
 
@@ -164,6 +167,7 @@ func Load() (Config, error) {
 
 		StripeSecretKey:       os.Getenv("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret:   os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		StripePricePro:        os.Getenv("STRIPE_PRICE_PRO"),
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
 		DashboardURL:          envOr("DASHBOARD_URL", "https://app.dropway.dev"),

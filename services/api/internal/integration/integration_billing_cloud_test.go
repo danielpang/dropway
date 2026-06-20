@@ -68,6 +68,7 @@ const (
 	cbAppPw    = "dropway_app_cb_pw"
 	cbAppDSN   = "postgres://dropway_app:" + cbAppPw + "@127.0.0.1:" + cbPort + "/dropway?sslmode=disable"
 	cbWhSecret = "whsec_integration_secret"
+	cbPricePro = "price_pro_test"
 	cbPriceBiz = "price_business_test"
 	cbPriceEnt = "price_enterprise_test"
 )
@@ -97,7 +98,7 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	// is the source of truth, the KV flag is what makes suspension block at the edge.
 	orgStatusKV := projection.NewLocal()
 	bstore := cloudbilling.NewStore(pool).WithOrgStatusWriter(orgStatusKV)
-	prices := cloudbilling.NewPriceMap(cbPriceBiz, cbPriceEnt)
+	prices := cloudbilling.NewPriceMap(cbPricePro, cbPriceBiz, cbPriceEnt)
 	verifier := cloudbilling.NewRealSignatureVerifier(cbWhSecret, prices)
 	webhookHandler := cloudbilling.NewHandler(verifier, bstore, nil)
 

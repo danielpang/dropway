@@ -54,7 +54,7 @@ func (s *errStore) ReadPlanTier(ctx context.Context, org string) (PlanTier, erro
 // given canned claims, live roles, and JWT-fallback flag, so a test can drive any
 // route with an injected tenant/role through the real claims plumbing.
 func mountUnderAuth(store CheckoutPortalStore, sc StripeClient, c *auth.Claims, roles RoleChecker, allowFB bool) http.Handler {
-	h := NewHandlers(store, sc, NewPriceMap("price_biz", "price_ent"), "https://app.dropway.dev", roles, allowFB, nil)
+	h := NewHandlers(store, sc, NewPriceMap("price_pro", "price_biz", "price_ent"), "https://app.dropway.dev", roles, allowFB, nil)
 	mux := http.NewServeMux()
 	a := middleware.Auth(fakeVerifier{claims: c})
 	mux.Handle("POST /v1/billing/checkout", a(http.HandlerFunc(h.Checkout)))

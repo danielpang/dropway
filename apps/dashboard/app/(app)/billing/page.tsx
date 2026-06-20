@@ -19,8 +19,19 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api, ApiError, type BillingPlan, type PlanTier } from "@/lib/api";
-import { isCheckoutTier, nextTier, TIER_LABEL } from "@/lib/billing";
+import { TIER_LABEL } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
+
+/** Sales contact for the "Custom" Enterprise tier. */
+const SALES_MAILTO = "mailto:sales@dropway.dev";
+
+/** Tier order, so we can offer every self-serve plan ABOVE the current one. */
+const TIER_RANK: Record<PlanTier, number> = {
+  free: 0,
+  pro: 1,
+  business: 2,
+  enterprise: 3,
+};
 
 export const metadata: Metadata = { title: "Billing" };
 export const dynamic = "force-dynamic";
@@ -48,9 +59,9 @@ function statusBadge(plan: BillingPlan) {
  * plan here:
  *  - current plan + status (read from GET /v1/billing → app.org_meta);
  *  - the plan/limits matrix with the current tier highlighted;
- *  - "Manage billing" → Stripe Billing Portal (self-serve seats/plan/cancel);
- *  - upgrade buttons → Stripe Checkout (the next self-serve tier), or Contact
- *    Sales above Enterprise.
+ *  - "Manage billing" → Stripe Billing Portal (self-serve plan switch / cancel);
+ *  - upgrade buttons → Stripe Checkout for any self-serve tier above the current
+ *    one (Pro $25, Business $150), or Contact Sales for the "Custom" Enterprise tier.
  *
  * After returning from Stripe's success_url (`?checkout=success`) we DON'T trust
  * the redirect for entitlement, we show a "finalizing…" state that POLLS the
@@ -94,7 +105,12 @@ export default async function BillingPage({
   }
 
   const currentTier: PlanTier = plan.plan_tier ?? "free";
-  const upgradeTarget = nextTier(currentTier);
+  // Self-serve tiers strictly above the current one, so a Free org can jump
+  // straight to Business, not just the next rung. Enterprise is "Custom" (Contact
+  // Sales), so it isn't a self-serve checkout option.
+  const upgradeTiers = (["pro", "business"] as const).filter(
+    (t) => TIER_RANK[t] > TIER_RANK[currentTier],
+  );
   const isCheckoutReturn = checkoutReturn === "success";
   const isCheckoutCancel = checkoutReturn === "cancel";
 
@@ -169,21 +185,16 @@ export default async function BillingPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {currentTier === "free" ? (
-              // No Stripe customer until first checkout → lead with upgrade.
-              upgradeTarget && isCheckoutTier(upgradeTarget) ? (
-                <UpgradeButton targetTier={upgradeTarget} />
-              ) : null
-            ) : (
-              <>
-                <ManageBillingButton />
-                {upgradeTarget &&
-                  (isCheckoutTier(upgradeTarget) ? (
-                    <UpgradeButton targetTier={upgradeTarget} />
-                  ) : (
-                    <ContactSalesButton salesUrl={undefined} />
-                  ))}
-              </>
+            {/* Paid orgs manage/switch/cancel via the Stripe portal; free orgs have
+                no Stripe customer yet, so they lead straight with the upgrade
+                options. Every self-serve plan above the current one is offered, plus
+                Contact Sales for the "Custom" Enterprise tier. */}
+            {currentTier !== "free" && <ManageBillingButton />}
+            {upgradeTiers.map((tier) => (
+              <UpgradeButton key={tier} targetTier={tier} />
+            ))}
+            {currentTier !== "enterprise" && (
+              <ContactSalesButton salesUrl={SALES_MAILTO} />
             )}
           </div>
         </CardContent>
@@ -202,7 +213,7 @@ export default async function BillingPage({
         <p className="text-xs text-muted-foreground">
           Need more than Enterprise?{" "}
           <Button asChild variant="link" className="h-auto p-0 text-xs">
-            <Link href="mailto:sales@dropway.com">Talk to sales</Link>
+            <Link href={SALES_MAILTO}>Talk to sales</Link>
           </Button>
           .
         </p>
