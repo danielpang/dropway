@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
@@ -192,12 +193,20 @@ export class ApiError extends Error {
  * Mints/fetches the short-lived EdDSA JWT for the current Better Auth session.
  * The jwt() plugin exposes a `getToken` server action; we forward the request
  * cookies so it resolves the caller's session.
+ *
+ * Wrapped in React `cache()` so the JWT is minted AT MOST ONCE per server
+ * request, no matter how many endpoints a page touches. A single dashboard
+ * render fans out to several API calls (sites + billing + org, each its own
+ * round-trip); without this, each one independently re-ran the EdDSA signing.
+ * The token is valid for ~10m, so reusing one mint across a millisecond-long
+ * render is always safe. cache() is request-scoped, so concurrent requests
+ * never share a token.
  */
-async function bearerToken(): Promise<string | null> {
+const bearerToken = cache(async (): Promise<string | null> => {
   const requestHeaders = await headers();
   const result = await auth.api.getToken({ headers: requestHeaders });
   return result?.token ?? null;
-}
+});
 
 // ---- Core fetch wrapper ---------------------------------------------------
 
@@ -266,30 +275,46 @@ async function apiFetchPublic<T>(
   return (await res.json()) as T;
 }
 
+/**
+ * Per-request memoized GET. React `cache()` dedupes identical reads within a
+ * single server render, so each distinct endpoint is hit AT MOST ONCE per
+ * request even when several components ask for it independently — e.g. the (app)
+ * layout and the dashboard page both reading `/v1/billing`, or a site page whose
+ * `generateMetadata` and body both read `/v1/sites/{id}`. Previously each of
+ * those repeated the full API round-trip (and its JWT mint); now the second
+ * caller awaits the same in-flight promise.
+ *
+ * Only safe for idempotent reads — all GET endpoints route through here, while
+ * writes (POST/PUT/PATCH/DELETE) keep calling `apiFetch` directly so they are
+ * never collapsed. The memo lives only for the current request (cache() is
+ * request-scoped), so a later navigation always re-reads fresh data.
+ */
+const apiGet = cache((path: string): Promise<unknown> => apiFetch(path));
+
 // ---- Typed endpoints (Phase 1 + Phase 2 surface; mirrors openapi.yaml) -----
 
 export const api = {
   /** Echo the caller's verified identity (user_id / org_id / role). */
   me(): Promise<Me> {
-    return apiFetch<Me>("/v1/me");
+    return apiGet("/v1/me") as Promise<Me>;
   },
 
   /** List the caller org's sites. */
   async listSites(): Promise<Site[]> {
-    const body = await apiFetch<{ sites?: Site[] }>("/v1/sites");
+    const body = (await apiGet("/v1/sites")) as { sites?: Site[] };
     return body.sites ?? [];
   },
 
   /** Get one site by id (404 → ApiError with status 404). */
   getSite(id: string): Promise<Site> {
-    return apiFetch<Site>(`/v1/sites/${id}`);
+    return apiGet(`/v1/sites/${id}`) as Promise<Site>;
   },
 
   /** A site's deploy history, newest first (each flagged is_current). */
   async listVersions(siteId: string): Promise<SiteVersion[]> {
-    const body = await apiFetch<{ versions?: SiteVersion[] }>(
-      `/v1/sites/${siteId}/versions`,
-    );
+    const body = (await apiGet(`/v1/sites/${siteId}/versions`)) as {
+      versions?: SiteVersion[];
+    };
     return body.versions ?? [];
   },
 
@@ -347,7 +372,7 @@ export const api = {
 
   /** List the caller org's members (Better Auth roles, RLS/org-scoped). */
   async listMembers(): Promise<Member[]> {
-    const body = await apiFetch<{ members?: Member[] }>("/v1/members");
+    const body = (await apiGet("/v1/members")) as { members?: Member[] };
     return body.members ?? [];
   },
 
@@ -357,7 +382,7 @@ export const api = {
    * NOT deduplicated. Users with no sites are omitted (treat as 0).
    */
   async storageUsage(): Promise<UserStorage[]> {
-    const body = await apiFetch<{ users?: UserStorage[] }>("/v1/storage");
+    const body = (await apiGet("/v1/storage")) as { users?: UserStorage[] };
     return body.users ?? [];
   },
 
@@ -374,9 +399,9 @@ export const api = {
 
   /** List a site's allowlist (emails + claim state). */
   async listAllowlist(siteId: string): Promise<AllowlistEntry[]> {
-    const body = await apiFetch<{ allowlist?: AllowlistEntry[] }>(
-      `/v1/sites/${siteId}/allowlist`,
-    );
+    const body = (await apiGet(`/v1/sites/${siteId}/allowlist`)) as {
+      allowlist?: AllowlistEntry[];
+    };
     return body.allowlist ?? [];
   },
 
@@ -401,9 +426,9 @@ export const api = {
 
   /** List a site's custom domains. */
   async listDomains(siteId: string): Promise<Domain[]> {
-    const body = await apiFetch<{ domains?: Domain[] }>(
-      `/v1/sites/${siteId}/domains`,
-    );
+    const body = (await apiGet(`/v1/sites/${siteId}/domains`)) as {
+      domains?: Domain[];
+    };
     return body.domains ?? [];
   },
 
@@ -434,9 +459,10 @@ export const api = {
    * Any member may read it.
    */
   getOrgPolicy(): Promise<{ allow_external_sharing: boolean; mcp_enabled: boolean }> {
-    return apiFetch<{ allow_external_sharing: boolean; mcp_enabled: boolean }>(
-      "/v1/orgs/policy",
-    );
+    return apiGet("/v1/orgs/policy") as Promise<{
+      allow_external_sharing: boolean;
+      mcp_enabled: boolean;
+    }>;
   },
 
   /**
@@ -494,7 +520,7 @@ export const api = {
    * On the OSS build this 404s; callers treat that as "no billing".
    */
   getBilling(): Promise<BillingPlan> {
-    return apiFetch<BillingPlan>("/v1/billing");
+    return apiGet("/v1/billing") as Promise<BillingPlan>;
   },
 
   /**
@@ -542,9 +568,11 @@ export const api = {
     if (params.limit != null) q.set("limit", String(params.limit));
     if (params.offset != null) q.set("offset", String(params.offset));
     const qs = q.toString();
-    const body = await apiFetch<{ events?: AuditEvent[]; total?: number; next_cursor?: string | null }>(
-      `/v1/audit${qs ? `?${qs}` : ""}`,
-    );
+    const body = (await apiGet(`/v1/audit${qs ? `?${qs}` : ""}`)) as {
+      events?: AuditEvent[];
+      total?: number;
+      next_cursor?: string | null;
+    };
     return {
       events: body.events ?? [],
       total: body.total,
@@ -580,6 +608,6 @@ export const api = {
    * never ship in the dashboard build).
    */
   preflightMembers(): Promise<{ allowed: boolean }> {
-    return apiFetch<{ allowed: boolean }>("/v1/members/preflight");
+    return apiGet("/v1/members/preflight") as Promise<{ allowed: boolean }>;
   },
 };

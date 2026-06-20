@@ -10,6 +10,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
 import { loadOrgBillingState } from "@/lib/billing-server";
 import { canManage, loadActiveRole } from "@/lib/org";
+import { getCurrentSession } from "@/lib/session";
 
 /**
  * Authenticated app shell. Guards the whole (app) route group server-side:
@@ -21,7 +22,9 @@ export default async function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const requestHeaders = await headers();
-  const session = await auth.api.getSession({ headers: requestHeaders });
+  // Memoized per request, so the same session read is reused by loadActiveOrg /
+  // role helpers further down the tree instead of re-verifying the cookie.
+  const session = await getCurrentSession();
   if (!session) redirect("/sign-in");
 
   // A signed-in user with no org (e.g. a fresh Google sign-up) must create one

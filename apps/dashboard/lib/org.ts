@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 
 import { auth } from "@/lib/auth";
 import type { Role } from "@/lib/api";
+import { getCurrentSession } from "@/lib/session";
 
 /**
  * Server-side helpers over Better Auth's Organization plugin (`auth.api`).
@@ -89,9 +90,9 @@ export async function loadActiveOrg(): Promise<ActiveOrg | null> {
 
   if (!full?.id) return null;
 
-  const session = await auth.api
-    .getSession({ headers: requestHeaders })
-    .catch(() => null);
+  // Reuses the request-memoized session (the (app) layout already resolved it),
+  // so this page-level org load doesn't re-verify the cookie a second time.
+  const session = await getCurrentSession();
   const myUserId = session?.user?.id;
 
   const members: OrgMember[] = (full.members ?? []).map((m) => ({
