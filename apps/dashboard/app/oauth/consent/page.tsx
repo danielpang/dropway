@@ -72,8 +72,14 @@ export default function OAuthConsentPage() {
         setPending(null);
         return;
       }
-      const data = res?.data as { redirectURI?: string; url?: string } | undefined;
-      const url = data?.redirectURI ?? data?.url ?? "/dashboard";
+      // The provider returns the redirect under `redirect_uri` on ACCEPT (the auth-code
+      // redirect back to the client) and `url` on DENY (the access_denied error redirect).
+      // (Older versions used `url` for both — reading only that silently dropped the accept
+      // redirect to /dashboard, so the client never got its code: MCP/CLI auth "failed".)
+      const data = res?.data as
+        | { redirect_uri?: string; url?: string }
+        | undefined;
+      const url = data?.redirect_uri ?? data?.url ?? "/dashboard";
       if (accept) {
         // Show the branded success screen; the effect above performs the redirect.
         setDoneURL(url);
