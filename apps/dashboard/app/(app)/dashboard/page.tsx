@@ -69,7 +69,7 @@ export default async function DashboardPage() {
           {loadError} Start the API (api.dropway.dev) and reload.
         </Card>
       ) : sites && sites.length > 0 ? (
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {sites.map((site) => (
             <li key={site.id}>
               <SiteRow site={site} />
@@ -93,11 +93,11 @@ function SiteRow({ site }: { site: Site }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <span className="grid size-8 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
               <Globe className="size-4" aria-hidden />
             </span>
-            <span className="truncate font-medium text-foreground">
+            <span className="min-w-0 truncate font-medium text-foreground">
               {site.slug}
             </span>
           </div>
