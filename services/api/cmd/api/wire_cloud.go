@@ -63,7 +63,7 @@ func newQuotaProvider(cfg config.Config) quota.Provider {
 }
 
 // quotaProviderName labels the wired provider for startup logging.
-func quotaProviderName() string { return "cloud hard-cap (free/business/enterprise)" }
+func quotaProviderName() string { return "cloud hard-cap (free/pro/business/enterprise)" }
 
 // mountCloud wires cloud/billing onto the shared chi mux. It builds:
 //   - the Postgres BillingStore over the SAME non-BYPASSRLS dropway_app pool (the
