@@ -115,6 +115,18 @@ type Config struct {
 	// success/cancel + Billing-Portal return URLs. Defaults to https://app.dropway.dev.
 	DashboardURL string
 
+	// PostHogKey / PostHogHost configure server-side PostHog capture for cloud
+	// billing analytics (plan upgrade/downgrade events emitted from the Stripe
+	// webhook). PostHogKey is the project ingest key (POSTHOG_KEY, a `phc_…` value);
+	// PostHogHost is the ingest host (POSTHOG_HOST, default PostHog US cloud). Read
+	// ONLY by the cloud build; UNSET → billing analytics is disabled (no-op).
+	PostHogKey  string
+	PostHogHost string
+
+	// Environment is the deploy label (ENVIRONMENT) stamped on every analytics event
+	// so PostHog can segment production from staging/dev. Defaults to "development".
+	Environment string
+
 	// EnforceStorageQuota gates the cloud per-org STORAGE cap (ENFORCE_STORAGE_QUOTA).
 	// Defaults to FALSE: storage is metered/tracked but a deploy is never rejected for
 	// crossing a storage band — the only paid lever today is the per-org site count
@@ -171,6 +183,9 @@ func Load() (Config, error) {
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
 		DashboardURL:          envOr("DASHBOARD_URL", "https://app.dropway.dev"),
+		PostHogKey:            os.Getenv("POSTHOG_KEY"),
+		PostHogHost:           envOr("POSTHOG_HOST", "https://us.i.posthog.com"),
+		Environment:           envOr("ENVIRONMENT", "development"),
 		EnforceStorageQuota:   parseBool(os.Getenv("ENFORCE_STORAGE_QUOTA")),
 
 		ContentScheme: envOr("CONTENT_SCHEME", "https"),

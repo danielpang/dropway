@@ -199,8 +199,8 @@ func TestTxSubsStore_EmptyOrgGuards(t *testing.T) {
 	if err := a.SetCanceled(context.Background(), ""); err == nil {
 		t.Error("txSubsStore.SetCanceled with empty OrgID must error")
 	}
-	// A guard failure must NOT have captured any org/status to project.
-	if a.orgID != "" || a.orgStatus != "" {
-		t.Errorf("guarded failure must capture nothing, got org=%q status=%q", a.orgID, a.orgStatus)
+	// A guard failure must NOT have captured any org/status/tier to project or emit.
+	if a.orgID != "" || a.result.orgStatus != "" || a.result.fromTier != "" || a.result.toTier != "" {
+		t.Errorf("guarded failure must capture nothing, got org=%q result=%+v", a.orgID, a.result)
 	}
 }
