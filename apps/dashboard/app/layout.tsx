@@ -13,6 +13,14 @@ export const metadata: Metadata = {
   },
   description:
     "A folder of files to a live, access-controlled URL in one command.",
+  manifest: "/site.webmanifest",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
