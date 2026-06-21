@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 
+import { captureDomainAdded } from "@/lib/analytics-server";
 import { api, ApiError, type Domain } from "@/lib/api";
+import { getCurrentSession } from "@/lib/session";
 
 export type AddDomainResult =
   | { ok: true; domain: Domain }
@@ -37,6 +39,7 @@ export async function addDomainAction(input: {
   try {
     const domain = await api.addDomain(input.siteId, hostname);
     revalidatePath(`/sites/${input.siteId}/domains`);
+    await recordDomainAdded(input.siteId, domain, hostname);
     return { ok: true, domain };
   } catch (err) {
     if (err instanceof ApiError) {
@@ -63,6 +66,33 @@ export async function addDomainAction(input: {
       return { ok: false, message: "Could not add the domain. Try again." };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
+/** Best-effort `domain_added` analytics, attributed to the acting user + active
+ * org. Never throws into the action. */
+async function recordDomainAdded(
+  siteId: string,
+  domain: Domain,
+  hostname: string,
+): Promise<void> {
+  try {
+    const session = await getCurrentSession();
+    const userId = (session?.user as { id?: string } | undefined)?.id;
+    const organization =
+      (session?.session as { activeOrganizationId?: string | null } | undefined)
+        ?.activeOrganizationId ?? null;
+    if (userId && organization) {
+      await captureDomainAdded({
+        userId,
+        organization,
+        siteId,
+        domainId: (domain as { id?: string }).id,
+        hostname: domain.hostname ?? hostname,
+      });
+    }
+  } catch {
+    // analytics is non-fatal
   }
 }
 

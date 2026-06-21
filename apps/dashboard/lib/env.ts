@@ -118,6 +118,53 @@ export function googleClientSecret(): string {
 }
 
 /**
+ * The deployment environment label stamped onto every analytics event
+ * (`environment` property) so PostHog can segment production from staging,
+ * self-host, and local dev. Sourced from an EXPLICIT var (NEXT_PUBLIC_APP_ENV so
+ * the browser SDK can read it too, falling back to the server-only DROPWAY_ENV),
+ * and only then NODE_ENV. Set NEXT_PUBLIC_APP_ENV per deploy (e.g. "production",
+ * "staging", "self-host").
+ */
+export function appEnvironment(): string {
+  return (
+    process.env.NEXT_PUBLIC_APP_ENV ||
+    process.env.DROPWAY_ENV ||
+    process.env.NODE_ENV ||
+    "development"
+  );
+}
+
+/**
+ * PostHog project API key for the BROWSER SDK (posthog-js). The project API key
+ * (`phc_…`) is safe to expose — it can only ingest events, not read data — so it
+ * ships as NEXT_PUBLIC_. UNSET → analytics is disabled (the provider no-ops), so
+ * a self-host with no PostHog simply collects nothing.
+ */
+export function posthogClientKey(): string | undefined {
+  return process.env.NEXT_PUBLIC_POSTHOG_KEY || undefined;
+}
+
+/**
+ * PostHog project API key for SERVER-side capture (posthog-node): signups, sites
+ * created, domains added. Prefers a server-only POSTHOG_KEY but falls back to the
+ * same public project key (it's the same `phc_…` ingest key). UNSET → server
+ * analytics no-ops.
+ */
+export function posthogServerKey(): string | undefined {
+  requireServer();
+  return process.env.POSTHOG_KEY || process.env.NEXT_PUBLIC_POSTHOG_KEY || undefined;
+}
+
+/**
+ * PostHog ingestion host. Defaults to US cloud; set NEXT_PUBLIC_POSTHOG_HOST to
+ * the EU host (https://eu.posthog.com) or a reverse-proxy origin. NEXT_PUBLIC_ so
+ * both the browser and server clients read the same value.
+ */
+export function posthogHost(): string {
+  return process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.posthog.com";
+}
+
+/**
  * Base URL of the Go API (api.dropway.dev) the dashboard calls for ALL business
  * data, carrying a short-lived Better Auth EdDSA JWT, it never opens a Postgres
  * connection for business data.

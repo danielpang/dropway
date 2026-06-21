@@ -63,6 +63,7 @@ import {
   readOrgStatus,
 } from "./ratelimit";
 import type { RevokedKVLike } from "./revoke";
+import { type AnalyticsEnv, captureSiteVisit } from "./analytics";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -138,6 +139,16 @@ export interface Env {
   RATE_LIMIT_MAX?: string;
   /** OPTIONAL: rate-limit window length in seconds (overrides the default 60s). */
   RATE_LIMIT_WINDOW_SECONDS?: string;
+  /**
+   * OPTIONAL analytics: PostHog project key for the per-site `site_visit` metric.
+   * UNSET → no visit events are emitted. POSTHOG_HOST / DROPWAY_ENV / VISIT_SALT
+   * tune the host, the `environment` label, and the visitor-hash salt. See
+   * src/analytics.ts.
+   */
+  POSTHOG_KEY?: string;
+  POSTHOG_HOST?: string;
+  DROPWAY_ENV?: string;
+  VISIT_SALT?: string;
 }
 
 /**
@@ -403,11 +414,19 @@ async function servePublic(
   if (cache) {
     const key = cacheKey(route, url);
     const hit = await cache.match(key);
-    if (hit) return bodyFor(request, hit);
+    if (hit) {
+      // Count the visit even on a warm cache hit (HTML is short-cached but still
+      // a page view), using the cached response's own Content-Type.
+      scheduleVisit(env, request, route, url, hit.headers.get("Content-Type"), opts);
+      return bodyFor(request, hit);
+    }
   }
 
   const resolved = await resolveBlob(request, env, route, url);
   if (resolved.kind === "not-found") return resolved.response;
+
+  // Best-effort per-site visit metric (HTML pages only; never blocks the response).
+  scheduleVisit(env, request, route, url, resolved.contentType, opts);
 
   const headers = publicResponseHeaders(resolved.servedPath, {
     contentType: resolved.contentType,
@@ -588,6 +607,33 @@ function cacheKey(route: RouteValue, url: URL): Request {
   // publish/rollback can ever serve a stale or cross-mode cache entry.
   keyUrl.pathname = `/${route.access_mode}/${route.version_id}${keyUrl.pathname}`;
   return new Request(keyUrl.toString(), { method: "GET" });
+}
+
+/**
+ * Schedule a best-effort `site_visit` capture for an HTML page response. Runs
+ * past the response via `waitUntil` (so it never adds latency) and is a complete
+ * no-op when PostHog isn't configured or the response isn't a page (see
+ * captureSiteVisit / isVisit). Failures are swallowed inside captureSiteVisit.
+ */
+function scheduleVisit(
+  env: AnalyticsEnv,
+  request: Request,
+  route: RouteValue,
+  url: URL,
+  contentType: string | null,
+  opts: ServeOptions,
+): void {
+  // Avoid even constructing the work when analytics is off.
+  if (!env.POSTHOG_KEY) return;
+  const p = captureSiteVisit(env, {
+    request,
+    route,
+    url,
+    contentType,
+    now: opts.now ?? new Date(),
+  });
+  if (opts.waitUntil) opts.waitUntil(p);
+  else void p.catch(() => {});
 }
 
 /** Return a response suitable for the request method (HEAD carries no body). */

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
+import { AnalyticsIdentify } from "@/components/analytics/analytics-identify";
 import { BrandMark } from "@/components/brand-mark";
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { MainNav } from "@/components/main-nav";
@@ -47,8 +48,22 @@ export default async function AppLayout({
   ]);
   const isAdmin = canManage(role);
 
+  // Attribute browser analytics to this user + their active org (client-side;
+  // no-op when PostHog isn't configured).
+  const sessionUser = session.user as { id?: string; email?: string } | undefined;
+  const activeOrgId =
+    (session.session as { activeOrganizationId?: string | null } | undefined)
+      ?.activeOrganizationId ?? null;
+
   return (
     <div className="flex min-h-dvh flex-col">
+      {sessionUser?.id ? (
+        <AnalyticsIdentify
+          userId={sessionUser.id}
+          email={sessionUser.email}
+          organization={activeOrgId}
+        />
+      ) : null}
       <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
         <div className="container flex h-14 items-center justify-between">
           <Link

@@ -41,6 +41,19 @@ APP_AUTHZ_URL = "https://app.dropway.dev/authz"
 RATE_LIMIT_MAX = "600"
 RATE_LIMIT_WINDOW_SECONDS = "60"
 
+# --- Analytics (OPTIONAL: per-site visit metric) -----------------------------
+# The Worker emits a `site_visit` PostHog event per HTML page served so the
+# dashboard can report visits per site (src/analytics.ts). Best-effort and off
+# the response path. Visitors are identified by an anonymized, daily-rotating
+# hash of IP+User-Agent — no raw IP is stored.
+#
+# Non-secret config goes here; the KEY + SALT are SECRETS, set with:
+#   wrangler secret put POSTHOG_KEY      # phc_... project API key
+#   wrangler secret put VISIT_SALT       # any long random string
+# Leave POSTHOG_KEY unset to disable visit tracking entirely.
+POSTHOG_HOST = "https://us.posthog.com"
+DROPWAY_ENV = "production"
+
 # Native, atomic Rate Limiting binding — the REAL denial-of-wallet control (it
 # correctly counts a single-IP flood the KV counter cannot). Keep `simple.limit`
 # /`period` in sync with the vars above; `namespace_id` is an arbitrary per-Worker
