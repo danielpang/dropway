@@ -51,8 +51,7 @@ const SANS =
 const MONO =
   "'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
 
-// Marketing site the footer links point at. Targets (docs/status/support) are the
-// design's placeholders; adjust if those routes move.
+// Marketing site the logo and footer wordmark link to.
 const BRAND_URL = "https://dropway.dev";
 
 // Zero-width spacer that follows the preheader so the real email body doesn't bleed
@@ -100,7 +99,7 @@ function renderLayout(i: LayoutInput): string {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${PAGE};width:100%;"><tr><td align="center" style="padding:40px 14px;">
 <!--[if mso | IE]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
 <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
-<tr><td class="cardpad" style="padding:40px 48px 0;" align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr><td style="padding-right:11px;vertical-align:middle;"><img src="${logo}" width="30" height="30" alt="Dropway" style="display:block;border:0;border-radius:6.6px;"></td><td style="vertical-align:middle;font-family:${SANS};font-size:19.8px;font-weight:600;letter-spacing:-0.03em;color:${INK};">Dropway</td></tr></table></td></tr>
+<tr><td class="cardpad" style="padding:40px 48px 0;" align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr><td style="padding-right:11px;vertical-align:middle;"><a href="${BRAND_URL}" style="text-decoration:none;"><img src="${logo}" width="30" height="30" alt="Dropway" style="display:block;border:0;border-radius:6.6px;"></a></td><td style="vertical-align:middle;font-family:${SANS};font-size:19.8px;font-weight:600;letter-spacing:-0.03em;color:${INK};"><a href="${BRAND_URL}" style="color:${INK};text-decoration:none;">Dropway</a></td></tr></table></td></tr>
 <tr><td class="cardpad" style="padding:34px 48px 0;" align="center"><p style="margin:0;font-family:${MONO};font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:${INDIGO};">${esc(i.kicker)}</p></td></tr>
 <tr><td class="cardpad" style="padding:12px 48px 0;" align="center"><h1 class="h" style="margin:0;font-family:${SANS};font-size:28px;line-height:1.18;letter-spacing:-0.025em;font-weight:600;color:${INK};">${esc(i.heading)}</h1></td></tr>
 <tr><td class="cardpad" style="padding:16px 52px 0;" align="center"><p class="bodytext" style="margin:0;font-family:${SANS};font-size:16px;line-height:1.65;color:${INK2};">${i.bodyHtml}</p></td></tr>
@@ -109,7 +108,7 @@ function renderLayout(i: LayoutInput): string {
 <tr><td class="cardpad" style="padding:32px 48px 0;"><div style="height:1px;background:${BORDER_SOFT};line-height:1px;font-size:0;">&nbsp;</div></td></tr>
 <tr><td class="cardpad" style="padding:24px 48px 40px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${MUTED};border-radius:10px;"><tr><td style="padding:16px 18px;"><p style="margin:0 0 4px;font-family:${MONO};font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:${INK3};">Security</p><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${INK2};">${i.securityHtml}</p></td></tr></table></td></tr>
 </table>
-<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;"><tr><td class="cardpad" style="padding:28px 48px 8px;" align="center"><p style="margin:0 0 12px;font-family:${MONO};font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${INK3};text-align:center;"><a href="${BRAND_URL}/docs" style="color:${INK2};text-decoration:none;">Docs</a><span style="color:${BORDER};"> &nbsp;/&nbsp; </span><a href="${BRAND_URL}/status" style="color:${INK2};text-decoration:none;">Status</a><span style="color:${BORDER};"> &nbsp;/&nbsp; </span><a href="${BRAND_URL}/support" style="color:${INK2};text-decoration:none;">Support</a></p><p style="margin:0 0 4px;font-family:${SANS};font-size:12px;line-height:1.6;color:${INK3};text-align:center;">${esc(i.footerReason)}</p><p style="margin:0;font-family:${SANS};font-size:12px;line-height:1.6;color:${INK3};text-align:center;">Dropway</p></td></tr></table>
+<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;"><tr><td class="cardpad" style="padding:28px 48px 8px;" align="center"><p style="margin:0 0 4px;font-family:${SANS};font-size:12px;line-height:1.6;color:${INK3};text-align:center;">${esc(i.footerReason)}</p><p style="margin:0;font-family:${SANS};font-size:12px;line-height:1.6;color:${INK3};text-align:center;"><a href="${BRAND_URL}" style="color:${INK3};text-decoration:none;">Dropway</a></p></td></tr></table>
 <!--[if mso | IE]></td></tr></table><![endif]-->
 </td></tr></table></body></html>`;
 }
