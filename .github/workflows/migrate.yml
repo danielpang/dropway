@@ -4,7 +4,9 @@
 # databases after code lands on main, so neither schema drifts behind merged code.
 #
 # Two-stage pipeline:
-#   1. dev  — runs AUTOMATICALLY, no approval. Migrating dev first also smoke-tests
+#   1. dev  — runs AUTOMATICALLY, no approval. Bound to the `development` GitHub
+#             Environment (which scopes the DEV_* secrets) but with NO required
+#             reviewers, so it does not pause. Migrating dev first also smoke-tests
 #             the migrations against a real database before they reach prod.
 #   2. prod — `needs: dev`, so it only runs once dev succeeds, AND is gated on the
 #             `production` GitHub Environment: it PAUSES for a required reviewer to
@@ -25,10 +27,10 @@
 # `goose up` is idempotent — it applies only versions newer than what each table
 # records, so a re-run with no new migrations is a clean no-op.
 #
-# Required repo/environment secrets (privileged OWNER connections, NOT the runtime
-# dropway_app role):
-#   DEV_DATABASE_OWNER_URL  / DEV_BILLING_OWNER_URL   — dev app + billing schemas.
-#   PROD_DATABASE_OWNER_URL / PROD_BILLING_OWNER_URL  — prod app + billing schemas.
+# Required environment secrets (privileged OWNER connections, NOT the runtime
+# dropway_app role). Set each on its matching GitHub Environment:
+#   development → DEV_DATABASE_OWNER_URL  / DEV_BILLING_OWNER_URL   — dev schemas.
+#   production  → PROD_DATABASE_OWNER_URL / PROD_BILLING_OWNER_URL  — prod schemas.
 # All must be reachable from GitHub-hosted runners (Supabase egress is not a fixed
 # IP range; allowlist GH Actions or use a self-hosted runner if you restrict access).
 
@@ -58,6 +60,10 @@ jobs:
   dev:
     name: Apply goose migrations to dev
     runs-on: ubuntu-latest
+    # The `development` GitHub Environment scopes the DEV_* secrets to this job.
+    # Leave its "Required reviewers" UNSET so dev keeps running automatically — an
+    # environment without protection rules adds no approval gate (unlike `production`).
+    environment: development
 
     steps:
       - uses: actions/checkout@v4
