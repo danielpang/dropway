@@ -20,7 +20,7 @@ export default function NotFound() {
       <ErrorPageMetric status={404} />
       <div className="w-full max-w-md space-y-6 text-center">
         <div className="flex justify-center">
-          <PrismShatter size={260} />
+          <PrismShatter />
         </div>
         <div className="space-y-2">
           <p className="font-mono text-sm font-medium text-muted-foreground">

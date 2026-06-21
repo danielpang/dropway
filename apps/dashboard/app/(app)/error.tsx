@@ -41,7 +41,7 @@ export default function AppError({
     <div className="mx-auto max-w-2xl">
       <ErrorPageMetric status={500} />
       <Card className="flex flex-col items-center gap-5 border-dashed p-10 text-center">
-        <PrismShatter size={200} />
+        <PrismShatter className="max-w-[300px]" />
         <div className="space-y-2">
           <h2 className="text-lg font-semibold tracking-tight">
             Couldn&rsquo;t load this page

@@ -44,7 +44,7 @@ export default function GlobalRouteError({
       <ErrorPageMetric status={500} />
       <div className="w-full max-w-md space-y-6 text-center">
         <div className="flex justify-center">
-          <PrismShatter size={260} />
+          <PrismShatter />
         </div>
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">
