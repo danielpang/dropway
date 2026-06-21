@@ -63,6 +63,8 @@ func mountPhase4(a *API, c *auth.Claims) http.Handler {
 		r.Put("/v1/sites/{id}/access", a.SetSiteAccess)
 		r.Post("/v1/sites/{id}/revoke-access", a.RevokeSiteAccess)
 		r.Post("/v1/members/{userId}/revoke", a.RevokeMember)
+		r.Post("/v1/members/invites", a.RecordMemberInvite)
+		r.Post("/v1/members/joined", a.RecordMemberJoin)
 		r.Post("/v1/orgs/revoke-access", a.RevokeAccess)
 		r.Get("/v1/audit", a.ListAudit)
 		r.Put("/v1/orgs/allow-external-sharing", a.SetAllowExternalSharing)
@@ -353,6 +355,111 @@ func TestRevoke_GenericByKind(t *testing.T) {
 				c.check(t, rev)
 			}
 		})
+	}
+}
+
+// --- membership audit: invites + joins -----------------------------------------
+
+func TestRecordMemberInvite_WritesAuditRow(t *testing.T) {
+	f := newFakeStore()
+	f.p2().members["u-admin"] = store.RoleAdmin
+	a := New(quota.Unlimited{})
+	a.Store = f
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/members/invites", `{"email":"new@team.com","role":"admin"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("record invite: %d %s", rr.Code, rr.Body)
+	}
+	log := f.auditLog()
+	if len(log) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(log))
+	}
+	e := log[0]
+	if e.Action != "member.invite" {
+		t.Errorf("action = %q, want member.invite", e.Action)
+	}
+	if e.Target != "invite:new@team.com" {
+		t.Errorf("target = %q", e.Target)
+	}
+	if e.ActorUser == nil || *e.ActorUser != "u-admin" {
+		t.Errorf("actor_user = %v, want u-admin", e.ActorUser)
+	}
+	if e.Metadata["email"] != "new@team.com" || e.Metadata["role"] != "admin" {
+		t.Errorf("metadata = %v", e.Metadata)
+	}
+}
+
+func TestRecordMemberInvite_NonAdminForbidden(t *testing.T) {
+	f := newFakeStore()
+	f.p2().members["u-member"] = store.RoleMember
+	a := New(quota.Unlimited{})
+	a.Store = f
+
+	h := mountPhase4(a, memberClaims())
+	rr := postJSON(h, "/v1/members/invites", `{"email":"new@team.com","role":"member"}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("member recording invite: got %d, want 403\n%s", rr.Code, rr.Body)
+	}
+	if len(f.auditLog()) != 0 {
+		t.Errorf("non-admin must not write an audit row")
+	}
+}
+
+func TestRecordMemberInvite_BadEmail400(t *testing.T) {
+	f := newFakeStore()
+	f.p2().members["u-admin"] = store.RoleAdmin
+	a := New(quota.Unlimited{})
+	a.Store = f
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/members/invites", `{"email":"not-an-email"}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("bad email: got %d, want 400\n%s", rr.Code, rr.Body)
+	}
+}
+
+func TestRecordMemberJoin_WritesAuditRow(t *testing.T) {
+	f := newFakeStore()
+	// The caller is a member of the (now-active) joined org.
+	f.p2().members["u-member"] = store.RoleMember
+	a := New(quota.Unlimited{})
+	a.Store = f
+
+	h := mountPhase4(a, memberClaims())
+	rr := postJSON(h, "/v1/members/joined", `{}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("record join: %d %s", rr.Code, rr.Body)
+	}
+	log := f.auditLog()
+	if len(log) != 1 {
+		t.Fatalf("expected 1 audit row, got %d", len(log))
+	}
+	e := log[0]
+	if e.Action != "member.join" {
+		t.Errorf("action = %q, want member.join", e.Action)
+	}
+	// Target is the caller's own id (from claims), never the request body.
+	if e.Target != "member:u-member" {
+		t.Errorf("target = %q, want member:u-member", e.Target)
+	}
+	if e.Metadata["role"] != "member" {
+		t.Errorf("metadata.role = %v, want member", e.Metadata["role"])
+	}
+}
+
+func TestRecordMemberJoin_NonMemberRejected(t *testing.T) {
+	f := newFakeStore() // no member rows → MemberRole returns ErrNoMembership
+	a := New(quota.Unlimited{})
+	a.Store = f
+
+	h := mountPhase4(a, memberClaims())
+	rr := postJSON(h, "/v1/members/joined", `{}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("non-member join: got %d, want 400\n%s", rr.Code, rr.Body)
+	}
+	if len(f.auditLog()) != 0 {
+		t.Errorf("non-member must not write an audit row")
 	}
 }
 

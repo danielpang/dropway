@@ -104,6 +104,40 @@ export async function preflightMembersAction(): Promise<MembersPreflightResult> 
 }
 
 /**
+ * Record a `member.invite` audit entry after Better Auth creates an org invitation.
+ * Best-effort telemetry to the audit trail: the invitation already exists and is
+ * authoritative, so a failure here (or an older API build without the endpoint) is
+ * swallowed — it must never turn a successful invite into a UI error. Called by the
+ * invite form right after `organization.inviteMember` succeeds.
+ */
+export async function recordInviteSentAction(input: {
+  email: string;
+  role: string;
+}): Promise<void> {
+  try {
+    await api.recordMemberInvite(input);
+    // The new event should show on the audit page.
+    revalidatePath("/audit");
+  } catch {
+    // Audit recording is best-effort; never surface it to the inviter.
+  }
+}
+
+/**
+ * Record a `member.join` audit entry after the caller accepts an invitation. MUST
+ * run after the joined org is set active (the form awaits setActive first), so the
+ * Go API scopes the row to the org just joined. Best-effort like the invite path:
+ * the membership already exists, so any failure is swallowed.
+ */
+export async function recordMemberJoinAction(): Promise<void> {
+  try {
+    await api.recordMemberJoin();
+  } catch {
+    // Best-effort; the join already succeeded regardless of the trail write.
+  }
+}
+
+/**
  * Hard-finalize a member removal (C2). After the org plugin
  * deletes the member row, removal MUST also:
  *   1. revoke the removed user's Better Auth sessions, so the jwt() plugin can't

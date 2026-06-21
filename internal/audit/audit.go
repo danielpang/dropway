@@ -49,6 +49,15 @@ const (
 	// ActionMemberRevoke records an admin revoking a member's edge tokens /
 	// removing them (POST /v1/members/{userId}/revoke).
 	ActionMemberRevoke Action = "member.revoke"
+	// ActionMemberInvite records an admin/owner sending an org invitation
+	// (POST /v1/members/invites). Better Auth owns the invitation row + email; the
+	// dashboard records this after the invite is created so the trail captures who
+	// invited whom, with what role.
+	ActionMemberInvite Action = "member.invite"
+	// ActionMemberJoin records a user accepting an invitation and joining the org
+	// (POST /v1/members/joined). Better Auth owns the membership row; the dashboard
+	// records this after the join so the trail captures the new member.
+	ActionMemberJoin Action = "member.join"
 	// ActionSiteRevokeAccess records an admin force-revoking a site's edge tokens
 	// (POST /v1/sites/{id}/revoke-access) or a site unshare/tighten.
 	ActionSiteRevokeAccess Action = "site.revoke_access"

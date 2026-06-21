@@ -18,6 +18,8 @@ const CANONICAL_ACTIONS: Array<[action: string, highlight: boolean]> = [
   ["site.revoke_access", true],
   ["org.allow_external_sharing", true],
   ["member.revoke", true],
+  ["member.invite", true], // membership addition: who can reach the org
+  ["member.join", true],
   ["deploy.finalize", false],
   ["deploy.publish", false],
   ["domain.add", false],
