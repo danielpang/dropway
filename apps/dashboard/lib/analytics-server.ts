@@ -27,9 +27,14 @@ function getClient(): PostHog | null {
     client = null;
     return client;
   }
-  // flushAt:1 / flushInterval:0 → send each event immediately. Combined with an
-  // awaited flush() per capture, this survives a serverless function freezing
-  // right after the action returns (no buffered, never-sent events).
+  // Every capture below uses the *Immediate methods (captureImmediate /
+  // captureExceptionImmediate), which BUILD, ENQUEUE, and SEND the event in a
+  // single awaited call — the pattern PostHog documents for serverless (Vercel
+  // functions freeze the instant the handler returns). The plain
+  // capture()+flush() pattern is racy here: capture() builds the event message
+  // asynchronously, so an immediately-following flush() can run before the event
+  // is even queued and send nothing (PostHog/posthog-js#2220). flushAt:1 /
+  // flushInterval:0 remain as a defensive backstop for any non-immediate path.
   client = new PostHog(key, {
     host: posthogHost(),
     flushAt: 1,
@@ -51,7 +56,9 @@ async function captureServerEvent(input: ServerEventInput): Promise<void> {
   const ph = getClient();
   if (!ph) return;
   try {
-    ph.capture({
+    // captureImmediate (not capture + flush): sends the event before the awaited
+    // call resolves, so it can't be lost to a serverless freeze.
+    await ph.captureImmediate({
       distinctId: input.distinctId,
       event: input.event,
       properties: buildEventProperties({
@@ -66,7 +73,6 @@ async function captureServerEvent(input: ServerEventInput): Promise<void> {
         ? { groups: { organization: input.organization } }
         : {}),
     });
-    await ph.flush();
   } catch {
     // Analytics must never break the user action that triggered it.
   }
@@ -130,10 +136,14 @@ const SYSTEM_DISTINCT_ID = "system";
 /**
  * Report a Postgres connection-capacity failure (pooler exhaustion / acquire timeout)
  * to PostHog Error Tracking, so the same condition that logs `[db-capacity]` also raises
- * an alertable issue. Sent via captureException (not capture) so it lands in the Error
+ * an alertable issue. Sent via captureExceptionImmediate so it lands in the Error
  * Tracking product grouped by the underlying error, with `db_capacity_reason` / `source`
- * as queryable properties an alert can target. Infra-level and best-effort: no-ops when
- * PostHog is unconfigured (self-host) and never throws into the caller.
+ * as queryable properties an alert can target. The Immediate variant is essential here:
+ * plain captureException builds + enqueues the event ASYNCHRONOUSLY, so a following
+ * flush() can fire before it's queued and send nothing (PostHog/posthog-js#2220) — which
+ * on a Vercel function that freezes right after would silently drop every error. Infra-
+ * level and best-effort: no-ops when PostHog is unconfigured (self-host) and never throws
+ * into the caller.
  */
 export async function captureDbCapacityIssue(input: {
   /** Machine-stable reason from connectionCapacityReason (e.g. pooler_session_exhausted). */
@@ -149,13 +159,12 @@ export async function captureDbCapacityIssue(input: {
   if (!ph) return;
   try {
     const err = input.error instanceof Error ? input.error : new Error(String(input.error));
-    ph.captureException(err, input.distinctId || SYSTEM_DISTINCT_ID, {
+    await ph.captureExceptionImmediate(err, input.distinctId || SYSTEM_DISTINCT_ID, {
       issue: "db_connection_capacity",
       db_capacity_reason: input.reason,
       source: input.source,
       environment: appEnvironment(),
     });
-    await ph.flush();
   } catch {
     // Telemetry must never break the request/path that hit the capacity error.
   }
