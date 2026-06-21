@@ -21,6 +21,7 @@ package pgpool
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -43,7 +44,50 @@ func New(ctx context.Context, url string, defaultMaxConns int32) (*pgxpool.Pool,
 	cfg.MaxConnIdleTime = 30 * time.Second
 	cfg.MaxConnLifetime = 30 * time.Minute
 
-	return pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	go monitorSaturation(ctx, pool)
+	return pool, nil
+}
+
+// monitorSaturation samples the pool on a ticker and logs when callers had to WAIT for
+// a free connection (the pool hit its cap), or when acquires were CANCELED while waiting
+// (timeouts / context expiry — actual request failures, the Go-side equivalent of the
+// dashboard's EMAXCONNSESSION). It only logs on a non-zero delta, so a healthy pool stays
+// silent; the message names the cap so the fix (raise DB_MAX_CONNS, or move to the
+// transaction pooler) is obvious from the log line. Exits when ctx is cancelled.
+func monitorSaturation(ctx context.Context, pool *pgxpool.Pool) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	var lastEmpty, lastCanceled int64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s := pool.Stat()
+			empty, canceled := s.EmptyAcquireCount(), s.CanceledAcquireCount()
+			dEmpty, dCanceled := empty-lastEmpty, canceled-lastCanceled
+			lastEmpty, lastCanceled = empty, canceled
+			if dEmpty == 0 && dCanceled == 0 {
+				continue
+			}
+			attrs := []any{
+				"waited_acquires", dEmpty,
+				"canceled_acquires", dCanceled,
+				"acquired_conns", s.AcquiredConns(),
+				"total_conns", s.TotalConns(),
+				"max_conns", s.MaxConns(),
+			}
+			if dCanceled > 0 {
+				slog.Error("postgres pool exhausted: acquisitions timed out waiting for a connection (raise DB_MAX_CONNS or use the transaction pooler)", attrs...)
+			} else {
+				slog.Warn("postgres pool saturated: acquisitions waited for a free connection", attrs...)
+			}
+		}
+	}
 }
 
 // maxConnsFromEnv returns DB_MAX_CONNS when it is a positive integer, else the

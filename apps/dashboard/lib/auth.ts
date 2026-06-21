@@ -5,6 +5,7 @@ import { jwt, magicLink, organization } from "better-auth/plugins";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
 
+import { logIfConnectionCapacity } from "@/lib/db-capacity";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -65,6 +66,16 @@ const authPool = new Pool({
   connectionTimeoutMillis: 10_000,
 });
 
+// An idle pooled client erroring out (backend dropped it, pooler reset it) emits here
+// rather than rejecting a query, so without this handler `pg` would log it unattended
+// or, worse, crash the process on an 'error' with no listener. Tag connection-capacity
+// errors so they're alertable; surface anything else so it isn't lost.
+authPool.on("error", (err) => {
+  if (logIfConnectionCapacity("authPool idle client", err)) return;
+  // eslint-disable-next-line no-console
+  console.error(`[db-pool] idle client error: ${err instanceof Error ? err.message : String(err)}`);
+});
+
 // Per-instance memo of firstOrgId. The lookup runs on every new session AND every MCP
 // access-token mint (customAccessTokenClaims), which during one sign-in fires several
 // times within seconds, so a short TTL collapses those repeats into one query without
@@ -106,7 +117,11 @@ async function firstOrgId(userId: string): Promise<string | undefined> {
       orgCache.set(userId, { orgId, expiresAt: Date.now() + ORG_CACHE_TTL_MS });
     }
     return orgId;
-  } catch {
+  } catch (err) {
+    // Stays best-effort (returns undefined so the caller falls back), but a
+    // connection-capacity failure here is logged under [db-capacity] rather than
+    // silently swallowed, so the org-backfill misfiring is diagnosable.
+    logIfConnectionCapacity("firstOrgId", err);
     return undefined;
   }
 }
@@ -115,6 +130,23 @@ export const auth = betterAuth({
   appName: "Dropway",
   baseURL: betterAuthUrl(),
   secret: betterAuthSecret(),
+
+  // Intercept Better Auth's own logs so a connection-capacity failure inside ITS
+  // queries (e.g. findSession hitting the pooler cap, the original EMAXCONNSESSION
+  // 500) is re-emitted under the alertable [db-capacity] tag instead of being buried
+  // in a generic INTERNAL_SERVER_ERROR. Providing `log` replaces Better Auth's default
+  // console output, so forward every record to the console to preserve its diagnostics.
+  logger: {
+    log: (level, message, ...args) => {
+      if (level === "error") {
+        for (const candidate of [message, ...args]) {
+          if (logIfConnectionCapacity("better-auth", candidate)) break;
+        }
+      }
+      // eslint-disable-next-line no-console
+      console[level](`[Better Auth] ${message}`, ...args);
+    },
+  },
 
   // Postgres via a node-postgres Pool. Better Auth uses its built-in Kysely
   // adapter when handed a `Pool`, generating + migrating its own identity tables.
