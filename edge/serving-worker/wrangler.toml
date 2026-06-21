@@ -52,7 +52,7 @@ RATE_LIMIT_WINDOW_SECONDS = "60"
 #   wrangler secret put VISIT_SALT       # any long random string
 # Leave POSTHOG_KEY unset to disable visit tracking entirely.
 POSTHOG_HOST = "https://us.posthog.com"
-DROPWAY_ENV = "production"
+ENVIRONMENT = "production"
 
 # Native, atomic Rate Limiting binding — the REAL denial-of-wallet control (it
 # correctly counts a single-IP flood the KV counter cannot). Keep `simple.limit`

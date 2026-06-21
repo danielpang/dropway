@@ -20,7 +20,7 @@ export interface AnalyticsEnv {
   /** PostHog ingestion host. Defaults to US cloud. */
   POSTHOG_HOST?: string;
   /** Deployment label stamped as the `environment` property (e.g. "production"). */
-  DROPWAY_ENV?: string;
+  ENVIRONMENT?: string;
   /** Salt for the visitor hash. Falls back to POSTHOG_KEY when unset. */
   VISIT_SALT?: string;
 }
@@ -137,7 +137,7 @@ export async function captureSiteVisit(
       host: ctx.url.host,
       path: ctx.url.pathname,
       route: ctx.route,
-      environment: env.DROPWAY_ENV ?? "production",
+      environment: env.ENVIRONMENT ?? "production",
       now: ctx.now,
     });
     const host = (env.POSTHOG_HOST ?? DEFAULT_HOST).replace(/\/$/, "");

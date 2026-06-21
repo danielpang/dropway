@@ -141,13 +141,13 @@ export interface Env {
   RATE_LIMIT_WINDOW_SECONDS?: string;
   /**
    * OPTIONAL analytics: PostHog project key for the per-site `site_visit` metric.
-   * UNSET → no visit events are emitted. POSTHOG_HOST / DROPWAY_ENV / VISIT_SALT
+   * UNSET → no visit events are emitted. POSTHOG_HOST / ENVIRONMENT / VISIT_SALT
    * tune the host, the `environment` label, and the visitor-hash salt. See
    * src/analytics.ts.
    */
   POSTHOG_KEY?: string;
   POSTHOG_HOST?: string;
-  DROPWAY_ENV?: string;
+  ENVIRONMENT?: string;
   VISIT_SALT?: string;
 }
 

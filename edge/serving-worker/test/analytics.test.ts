@@ -141,7 +141,7 @@ describe("captureSiteVisit", () => {
   it("POSTs a site_visit to the capture endpoint for an HTML page", async () => {
     const fetchImpl = vi.fn<CaptureFetch>().mockResolvedValue(undefined);
     await captureSiteVisit(
-      { POSTHOG_KEY: "phc_test", POSTHOG_HOST: "https://eu.posthog.com", DROPWAY_ENV: "staging" },
+      { POSTHOG_KEY: "phc_test", POSTHOG_HOST: "https://eu.posthog.com", ENVIRONMENT: "staging" },
       ctx("text/html; charset=utf-8"),
       fetchImpl,
     );

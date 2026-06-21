@@ -120,18 +120,15 @@ export function googleClientSecret(): string {
 /**
  * The deployment environment label stamped onto every analytics event
  * (`environment` property) so PostHog can segment production from staging,
- * self-host, and local dev. Sourced from an EXPLICIT var (NEXT_PUBLIC_APP_ENV so
- * the browser SDK can read it too, falling back to the server-only DROPWAY_ENV),
- * and only then NODE_ENV. Set NEXT_PUBLIC_APP_ENV per deploy (e.g. "production",
- * "staging", "self-host").
+ * self-host, and local dev. Sourced from a single literal `ENVIRONMENT` var,
+ * falling back to NODE_ENV ("development" / "production") and then "development".
+ *
+ * `ENVIRONMENT` is exposed to the BROWSER bundle via next.config's `env` (Next
+ * only auto-exposes NEXT_PUBLIC_*), so the same value drives both server-side
+ * capture (posthog-node) and the browser SDK. It is resolved at build time.
  */
 export function appEnvironment(): string {
-  return (
-    process.env.NEXT_PUBLIC_APP_ENV ||
-    process.env.DROPWAY_ENV ||
-    process.env.NODE_ENV ||
-    "development"
-  );
+  return process.env.ENVIRONMENT || process.env.NODE_ENV || "development";
 }
 
 /**
