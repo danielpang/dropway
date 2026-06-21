@@ -15,9 +15,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { api, ApiError, type BillingPlan, type PlanTier } from "@/lib/api";
-import { SALES_URL, TIER_LABEL } from "@/lib/billing";
+import { SALES_URL, SITE_LIMIT, TIER_LABEL } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
+import { formatBytes } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Billing" };
 export const dynamic = "force-dynamic";
@@ -93,6 +95,19 @@ export default async function BillingPage({
   const currentTier: PlanTier = plan.plan_tier ?? "free";
   const isCheckoutReturn = checkoutReturn === "success";
   const isCheckoutCancel = checkoutReturn === "cancel";
+
+  // Live usage for the meter: site count + total storage across the org's sites.
+  // Best-effort — if the sites list can't be read we just omit the Usage card
+  // rather than failing the billing page.
+  const sites = await api.listSites().catch(() => null);
+  const usage =
+    sites != null
+      ? {
+          siteCount: sites.length,
+          siteLimit: SITE_LIMIT[currentTier],
+          storageBytes: sites.reduce((sum, s) => sum + (s.storage_bytes ?? 0), 0),
+        }
+      : null;
 
   // Members can view billing (it drives banners + CTAs) but cannot mutate it.
   if (!manage) {
@@ -175,6 +190,55 @@ export default async function BillingPage({
           </div>
         </CardContent>
       </Card>
+
+      {/* Usage against the current plan's limits */}
+      {usage && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Usage</CardTitle>
+            <CardDescription>
+              What {org?.name ?? "this organization"} is using on its current
+              plan.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {/* Sites: count vs the tier's site cap (Business/Enterprise unlimited). */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Sites</span>
+                <span className="font-medium tabular-nums">
+                  <span
+                    className={
+                      usage.siteLimit != null && usage.siteCount > usage.siteLimit
+                        ? "text-destructive"
+                        : "text-foreground"
+                    }
+                  >
+                    {usage.siteCount}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {" / "}
+                    {usage.siteLimit ?? "Unlimited"}
+                  </span>
+                </span>
+              </div>
+              {usage.siteLimit != null && (
+                <Progress
+                  value={(usage.siteCount / usage.siteLimit) * 100}
+                />
+              )}
+            </div>
+
+            {/* Storage: cumulative across all of the org's sites. */}
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Storage used</span>
+              <span className="font-medium tabular-nums text-foreground">
+                {formatBytes(usage.storageBytes)}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Plan/limits matrix */}
       <section className="space-y-3">

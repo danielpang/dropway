@@ -171,6 +171,18 @@ export const PLAN_MATRIX: PlanFeatureRow[] = [
 export const MATRIX_TIERS: PlanTier[] = ["free", "pro", "business", "enterprise"];
 
 /**
+ * Numeric per-org site cap by tier for the usage meter (null = unlimited).
+ * Mirrors cloud/quota's bands (Free 10 / Pro 100; Business and Enterprise
+ * unlimited). Display-only — the real cap is enforced server-side.
+ */
+export const SITE_LIMIT: Record<PlanTier, number | null> = {
+  free: 10,
+  pro: 100,
+  business: null,
+  enterprise: null,
+};
+
+/**
  * Sales/contact form for the "Custom" Enterprise tier — the same Google Form
  * dropway.dev links to, so the dashboard and marketing site stay consistent.
  */
