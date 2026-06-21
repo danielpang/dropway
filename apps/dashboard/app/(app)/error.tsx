@@ -5,7 +5,7 @@ import { RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 
 import { ErrorPageMetric } from "@/components/error/error-page-metric";
-import { PrismShatter } from "@/components/error/prism-shatter";
+import { BurstPipe } from "@/components/error/burst-pipe";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -41,7 +41,7 @@ export default function AppError({
     <div className="mx-auto max-w-2xl">
       <ErrorPageMetric status={500} />
       <Card className="flex flex-col items-center gap-5 border-dashed p-10 text-center">
-        <PrismShatter className="max-w-[300px]" />
+        <BurstPipe className="max-w-[240px]" />
         <div className="space-y-2">
           <h2 className="text-lg font-semibold tracking-tight">
             Couldn&rsquo;t load this page

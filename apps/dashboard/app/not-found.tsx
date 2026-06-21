@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { ErrorPageMetric } from "@/components/error/error-page-metric";
-import { PrismShatter } from "@/components/error/prism-shatter";
+import { BurstPipe } from "@/components/error/burst-pipe";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = { title: "Page not found" };
@@ -20,7 +20,7 @@ export default function NotFound() {
       <ErrorPageMetric status={404} />
       <div className="w-full max-w-md space-y-6 text-center">
         <div className="flex justify-center">
-          <PrismShatter />
+          <BurstPipe />
         </div>
         <div className="space-y-2">
           <p className="font-mono text-sm font-medium text-muted-foreground">

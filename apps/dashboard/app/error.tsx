@@ -6,7 +6,7 @@ import { RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 
 import { ErrorPageMetric } from "@/components/error/error-page-metric";
-import { PrismShatter } from "@/components/error/prism-shatter";
+import { BurstPipe } from "@/components/error/burst-pipe";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -44,7 +44,7 @@ export default function GlobalRouteError({
       <ErrorPageMetric status={500} />
       <div className="w-full max-w-md space-y-6 text-center">
         <div className="flex justify-center">
-          <PrismShatter />
+          <BurstPipe />
         </div>
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">
