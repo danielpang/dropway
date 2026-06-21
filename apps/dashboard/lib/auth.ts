@@ -17,6 +17,12 @@ import {
   MCP_URL,
   requireEmailVerification,
 } from "@/lib/env";
+import {
+  invitationEmail,
+  magicLinkEmail,
+  passwordResetEmail,
+  verifyEmail,
+} from "@/lib/email-templates";
 
 // NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
 // module top level. The `@better-auth/cli migrate` step loads THIS config under a
@@ -25,7 +31,8 @@ import {
 // would make `Cannot find module 'server-only'` break the one-time auth migration
 // (CI + every fresh self-host). Deferring it keeps the config import graph free of
 // server-only/nodemailer; the dynamic import runs only at send time, in the real
-// Next runtime.
+// Next runtime. (`@/lib/email-templates` IS safe to import at the top: it's pure
+// string building with no `server-only`/Node deps, so it loads fine under jiti.)
 
 /**
  * Better Auth server instance, the authoritative owner of the `identity` schema
@@ -138,13 +145,11 @@ export const auth = betterAuth({
     // Password-reset link. sendEmail no-ops+logs when MAIL_SMTP_URL is unset (lib/email.ts).
     sendResetPassword: async ({ user, url }) => {
       const { sendEmail } = await import("@/lib/email");
-      await sendEmail({
-        to: user.email,
-        subject: "Reset your Dropway password",
-        text:
-          `Reset your Dropway password by opening this link:\n\n${url}\n\n` +
-          `If you didn't request this, you can safely ignore this email.`,
+      const { subject, html, text } = passwordResetEmail({
+        url,
+        appUrl: betterAuthUrl(),
       });
+      await sendEmail({ to: user.email, subject, html, text });
     },
   },
 
@@ -155,13 +160,8 @@ export const auth = betterAuth({
     sendOnSignUp: true,
     sendVerificationEmail: async ({ user, url }) => {
       const { sendEmail } = await import("@/lib/email");
-      await sendEmail({
-        to: user.email,
-        subject: "Verify your email for Dropway",
-        text:
-          `Welcome to Dropway! Confirm your email by opening this link:\n\n${url}\n\n` +
-          `If you didn't create a Dropway account, you can ignore this email.`,
-      });
+      const { subject, html, text } = verifyEmail({ url, appUrl: betterAuthUrl() });
+      await sendEmail({ to: user.email, subject, html, text });
     },
   },
 
@@ -226,20 +226,13 @@ export const auth = betterAuth({
         after(async () => {
           try {
             const { sendEmail } = await import("@/lib/email");
-            const url = `${betterAuthUrl()}/accept-invitation/${id}`;
-            const org = organization?.name || "a team";
-            const inviterName = inviter?.user?.name;
-            const lead = inviterName
-              ? `${inviterName} invited you to join ${org} on Dropway.`
-              : `You've been invited to join ${org} on Dropway.`;
-            await sendEmail({
-              to: email,
-              subject: `You've been invited to join ${org} on Dropway`,
-              text:
-                `${lead}\n\n` +
-                `Accept the invitation by opening this link:\n\n${url}\n\n` +
-                `If you weren't expecting this, you can safely ignore this email.`,
+            const { subject, html, text } = invitationEmail({
+              url: `${betterAuthUrl()}/accept-invitation/${id}`,
+              appUrl: betterAuthUrl(),
+              orgName: organization?.name || "your team",
+              inviterName: inviter?.user?.name,
             });
+            await sendEmail({ to: email, subject, html, text });
           } catch (err) {
             // Never let a mail failure surface; log so a missed invite is diagnosable.
             // eslint-disable-next-line no-console
@@ -257,13 +250,11 @@ export const auth = betterAuth({
         // sendEmail no-ops+logs when MAIL_SMTP_URL is unset (lib/email.ts), so a
         // no-email self-host can still sign in by copying the link from the logs.
         const { sendEmail } = await import("@/lib/email");
-        await sendEmail({
-          to: email,
-          subject: "Your Dropway sign-in link",
-          text:
-            `Sign in to Dropway by opening this link:\n\n${url}\n\n` +
-            `This link expires shortly. If you didn't request it, ignore this email.`,
+        const { subject, html, text } = magicLinkEmail({
+          url,
+          appUrl: betterAuthUrl(),
         });
+        await sendEmail({ to: email, subject, html, text });
       },
     }),
 
