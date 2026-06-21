@@ -1,4 +1,4 @@
-# Dropway Go API — Fly.io deploy manifest (app: dropway-api).
+# Dropway Go API — Fly.io deploy manifest (app: dropway-production).
 #
 # Committed so Fly can deploy from CI (GitHub Actions → flyctl). It holds only
 # non-secret deploy config — NO credentials. All secrets are set out-of-band with
@@ -8,7 +8,7 @@
 # Build context is the REPO ROOT (the Go module spans the whole repo), so run
 # `fly deploy` FROM THE REPO ROOT (this file is read by default).
 
-app = "dropway-api"
+app = "dropway-production"
 primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US East)
 
 [build]
@@ -22,7 +22,7 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   force_https = true
   # Always-on control plane: keep one machine up (no cold starts on the auth path).
   auto_stop_machines = false
-  auto_start_machines = false
+  auto_start_machines = true
   min_machines_running = 1
 
   [http_service.concurrency]
