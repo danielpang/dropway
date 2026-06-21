@@ -2,30 +2,21 @@
 
 package billing
 
-// analytics.go is the PROPRIETARY, cloud-only PostHog emission for billing plan
-// changes. When a signature-verified Stripe webhook moves an org between tiers
-// (free→pro upgrade, business→pro or →free downgrade, cancel→free), we emit a
-// `plan_upgraded` / `plan_downgraded` event to PostHog so the growth dashboard can
-// track conversion and churn.
+// analytics.go is the PROPRIETARY, cloud-only billing-analytics LOGIC: it decides
+// WHAT to emit when a signature-verified Stripe webhook moves an org between tiers
+// (free→pro upgrade, business→pro or →free downgrade, cancel→free) and maps it to a
+// `plan_upgraded` / `plan_downgraded` product-analytics event.
 //
-// DELIVERY MODEL — flush before returning. The Go API is long-lived, but we still
-// SEND each event SYNCHRONOUSLY over HTTP at the moment it happens rather than
-// handing it to a background batch queue. Billing events are rare and high-value,
-// so a buffered client that could drop un-flushed events on a deploy/restart is the
-// wrong trade: a direct, bounded POST guarantees the event is on the wire before
-// the webhook handler returns, with nothing left buffered. It is BEST-EFFORT —
-// every failure is logged, never returned — so analytics can never fail a webhook
-// (the entitlement write already committed).
+// The TRANSPORT is the vendor-neutral, open-source internal/analytics.Emitter (a
+// PostHog client by default) — so this file owns only the billing semantics, and
+// the sink can be swapped (a different CDP, a no-op) without touching billing. It
+// is BEST-EFFORT: CapturePlanChange never returns an error and never blocks the
+// webhook (the entitlement write already committed).
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"log/slog"
-	"net/http"
-	"strings"
-	"time"
+
+	"github.com/danielpang/dropway/internal/analytics"
 )
 
 // Plan-change direction labels (also the `direction` event property).
@@ -46,7 +37,7 @@ type PlanChange struct {
 }
 
 // PlanAnalytics receives plan-change events. It is an interface so the store stays
-// testable (a fake records calls) and so a deployment with no PostHog key simply
+// testable (a fake records calls) and so a deployment with no analytics sink simply
 // wires nothing (the store's emitter is nil → no-op). Implementations MUST be
 // best-effort: CapturePlanChange never returns an error and must not panic.
 type PlanAnalytics interface {
@@ -109,110 +100,44 @@ func eventNameForDirection(direction string) string {
 	return "plan_upgraded"
 }
 
-// defaultPostHogHost is PostHog US cloud's INGEST host (the `i.` subdomain is the
-// event-capture endpoint, distinct from the app host).
-const defaultPostHogHost = "https://us.i.posthog.com"
-
-// PostHogAnalytics is the live PlanAnalytics: a synchronous HTTP capture against
-// PostHog's /capture/ endpoint. Construct with NewPostHogAnalytics.
-type PostHogAnalytics struct {
-	apiKey      string
-	endpoint    string // {host}/capture/
-	environment string // stamped as the `environment` property (prod/staging/…)
-	http        *http.Client
-	log         *slog.Logger
+// emitterPlanAnalytics adapts a vendor-neutral analytics.Emitter to PlanAnalytics:
+// it shapes a PlanChange into the product-analytics Event (event name, properties,
+// and the org group) and hands it to the emitter.
+type emitterPlanAnalytics struct {
+	em analytics.Emitter
 }
 
-var _ PlanAnalytics = (*PostHogAnalytics)(nil)
+var _ PlanAnalytics = emitterPlanAnalytics{}
 
-// NewPostHogAnalytics builds the emitter. host defaults to PostHog US cloud's
-// ingest host; environment is the deploy label stamped on every event. A short
-// client timeout bounds the synchronous send so a slow PostHog can't hold the
-// webhook handler open. Returns nil when apiKey is empty so callers can wire
-// "nothing" (the store treats a nil emitter as disabled).
-func NewPostHogAnalytics(apiKey, host, environment string, log *slog.Logger) *PostHogAnalytics {
-	if apiKey == "" {
+// NewPlanAnalytics wraps a generic analytics emitter as the billing PlanAnalytics.
+// Returns nil when em is nil so the store treats analytics as disabled.
+func NewPlanAnalytics(em analytics.Emitter) PlanAnalytics {
+	if em == nil {
 		return nil
 	}
-	if log == nil {
-		log = slog.Default()
-	}
-	host = strings.TrimRight(host, "/")
-	if host == "" {
-		host = defaultPostHogHost
-	}
-	return &PostHogAnalytics{
-		apiKey:      apiKey,
-		endpoint:    host + "/capture/",
-		environment: environment,
-		http:        &http.Client{Timeout: 5 * time.Second},
-		log:         log,
-	}
+	return emitterPlanAnalytics{em: em}
 }
 
-// CapturePlanChange POSTs a single plan-change event to PostHog. It is best-effort:
-// any failure is logged and swallowed (the entitlement change already committed; a
-// missed analytics event must never surface to Stripe).
-//
-// The event is tied to the org via PostHog GROUP analytics ($groups.organization)
-// AND distinct_id=org so per-org billing rolls up cleanly. Person-profile
-// processing is disabled ($process_person_profile:false): these are system events
-// with no acting user, so they should not mint a "person" per org.
-func (p *PostHogAnalytics) CapturePlanChange(ctx context.Context, ev PlanChange) {
-	if p == nil || ev.OrgID == "" || ev.Direction == directionNone {
+// CapturePlanChange shapes and emits the plan-change event. The event is tied to
+// the org via PostHog GROUP analytics ($groups via Event.Groups) AND
+// distinct_id=org so per-org billing rolls up cleanly. Person-profile processing is
+// disabled ($process_person_profile:false): these are system events with no acting
+// user, so they should not mint a "person" per org.
+func (a emitterPlanAnalytics) CapturePlanChange(ctx context.Context, ev PlanChange) {
+	if ev.OrgID == "" || ev.Direction == directionNone {
 		return
 	}
-
-	body, err := json.Marshal(map[string]any{
-		"api_key":     p.apiKey,
-		"event":       eventNameForDirection(ev.Direction),
-		"distinct_id": ev.OrgID,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"properties": map[string]any{
+	a.em.Capture(ctx, analytics.Event{
+		DistinctID: ev.OrgID,
+		Event:      eventNameForDirection(ev.Direction),
+		Properties: map[string]any{
 			"from_tier":               string(ev.FromTier),
 			"to_tier":                 string(ev.ToTier),
 			"direction":               ev.Direction,
 			"reason":                  ev.Reason,
-			"environment":             p.environment,
 			"organization":            ev.OrgID,
-			"$groups":                 map[string]string{"organization": ev.OrgID},
 			"$process_person_profile": false,
-			"$lib":                    "dropway-cloud-api",
 		},
+		Groups: map[string]string{"organization": ev.OrgID},
 	})
-	if err != nil {
-		p.log.Warn("posthog: marshal plan-change event failed", "org_id", ev.OrgID, "err", err)
-		return
-	}
-
-	// Detach from the request's cancellation (a Stripe disconnect must not abort an
-	// already-earned event) but keep a hard deadline so the send can't hang the
-	// webhook response.
-	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(sendCtx, http.MethodPost, p.endpoint, bytes.NewReader(body))
-	if err != nil {
-		p.log.Warn("posthog: build request failed", "org_id", ev.OrgID, "err", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.http.Do(req)
-	if err != nil {
-		p.log.Warn("posthog: plan-change capture failed", "org_id", ev.OrgID, "err", err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	// Drain so the connection can be reused; PostHog returns a tiny {"status":1}.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		p.log.Warn("posthog: plan-change capture non-2xx",
-			"org_id", ev.OrgID, "event", eventNameForDirection(ev.Direction), "status", resp.StatusCode)
-		return
-	}
-	p.log.Debug("posthog: plan-change captured",
-		"org_id", ev.OrgID, "event", eventNameForDirection(ev.Direction),
-		"from", string(ev.FromTier), "to", string(ev.ToTier), "reason", ev.Reason)
 }

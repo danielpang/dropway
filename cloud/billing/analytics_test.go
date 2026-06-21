@@ -2,18 +2,16 @@
 
 package billing
 
-// Unit tests for the cloud billing → PostHog plan-change analytics: the pure
-// upgrade/downgrade classification, the reason/event-name mapping, the synchronous
-// HTTP capture (shape of the /capture/ payload), and the store's post-commit
+// Unit tests for the cloud billing → analytics logic: the pure upgrade/downgrade
+// classification, the reason/event-name mapping, the adapter that shapes a
+// PlanChange into a vendor-neutral analytics.Event, and the store's post-commit
 // emitPlanChange gating (no emit on a no-op move, an empty org, or no emitter).
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"sync"
 	"testing"
+
+	"github.com/danielpang/dropway/internal/analytics"
 )
 
 func TestPlanDirection(t *testing.T) {
@@ -63,46 +61,28 @@ func TestEventNameForDirection(t *testing.T) {
 	}
 }
 
-func TestNewPostHogAnalytics_DisabledWithoutKey(t *testing.T) {
-	if ph := NewPostHogAnalytics("", "https://us.i.posthog.com", "production", nil); ph != nil {
-		t.Error("NewPostHogAnalytics with empty key must return nil (disabled)")
-	}
-	// A nil *PostHogAnalytics must be safe to call (defensive guard).
-	var ph *PostHogAnalytics
-	ph.CapturePlanChange(context.Background(), PlanChange{OrgID: "org_1", Direction: DirectionUpgrade})
+// fakeEmitter records Capture calls (and implements the io.Closer half of Emitter).
+type fakeEmitter struct {
+	events []analytics.Event
+	closed bool
 }
 
-func TestPostHogAnalytics_CaptureSendsExpectedPayload(t *testing.T) {
-	type captured struct {
-		APIKey     string         `json:"api_key"`
-		Event      string         `json:"event"`
-		DistinctID string         `json:"distinct_id"`
-		Timestamp  string         `json:"timestamp"`
-		Properties map[string]any `json:"properties"`
-	}
+func (f *fakeEmitter) Capture(_ context.Context, ev analytics.Event) {
+	f.events = append(f.events, ev)
+}
+func (f *fakeEmitter) Close() error { f.closed = true; return nil }
 
-	var (
-		mu   sync.Mutex
-		got  captured
-		path string
-		hits int
-	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		hits++
-		path = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&got)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":1}`))
-	}))
-	defer srv.Close()
-
-	ph := NewPostHogAnalytics("phc_test", srv.URL, "production", nil)
-	if ph == nil {
-		t.Fatal("expected a non-nil emitter for a configured key")
+func TestNewPlanAnalytics_NilEmitter(t *testing.T) {
+	if NewPlanAnalytics(nil) != nil {
+		t.Error("NewPlanAnalytics(nil) must return nil so the store treats analytics as disabled")
 	}
-	ph.CapturePlanChange(context.Background(), PlanChange{
+}
+
+func TestCapturePlanChange_ShapesEvent(t *testing.T) {
+	em := &fakeEmitter{}
+	pa := NewPlanAnalytics(em)
+
+	pa.CapturePlanChange(context.Background(), PlanChange{
 		OrgID:     "org_123",
 		FromTier:  TierBusiness,
 		ToTier:    TierPro,
@@ -110,66 +90,42 @@ func TestPostHogAnalytics_CaptureSendsExpectedPayload(t *testing.T) {
 		Reason:    "subscription_updated",
 	})
 
-	mu.Lock()
-	defer mu.Unlock()
-	if hits != 1 {
-		t.Fatalf("expected exactly 1 capture POST, got %d", hits)
+	if len(em.events) != 1 {
+		t.Fatalf("expected 1 captured event, got %d", len(em.events))
 	}
-	if path != "/capture/" {
-		t.Errorf("POST path = %q, want /capture/", path)
+	ev := em.events[0]
+	if ev.Event != "plan_downgraded" {
+		t.Errorf("event = %q, want plan_downgraded", ev.Event)
 	}
-	if got.APIKey != "phc_test" {
-		t.Errorf("api_key = %q", got.APIKey)
+	if ev.DistinctID != "org_123" {
+		t.Errorf("distinct id = %q, want org_123", ev.DistinctID)
 	}
-	if got.Event != "plan_downgraded" {
-		t.Errorf("event = %q, want plan_downgraded", got.Event)
+	if ev.Properties["from_tier"] != "business" || ev.Properties["to_tier"] != "pro" {
+		t.Errorf("tier props = %v / %v", ev.Properties["from_tier"], ev.Properties["to_tier"])
 	}
-	if got.DistinctID != "org_123" {
-		t.Errorf("distinct_id = %q, want org_123", got.DistinctID)
+	if ev.Properties["direction"] != "downgrade" {
+		t.Errorf("direction = %v", ev.Properties["direction"])
 	}
-	if got.Timestamp == "" {
-		t.Error("timestamp must be set")
+	if ev.Properties["reason"] != "subscription_updated" {
+		t.Errorf("reason = %v", ev.Properties["reason"])
 	}
-	if got.Properties["from_tier"] != "business" || got.Properties["to_tier"] != "pro" {
-		t.Errorf("tier props = %v / %v", got.Properties["from_tier"], got.Properties["to_tier"])
+	if ev.Properties["$process_person_profile"] != false {
+		t.Errorf("$process_person_profile = %v, want false", ev.Properties["$process_person_profile"])
 	}
-	if got.Properties["direction"] != "downgrade" {
-		t.Errorf("direction = %v", got.Properties["direction"])
-	}
-	if got.Properties["reason"] != "subscription_updated" {
-		t.Errorf("reason = %v", got.Properties["reason"])
-	}
-	if got.Properties["environment"] != "production" {
-		t.Errorf("environment = %v", got.Properties["environment"])
-	}
-	if got.Properties["organization"] != "org_123" {
-		t.Errorf("organization = %v", got.Properties["organization"])
-	}
-	// Group analytics association so the dashboard can roll up per-org.
-	groups, ok := got.Properties["$groups"].(map[string]any)
-	if !ok || groups["organization"] != "org_123" {
-		t.Errorf("$groups.organization = %v (ok=%v)", got.Properties["$groups"], ok)
-	}
-	// System event: no person profile should be minted.
-	if got.Properties["$process_person_profile"] != false {
-		t.Errorf("$process_person_profile = %v, want false", got.Properties["$process_person_profile"])
+	if ev.Groups["organization"] != "org_123" {
+		t.Errorf("group organization = %v, want org_123", ev.Groups["organization"])
 	}
 }
 
-func TestPostHogAnalytics_NoSendOnNoMove(t *testing.T) {
-	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+func TestCapturePlanChange_SkipsNoMoveAndEmptyOrg(t *testing.T) {
+	em := &fakeEmitter{}
+	pa := NewPlanAnalytics(em)
 
-	ph := NewPostHogAnalytics("phc_test", srv.URL, "production", nil)
-	// directionNone and empty-org must not POST anything.
-	ph.CapturePlanChange(context.Background(), PlanChange{OrgID: "org_1", Direction: directionNone})
-	ph.CapturePlanChange(context.Background(), PlanChange{OrgID: "", Direction: DirectionUpgrade})
-	if hits != 0 {
-		t.Errorf("expected no capture POSTs, got %d", hits)
+	pa.CapturePlanChange(context.Background(), PlanChange{OrgID: "org_1", Direction: directionNone})
+	pa.CapturePlanChange(context.Background(), PlanChange{OrgID: "", Direction: DirectionUpgrade})
+
+	if len(em.events) != 0 {
+		t.Errorf("expected no events for no-op move / empty org, got %d", len(em.events))
 	}
 }
 
