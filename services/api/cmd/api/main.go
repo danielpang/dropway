@@ -26,6 +26,7 @@ import (
 	"github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/projection"
@@ -60,11 +61,22 @@ type cloudDeps struct {
 }
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	// Error tracking is wired first so the default logger captures EVERY
+	// slog.Error from this point on (incl. startup failures). The provider is
+	// runtime-selected (PostHog by default, Noop when unconfigured). WrapSlogHandler
+	// mirrors Error-level records to the sink; Noop returns the JSON handler as-is.
+	rep, label := errtrack.FromEnv("api")
+	logger := slog.New(rep.WrapSlogHandler(slog.NewJSONHandler(os.Stdout, nil)))
 	slog.SetDefault(logger)
+	slog.Info("error tracking wired", "provider", label)
 
-	if err := run(logger); err != nil {
+	err := run(logger)
+	if err != nil {
+		// Log before Close so this final fatal error is captured + flushed.
 		slog.Error("server exited with error", "err", err)
+	}
+	rep.Close() // os.Exit skips defers; flush the sink explicitly.
+	if err != nil {
 		os.Exit(1)
 	}
 }

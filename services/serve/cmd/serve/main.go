@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
@@ -34,9 +35,18 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	if err := run(); err != nil {
+	// Wire error tracking first so the default logger mirrors every slog.Error to
+	// the sink (runtime-selected provider; Noop when unconfigured).
+	rep, label := errtrack.FromEnv("serve")
+	slog.SetDefault(slog.New(rep.WrapSlogHandler(slog.NewJSONHandler(os.Stdout, nil))))
+	slog.Info("error tracking wired", "provider", label)
+
+	err := run()
+	if err != nil {
 		slog.Error("serve exited with error", "err", err)
+	}
+	rep.Close() // os.Exit skips defers; flush the sink explicitly.
+	if err != nil {
 		os.Exit(1)
 	}
 }
@@ -109,8 +119,10 @@ func run() error {
 	})
 
 	srv := &http.Server{
-		Addr:              cfg.Addr(),
-		Handler:           handler,
+		Addr: cfg.Addr(),
+		// errtrack.Recoverer recovers panics in content serving, captures them, and
+		// returns a clean 500 (the content handler has no recover of its own).
+		Handler:           errtrack.Recoverer(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      0, // streaming large blobs; no write deadline

@@ -32,6 +32,7 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       capture_pageview: false, // captured manually on App Router navigation
       capture_pageleave: true,
       capture_performance: true, // Web Vitals + page-load timing
+      capture_exceptions: true, // autocapture unhandled errors + promise rejections → Error Tracking
       person_profiles: "identified_only",
       defaults: "2025-05-24",
     });

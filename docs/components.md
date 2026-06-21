@@ -136,4 +136,14 @@ Content-addressed **blobs** (`blobs/<org>/<sha256>`) + per-deploy **manifests** 
 - `JWT_ISSUER` / `JWT_AUDIENCE` must agree across dashboard + api; `MCP_PUBLIC_URL` must be byte-identical across dashboard, mcp, **and** api (the MCP write-bridge audience).
 - Tenant isolation is enforced by **Postgres RLS** keyed on the token's `org_id`, not by application code — the api/mcp set the tenant context per request.
 
+---
+
+## Cross-cutting: error tracking
+Every component reports caught + uncaught errors to a single error sink through a **vendor-neutral seam**, so the same failure surfaces the same way whether you run PostHog, another vendor, or nothing.
+
+- **Go services (api, serve, mcp)** — `internal/errtrack` is the seam (the error analogue of `quota.Provider` / `projection.Writer`): a `Reporter` interface with a `Noop` default and a runtime-selected provider. Coverage is three mechanisms: a **slog bridge** (`WrapSlogHandler`) that mirrors every `slog.Error` to the sink (so `httpx.WriteError`'s 500 logging and all handler errors are captured with no call-site changes), an HTTP **`Recoverer`** that captures panics and returns a clean 500, and **`SafeGo`** for background goroutines. The shipped provider is PostHog (`internal/errtrack/posthog.go`, the official `posthog-go` SDK). Self-hosters can `Register` a Datadog/Sentry/OTLP `Reporter` under their own `ERROR_TRACKING_PROVIDER` name with no call-site changes.
+- **dashboard** — the browser SDK autocaptures unhandled errors + promise rejections (`capture_exceptions`); server errors flow through Next's `instrumentation.ts` `onRequestError` hook into `captureServerException` (the TS seam in `lib/analytics-server.ts`), which uses `captureExceptionImmediate` so an event is never lost to a Vercel function freeze.
+- **serve worker (`edge/serving-worker`)** — the `fetch` entry wraps `serve()` and reports any unexpected throw via `src/errtrack.ts` (a `$exception` POST, best-effort off the response path).
+- **Config** — `POSTHOG_KEY` (the same key the edge worker + dashboard use), `POSTHOG_HOST`, `ENVIRONMENT`, and optional `ERROR_TRACKING_PROVIDER`. Unset key ⇒ no reporting (the OSS/self-host default). The CLI is intentionally excluded (it runs on end-user machines).
+
 _See `deploy/docker-compose.yml` and `deploy/README.md` for the self-host wiring, and `docs/diagrams/` for the schema diagrams (`schema-app`, `schema-identity`, `schema-billing`)._

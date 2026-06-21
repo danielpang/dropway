@@ -134,16 +134,50 @@ export function captureDomainAdded(input: {
 const SYSTEM_DISTINCT_ID = "system";
 
 /**
+ * The vendor-neutral server-side error sink: report any caught or unhandled
+ * server exception to PostHog Error Tracking. This is the TypeScript analogue of
+ * the Go `errtrack.Reporter` seam — every server-side capture path
+ * (instrumentation.ts's onRequestError, server actions, Better Auth hooks, the
+ * db-capacity check) funnels through here, so swapping PostHog for another vendor
+ * is a one-function change.
+ *
+ * It MUST use captureExceptionImmediate (build + enqueue + send in one awaited
+ * call), NOT the plain async captureException. On Vercel the function freezes the
+ * instant the handler returns, so a non-immediate capture enqueues
+ * asynchronously and can be lost before it flushes (PostHog/posthog-js#2220).
+ * Callers should `await` this.
+ *
+ * Best-effort: no-ops when PostHog is unconfigured (self-host) and never throws
+ * into the caller.
+ */
+export async function captureServerException(input: {
+  /** The original error; coerced to an Error so it carries a stack into Error Tracking. */
+  error: unknown;
+  /** Acting user, when known; defaults to the system distinct_id for infra/background errors. */
+  distinctId?: string | null;
+  /** Extra queryable properties (route, source, issue tag, …). */
+  properties?: Record<string, unknown>;
+}): Promise<void> {
+  const ph = getClient();
+  if (!ph) return;
+  try {
+    const err =
+      input.error instanceof Error ? input.error : new Error(String(input.error));
+    await ph.captureExceptionImmediate(err, input.distinctId || SYSTEM_DISTINCT_ID, {
+      environment: appEnvironment(),
+      ...input.properties,
+    });
+  } catch {
+    // Telemetry must never break the path that produced the error.
+  }
+}
+
+/**
  * Report a Postgres connection-capacity failure (pooler exhaustion / acquire timeout)
  * to PostHog Error Tracking, so the same condition that logs `[db-capacity]` also raises
- * an alertable issue. Sent via captureExceptionImmediate so it lands in the Error
- * Tracking product grouped by the underlying error, with `db_capacity_reason` / `source`
- * as queryable properties an alert can target. The Immediate variant is essential here:
- * plain captureException builds + enqueues the event ASYNCHRONOUSLY, so a following
- * flush() can fire before it's queued and send nothing (PostHog/posthog-js#2220) — which
- * on a Vercel function that freezes right after would silently drop every error. Infra-
- * level and best-effort: no-ops when PostHog is unconfigured (self-host) and never throws
- * into the caller.
+ * an alertable issue, grouped by the underlying error with `db_capacity_reason` / `source`
+ * as queryable properties an alert can target. Delegates to captureServerException (the
+ * Immediate path) so it can't be lost to a serverless freeze.
  */
 export async function captureDbCapacityIssue(input: {
   /** Machine-stable reason from connectionCapacityReason (e.g. pooler_session_exhausted). */
@@ -155,17 +189,13 @@ export async function captureDbCapacityIssue(input: {
   /** Acting user, when known (firstOrgId path); omitted for background pool errors. */
   distinctId?: string | null;
 }): Promise<void> {
-  const ph = getClient();
-  if (!ph) return;
-  try {
-    const err = input.error instanceof Error ? input.error : new Error(String(input.error));
-    await ph.captureExceptionImmediate(err, input.distinctId || SYSTEM_DISTINCT_ID, {
+  return captureServerException({
+    error: input.error,
+    distinctId: input.distinctId,
+    properties: {
       issue: "db_connection_capacity",
       db_capacity_reason: input.reason,
       source: input.source,
-      environment: appEnvironment(),
-    });
-  } catch {
-    // Telemetry must never break the request/path that hit the capacity error.
-  }
+    },
+  });
 }

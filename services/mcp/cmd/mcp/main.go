@@ -25,6 +25,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	coreauth "github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
@@ -35,12 +36,23 @@ import (
 
 func main() {
 	ctx := context.Background()
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	// Wire error tracking first so every log.Error (and any below) mirrors to the
+	// sink. Provider is runtime-selected; Noop when unconfigured.
+	rep, label := errtrack.FromEnv("mcp")
+	log := slog.New(rep.WrapSlogHandler(slog.NewJSONHandler(os.Stderr, nil)))
+	slog.SetDefault(log)
+	log.Info("error tracking wired", "provider", label)
+	// os.Exit skips defers; fatal logs (→ captured), flushes the sink, then exits.
+	fatal := func(msg string, err error) {
+		log.Error(msg, "err", err)
+		rep.Close()
+		os.Exit(1)
+	}
 
-	dbURL := mustEnv(log, "DATABASE_URL")
-	jwksURL := mustEnv(log, "JWKS_URL")
-	publicURL := strings.TrimRight(mustEnv(log, "MCP_PUBLIC_URL"), "/") // this server's external URL
-	dashboardURL := mustEnv(log, "DASHBOARD_URL")                      // the OAuth authorization server
+	dbURL := mustEnv(rep, log, "DATABASE_URL")
+	jwksURL := mustEnv(rep, log, "JWKS_URL")
+	publicURL := strings.TrimRight(mustEnv(rep, log, "MCP_PUBLIC_URL"), "/") // this server's external URL
+	dashboardURL := mustEnv(rep, log, "DASHBOARD_URL")                       // the OAuth authorization server
 	issuer := os.Getenv("JWT_ISSUER")
 	port := getenv("MCP_PORT", "8092")
 
@@ -48,8 +60,7 @@ func main() {
 	// shared-pooler headroom. DB_MAX_CONNS overrides.
 	pool, err := pgpool.New(ctx, dbURL, 4)
 	if err != nil {
-		log.Error("db pool", "err", err)
-		os.Exit(1)
+		fatal("db pool", err)
 	}
 	defer pool.Close()
 
@@ -62,8 +73,7 @@ func main() {
 		UsePathStyle:    os.Getenv("S3_FORCE_PATH_STYLE") == "true",
 	})
 	if err != nil {
-		log.Error("object storage", "err", err)
-		os.Exit(1)
+		fatal("object storage", err)
 	}
 
 	// The bearer token is a Better-Auth-issued OAuth access token whose audience is
@@ -98,15 +108,17 @@ func main() {
 	mux := newMux(verifier, st, svc, publicURL, dashboardURL)
 
 	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           mux,
+		Addr: ":" + port,
+		// errtrack.Recoverer recovers panics in MCP request handling, captures them,
+		// and returns a clean 500.
+		Handler:           errtrack.Recoverer(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Info("mcp listening", "addr", srv.Addr, "resource", publicURL, "authz", dashboardURL)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error("serve", "err", err)
-		os.Exit(1)
+		fatal("serve", err)
 	}
+	rep.Close()
 }
 
 // newMux wires the HTTP surface: /healthz, the RFC 9728 protected-resource
@@ -207,10 +219,11 @@ func protectedResourceMetadata(resource, authServer string) http.HandlerFunc {
 	}
 }
 
-func mustEnv(log *slog.Logger, key string) string {
+func mustEnv(rep errtrack.Reporter, log *slog.Logger, key string) string {
 	v := os.Getenv(key)
 	if v == "" {
 		log.Error("missing required env", "key", key)
+		rep.Close() // flush before os.Exit skips the deferred Close.
 		os.Exit(1)
 	}
 	return v

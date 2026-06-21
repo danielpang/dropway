@@ -64,6 +64,7 @@ import {
 } from "./ratelimit";
 import type { RevokedKVLike } from "./revoke";
 import { type AnalyticsEnv, captureSiteVisit } from "./analytics";
+import { captureException } from "./errtrack";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -171,9 +172,32 @@ function defaultCache(): CacheLike | null {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return serve(request, env, { waitUntil: (p) => ctx.waitUntil(p) });
+    try {
+      return await serve(request, env, { waitUntil: (p) => ctx.waitUntil(p) });
+    } catch (err) {
+      // serve() is designed to return Responses rather than throw, so reaching
+      // here is an unexpected bug. Capture it (off the response path) and fail
+      // closed with a generic 500 — never leak tenant content or internals.
+      const url = safePath(request.url);
+      ctx.waitUntil(
+        captureException(env, err, { path: url, method: request.method }),
+      );
+      return new Response("Internal Server Error", {
+        status: 500,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
   },
 };
+
+/** Best-effort path extraction for the error report (never throws). */
+function safePath(rawURL: string): string {
+  try {
+    return new URL(rawURL).pathname;
+  } catch {
+    return "";
+  }
+}
 
 /** Side-channels the Worker uses but tests can stub (cache + background work). */
 export interface ServeOptions {
