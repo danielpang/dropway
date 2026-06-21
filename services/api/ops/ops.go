@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/internal/storage"
@@ -48,7 +49,9 @@ func Open(ctx context.Context) (*Env, error) {
 	if cfg.DatabaseURL == "" {
 		return nil, errors.New("ops: DATABASE_URL is required (the maintenance jobs read Postgres)")
 	}
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	// One-off maintenance jobs (GC, DR rebuild) run sequentially, so a small cap is
+	// plenty and keeps a job from contending with the live services for pooler slots.
+	pool, err := pgpool.New(ctx, cfg.DatabaseURL, 4)
 	if err != nil {
 		return nil, fmt.Errorf("ops: connect db: %w", err)
 	}
