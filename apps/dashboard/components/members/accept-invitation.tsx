@@ -4,6 +4,7 @@ import * as React from "react";
 import { Check, Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { recordMemberJoinAction } from "@/app/(app)/members/actions";
 import { authClient } from "@/lib/auth-client";
 
 function describeError(err: unknown): string {
@@ -42,6 +43,10 @@ export function AcceptInvitation({ invitationId }: { invitationId: string }) {
           .setActive({ organizationId: orgId })
           .catch(() => undefined);
       }
+      // Record the join in the org audit trail AFTER setActive, so the Go API scopes
+      // the row to the org just joined (RLS + actor). Best-effort; the membership is
+      // already authoritative, so a failure never blocks landing on the dashboard.
+      await recordMemberJoinAction().catch(() => undefined);
       window.location.assign("/dashboard");
     } catch (err) {
       setError(describeError(err));

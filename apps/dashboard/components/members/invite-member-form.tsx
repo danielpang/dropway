@@ -8,7 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { preflightMembersAction } from "@/app/(app)/members/actions";
+import {
+  preflightMembersAction,
+  recordInviteSentAction,
+} from "@/app/(app)/members/actions";
 import type { Role } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 
@@ -71,6 +74,9 @@ export function InviteMemberForm({
         organizationId,
       });
       if (err) throw err;
+      // Record the invite in the org audit trail (best-effort; the Go API owns it).
+      // Don't block the success UI on it — the invitation is already created.
+      void recordInviteSentAction({ email, role });
       setNotice(`Invitation sent to ${email}.`);
       setEmail("");
       setTouched(false);

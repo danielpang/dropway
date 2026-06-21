@@ -68,6 +68,13 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// OSS unlimited). Any member may call it (read-only check of its own org).
 		r.Get("/members/preflight", api.MembersPreflight)
 
+		// Membership audit trail: Better Auth owns invites + joins (in the dashboard),
+		// but the Go API is the audit system of record, so the dashboard records them
+		// here after the fact. invites = admin/owner only (the inviter); joined = any
+		// member recording their OWN join into the active org.
+		r.Post("/members/invites", api.RecordMemberInvite)
+		r.Post("/members/joined", api.RecordMemberJoin)
+
 		// Hard revocation (Phase 4): admin/owner writes the edge denylist so a
 		// removed/banned member's edge tokens are rejected immediately, not just at
 		// the short TTL.

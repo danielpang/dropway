@@ -55,16 +55,18 @@ describe("isSecurityAction (highlight matcher)", () => {
       "site.published",
       "version.uploaded",
       "domain.verified",
-      "member.invited",
       "org.renamed",
     ]) {
       expect(isSecurityAction(action)).toBe(false);
     }
   });
 
-  it("does not highlight `member.invited` despite the member.* family (anchored prefix)", () => {
-    // The member pattern is anchored to removed|role, so an invite is not flagged.
-    expect(isSecurityAction("member.invited")).toBe(false);
+  it("highlights the whole member.* membership family (removals, roles, AND additions)", () => {
+    // Who can reach the org is security-relevant, so additions are flagged too:
+    // the canonical Go actions are member.invite and member.join.
+    expect(isSecurityAction("member.invite")).toBe(true);
+    expect(isSecurityAction("member.join")).toBe(true);
+    expect(isSecurityAction("member.removed")).toBe(true);
     expect(isSecurityAction("member.role.granted")).toBe(true);
   });
 

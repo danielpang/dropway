@@ -99,6 +99,8 @@ func TestRouter_V1_RequiresAuth_401WithoutToken(t *testing.T) {
 		{http.MethodGet, "/v1/me"},
 		{http.MethodGet, "/v1/members"},
 		{http.MethodGet, "/v1/audit"},
+		{http.MethodPost, "/v1/members/invites"},
+		{http.MethodPost, "/v1/members/joined"},
 		{http.MethodPost, "/v1/sites"},
 		{http.MethodGet, "/v1/sites"},
 		{http.MethodPost, "/v1/authz/mint"},

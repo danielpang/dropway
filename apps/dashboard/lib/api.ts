@@ -645,4 +645,30 @@ export const api = {
   preflightMembers(): Promise<{ allowed: boolean }> {
     return apiGet("/v1/members/preflight") as Promise<{ allowed: boolean }>;
   },
+
+  /**
+   * Record a `member.invite` audit entry after Better Auth creates an org
+   * invitation (the dashboard owns the invite; the Go API owns the audit trail).
+   * admin/owner only → 403. Best-effort: the invitation already exists, so the
+   * caller treats a failure (or a 404 on an older API build) as non-fatal.
+   */
+  recordMemberInvite(input: { email: string; role: string }): Promise<{ recorded: boolean }> {
+    return apiFetch<{ recorded: boolean }>("/v1/members/invites", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /**
+   * Record a `member.join` audit entry after the caller accepts an invitation and
+   * joins the org. Call it only once the JOINED org is the active org (after
+   * setActive), so the Go API scopes the row (RLS + actor) to the org they joined.
+   * Any member may record their OWN join. Best-effort, like recordMemberInvite.
+   */
+  recordMemberJoin(): Promise<{ recorded: boolean }> {
+    return apiFetch<{ recorded: boolean }>("/v1/members/joined", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
 };

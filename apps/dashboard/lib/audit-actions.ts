@@ -14,7 +14,9 @@
  */
 const SECURITY_ACTION_PATTERNS: RegExp[] = [
   /revoke/i,
-  /^member\.(removed|role)/i,
+  // Membership changes: removals, role changes, AND additions (invites/joins) —
+  // who can reach the org is security-relevant, so surface them all.
+  /^member\.(removed|role|invite|join)/i,
   /unshare/i,
   /external[_.]sharing/i,
   // Matches the canonical Go actions site.access_change AND site.access_mode*
