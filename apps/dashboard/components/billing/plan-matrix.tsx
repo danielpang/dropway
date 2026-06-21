@@ -127,7 +127,8 @@ function MatrixCta({
   switch (planAction(tier, currentTier)) {
     case "current":
       return (
-        <span className="inline-flex items-center text-xs font-medium text-muted-foreground">
+        // h-9 matches the Button height so the text aligns with the CTAs in the row.
+        <span className="inline-flex h-9 items-center text-sm font-medium text-muted-foreground">
           Current plan
         </span>
       );
