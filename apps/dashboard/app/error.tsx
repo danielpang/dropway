@@ -2,9 +2,11 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { RefreshCw, ServerCrash } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 
+import { ErrorPageMetric } from "@/components/error/error-page-metric";
+import { PrismShatter } from "@/components/error/prism-shatter";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -39,10 +41,11 @@ export default function GlobalRouteError({
 
   return (
     <main className="grid min-h-dvh place-items-center px-4">
+      <ErrorPageMetric status={500} />
       <div className="w-full max-w-md space-y-6 text-center">
-        <span className="mx-auto grid size-12 place-items-center rounded-xl bg-secondary text-secondary-foreground">
-          <ServerCrash className="size-6" aria-hidden />
-        </span>
+        <div className="flex justify-center">
+          <PrismShatter size={260} />
+        </div>
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">
             Something went wrong

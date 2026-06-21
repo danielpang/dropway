@@ -22,6 +22,7 @@
     "@radix-ui/react-slot": "1.2.3",
     "better-auth": "1.6.19",
     "clsx": "2.1.1",
+    "framer-motion": "^12.40.0",
     "geist": "1.4.2",
     "lucide-react": "0.526.0",
     "next": "15.4.10",

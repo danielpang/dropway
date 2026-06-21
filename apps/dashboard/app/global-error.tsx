@@ -24,6 +24,7 @@ export default function GlobalError({
     try {
       // Best-effort: posthog may not have initialized if the root failed early.
       posthog?.captureException?.(error);
+      posthog?.capture?.("error_page_viewed", { status: 500 });
     } catch {
       /* never mask the original error */
     }
@@ -43,6 +44,38 @@ export default function GlobalError({
         }}
       >
         <main style={{ maxWidth: "32rem", textAlign: "center" }}>
+          {/* Static cracked prism — no animation lib (this is the last-resort
+              boundary and must render with zero dependencies). */}
+          <svg
+            width="120"
+            height="110"
+            viewBox="0 0 240 220"
+            fill="none"
+            aria-hidden
+            style={{ display: "block", margin: "0 auto 1.25rem" }}
+          >
+            <defs>
+              <linearGradient id="ge-prism" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#f43f5e" />
+                <stop offset="50%" stopColor="#22c55e" />
+                <stop offset="100%" stopColor="#a855f7" />
+              </linearGradient>
+            </defs>
+            <polygon
+              points="120,30 68,150 172,150"
+              fill="url(#ge-prism)"
+              fillOpacity="0.85"
+              stroke="rgba(255,255,255,0.5)"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+            {/* Fracture lines */}
+            <path
+              d="M120 30 L112 150 M120 92 L68 150 M120 92 L172 150"
+              stroke="rgba(255,255,255,0.7)"
+              strokeWidth="1.5"
+            />
+          </svg>
           <h1 style={{ fontSize: "1.5rem", margin: "0 0 .5rem" }}>
             Something went wrong
           </h1>

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { RefreshCw, ServerCrash } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 
+import { ErrorPageMetric } from "@/components/error/error-page-metric";
+import { PrismShatter } from "@/components/error/prism-shatter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -37,10 +39,9 @@ export default function AppError({
 
   return (
     <div className="mx-auto max-w-2xl">
+      <ErrorPageMetric status={500} />
       <Card className="flex flex-col items-center gap-5 border-dashed p-10 text-center">
-        <span className="grid size-12 place-items-center rounded-xl bg-secondary text-secondary-foreground">
-          <ServerCrash className="size-6" aria-hidden />
-        </span>
+        <PrismShatter size={200} />
         <div className="space-y-2">
           <h2 className="text-lg font-semibold tracking-tight">
             Couldn&rsquo;t load this page
