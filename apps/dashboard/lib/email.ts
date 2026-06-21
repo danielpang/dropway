@@ -14,11 +14,13 @@ import { mailFrom, mailSmtpUrl } from "@/lib/env";
  * dependency on a specific vendor SDK.
  *
  * Degradation, by design (see lib/env.ts mailSmtpUrl + REQUIRE_EMAIL_VERIFICATION):
- *  - MAIL_SMTP_URL UNSET → NO-OP: we log the message (subject + recipient + the
- *    link if present) instead of sending. A no-email self-host can still complete
- *    sign-up/magic-link by copying the link from the dashboard logs. (We log even
- *    in production: the dockerized dashboard runs as NODE_ENV=production, and a
- *    self-host with no provider has no other way to recover the link.)
+ *  - MAIL_SMTP_URL UNSET → NO-OP: we log the message at ERROR level (subject +
+ *    recipient + the link if present) instead of sending, so a misconfigured deploy
+ *    silently dropping every email is actually visible in the logs. A no-email
+ *    self-host can still complete sign-up/magic-link by copying the link from the
+ *    dashboard logs. (We log even in production: the dockerized dashboard runs as
+ *    NODE_ENV=production, and a self-host with no provider has no other way to
+ *    recover the link.)
  *  - send FAILS → we log the error and RECOVER (never throw). An SMTP outage must
  *    not break the auth flow with an unhandled rejection; Better Auth treats a
  *    resolved sendEmail as success, and the user can retry. Verification mail that
@@ -48,11 +50,16 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
   const url = mailSmtpUrl();
 
   if (!url) {
-    // No provider wired → log instead of send so the flow still completes locally.
+    // No provider wired → don't send, but log at ERROR level so a misconfigured
+    // deploy is visible (an unset MAIL_SMTP_URL silently dropping every
+    // verification / invite / reset mail is the kind of thing nobody notices until
+    // a user reports a missing email). Still a no-op, not a throw: a no-email
+    // self-host stays usable (the link is recoverable from this log), the error
+    // level just makes the cause obvious. Set MAIL_SMTP_URL to actually send.
     // eslint-disable-next-line no-console
-    console.log(
-      `[email:no-op] to=${msg.to} subject=${JSON.stringify(msg.subject)} ` +
-        `(set MAIL_SMTP_URL to actually send)\n${msg.text}`,
+    console.error(
+      `[email] NOT sent: MAIL_SMTP_URL is unset. to=${msg.to} ` +
+        `subject=${JSON.stringify(msg.subject)}\n${msg.text}`,
     );
     return;
   }

@@ -185,6 +185,47 @@ export const auth = betterAuth({
       // otherwise break an Enterprise org (cap 1000) and cap an unlimited self-host.
       // Keep it well above any tier cap so it never spuriously blocks.
       membershipLimit: 100_000,
+      // Invitation email. Better Auth writes the identity.invitation row and then
+      // calls THIS to deliver the accept link. WITHOUT this callback the invite is
+      // created and the form reports success, but no mail is ever attempted (no
+      // Resend activity, no error log, nothing) — that was the bug. The accept
+      // landing is /accept-invitation/[invitationId].
+      //
+      // Delivery runs on a non-blocking next/server `after()` task so a slow or
+      // rate-limited SMTP provider can never stall (or 500) the invite request, and
+      // the whole send is wrapped so a failure is LOGGED rather than swallowed.
+      // (sendEmail itself also no-ops+logs when MAIL_SMTP_URL is unset, and never
+      // throws on an SMTP error.) `after`/`@/lib/email` are imported lazily for the
+      // same reason as the other callbacks: this config is loaded under the jiti
+      // CLI loader at migrate time, where those Next-only modules don't resolve.
+      sendInvitationEmail: async ({ id, email, organization, inviter }) => {
+        const { after } = await import("next/server");
+        after(async () => {
+          try {
+            const { sendEmail } = await import("@/lib/email");
+            const url = `${betterAuthUrl()}/accept-invitation/${id}`;
+            const org = organization?.name || "a team";
+            const inviterName = inviter?.user?.name;
+            const lead = inviterName
+              ? `${inviterName} invited you to join ${org} on Dropway.`
+              : `You've been invited to join ${org} on Dropway.`;
+            await sendEmail({
+              to: email,
+              subject: `You've been invited to join ${org} on Dropway`,
+              text:
+                `${lead}\n\n` +
+                `Accept the invitation by opening this link:\n\n${url}\n\n` +
+                `If you weren't expecting this, you can safely ignore this email.`,
+            });
+          } catch (err) {
+            // Never let a mail failure surface; log so a missed invite is diagnosable.
+            // eslint-disable-next-line no-console
+            console.error(
+              `[invite-email] failed to send to ${email}: ${String(err)}`,
+            );
+          }
+        });
+      },
     }),
 
     // Passwordless magic-link sign-in as a secondary method on the auth screens.

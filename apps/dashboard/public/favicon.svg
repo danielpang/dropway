@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Dropway">
+  <rect width="100" height="100" rx="18" fill="hsl(246 72% 58%)"></rect>
+  <g transform="translate(17 17) scale(0.66)">
+    <path fill="#ffffff" fill-rule="evenodd" d="M50 7 L85 55 L62 92 L38 92 L15 55 Z M50 7 L34 51 L46 58 Z"></path>
+  </g>
+</svg>
