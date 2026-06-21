@@ -105,6 +105,18 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	} else {
 		slog.Warn("cloud billing: no org_status projection writer — suspension will NOT block at the edge")
 	}
+
+	// Plan upgrade/downgrade analytics (emitted post-commit from the webhook) over
+	// the shared, vendor-neutral analytics emitter (internal/analytics, a PostHog
+	// client by default). The emitter is nil when POSTHOG_KEY is unset, so a deploy
+	// without it simply records nothing — NewPlanAnalytics(nil) → WithPlanAnalytics(nil)
+	// is a no-op.
+	if deps.Analytics != nil {
+		store = store.WithPlanAnalytics(cloudbilling.NewPlanAnalytics(deps.Analytics))
+		slog.Info("cloud billing: plan-change analytics wired")
+	} else {
+		slog.Info("cloud billing: analytics disabled (POSTHOG_KEY unset)")
+	}
 	prices := cloudbilling.NewPriceMap(deps.Cfg.StripePricePro, deps.Cfg.StripePriceBusiness, deps.Cfg.StripePriceEnterprise)
 
 	// Webhook: verify → ProcessEvent (dedupe + persist ATOMICALLY in one tx, FIX 1).

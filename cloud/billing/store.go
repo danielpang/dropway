@@ -59,6 +59,11 @@ type BillingStore struct {
 	// (the DB write still lands; the edge just won't get the fast flag). Set it with
 	// WithOrgStatusWriter.
 	status projection.OrgStatusWriter
+	// analytics emits plan upgrade/downgrade events to PostHog AFTER the entitlement
+	// commit (same best-effort, post-commit model as `status`). nil → no analytics
+	// (a deploy without POSTHOG_KEY simply records nothing). Set it with
+	// WithPlanAnalytics.
+	analytics PlanAnalytics
 }
 
 // NewStore wraps the shared dropway_app pool. The pool MUST be the non-BYPASSRLS
@@ -74,6 +79,15 @@ func NewStore(pool *pgxpool.Pool) *BillingStore {
 // chaining. Passing nil leaves edge projection disabled.
 func (s *BillingStore) WithOrgStatusWriter(w projection.OrgStatusWriter) *BillingStore {
 	s.status = w
+	return s
+}
+
+// WithPlanAnalytics attaches the PostHog plan-change emitter so a tier
+// upgrade/downgrade is reported AFTER the DB commit (best-effort, post-commit —
+// like the edge org_status projection). Returns the store for chaining. Passing nil
+// leaves analytics disabled.
+func (s *BillingStore) WithPlanAnalytics(a PlanAnalytics) *BillingStore {
+	s.analytics = a
 	return s
 }
 
@@ -145,8 +159,35 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 	// column alone never reaches the edge). A failure here is logged, NOT returned —
 	// the DB is the source of truth and the projection is rebuildable, so we must not
 	// 500 the webhook (which would make Stripe retry an already-applied event).
-	s.projectOrgStatus(ctx, sink.orgID, sink.orgStatus)
+	s.projectOrgStatus(ctx, sink.orgID, sink.result.orgStatus)
+
+	// Best-effort PostHog analytics AFTER the durable commit (same model as the edge
+	// projection): emit a plan_upgraded / plan_downgraded event for a tier move. No-op
+	// when there was no tier change (seat/status refresh) or no emitter is wired.
+	s.emitPlanChange(ctx, sink.orgID, sink.result, ev.Type)
 	return true, nil
+}
+
+// emitPlanChange reports a tier upgrade/downgrade to PostHog after the commit. It is
+// best-effort and self-contained: a no-op without an emitter, without an org, or when
+// the tier didn't actually move (an equal from→to is a seat/status change). The
+// reason is derived from the Stripe event type so the dashboard can split a portal
+// downgrade from a cancellation.
+func (s *BillingStore) emitPlanChange(ctx context.Context, orgID string, res applyResult, eventType string) {
+	if s.analytics == nil || orgID == "" {
+		return
+	}
+	dir := planDirection(res.fromTier, res.toTier)
+	if dir == directionNone {
+		return
+	}
+	s.analytics.CapturePlanChange(ctx, PlanChange{
+		OrgID:     orgID,
+		FromTier:  res.fromTier,
+		ToTier:    res.toTier,
+		Direction: dir,
+		Reason:    reasonForEvent(eventType),
+	})
 }
 
 // projectOrgStatus pushes an org's status to the edge org-status projection (KV),
@@ -172,19 +213,30 @@ func (s *BillingStore) logger() *slog.Logger {
 	return slog.Default()
 }
 
+// applyResult is the outcome of an entitlement apply that the post-commit hooks
+// need: the org_status to project to the edge AND the from→to tier movement to
+// report to PostHog. The tx helpers return it so ProcessEvent can act on it after
+// the durable commit.
+type applyResult struct {
+	fromTier  PlanTier // org's tier BEFORE this apply (read from org_meta in-tx)
+	toTier    PlanTier // org's tier AFTER this apply
+	orgStatus string   // resulting org_status ("active" | "over_limit" | ...)
+}
+
 // txSubsStore adapts an open pgx.Tx to the SubscriptionStore surface applyEvent
 // dispatches to, so the entitlement write runs in the SAME tx as the dedupe-ledger
 // insert (FIX 1). It establishes the per-event RLS tenant context on the tx before
 // the cross-schema org_meta write, exactly as the standalone inOrgTx helper does.
 //
-// It also CAPTURES the org id + the resulting org_status of the apply so the caller
-// (ProcessEvent) can project that status to the edge AFTER the commit. It is a
-// pointer so those captured fields are observable by the caller.
+// It also CAPTURES the org id + the apply result (org_status + tier movement) so the
+// caller (ProcessEvent) can project the status to the edge AND emit the plan-change
+// analytics AFTER the commit. It is a pointer so those captured fields are
+// observable by the caller.
 type txSubsStore struct {
 	tx pgx.Tx
 
-	orgID     string // org the apply touched (empty for an unhandled event)
-	orgStatus string // resulting org_status to project ("active" | "over_limit" | ...)
+	orgID  string      // org the apply touched (empty for an unhandled event)
+	result applyResult // org_status to project + tier movement to report
 }
 
 var _ SubscriptionStore = (*txSubsStore)(nil)
@@ -196,14 +248,15 @@ func (t *txSubsStore) UpsertSubscription(ctx context.Context, d EventData) error
 	if err := setOrgContext(ctx, t.tx, d.OrgID); err != nil {
 		return err
 	}
-	status, err := upsertSubscriptionTx(ctx, t.tx, d)
+	res, err := upsertSubscriptionTx(ctx, t.tx, d)
 	if err != nil {
 		return err
 	}
-	// org_status is computed from the NEW tier's cap: a paid→paid downgrade that
+	// res.orgStatus is computed from the NEW tier's cap: a paid→paid downgrade that
 	// leaves the org over the lower tier's site cap is 'over_limit' (read-only);
-	// otherwise 'active' (which clears any prior edge block). Project whichever.
-	t.orgID, t.orgStatus = d.OrgID, status
+	// otherwise 'active' (which clears any prior edge block). res.fromTier/toTier
+	// drive the upgrade/downgrade analytics. Capture both for the post-commit hooks.
+	t.orgID, t.result = d.OrgID, res
 	return nil
 }
 
@@ -214,13 +267,13 @@ func (t *txSubsStore) SetCanceled(ctx context.Context, orgID string) error {
 	if err := setOrgContext(ctx, t.tx, orgID); err != nil {
 		return err
 	}
-	status, err := setCanceledTx(ctx, t.tx, orgID)
+	res, err := setCanceledTx(ctx, t.tx, orgID)
 	if err != nil {
 		return err
 	}
 	// On cancel the org becomes 'over_limit' (read-only) if it now exceeds Free caps,
-	// else 'active'. Project whichever it is so the edge blocks/clears accordingly.
-	t.orgID, t.orgStatus = orgID, status
+	// else 'active'. The tier movement (→ free) drives the downgrade analytics.
+	t.orgID, t.result = orgID, res
 	return nil
 }
 
@@ -239,17 +292,19 @@ func (s *BillingStore) UpsertSubscription(ctx context.Context, d EventData) erro
 	if d.OrgID == "" {
 		return errors.New("billing: UpsertSubscription with empty OrgID")
 	}
-	var status string
+	var res applyResult
 	if err := s.inOrgTx(ctx, d.OrgID, func(tx pgx.Tx) error {
-		st, err := upsertSubscriptionTx(ctx, tx, d)
-		status = st
+		r, err := upsertSubscriptionTx(ctx, tx, d)
+		res = r
 		return err
 	}); err != nil {
 		return err
 	}
 	// Project the computed state (over_limit on a downgrade past the new cap, else
-	// active) so the edge blocks/clears accordingly (best-effort, post-commit).
-	s.projectOrgStatus(ctx, d.OrgID, status)
+	// active) so the edge blocks/clears accordingly (best-effort, post-commit). Plan-
+	// change analytics is emitted by the webhook path (ProcessEvent), the sole
+	// production caller; this standalone writer only projects status.
+	s.projectOrgStatus(ctx, d.OrgID, res.orgStatus)
 	return nil
 }
 
@@ -263,10 +318,19 @@ func (s *BillingStore) UpsertSubscription(ctx context.Context, d EventData) erro
 // We detect that case up front and return errUnfulfillableEvent so the handler 400s
 // (a permanent acknowledgment) instead of looping. When a row already exists we
 // keep its customer id via COALESCE(NULLIF(...)) and proceed.
-func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (string, error) {
+func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (applyResult, error) {
 	tier := d.PlanTier
 	if tier == "" {
 		tier = TierFree
+	}
+
+	// Read the org's CURRENT tier (in-tx, RLS-scoped) BEFORE the write so the caller
+	// can classify the move as an upgrade or a downgrade for analytics. A missing
+	// org_meta row defaults to free. This read is analytics-only — it never gates the
+	// entitlement write.
+	fromTier, err := readPlanTierTx(ctx, tx, d.OrgID)
+	if err != nil {
+		return applyResult{}, err
 	}
 
 	if d.StripeCustomerID == "" {
@@ -281,10 +345,10 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (string, 
 		case errors.Is(err, pgx.ErrNoRows), existing == "":
 			// No row (or somehow a blank one) to COALESCE from → unfulfillable. The
 			// handler maps this to a 400 so Stripe stops retrying (FIX 3).
-			return "", fmt.Errorf("%w: subscription event for org %s has no stripe_customer_id and no existing row",
+			return applyResult{}, fmt.Errorf("%w: subscription event for org %s has no stripe_customer_id and no existing row",
 				errUnfulfillableEvent, d.OrgID)
 		case err != nil:
-			return "", fmt.Errorf("billing: probe existing customer for %s: %w", d.OrgID, err)
+			return applyResult{}, fmt.Errorf("billing: probe existing customer for %s: %w", d.OrgID, err)
 		}
 	}
 
@@ -295,7 +359,7 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (string, 
 	// quota check already blocks creating NEW ones).
 	over, err := orgExceedsCapsForTier(ctx, tx, d.OrgID, tier)
 	if err != nil {
-		return "", err
+		return applyResult{}, err
 	}
 	orgStatus := "active"
 	if over {
@@ -324,7 +388,7 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (string, 
 		d.OrgID, d.StripeCustomerID, d.StripeSubscriptionID, string(tier),
 		d.Seats, normalizeStatus(d.Status), d.CancelAtPeriodEnd, periodEnd(d.CurrentPeriodEnd), orgStatus,
 	); err != nil {
-		return "", fmt.Errorf("billing: upsert subscription %s: %w", d.OrgID, err)
+		return applyResult{}, fmt.Errorf("billing: upsert subscription %s: %w", d.OrgID, err)
 	}
 
 	// The only writer of plan_tier — RLS-scoped to d.OrgID by the GUC the caller set.
@@ -332,9 +396,9 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (string, 
 		`UPDATE app.org_meta SET plan_tier = $1 WHERE id = $2`,
 		string(tier), d.OrgID,
 	); err != nil {
-		return "", fmt.Errorf("billing: update org_meta.plan_tier %s: %w", d.OrgID, err)
+		return applyResult{}, fmt.Errorf("billing: update org_meta.plan_tier %s: %w", d.OrgID, err)
 	}
-	return orgStatus, nil
+	return applyResult{fromTier: fromTier, toTier: tier, orgStatus: orgStatus}, nil
 }
 
 // SetCanceled handles customer.subscription.deleted: a READ-ONLY downgrade to
@@ -347,17 +411,18 @@ func (s *BillingStore) SetCanceled(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return errors.New("billing: SetCanceled with empty OrgID")
 	}
-	var status string
+	var res applyResult
 	if err := s.inOrgTx(ctx, orgID, func(tx pgx.Tx) error {
-		st, err := setCanceledTx(ctx, tx, orgID)
-		status = st
+		r, err := setCanceledTx(ctx, tx, orgID)
+		res = r
 		return err
 	}); err != nil {
 		return err
 	}
 	// Best-effort edge projection after the durable commit (same model as
 	// ProcessEvent): a cancel may push the org to over_limit → block at the edge.
-	s.projectOrgStatus(ctx, orgID, status)
+	// Plan-change analytics is emitted by the webhook path (ProcessEvent).
+	s.projectOrgStatus(ctx, orgID, res.orgStatus)
 	return nil
 }
 
@@ -365,10 +430,17 @@ func (s *BillingStore) SetCanceled(ctx context.Context, orgID string) error {
 // (the GUC must already be set for orgID). Shared by the standalone SetCanceled and
 // the atomic ProcessEvent path (FIX 1). It returns the computed org_status
 // ('over_limit' or 'active') so the caller can project it to the edge.
-func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error) {
+func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) (applyResult, error) {
+	// Capture the tier BEFORE the downgrade so the caller can emit a `plan_downgraded`
+	// (unless the org was already Free, in which case from==to==free → no event).
+	fromTier, err := readPlanTierTx(ctx, tx, orgID)
+	if err != nil {
+		return applyResult{}, err
+	}
+
 	over, err := orgExceedsCapsForTier(ctx, tx, orgID, TierFree)
 	if err != nil {
-		return "", err
+		return applyResult{}, err
 	}
 	orgStatus := "active"
 	if over {
@@ -388,7 +460,7 @@ func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error)
 		 WHERE org_id = $1`,
 		orgID, orgStatus,
 	); err != nil {
-		return "", fmt.Errorf("billing: cancel subscription %s: %w", orgID, err)
+		return applyResult{}, fmt.Errorf("billing: cancel subscription %s: %w", orgID, err)
 	}
 
 	// Downgrade the authoritative entitlement (RLS-scoped to orgID).
@@ -396,9 +468,9 @@ func setCanceledTx(ctx context.Context, tx pgx.Tx, orgID string) (string, error)
 		`UPDATE app.org_meta SET plan_tier = 'free' WHERE id = $1`,
 		orgID,
 	); err != nil {
-		return "", fmt.Errorf("billing: downgrade org_meta.plan_tier %s: %w", orgID, err)
+		return applyResult{}, fmt.Errorf("billing: downgrade org_meta.plan_tier %s: %w", orgID, err)
 	}
-	return orgStatus, nil
+	return applyResult{fromTier: fromTier, toTier: TierFree, orgStatus: orgStatus}, nil
 }
 
 // ReadPlanTier returns the org's authoritative plan tier for the billing page. It
@@ -417,6 +489,25 @@ func (s *BillingStore) ReadPlanTier(ctx context.Context, orgID string) (PlanTier
 	})
 	if err != nil {
 		return TierFree, err
+	}
+	if tier == "" {
+		tier = string(TierFree)
+	}
+	return PlanTier(tier), nil
+}
+
+// readPlanTierTx reads an org's CURRENT plan_tier from app.org_meta inside an
+// already-open, org-scoped tx (the GUC must already be set for orgID). A missing row
+// defaults to 'free'. Shared by the upsert/cancel apply paths to capture the tier
+// BEFORE the write, so the post-commit analytics can classify the move as an upgrade
+// or a downgrade. Read-only and analytics-only — it never gates the entitlement write.
+func readPlanTierTx(ctx context.Context, tx pgx.Tx, orgID string) (PlanTier, error) {
+	var tier string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE((SELECT plan_tier FROM app.org_meta WHERE id = $1), 'free')::text`,
+		orgID,
+	).Scan(&tier); err != nil {
+		return "", fmt.Errorf("billing: read current plan_tier %s: %w", orgID, err)
 	}
 	if tier == "" {
 		tier = string(TierFree)

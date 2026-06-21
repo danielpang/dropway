@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgetoken"
@@ -51,6 +52,11 @@ type cloudDeps struct {
 	// (org_status:<orgID>) — making suspension/over_limit actually block at the
 	// serving Worker. The OSS build ignores it.
 	Projection projection.Writer
+	// Analytics is the shared, vendor-neutral product-analytics emitter
+	// (internal/analytics; a PostHog client when POSTHOG_KEY is set, else nil). The
+	// cloud build hands it to the BillingStore for plan upgrade/downgrade events; the
+	// OSS build ignores it. Its lifecycle (flush on shutdown) is owned by run().
+	Analytics analytics.Emitter
 }
 
 func main() {
@@ -207,6 +213,20 @@ func run(baseLogger *slog.Logger) error {
 	mux.Get("/.well-known/oauth-protected-resource",
 		oauthProtectedResource(cfg.JWTAudience, cfg.DashboardURL))
 
+	// Product-analytics emitter (vendor-neutral seam; PostHog by default). Built once
+	// here so its lifecycle is owned by run(): flushed on graceful shutdown so no
+	// queued event is dropped. nil when POSTHOG_KEY is unset → analytics disabled.
+	var analyticsEmitter analytics.Emitter
+	if cfg.PostHogKey != "" {
+		if ph, err := analytics.NewPostHog(cfg.PostHogKey, cfg.PostHogHost, cfg.Environment, baseLogger); err != nil {
+			slog.Warn("analytics disabled: posthog emitter init failed", "err", err)
+		} else if ph != nil {
+			analyticsEmitter = ph
+			defer func() { _ = ph.Close() }()
+			slog.Info("product analytics emitter wired (posthog)", "environment", cfg.Environment)
+		}
+	}
+
 	mountCloud(mux, cloudDeps{
 		Cfg:                  cfg,
 		Pool:                 pool,
@@ -214,6 +234,7 @@ func run(baseLogger *slog.Logger) error {
 		Verifier:             verifier,
 		EnsureOrgProvisioned: api.EnsureOrgProvisioned,
 		Projection:           proj,
+		Analytics:            analyticsEmitter,
 	})
 
 	srv := &http.Server{
