@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 
+import { captureSiteCreated } from "@/lib/analytics-server";
 import { api, ApiError, type QuotaExceeded, type Site } from "@/lib/api";
+import { getCurrentSession } from "@/lib/session";
 
 /**
  * Result envelope for the create-site action. The dashboard's client dialog
@@ -33,6 +35,7 @@ export async function createSiteAction(input: {
     const site = await api.createSite({ slug });
     // Refresh the server-rendered sites list.
     revalidatePath("/dashboard");
+    await recordSiteCreated(site, slug);
     return { ok: true, site };
   } catch (err) {
     if (err instanceof ApiError) {
@@ -52,5 +55,27 @@ export async function createSiteAction(input: {
       kind: "error",
       message: "Could not reach the API. Try again.",
     };
+  }
+}
+
+/** Best-effort `site_created` analytics, attributed to the acting user + active
+ * org. Never throws into the action. */
+async function recordSiteCreated(site: Site, slug: string): Promise<void> {
+  try {
+    const session = await getCurrentSession();
+    const userId = (session?.user as { id?: string } | undefined)?.id;
+    const organization =
+      (session?.session as { activeOrganizationId?: string | null } | undefined)
+        ?.activeOrganizationId ?? null;
+    if (userId && organization) {
+      await captureSiteCreated({
+        userId,
+        organization,
+        siteId: site.id,
+        slug: site.slug ?? slug,
+      });
+    }
+  } catch {
+    // analytics is non-fatal
   }
 }

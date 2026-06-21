@@ -91,6 +91,29 @@ export const auth = betterAuth({
   // This backfills the active org so the minted JWT always carries it. Failures are
   // non-fatal (a user with no membership simply gets none; onboarding sets it).
   databaseHooks: {
+    // Record a `user_signed_up` analytics event for every new account. The org
+    // usually doesn't exist yet (it's created in onboarding), so `organization`
+    // is best-effort here. Lazily imported (like @/lib/email) so the auth-config
+    // import graph stays free of `server-only`/posthog-node under the CLI migrate
+    // loader; never blocks signup.
+    user: {
+      create: {
+        after: async (user) => {
+          try {
+            const u = user as { id: string; email?: string };
+            const orgId = await firstOrgId(u.id);
+            const { captureSignup } = await import("@/lib/analytics-server");
+            await captureSignup({
+              userId: u.id,
+              email: u.email ?? null,
+              organization: orgId ?? null,
+            });
+          } catch {
+            // Analytics must never block account creation.
+          }
+        },
+      },
+    },
     session: {
       create: {
         before: async (session) => {
