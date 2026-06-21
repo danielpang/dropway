@@ -122,3 +122,41 @@ export function captureDomainAdded(input: {
     },
   });
 }
+
+/** Stable distinct_id for infra-level events with no acting user (a pool error can
+ * fire from a background idle client, not a request). */
+const SYSTEM_DISTINCT_ID = "system";
+
+/**
+ * Report a Postgres connection-capacity failure (pooler exhaustion / acquire timeout)
+ * to PostHog Error Tracking, so the same condition that logs `[db-capacity]` also raises
+ * an alertable issue. Sent via captureException (not capture) so it lands in the Error
+ * Tracking product grouped by the underlying error, with `db_capacity_reason` / `source`
+ * as queryable properties an alert can target. Infra-level and best-effort: no-ops when
+ * PostHog is unconfigured (self-host) and never throws into the caller.
+ */
+export async function captureDbCapacityIssue(input: {
+  /** Machine-stable reason from connectionCapacityReason (e.g. pooler_session_exhausted). */
+  reason: string;
+  /** Call site that detected it (e.g. better-auth, firstOrgId, authPool idle client). */
+  source: string;
+  /** The original error; coerced to an Error so it carries a stack into Error Tracking. */
+  error: unknown;
+  /** Acting user, when known (firstOrgId path); omitted for background pool errors. */
+  distinctId?: string | null;
+}): Promise<void> {
+  const ph = getClient();
+  if (!ph) return;
+  try {
+    const err = input.error instanceof Error ? input.error : new Error(String(input.error));
+    ph.captureException(err, input.distinctId || SYSTEM_DISTINCT_ID, {
+      issue: "db_connection_capacity",
+      db_capacity_reason: input.reason,
+      source: input.source,
+      environment: appEnvironment(),
+    });
+    await ph.flush();
+  } catch {
+    // Telemetry must never break the request/path that hit the capacity error.
+  }
+}

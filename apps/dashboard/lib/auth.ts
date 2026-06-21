@@ -66,12 +66,32 @@ const authPool = new Pool({
   connectionTimeoutMillis: 10_000,
 });
 
+// Detect a Postgres connection-capacity failure: log it under [db-capacity] AND raise a
+// PostHog Error Tracking issue so it's alertable, not just greppable. The PostHog send is
+// lazily imported (like @/lib/email and @/lib/analytics-server elsewhere here) so the
+// server-only/posthog-node graph stays out of the jiti migrate-time import; it's fire-
+// and-forget and self-swallows, so telemetry can never block or break the auth path.
+// Returns the matched reason (or null), so callers can branch on whether it was capacity.
+function reportConnectionIssue(where: string, err: unknown): string | null {
+  const reason = logIfConnectionCapacity(where, err);
+  if (!reason) return null;
+  void (async () => {
+    try {
+      const { captureDbCapacityIssue } = await import("@/lib/analytics-server");
+      await captureDbCapacityIssue({ reason, source: where, error: err });
+    } catch {
+      // Telemetry must never break auth; the [db-capacity] log already fired above.
+    }
+  })();
+  return reason;
+}
+
 // An idle pooled client erroring out (backend dropped it, pooler reset it) emits here
 // rather than rejecting a query, so without this handler `pg` would log it unattended
 // or, worse, crash the process on an 'error' with no listener. Tag connection-capacity
 // errors so they're alertable; surface anything else so it isn't lost.
 authPool.on("error", (err) => {
-  if (logIfConnectionCapacity("authPool idle client", err)) return;
+  if (reportConnectionIssue("authPool idle client", err)) return;
   // eslint-disable-next-line no-console
   console.error(`[db-pool] idle client error: ${err instanceof Error ? err.message : String(err)}`);
 });
@@ -119,9 +139,9 @@ async function firstOrgId(userId: string): Promise<string | undefined> {
     return orgId;
   } catch (err) {
     // Stays best-effort (returns undefined so the caller falls back), but a
-    // connection-capacity failure here is logged under [db-capacity] rather than
-    // silently swallowed, so the org-backfill misfiring is diagnosable.
-    logIfConnectionCapacity("firstOrgId", err);
+    // connection-capacity failure here is logged under [db-capacity] and raised to
+    // PostHog rather than silently swallowed, so the org-backfill misfiring is visible.
+    reportConnectionIssue("firstOrgId", err);
     return undefined;
   }
 }
@@ -140,7 +160,7 @@ export const auth = betterAuth({
     log: (level, message, ...args) => {
       if (level === "error") {
         for (const candidate of [message, ...args]) {
-          if (logIfConnectionCapacity("better-auth", candidate)) break;
+          if (reportConnectionIssue("better-auth", candidate)) break;
         }
       }
       // eslint-disable-next-line no-console

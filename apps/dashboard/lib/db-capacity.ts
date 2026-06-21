@@ -42,14 +42,16 @@ export function connectionCapacityReason(err: unknown): string | null {
 
 /**
  * Logs `err` with the stable `[db-capacity]` tag IFF it is a connection-capacity issue,
- * and returns whether it matched. `where` identifies the call site. Non-capacity errors
- * are left for the caller to handle, this only owns the capacity-exhaustion signal.
+ * and returns the matched reason (or null when it isn't one). `where` identifies the
+ * call site. Non-capacity errors are left for the caller to handle, this only owns the
+ * capacity-exhaustion signal. Returning the reason lets the caller forward it (e.g. to
+ * PostHog) without re-running the classifier.
  */
-export function logIfConnectionCapacity(where: string, err: unknown): boolean {
+export function logIfConnectionCapacity(where: string, err: unknown): string | null {
   const reason = connectionCapacityReason(err);
-  if (!reason) return false;
+  if (!reason) return null;
   const message = err instanceof Error ? err.message : String(err);
   // eslint-disable-next-line no-console
   console.error(`${DB_CAPACITY_TAG} ${reason} at ${where}: ${message}`);
-  return true;
+  return reason;
 }
