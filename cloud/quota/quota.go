@@ -8,15 +8,17 @@
 // (Allow(planTier, res, current)) with the seat-free per-ORG site bands
 // ("pay for sites, not seats"):
 //
-//	Free       : ≤ 10 sites/org   → 402 {next_tier: business}
-//	Pro        : ≤ 100 sites/org  → 402 {next_tier: enterprise}
+//	Free       : ≤ 10 sites/org   → 402 {next_tier: pro}
+//	Pro        : ≤ 100 sites/org  → 402 {next_tier: business}
+//	Business   : unlimited sites  (no site cap)
 //	Enterprise : unlimited sites  (no site cap)
 //
 // SEATS ARE FREE: members are unlimited on every plan, so ResourceMemberPerOrg
 // always passes. Storage (bytes/org) keeps its own bands but is GATED OFF by
 // default — it's metered, not enforced, until storage billing ships (toggle with
-// ENFORCE_STORAGE_QUOTA / NewProvider's enforceStorage). "Pro" is the public name
-// for the internal "business" plan tier.
+// ENFORCE_STORAGE_QUOTA / NewProvider's enforceStorage). Business is the $150
+// unlimited-sites tier between Pro and Enterprise; the internal tier keys now
+// match the public labels (free / pro / business / enterprise).
 //
 // Race-safety lives in the STORE: it holds a per-(org,subject) advisory lock
 // across COUNT → Allow → INSERT inside the request tx (internal/store). This
@@ -34,18 +36,19 @@ type PlanTier string
 
 const (
 	TierFree       PlanTier = "free"
+	TierPro        PlanTier = "pro"
 	TierBusiness   PlanTier = "business"
 	TierEnterprise PlanTier = "enterprise"
 	tierSales      PlanTier = "contact_sales"
 )
 
 // Per-ORG site caps. These are the maximum EXISTING count;
-// creating one more is rejected when current >= cap. Enterprise is uncapped
-// (handled in orgSiteCap), so it has no constant here. Seats are free, so there
-// are no member caps.
+// creating one more is rejected when current >= cap. Business and Enterprise are
+// uncapped (handled in orgSiteCap), so they have no constant here. Seats are
+// free, so there are no member caps.
 const (
-	freeSitesCap     = 10
-	businessSitesCap = 100
+	freeSitesCap = 10
+	proSitesCap  = 100
 )
 
 // Per-org storage caps in BYTES. gib is binary (1<<30) to
@@ -54,7 +57,8 @@ const (
 	gib = int64(1) << 30
 
 	freeStorageCap       = 5 * gib
-	businessStorageCap   = 100 * gib
+	proStorageCap        = 100 * gib
+	businessStorageCap   = 250 * gib
 	enterpriseStorageCap = 500 * gib
 )
 
@@ -156,28 +160,30 @@ func (p *Provider) exceeded(res corequota.Resource, current, max int64, tier, ne
 }
 
 // orgSiteCap returns the per-ORG site cap, the tier to upgrade to, and whether the
-// tier is uncapped. The bands are seat-free: Free 10 → Business
-// (Pro) 100 → Enterprise UNLIMITED. Enterprise has no self-serve upgrade above it,
-// so it returns unlimited=true and the caller never builds a 402.
+// tier is uncapped. The bands are seat-free: Free 10 → Pro 100 → Business
+// UNLIMITED → Enterprise UNLIMITED. Business and Enterprise have no site cap, so
+// they return unlimited=true and the caller never builds a site-cap 402.
 func orgSiteCap(tier PlanTier) (max int64, next PlanTier, unlimited bool) {
 	switch tier {
-	case TierBusiness:
-		return businessSitesCap, TierEnterprise, false
-	case TierEnterprise:
+	case TierPro:
+		return proSitesCap, TierBusiness, false
+	case TierBusiness, TierEnterprise:
 		return 0, "", true
 	default: // free
-		return freeSitesCap, TierBusiness, false
+		return freeSitesCap, TierPro, false
 	}
 }
 
 // storageCap returns the per-org storage cap (bytes) and the next tier for `tier`.
 func storageCap(tier PlanTier) (max int64, next PlanTier) {
 	switch tier {
+	case TierPro:
+		return proStorageCap, TierBusiness
 	case TierBusiness:
 		return businessStorageCap, TierEnterprise
 	case TierEnterprise:
 		return enterpriseStorageCap, tierSales
 	default: // free
-		return freeStorageCap, TierBusiness
+		return freeStorageCap, TierPro
 	}
 }

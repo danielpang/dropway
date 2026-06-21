@@ -2,13 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CreditCard, ShieldAlert, Sparkles } from "lucide-react";
 
+import { ChangePlanDrawer } from "@/components/billing/change-plan-drawer";
 import { FinalizingState } from "@/components/billing/finalizing-state";
 import { ManageBillingButton } from "@/components/billing/manage-billing-button";
 import { PlanMatrix } from "@/components/billing/plan-matrix";
-import {
-  ContactSalesButton,
-  UpgradeButton,
-} from "@/components/billing/upgrade-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,9 +15,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { api, ApiError, type BillingPlan, type PlanTier } from "@/lib/api";
-import { isCheckoutTier, nextTier, TIER_LABEL } from "@/lib/billing";
+import { SALES_URL, SITE_LIMIT, TIER_LABEL } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
+import { formatBytes } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Billing" };
 export const dynamic = "force-dynamic";
@@ -48,9 +47,9 @@ function statusBadge(plan: BillingPlan) {
  * plan here:
  *  - current plan + status (read from GET /v1/billing → app.org_meta);
  *  - the plan/limits matrix with the current tier highlighted;
- *  - "Manage billing" → Stripe Billing Portal (self-serve seats/plan/cancel);
- *  - upgrade buttons → Stripe Checkout (the next self-serve tier), or Contact
- *    Sales above Enterprise.
+ *  - "Manage billing" → Stripe Billing Portal (self-serve plan switch / cancel);
+ *  - upgrade buttons → Stripe Checkout for any self-serve tier above the current
+ *    one (Pro $25, Business $150), or Contact Sales for the "Custom" Enterprise tier.
  *
  * After returning from Stripe's success_url (`?checkout=success`) we DON'T trust
  * the redirect for entitlement, we show a "finalizing…" state that POLLS the
@@ -94,9 +93,21 @@ export default async function BillingPage({
   }
 
   const currentTier: PlanTier = plan.plan_tier ?? "free";
-  const upgradeTarget = nextTier(currentTier);
   const isCheckoutReturn = checkoutReturn === "success";
   const isCheckoutCancel = checkoutReturn === "cancel";
+
+  // Live usage for the meter: site count + total storage across the org's sites.
+  // Best-effort — if the sites list can't be read we just omit the Usage card
+  // rather than failing the billing page.
+  const sites = await api.listSites().catch(() => null);
+  const usage =
+    sites != null
+      ? {
+          siteCount: sites.length,
+          siteLimit: SITE_LIMIT[currentTier],
+          storageBytes: sites.reduce((sum, s) => sum + (s.storage_bytes ?? 0), 0),
+        }
+      : null;
 
   // Members can view billing (it drives banners + CTAs) but cannot mutate it.
   if (!manage) {
@@ -169,25 +180,65 @@ export default async function BillingPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {currentTier === "free" ? (
-              // No Stripe customer until first checkout → lead with upgrade.
-              upgradeTarget && isCheckoutTier(upgradeTarget) ? (
-                <UpgradeButton targetTier={upgradeTarget} />
-              ) : null
-            ) : (
-              <>
-                <ManageBillingButton />
-                {upgradeTarget &&
-                  (isCheckoutTier(upgradeTarget) ? (
-                    <UpgradeButton targetTier={upgradeTarget} />
-                  ) : (
-                    <ContactSalesButton salesUrl={undefined} />
-                  ))}
-              </>
+            {/* Paid orgs manage/switch/cancel via the Stripe portal. A single
+                "Upgrade" opens the change-plan drawer (every tier + the right CTA);
+                Enterprise has nothing higher, so it only gets Manage billing. */}
+            {currentTier !== "free" && <ManageBillingButton />}
+            {currentTier !== "enterprise" && (
+              <ChangePlanDrawer currentTier={currentTier} />
             )}
           </div>
         </CardContent>
       </Card>
+
+      {/* Usage against the current plan's limits */}
+      {usage && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Usage</CardTitle>
+            <CardDescription>
+              What {org?.name ?? "this organization"} is using on its current
+              plan.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {/* Sites: count vs the tier's site cap (Business/Enterprise unlimited). */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Sites</span>
+                <span className="font-medium tabular-nums">
+                  <span
+                    className={
+                      usage.siteLimit != null && usage.siteCount > usage.siteLimit
+                        ? "text-destructive"
+                        : "text-foreground"
+                    }
+                  >
+                    {usage.siteCount}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {" / "}
+                    {usage.siteLimit ?? "Unlimited"}
+                  </span>
+                </span>
+              </div>
+              {usage.siteLimit != null && (
+                <Progress
+                  value={(usage.siteCount / usage.siteLimit) * 100}
+                />
+              )}
+            </div>
+
+            {/* Storage: cumulative across all of the org's sites. */}
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Storage used</span>
+              <span className="font-medium tabular-nums text-foreground">
+                {formatBytes(usage.storageBytes)}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Plan/limits matrix */}
       <section className="space-y-3">
@@ -198,11 +249,13 @@ export default async function BillingPage({
             against your current plan.
           </p>
         </div>
-        <PlanMatrix currentTier={currentTier} />
+        <PlanMatrix currentTier={currentTier} canManage />
         <p className="text-xs text-muted-foreground">
           Need more than Enterprise?{" "}
           <Button asChild variant="link" className="h-auto p-0 text-xs">
-            <Link href="mailto:sales@dropway.com">Talk to sales</Link>
+            <Link href={SALES_URL} target="_blank" rel="noopener noreferrer">
+              Talk to sales
+            </Link>
           </Button>
           .
         </p>

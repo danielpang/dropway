@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
+import { BrandMark } from "@/components/brand-mark";
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { MainNav } from "@/components/main-nav";
 import { MobileNav } from "@/components/mobile-nav";
@@ -54,12 +55,7 @@ export default async function AppLayout({
             href="/dashboard"
             className="flex items-center gap-2 text-sm font-semibold tracking-tight rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            <span
-              aria-hidden
-              className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground text-xs font-bold"
-            >
-              D
-            </span>
+            <BrandMark />
             Dropway
           </Link>
           {/* Desktop: full nav + actions inline. */}

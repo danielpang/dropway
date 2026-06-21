@@ -63,7 +63,7 @@ func newQuotaProvider(cfg config.Config) quota.Provider {
 }
 
 // quotaProviderName labels the wired provider for startup logging.
-func quotaProviderName() string { return "cloud hard-cap (free/business/enterprise)" }
+func quotaProviderName() string { return "cloud hard-cap (free/pro/business/enterprise)" }
 
 // mountCloud wires cloud/billing onto the shared chi mux. It builds:
 //   - the Postgres BillingStore over the SAME non-BYPASSRLS dropway_app pool (the
@@ -105,7 +105,7 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	} else {
 		slog.Warn("cloud billing: no org_status projection writer — suspension will NOT block at the edge")
 	}
-	prices := cloudbilling.NewPriceMap(deps.Cfg.StripePriceBusiness, deps.Cfg.StripePriceEnterprise)
+	prices := cloudbilling.NewPriceMap(deps.Cfg.StripePricePro, deps.Cfg.StripePriceBusiness, deps.Cfg.StripePriceEnterprise)
 
 	// Webhook: verify → ProcessEvent (dedupe + persist ATOMICALLY in one tx, FIX 1).
 	// The BillingStore is the EventProcessor.

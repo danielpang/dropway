@@ -24,7 +24,7 @@ func signHeader(t *testing.T, secret string, payload []byte, when time.Time) str
 const whSecret = "whsec_real_test_secret"
 
 func TestPriceMap_TierAndPriceRoundTrip(t *testing.T) {
-	m := NewPriceMap("price_biz", "price_ent")
+	m := NewPriceMap("price_pro", "price_biz", "price_ent")
 
 	if got := m.TierFor("price_biz"); got != TierBusiness {
 		t.Errorf("TierFor(price_biz) = %q, want business", got)
@@ -68,7 +68,7 @@ func TestIDObject_ParsesBareAndExpanded(t *testing.T) {
 }
 
 func TestRealVerifier_CheckoutCompleted_ResolvesOrgAndTier(t *testing.T) {
-	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 
 	payload := []byte(`{
 		"id":"evt_checkout_1",
@@ -103,7 +103,7 @@ func TestRealVerifier_CheckoutCompleted_ResolvesOrgAndTier(t *testing.T) {
 }
 
 func TestRealVerifier_SubscriptionUpdated_DerivesTierFromPrice(t *testing.T) {
-	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 
 	payload := []byte(`{
 		"id":"evt_sub_1",
@@ -144,7 +144,7 @@ func TestRealVerifier_SubscriptionUpdated_DerivesTierFromPrice(t *testing.T) {
 // must set UnknownPrice (so applyEvent refuses to change entitlement) rather than
 // silently resolving to Free — which would downgrade a paying org.
 func TestRealVerifier_SubscriptionUpdated_UnknownPrice_Flagged(t *testing.T) {
-	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 	payload := []byte(`{
 		"id":"evt_sub_unknown",
 		"object":"event",
@@ -169,7 +169,7 @@ func TestRealVerifier_SubscriptionUpdated_UnknownPrice_Flagged(t *testing.T) {
 }
 
 func TestRealVerifier_ForgedSignature_Rejected(t *testing.T) {
-	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 	payload := []byte(`{"id":"evt_forged","type":"checkout.session.completed","data":{"object":{}}}`)
 
 	// Signed with the WRONG secret → ConstructEvent must reject.
@@ -185,7 +185,7 @@ func TestRealVerifier_ForgedSignature_Rejected(t *testing.T) {
 }
 
 func TestRealVerifier_StaleTimestamp_Rejected(t *testing.T) {
-	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 	payload := []byte(`{"id":"evt_old","type":"checkout.session.completed","data":{"object":{"client_reference_id":"o","metadata":{"target_tier":"business"}}}}`)
 	// Correctly signed but far outside the default tolerance window.
 	header := signHeader(t, whSecret, payload, time.Now().Add(-24*time.Hour))
@@ -195,7 +195,7 @@ func TestRealVerifier_StaleTimestamp_Rejected(t *testing.T) {
 }
 
 func TestRealVerifier_MissingOrgID_Errors(t *testing.T) {
-	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_biz", "price_ent"))
+	v := NewRealSignatureVerifier(whSecret, NewPriceMap("price_pro", "price_biz", "price_ent"))
 	payload := []byte(`{"id":"evt_noorg","object":"event","type":"checkout.session.completed","data":{"object":{"object":"checkout.session"}}}`)
 	header := signHeader(t, whSecret, payload, time.Now())
 	if _, err := v.Verify(payload, header); err == nil {

@@ -779,8 +779,9 @@ paths:
               type: object
               required: [target_tier]
               properties:
-                target_tier: { type: string, enum: [business, enterprise] }
+                target_tier: { type: string, enum: [pro, business, enterprise] }
                 seats: { type: integer, format: int64, minimum: 1, description: "Seats (defaults to 1)." }
+                local_currency: { type: boolean, description: "Enable Adaptive Pricing (local-currency presentment; Stripe converts from USD). Default false = billed in USD, the customer's bank does the FX." }
       responses:
         "200":
           description: A Stripe Checkout Session URL to redirect the user to.
@@ -967,7 +968,7 @@ components:
       type: object
       description: "[CLOUD-ONLY] The org's current plan (GET /v1/billing). plan_tier is read from app.org_meta (authoritative)."
       properties:
-        plan_tier: { type: string, enum: [free, business, enterprise] }
+        plan_tier: { type: string, enum: [free, pro, business, enterprise] }
         status: { type: string, enum: [active, trialing, past_due, canceled, incomplete], description: Stripe subscription status (omitted if no subscription row). }
         org_status: { type: string, enum: [active, over_limit, past_due, suspended], description: Derived account state mirrored to the edge. }
         seats: { type: integer, format: int64 }

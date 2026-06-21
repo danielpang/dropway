@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
+import { BrandMark } from "@/components/brand-mark";
 import { CreateOrgForm } from "@/components/onboarding/create-org-form";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
@@ -33,12 +34,7 @@ export default async function OnboardingPage() {
     <div className="auth-backdrop flex min-h-dvh flex-col">
       <header className="flex h-14 items-center justify-between px-6">
         <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-          <span
-            aria-hidden
-            className="grid size-6 place-items-center rounded-md bg-primary text-xs font-bold text-primary-foreground"
-          >
-            D
-          </span>
+          <BrandMark />
           Dropway
         </span>
         <ThemeToggle />

@@ -1,17 +1,35 @@
 import { Check } from "lucide-react";
 
+import {
+  ContactSalesButton,
+  UpgradeButton,
+} from "@/components/billing/upgrade-button";
+import { ManageBillingButton } from "@/components/billing/manage-billing-button";
 import { Badge } from "@/components/ui/badge";
+import type { CheckoutTier, PlanTier } from "@/lib/api";
+import {
+  MATRIX_TIERS,
+  PLAN_MATRIX,
+  planAction,
+  SALES_URL,
+  TIER_LABEL,
+} from "@/lib/billing";
 import { cn } from "@/lib/utils";
-import type { PlanTier } from "@/lib/api";
-import { MATRIX_TIERS, PLAN_MATRIX, TIER_LABEL } from "@/lib/billing";
 
 /**
- * The plan/limits matrix, highlighting the org's current
- * tier. Display-only, the real caps are enforced server-side in cloud/quota,
- * and paying raises them automatically once the webhook syncs plan_tier. The
- * matrix simply makes "what does upgrading get me" legible.
+ * The plan/limits matrix, highlighting the org's current tier. Display-only — the
+ * real caps are enforced server-side in cloud/quota, and paying raises them
+ * automatically once the webhook syncs plan_tier. When `canManage`, a CTA row is
+ * appended under each column (Upgrade to Pro/Business, Contact Sales, or the
+ * current-plan marker) so owners/admins can act straight from the comparison.
  */
-export function PlanMatrix({ currentTier }: { currentTier: PlanTier }) {
+export function PlanMatrix({
+  currentTier,
+  canManage = false,
+}: {
+  currentTier: PlanTier;
+  canManage?: boolean;
+}) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full border-collapse text-sm">
@@ -72,7 +90,59 @@ export function PlanMatrix({ currentTier }: { currentTier: PlanTier }) {
             </tr>
           ))}
         </tbody>
+        {canManage && (
+          <tfoot>
+            <tr className="border-t border-border">
+              <td className="px-4 py-3" />
+              {MATRIX_TIERS.map((tier) => (
+                <td
+                  key={tier}
+                  className={cn(
+                    "px-4 py-3 align-top",
+                    tier === currentTier && "bg-secondary/30",
+                  )}
+                >
+                  <MatrixCta tier={tier} currentTier={currentTier} />
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        )}
       </table>
     </div>
   );
+}
+
+/**
+ * The per-column action: upgrade (Checkout), contact sales, downgrade (portal),
+ * or the current-plan marker.
+ */
+function MatrixCta({
+  tier,
+  currentTier,
+}: {
+  tier: PlanTier;
+  currentTier: PlanTier;
+}) {
+  switch (planAction(tier, currentTier)) {
+    case "current":
+      return (
+        // h-9 matches the Button height so the text aligns with the CTAs in the row.
+        <span className="inline-flex h-9 items-center text-sm font-medium text-muted-foreground">
+          Current plan
+        </span>
+      );
+    case "upgrade":
+      return <UpgradeButton targetTier={tier as CheckoutTier} block />;
+    case "contact":
+      return <ContactSalesButton salesUrl={SALES_URL} block />;
+    case "downgrade":
+      return (
+        <ManageBillingButton
+          block
+          hideIcon
+          label={`Downgrade to ${TIER_LABEL[tier]}`}
+        />
+      );
+  }
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { BrandMark } from "@/components/brand-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 /**
@@ -18,12 +19,7 @@ export default function AuthzLayout({
           href="/"
           className="flex items-center gap-2 text-sm font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-md"
         >
-          <span
-            aria-hidden
-            className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground text-xs font-bold"
-          >
-            D
-          </span>
+          <BrandMark />
           Dropway
         </Link>
         <ThemeToggle />
