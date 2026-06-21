@@ -5,6 +5,7 @@ import { jwt, magicLink, organization } from "better-auth/plugins";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
 
+import { logIfConnectionCapacity } from "@/lib/db-capacity";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -53,10 +54,70 @@ import {
  */
 // A single shared pg Pool for Better Auth's `identity` schema (search_path pinned
 // to identity). Reused by the session hook below to look up a user's organization.
+// Pool sizing is tuned for SERVERLESS: each warm Vercel function instance holds its
+// own copy of this module-level pool, so the cap must be per-instance, not global.
+// `pg` defaults to max:10 with no idle timeout, so a few warm instances (10 each)
+// blow past Supabase's session-pooler cap (pool_size: 15) and acquireConnection
+// throws EMAXCONNSESSION. Keep `max` small and let idle connections drain back so
+// pooler slots free up between bursts. The runtime URL should point at Supabase's
+// TRANSACTION-mode pooler (...pooler.supabase.com:6543), which multiplexes these onto
+// few backends and is reachable over IPv4 (Vercel is IPv4-only; the DIRECT host
+// db.<ref>.supabase.co is IPv6-only and would not connect). The one-time CLI migrate
+// (DDL) needs a real session, so point IT at the pooler's SESSION port (5432) — same
+// IPv4 hostname, not the IPv6 direct connection.
 const authPool = new Pool({
   connectionString: databaseUrl(),
   options: "-c search_path=identity",
+  max: 3,
+  idleTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 10_000,
 });
+
+// Detect a Postgres connection-capacity failure: log it under [db-capacity] AND raise a
+// PostHog Error Tracking issue so it's alertable, not just greppable. The PostHog send is
+// lazily imported (like @/lib/email and @/lib/analytics-server elsewhere here) so the
+// server-only/posthog-node graph stays out of the jiti migrate-time import; it's fire-
+// and-forget and self-swallows, so telemetry can never block or break the auth path.
+// Returns the matched reason (or null), so callers can branch on whether it was capacity.
+function reportConnectionIssue(where: string, err: unknown): string | null {
+  const reason = logIfConnectionCapacity(where, err);
+  if (!reason) return null;
+  void (async () => {
+    try {
+      const { captureDbCapacityIssue } = await import("@/lib/analytics-server");
+      await captureDbCapacityIssue({ reason, source: where, error: err });
+    } catch {
+      // Telemetry must never break auth; the [db-capacity] log already fired above.
+    }
+  })();
+  return reason;
+}
+
+// An idle pooled client erroring out (backend dropped it, pooler reset it) emits here
+// rather than rejecting a query, so without this handler `pg` would log it unattended
+// or, worse, crash the process on an 'error' with no listener. Tag connection-capacity
+// errors so they're alertable; surface anything else so it isn't lost.
+authPool.on("error", (err) => {
+  if (reportConnectionIssue("authPool idle client", err)) return;
+  // eslint-disable-next-line no-console
+  console.error(`[db-pool] idle client error: ${err instanceof Error ? err.message : String(err)}`);
+});
+
+// Per-instance memo of firstOrgId. The lookup runs on every new session AND every MCP
+// access-token mint (customAccessTokenClaims), which during one sign-in fires several
+// times within seconds, so a short TTL collapses those repeats into one query without
+// adding meaningful staleness. The cache is per serverless instance (a plain Map),
+// best-effort, and bounded by a hard size cap so a long-lived instance can't grow it
+// without limit.
+//
+// Only POSITIVE results are cached. A miss (a brand-new user mid-onboarding with no
+// membership yet) is never cached, so the org appears the instant onboarding creates
+// it. A found org changes only when the user's OLDEST membership changes (rare); even
+// then the Go API re-checks membership live per request, so a briefly stale org_id is
+// rejected there rather than granting access, bounding the risk to the TTL.
+const ORG_CACHE_TTL_MS = 60_000;
+const ORG_CACHE_MAX = 10_000;
+const orgCache = new Map<string, { orgId: string; expiresAt: number }>();
 
 /**
  * The user's first organization id, the default "active org" for a new session AND
@@ -65,13 +126,29 @@ const authPool = new Pool({
  * undefined on a lookup error or a user with no membership.
  */
 async function firstOrgId(userId: string): Promise<string | undefined> {
+  const hit = orgCache.get(userId);
+  if (hit) {
+    if (hit.expiresAt > Date.now()) return hit.orgId;
+    orgCache.delete(userId);
+  }
   try {
     const res = await authPool.query<{ organizationId: string }>(
       `SELECT "organizationId" FROM identity.member WHERE "userId" = $1 ORDER BY "createdAt" LIMIT 1`,
       [userId],
     );
-    return res.rows[0]?.organizationId;
-  } catch {
+    const orgId = res.rows[0]?.organizationId;
+    if (orgId) {
+      // Drop the whole cache rather than tracking LRU: entries are tiny and expire on
+      // their own, this only guards against unbounded growth in a rare long-lived host.
+      if (orgCache.size >= ORG_CACHE_MAX) orgCache.clear();
+      orgCache.set(userId, { orgId, expiresAt: Date.now() + ORG_CACHE_TTL_MS });
+    }
+    return orgId;
+  } catch (err) {
+    // Stays best-effort (returns undefined so the caller falls back), but a
+    // connection-capacity failure here is logged under [db-capacity] and raised to
+    // PostHog rather than silently swallowed, so the org-backfill misfiring is visible.
+    reportConnectionIssue("firstOrgId", err);
     return undefined;
   }
 }
@@ -80,6 +157,23 @@ export const auth = betterAuth({
   appName: "Dropway",
   baseURL: betterAuthUrl(),
   secret: betterAuthSecret(),
+
+  // Intercept Better Auth's own logs so a connection-capacity failure inside ITS
+  // queries (e.g. findSession hitting the pooler cap, the original EMAXCONNSESSION
+  // 500) is re-emitted under the alertable [db-capacity] tag instead of being buried
+  // in a generic INTERNAL_SERVER_ERROR. Providing `log` replaces Better Auth's default
+  // console output, so forward every record to the console to preserve its diagnostics.
+  logger: {
+    log: (level, message, ...args) => {
+      if (level === "error") {
+        for (const candidate of [message, ...args]) {
+          if (reportConnectionIssue("better-auth", candidate)) break;
+        }
+      }
+      // eslint-disable-next-line no-console
+      console[level](`[Better Auth] ${message}`, ...args);
+    },
+  },
 
   // Postgres via a node-postgres Pool. Better Auth uses its built-in Kysely
   // adapter when handed a `Pool`, generating + migrating its own identity tables.

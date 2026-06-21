@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	coreauth "github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	mcpauth "github.com/danielpang/dropway/services/mcp/internal/auth"
@@ -44,7 +44,9 @@ func main() {
 	issuer := os.Getenv("JWT_ISSUER")
 	port := getenv("MCP_PORT", "8092")
 
-	pool, err := pgxpool.New(ctx, dbURL)
+	// Read-only, lighter traffic than the API: a small cap is plenty and leaves
+	// shared-pooler headroom. DB_MAX_CONNS overrides.
+	pool, err := pgpool.New(ctx, dbURL, 4)
 	if err != nil {
 		log.Error("db pool", "err", err)
 		os.Exit(1)

@@ -26,6 +26,7 @@ import (
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgetoken"
 	"github.com/danielpang/dropway/internal/middleware"
+	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/config"
@@ -88,7 +89,10 @@ func run(baseLogger *slog.Logger) error {
 	var st *store.Store
 	var pool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
-		p, err := pgxpool.New(ctx, cfg.DatabaseURL)
+		// Cap the pool (DB_MAX_CONNS overrides): the API + billing share this pool and
+		// run concurrent request traffic, so it gets the largest of the Go services'
+		// budgets while still leaving headroom under the shared pooler cap.
+		p, err := pgpool.New(ctx, cfg.DatabaseURL, 8)
 		if err != nil {
 			return err
 		}

@@ -22,8 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/serve/internal/config"
@@ -53,7 +52,9 @@ func run() error {
 	if cfg.DatabaseURL == "" {
 		return errors.New("serve: DATABASE_URL is required (the dropway_app role) to resolve hosts")
 	}
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	// Public host resolution: high request rate but each query is a fast single
+	// lookup, so a modest cap covers it. DB_MAX_CONNS overrides.
+	pool, err := pgpool.New(ctx, cfg.DatabaseURL, 6)
 	if err != nil {
 		return err
 	}
