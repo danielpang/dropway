@@ -1,12 +1,7 @@
-# Dropway Go API — Fly.io deploy manifest (app: dropway-api).
+# fly.toml app configuration file generated for dropway-api on 2026-06-21T20:09:03Z
 #
-# Committed so Fly can deploy from CI (GitHub Actions → flyctl). It holds only
-# non-secret deploy config — NO credentials. All secrets are set out-of-band with
-# `fly secrets set` (DATABASE_URL, S3_*, CF_*, EDGE_SIGNING_KEY, JWT_*, ...) and
-# never live in this file.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# Build context is the REPO ROOT (the Go module spans the whole repo), so run
-# `fly deploy` FROM THE REPO ROOT (this file is read by default).
 
 app = "dropway-api"
 primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US East)
@@ -14,6 +9,7 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
 [build]
   dockerfile = "services/api/Dockerfile"
   # Hosted/cloud build (Stripe billing + cloud quota bands). Leave commented for OSS.
+
   [build.args]
     DROPWAY_BUILD_TAGS = "cloud"
 
@@ -21,9 +17,11 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   internal_port = 8080
   force_https = true
   # Always-on control plane: keep one machine up (no cold starts on the auth path).
-  auto_stop_machines = false
-  auto_start_machines = false
+  auto_stop_machines = 'off'
+  auto_start_machines = true
   min_machines_running = 1
+  checks = [{ grace_period = '10s', interval = '15s', method = 'GET', path = '/healthz', timeout = '2s' }]
+  concurrency = { hard_limit = 250, soft_limit = 200, type = 'requests' }
 
   [http_service.concurrency]
     type = "requests"
@@ -38,5 +36,5 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   grace_period = "10s"
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'
