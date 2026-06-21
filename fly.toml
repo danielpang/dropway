@@ -14,8 +14,8 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
 [build]
   dockerfile = "services/api/Dockerfile"
   # Hosted/cloud build (Stripe billing + cloud quota bands). Leave commented for OSS.
-  # [build.args]
-  #   DROPWAY_BUILD_TAGS = "cloud"
+  [build.args]
+    DROPWAY_BUILD_TAGS = "cloud"
 
 [http_service]
   internal_port = 8080
