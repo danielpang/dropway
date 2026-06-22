@@ -6,6 +6,7 @@ import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
 
 import { logIfConnectionCapacity } from "@/lib/db-capacity";
+import { oauthRateLimitRules } from "@/lib/oauth-ratelimit";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -287,6 +288,47 @@ export const auth = betterAuth({
     database: {
       generateId: () => randomUUID(),
     },
+    // Trusted client-IP source for rate limiting (M4). Better Auth defaults to the
+    // LEFT-most x-forwarded-for entry, which the client controls (Vercel/Fly append
+    // the real IP to the RIGHT), so the per-IP OAuth/DCR limits below would be
+    // trivially bypassable by spoofing X-Forwarded-For. Pin platform-trusted headers
+    // first: x-vercel-forwarded-for (Vercel, the dashboard's host, un-spoofable),
+    // then fly-client-ip and x-real-ip for the Dockerfile self-host path, with
+    // x-forwarded-for only as a last resort. Better Auth uses the first header that
+    // is present, so on Vercel the spoofable x-forwarded-for is never consulted.
+    ipAddress: {
+      ipAddressHeaders: [
+        "x-vercel-forwarded-for",
+        "fly-client-ip",
+        "x-real-ip",
+        "x-forwarded-for",
+      ],
+    },
+  },
+
+  // Rate limiting for the unauthenticated OAuth surface (M4). The oauthProvider
+  // exposes a PUBLIC, unauthenticated Dynamic Client Registration endpoint
+  // (allowUnauthenticatedClientRegistration below) plus the authorize/token/
+  // consent endpoints, so without throttling an anonymous caller could flood
+  // /oauth2/register to exhaust oauth_application rows (and the tight Supabase
+  // pooler) and degrade login platform-wide.
+  //
+  // Keyed per client IP + path; the IP comes from the trusted-header list set in
+  // advanced.ipAddress above (NOT the spoofable left-most x-forwarded-for, which
+  // would let an attacker rotate the key per request). Enabled in production only
+  // so local dev + the OAuth e2e scripts aren't throttled; this mirrors Better
+  // Auth's own default of enabling rate limiting in production.
+  //
+  // NOTE (first layer): the default storage is in-memory, i.e. per instance. On a
+  // multi-instance serverless deployment that is a partial control. The durable
+  // follow-up is shared-storage rate limiting (Better Auth `storage: "database"`,
+  // which needs the `rateLimit` table migrated, or a secondary store) and/or an
+  // edge WAF rule on /api/auth/oauth2/register. The rules live in
+  // lib/oauth-ratelimit.ts so they can be unit-tested without this module.
+  rateLimit: {
+    enabled: process.env.NODE_ENV === "production",
+    storage: "memory",
+    customRules: oauthRateLimitRules,
   },
 
   plugins: [
