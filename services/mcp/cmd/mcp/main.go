@@ -19,7 +19,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -115,10 +117,33 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Info("mcp listening", "addr", srv.Addr, "resource", publicURL, "authz", dashboardURL)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+
+	// Run the listener on a goroutine so we can select against the shutdown signal.
+	// A graceful drain on SIGINT/SIGTERM is what lets rep.Close() actually flush
+	// buffered exception events before the process exits — without it, errors
+	// captured since the last flush interval would be lost on every deploy.
+	listenErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			listenErr <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	select {
+	case err := <-listenErr:
 		fatal("serve", err)
+	case sig := <-stop:
+		log.Info("shutdown signal received, draining", "signal", sig.String())
 	}
-	rep.Close()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("graceful shutdown failed", "err", err)
+	}
+	rep.Close() // flush buffered exceptions before exit.
 }
 
 // newMux wires the HTTP surface: /healthz, the RFC 9728 protected-resource
