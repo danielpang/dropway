@@ -601,13 +601,25 @@ func TestDomainMatches(t *testing.T) {
 }
 
 func TestLooksLikeHostname(t *testing.T) {
-	good := []string{"docs.acme.com", "a.b", "x.io"}
+	cd := projection.ContentDomain // "dropwaycontent.com" by default
+	good := []string{
+		"docs.acme.com", "a.b", "x.io",
+		"blog.acme.com", "my-blog.acme.com", "www.blog.acme.example",
+	}
 	for _, h := range good {
 		if !looksLikeHostname(h) {
 			t.Errorf("looksLikeHostname(%q) = false, want true", h)
 		}
 	}
-	bad := []string{"", "localhost", "no dot", "has space.com", "a/b.com", "host:port.com", ".leadingdot"}
+	bad := []string{
+		"", "localhost", "no dot", "has space.com", "a/b.com", "host:port.com", ".leadingdot",
+		// Platform content domain + subdomains (squat of a future canonical host).
+		cd, "x." + cd, "victimorg--blog." + cd,
+		// Bare IP literals.
+		"1.2.3.4", "2001:db8::1",
+		// Malformed labels: trailing dot, empty label, hyphen-edged labels.
+		"acme.com.", "blog..acme.com", "-blog.acme.com", "blog-.acme.com",
+	}
 	for _, h := range bad {
 		if looksLikeHostname(h) {
 			t.Errorf("looksLikeHostname(%q) = true, want false", h)
@@ -653,9 +665,9 @@ func TestLooksLikeID(t *testing.T) {
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
 		"  ACME.DropwayContent.COM ": "acme.dropwaycontent.com",
-		"a\tb\nc\rd":                     "abcd", // whitespace runes are stripped
-		"already.lower.com":              "already.lower.com",
-		"":                               "",
+		"a\tb\nc\rd":                 "abcd", // whitespace runes are stripped
+		"already.lower.com":          "already.lower.com",
+		"":                           "",
 	}
 	for in, want := range cases {
 		if got := normalizeHost(in); got != want {

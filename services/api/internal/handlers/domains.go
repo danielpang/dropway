@@ -5,6 +5,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,7 @@ import (
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -252,10 +254,43 @@ func mapDomainStatus(s customdomains.StatusResult) (verify, tls string) {
 	return verify, tls
 }
 
-// looksLikeHostname is a minimal sanity check for a custom hostname.
+// looksLikeHostname is a conservative sanity check for a custom hostname. Beyond
+// the basic shape (length, no whitespace/slash/colon, at least one dot), it blocks
+// hosts a tenant must never be allowed to claim as a "custom domain":
+//
+//   - the platform content domain itself and any subdomain of it. Otherwise a
+//     tenant could squat another tenant's future canonical host (e.g.
+//     "victim--blog.dropwaycontent.com") before its host_routes row exists, so the
+//     global unique constraint can't fire yet.
+//   - bare IPv4/IPv6 literals (a custom domain must be a name, not an address).
+//   - single-label hosts (no dot), which can't be a real custom domain.
+//   - labels with a leading/trailing dot or hyphen (malformed DNS names).
+//
+// NOTE (future): this does not reject registering a public-suffix apex directly
+// (e.g. "co.uk") because that needs the public-suffix list, and we deliberately
+// avoid pulling in that dependency here. Worth adding if/when a PSL is available.
 func looksLikeHostname(s string) bool {
 	if s == "" || len(s) > 253 || strings.ContainsAny(s, " \t/:") {
 		return false
 	}
-	return strings.IndexByte(s, '.') > 0
+	// Must have at least one dot (rejects single-label hosts).
+	if strings.IndexByte(s, '.') <= 0 {
+		return false
+	}
+	// Reject leading/trailing dots and any empty/hyphen-edged label.
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	// Reject bare IP literals (an IPv4 like "1.2.3.4" otherwise passes the dot check).
+	if _, err := netip.ParseAddr(s); err == nil {
+		return false
+	}
+	// Reject the platform content domain and any subdomain of it (platform squat).
+	cd := strings.ToLower(projection.ContentDomain)
+	if s == cd || strings.HasSuffix(s, "."+cd) {
+		return false
+	}
+	return true
 }
