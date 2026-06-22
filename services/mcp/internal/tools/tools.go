@@ -21,6 +21,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	slugpkg "github.com/danielpang/dropway/internal/slug"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	"github.com/danielpang/dropway/services/mcp/internal/auth"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
@@ -120,7 +121,7 @@ type downloadSiteOut struct {
 }
 
 type createSiteIn struct {
-	Slug       string `json:"slug" jsonschema:"the new site's slug (subdomain label, unique per org)"`
+	Slug       string `json:"slug" jsonschema:"the new site's slug: a single lowercase DNS label (letters, digits, hyphens; 1-63 chars; no leading/trailing or doubled hyphens), unique per org. Loose input is normalized (e.g. 'My Blog' becomes 'my-blog') and the final slug is returned in the response."`
 	AccessMode string `json:"access_mode,omitempty" jsonschema:"initial access: 'public' or 'org_only' (default: the org's default, usually org_only)"`
 }
 type createSiteOut struct {
@@ -283,9 +284,16 @@ func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, slug strin
 }
 
 // CreateSite creates a new site via the Go API (which enforces quota + reserves the
-// global host) under the user's forwarded token.
-func (svc *Service) CreateSite(ctx context.Context, token, slug, accessMode string) (createSiteOut, error) {
-	site, err := svc.API.CreateSite(ctx, token, slug, accessMode)
+// global host) under the user's forwarded token. The slug is normalized to the
+// canonical grammar the API enforces (mirroring the dashboard/CLI), so a loose
+// agent-supplied value (e.g. "My Blog") becomes a valid slug instead of a 400;
+// the API echoes the final slug back in the response.
+func (svc *Service) CreateSite(ctx context.Context, token, rawSlug, accessMode string) (createSiteOut, error) {
+	normalized := slugpkg.Slugify(rawSlug)
+	if normalized == "" {
+		return createSiteOut{}, fmt.Errorf("slug %q has no usable characters (use lowercase letters, digits, and hyphens)", rawSlug)
+	}
+	site, err := svc.API.CreateSite(ctx, token, normalized, accessMode)
 	if err != nil {
 		return createSiteOut{}, err
 	}

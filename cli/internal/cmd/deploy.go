@@ -16,6 +16,7 @@ import (
 	"github.com/danielpang/dropway/cli/internal/api"
 	"github.com/danielpang/dropway/cli/internal/auth"
 	"github.com/danielpang/dropway/cli/internal/manifest"
+	"github.com/danielpang/dropway/internal/slug"
 )
 
 // tokenEnv is the env var carrying a Bearer deploy token (CI / non-interactive).
@@ -85,7 +86,18 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 				if site == "" {
 					return fmt.Errorf("deploy: --new requires --site <slug>")
 				}
-				s, err := client.CreateSite(ctx, api.CreateSiteRequest{Slug: site})
+				// Normalize the slug to the canonical grammar the API enforces (a
+				// lowercase DNS label) instead of letting a loose value 400. Mirror
+				// the dashboard's slugifier and tell the user when it changed, so the
+				// created slug is never a silent surprise.
+				normalized := slug.Slugify(site)
+				if normalized == "" {
+					return fmt.Errorf("deploy: --site %q has no usable slug characters (use lowercase letters, digits, and hyphens)", site)
+				}
+				if normalized != site {
+					fmt.Fprintf(out, "Using site slug %q (normalized from %q)\n", normalized, site)
+				}
+				s, err := client.CreateSite(ctx, api.CreateSiteRequest{Slug: normalized})
 				if err != nil {
 					return fmt.Errorf("create site: %w", err)
 				}
@@ -129,7 +141,7 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 		},
 	}
 
-	cmd.Flags().StringVar(&site, "site", "", "site slug (with --new) to create")
+	cmd.Flags().StringVar(&site, "site", "", "site slug to create (with --new); loose input is normalized to a lowercase DNS label")
 	cmd.Flags().StringVar(&siteID, "site-id", "", "existing site id to deploy to")
 	cmd.Flags().BoolVar(&createNew, "new", false, "create a new site (requires --site <slug>)")
 	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Dropway API base URL")

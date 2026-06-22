@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,44 @@ func TestIsReservedSlug(t *testing.T) {
 	for _, s := range allowed {
 		if IsReservedSlug(s) {
 			t.Errorf("IsReservedSlug(%q) = true, want false (case-sensitive exact match only)", s)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ValidSlug — the slug grammar guarding the content host + KV route key (H1).
+// ---------------------------------------------------------------------------
+
+func TestValidSlug(t *testing.T) {
+	valid := []string{
+		"a", "acme", "my-site", "docs-internal", "blog2", "a1", "1a",
+		"a-b-c", strings.Repeat("a", 63),
+	}
+	for _, s := range valid {
+		if !ValidSlug(s) {
+			t.Errorf("ValidSlug(%q) = false, want true", s)
+		}
+	}
+
+	invalid := []string{
+		"",                      // empty
+		"-acme",                 // leading hyphen
+		"acme-",                 // trailing hyphen
+		"Acme",                  // uppercase
+		"ac me",                 // space
+		"a/b",                   // path separator → KV-key path injection
+		"a.b",                   // dot → extra DNS label
+		"a%2e",                  // percent → KV-key escaping
+		"a#x",                   // fragment
+		"a?x",                   // query
+		"victimorg--victimsite", // doubled hyphen → org/app host-namespace collision
+		"a--b",                  // any `--` run
+		strings.Repeat("a", 64), // too long (max DNS label is 63)
+		"a\tb",                  // control char
+	}
+	for _, s := range invalid {
+		if ValidSlug(s) {
+			t.Errorf("ValidSlug(%q) = true, want false", s)
 		}
 	}
 }

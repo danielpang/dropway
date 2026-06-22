@@ -53,3 +53,31 @@ func TestCreateSite_AccessMode(t *testing.T) {
 		})
 	}
 }
+
+// CreateSite rejects malformed slugs with a 400 BEFORE they can reach the
+// canonical content host or the Cloudflare KV route key (H1). The CLI and MCP
+// hit this handler directly (only the dashboard slugifies client-side), so this
+// server-side check is the real boundary.
+func TestCreateSite_RejectsMalformedSlug(t *testing.T) {
+	bad := []string{
+		`{"slug":"a/b"}`,                   // path separator → KV-key path injection
+		`{"slug":"a.b"}`,                   // dot → extra DNS label
+		`{"slug":"a%2e"}`,                  // percent → KV-key escaping
+		`{"slug":"a#x"}`,                   // fragment
+		`{"slug":"Acme"}`,                  // uppercase
+		`{"slug":"victimorg--victimsite"}`, // doubled hyphen → host-namespace collision
+		`{"slug":"-lead"}`,                 // leading hyphen
+		`{"slug":"trail-"}`,                // trailing hyphen
+	}
+	for _, body := range bad {
+		t.Run(body, func(t *testing.T) {
+			a := NewFull(quota.Unlimited{}, newFakeStore(), nil, nil)
+			h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, jsonReq(http.MethodPost, "/v1/sites", body))
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
