@@ -240,6 +240,11 @@ func (a *API) requireRevoker(w http.ResponseWriter) bool {
 // an unscoped cross-org write. A self-host pre-Better-Auth can opt back in via
 // AllowJWTRoleFallback, which logs the degradation.
 //
+// PRECONDITION: callers MUST have already passed requireAdmin(w, r, t) (both
+// RevokeMember and RevokeAccess do), so the caller's own admin authority over
+// t.OrgID is already established when the AllowJWTRoleFallback branch below relies
+// on "the caller is already a verified admin of this org".
+//
 // On success it returns true; callers proceed with the denylist write.
 func (a *API) requireTargetOrgMember(w http.ResponseWriter, r *http.Request, t store.Tenant, targetUserID string) bool {
 	_, err := a.Store.MemberRole(r.Context(), t.OrgID, targetUserID)

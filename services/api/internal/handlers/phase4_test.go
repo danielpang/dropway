@@ -273,6 +273,54 @@ func TestRevoke_MemberInOrgSucceeds(t *testing.T) {
 	}
 }
 
+// L5 fail-closed: when the Better Auth member table is unavailable and JWT role
+// fallback is OFF (the strict default), a user-targeted revoke is DENIED and writes
+// nothing. Membership can't be confirmed, so the path never falls open to an
+// unscoped cross-org denylist write.
+func TestRevoke_MemberTableUnavailable_StrictDenyWritesNothing(t *testing.T) {
+	f := newFakeStore()
+	f.p2().memberErr = store.ErrAuthSchemaUnavailable // whole identity.member table is gone
+	rev := newFakeRevoker()
+	a := New(quota.Unlimited{})
+	a.Store = f
+	a.Revoker = rev
+	// a.AllowJWTRoleFallback defaults to false (strict).
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/members/victim-123/revoke", `{}`)
+	if rr.Code < 400 {
+		t.Fatalf("table unavailable + fallback off must deny, got %d\n%s", rr.Code, rr.Body)
+	}
+	if _, ok := rev.get(edgerevoke.KindUser, "victim-123"); ok {
+		t.Error("must write nothing when membership cannot be confirmed")
+	}
+	if len(f.auditLog()) != 0 {
+		t.Error("must write no audit row when denied")
+	}
+}
+
+// L5 opt-in: with AllowJWTRoleFallback (a self-host that has not migrated Better
+// Auth), the table-unavailable case allows the revoke, since the caller is already a
+// verified admin of this org. This locks in the documented opt-in behavior.
+func TestRevoke_MemberTableUnavailable_FallbackAllows(t *testing.T) {
+	f := newFakeStore()
+	f.p2().memberErr = store.ErrAuthSchemaUnavailable
+	rev := newFakeRevoker()
+	a := New(quota.Unlimited{})
+	a.Store = f
+	a.Revoker = rev
+	a.AllowJWTRoleFallback = true // opt back in
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/members/victim-123/revoke", `{}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fallback-enabled revoke: got %d, want 200\n%s", rr.Code, rr.Body)
+	}
+	if iat, ok := rev.get(edgerevoke.KindUser, "victim-123"); !ok || iat <= 0 {
+		t.Fatalf("fallback-enabled revoke should write revoked:user (ok=%v iat=%d)", ok, iat)
+	}
+}
+
 // --- revoke site-access writes revoked:site -----------------------------------
 
 func TestRevoke_SiteAccessWritesDenylist(t *testing.T) {
