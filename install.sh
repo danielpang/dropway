@@ -11,6 +11,10 @@
 #   DROPWAY_VERSION      release tag to install (default: latest), e.g. v0.1.0
 #   DROPWAY_INSTALL_DIR  install directory (default: /usr/local/bin, falling
 #                        back to ~/.local/bin when that isn't writable)
+#   DROPWAY_INSECURE_SKIP_CHECKSUM
+#                        set to 1 to skip checksum verification (NOT
+#                        recommended). By default the installer fails closed:
+#                        it aborts unless the binary's checksum is verified.
 #
 # POSIX sh — no bashisms, so it runs under dash/sh on minimal systems.
 
@@ -89,14 +93,37 @@ info "downloading ${bin_url}"
 http_dl "$bin_url" "${tmp}/${BIN}" \
   || die "download failed. Is ${version} published with a ${asset} asset? See https://github.com/${REPO}/releases"
 
-# ---- verify checksum (best-effort: warn, don't fail, if unavailable) ------
+# ---- verify checksum (fail closed: abort unless a checksum is verified) ----
+# Verification must succeed before we install. A missing sha256 tool, an
+# unfetchable or empty checksums.txt, or no matching entry for the asset all
+# ABORT (a MITM or a CDN that selectively fails the checksums request must not
+# silently downgrade an install to "unverified"). Set
+# DROPWAY_INSECURE_SKIP_CHECKSUM=1 to knowingly accept the risk and continue
+# with a loud warning instead.
+#
+# verify_fail "reason" prints why verification could not complete, then either
+# aborts (default) or, when the opt-out is set, warns and continues.
+verify_fail() {
+  if [ "${DROPWAY_INSECURE_SKIP_CHECKSUM:-}" = "1" ]; then
+    err "$1"
+    err "DROPWAY_INSECURE_SKIP_CHECKSUM=1 is set, installing WITHOUT checksum verification. You have been warned."
+    return 0
+  fi
+  die "$1
+Refusing to install an unverified binary. Set DROPWAY_INSECURE_SKIP_CHECKSUM=1 to skip verification at your own risk."
+}
+
 got="$(sha256 "${tmp}/${BIN}")"
 if [ -z "$got" ]; then
-  err "no sha256 tool found — skipping checksum verification."
-elif http_dl "$sum_url" "${tmp}/checksums.txt" 2>/dev/null; then
+  verify_fail "no sha256 tool found (need sha256sum or shasum), cannot verify checksum."
+elif ! http_dl "$sum_url" "${tmp}/checksums.txt" 2>/dev/null; then
+  verify_fail "couldn't fetch checksums.txt from ${sum_url}, cannot verify checksum."
+elif [ ! -s "${tmp}/checksums.txt" ]; then
+  verify_fail "checksums.txt was empty, cannot verify checksum."
+else
   want="$(grep " ${asset}\$" "${tmp}/checksums.txt" | awk '{print $1}')"
   if [ -z "$want" ]; then
-    err "no checksum entry for ${asset} — skipping verification."
+    verify_fail "no checksum entry for ${asset} in checksums.txt, cannot verify checksum."
   elif [ "$got" != "$want" ]; then
     die "checksum mismatch for ${asset}!
   expected: ${want}
@@ -105,8 +132,6 @@ Refusing to install a binary that doesn't match the published checksum."
   else
     info "checksum verified"
   fi
-else
-  err "couldn't fetch checksums.txt — skipping verification."
 fi
 
 chmod +x "${tmp}/${BIN}"
