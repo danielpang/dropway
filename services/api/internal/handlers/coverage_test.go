@@ -592,6 +592,9 @@ func TestDomainMatches(t *testing.T) {
 		// Verified apex covers its subdomains: proving acme.com proves the
 		// whole subtree, so @mail.acme.com is internal. (Legitimate behavior.)
 		{"acme.com", "mail.acme.com", true},
+		// ...and the whole subtree, not just one level: a grandchild email domain
+		// is still covered by the verified apex.
+		{"acme.com", "a.b.acme.com", true},
 		// L7 fix: a verified CHILD subdomain must NOT widen to the parent mail
 		// domain. Proving docs.acme.com proves only docs.acme.com, so @acme.com
 		// (and sibling subdomains) stay external.
