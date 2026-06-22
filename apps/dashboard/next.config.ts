@@ -27,6 +27,11 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   // Ignored by browsers over plain http (local dev), enforced on the https origin.
+  // Note: `preload` only gets a domain onto the browser preload list when the
+  // header is also served from the bare apex (https://dropway.dev). Served from the
+  // app subdomain it still asserts HSTS for app.dropway.dev and its subdomains; the
+  // tenant content domain is a separate apex (dropwaycontent.com), so
+  // includeSubDomains never reaches tenant sites.
   {
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",

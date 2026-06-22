@@ -18,6 +18,14 @@ async function headerMap() {
 }
 
 describe("dashboard security headers", () => {
+  it("applies a single catch-all group covering every route", async () => {
+    const groups = await nextConfig.headers!();
+    // Exactly one group, matching all paths, so the consent/authz pages and API
+    // routes are all covered and nothing is silently scoped out.
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.source).toBe("/:path*");
+  });
+
   it("blocks framing via CSP frame-ancestors and X-Frame-Options", async () => {
     const h = await headerMap();
     expect(h.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
