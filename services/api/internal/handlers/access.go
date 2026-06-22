@@ -571,16 +571,31 @@ func (a *API) emailIsExternal(r *http.Request, t store.Tenant, email string) (bo
 	return true, nil
 }
 
-// domainMatches reports whether the email domain matches a verified hostname
-// (exact, or the email domain is a parent of the hostname e.g. acme.com matches
-// docs.acme.com).
+// domainMatches reports whether an email domain is internal to a VERIFIED org
+// hostname. hostname is the proven-controlled host; emailDomain is the domain
+// part of the member's email.
+//
+// An email domain counts as internal only when the verified host actually
+// covers it:
+//   - exact match (verified acme.com matches @acme.com), or
+//   - the verified host is the apex/parent of the email domain (verified
+//     acme.com matches @mail.acme.com, because proving acme.com proves its
+//     subtree).
+//
+// We deliberately do NOT treat a verified CHILD subdomain as covering its
+// parent: verifying docs.acme.com proves only docs.acme.com, so @acme.com (and
+// every other @*.acme.com sibling) stays external. Promoting the whole apex
+// from one proven child would grant internal status far beyond what was proven.
 func domainMatches(hostname, emailDomain string) bool {
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	emailDomain = strings.ToLower(strings.TrimSpace(emailDomain))
 	if hostname == emailDomain {
 		return true
 	}
-	return strings.HasSuffix(hostname, "."+emailDomain)
+	// Internal only when the verified host is a parent of the email domain,
+	// i.e. emailDomain ends with "." + hostname. The reverse direction (a
+	// verified child widening to the parent mail domain) is rejected.
+	return strings.HasSuffix(emailDomain, "."+hostname)
 }
 
 // looksLikeEmail is a minimal sanity check (a full RFC 5322 validator is overkill;

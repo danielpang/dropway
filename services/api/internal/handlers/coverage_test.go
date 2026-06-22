@@ -586,12 +586,20 @@ func TestDomainMatches(t *testing.T) {
 		hostname, emailDomain string
 		want                  bool
 	}{
-		{"acme.com", "acme.com", true},       // exact
-		{"docs.acme.com", "acme.com", true},  // email domain is a parent of the host
-		{"ACME.com", "acme.COM", true},       // case-insensitive
-		{"acme.com", "other.com", false},     // unrelated
-		{"notacme.com", "acme.com", false},   // suffix without the dot boundary
-		{"acme.com", "docs.acme.com", false}, // child can't match a parent host
+		{"acme.com", "acme.com", true},   // exact match
+		{"ACME.com", "acme.COM", true},   // case-insensitive
+		{"acme.com", "other.com", false}, // unrelated
+		// Verified apex covers its subdomains: proving acme.com proves the
+		// whole subtree, so @mail.acme.com is internal. (Legitimate behavior.)
+		{"acme.com", "mail.acme.com", true},
+		// L7 fix: a verified CHILD subdomain must NOT widen to the parent mail
+		// domain. Proving docs.acme.com proves only docs.acme.com, so @acme.com
+		// (and sibling subdomains) stay external.
+		{"docs.acme.com", "acme.com", false},
+		{"docs.acme.com", "mail.acme.com", false},
+		// Suffix collision without the dot boundary is not a match.
+		{"acme.com", "notacme.com", false},
+		{"notacme.com", "acme.com", false},
 	}
 	for _, c := range cases {
 		if got := domainMatches(c.hostname, c.emailDomain); got != c.want {
@@ -653,9 +661,9 @@ func TestLooksLikeID(t *testing.T) {
 func TestNormalizeHost(t *testing.T) {
 	cases := map[string]string{
 		"  ACME.DropwayContent.COM ": "acme.dropwaycontent.com",
-		"a\tb\nc\rd":                     "abcd", // whitespace runes are stripped
-		"already.lower.com":              "already.lower.com",
-		"":                               "",
+		"a\tb\nc\rd":                 "abcd", // whitespace runes are stripped
+		"already.lower.com":          "already.lower.com",
+		"":                           "",
 	}
 	for in, want := range cases {
 		if got := normalizeHost(in); got != want {
