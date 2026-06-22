@@ -39,13 +39,16 @@ func Valid(s string) bool {
 	return !strings.Contains(s, "--")
 }
 
-// Slugify normalizes arbitrary input into a slug that satisfies Valid, mirroring
-// the dashboard's client-side slugifier so the CLI/MCP and the UI agree: lower-
-// case, every run of non-slug characters becomes a single hyphen, hyphen runs
-// collapse, leading/trailing hyphens are trimmed, and the result is capped at 63
-// chars (re-trimming any trailing hyphen the cap exposed). Returns "" when the
-// input has no usable characters — callers should treat that as "no valid slug"
-// rather than sending it.
+// Slugify normalizes arbitrary input into a slug that satisfies Valid. It is
+// modeled on the dashboard's client-side slugifier, but is deliberately stricter:
+// it ALSO trims a trailing hyphen (including one the 63-char cap exposes), so its
+// output always satisfies Valid, whereas the dashboard's live-typing slugifier can
+// momentarily leave a trailing hyphen that its own submit-time SLUG_RE rejects.
+// The steps: lowercase, every run of non-slug characters becomes a single hyphen,
+// hyphen runs collapse, leading/trailing hyphens are trimmed, and the result is
+// capped at 63 chars (re-trimming any trailing hyphen the cap exposed). Returns ""
+// when the input has no usable characters; callers should treat that as "no valid
+// slug" rather than sending it.
 func Slugify(s string) string {
 	s = strings.ToLower(s)
 	s = nonSlugRun.ReplaceAllString(s, "-")

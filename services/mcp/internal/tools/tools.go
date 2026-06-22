@@ -284,10 +284,10 @@ func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, slug strin
 }
 
 // CreateSite creates a new site via the Go API (which enforces quota + reserves the
-// global host) under the user's forwarded token. The slug is normalized to the
-// canonical grammar the API enforces (mirroring the dashboard/CLI), so a loose
-// agent-supplied value (e.g. "My Blog") becomes a valid slug instead of a 400;
-// the API echoes the final slug back in the response.
+// global host) under the user's forwarded token. The slug is normalized via the
+// shared slug.Slugify (the same normalizer the CLI uses), so a loose agent-supplied
+// value (e.g. "My Blog") becomes a valid slug instead of a 400; the API echoes the
+// final slug back in the response.
 func (svc *Service) CreateSite(ctx context.Context, token, rawSlug, accessMode string) (createSiteOut, error) {
 	normalized := slugpkg.Slugify(rawSlug)
 	if normalized == "" {
