@@ -5,6 +5,8 @@ package store
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -103,6 +105,28 @@ var reservedSlugs = map[string]struct{}{
 func IsReservedSlug(slug string) bool {
 	_, ok := reservedSlugs[slug]
 	return ok
+}
+
+// slugPattern is the strict grammar a site slug MUST match: a single
+// lowercase-DNS-label of 1–63 chars — start/end alphanumeric, interior
+// alphanumeric or single hyphens. It deliberately excludes uppercase, dots,
+// slashes, percent signs, spaces, and every other character that would be
+// unsafe in the canonical content host (projection.HostForSite) or in the
+// Cloudflare KV route key path (projection.kvValueURL).
+var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// ValidSlug reports whether slug is a safe, canonical site slug. The slug is
+// interpolated into a DNS label (`<orgSlug>--<slug>.<ContentDomain>`) and into
+// the Cloudflare KV REST path, so it must be a single lowercase DNS label and
+// must NOT contain a `--` run — `--` is the org/app separator in the content
+// host, so a slug containing it would break the org-namespacing invariant and
+// could collide with another org's host namespace (HostForSite's collision-free
+// guarantee assumes neither half contains `--`).
+func ValidSlug(slug string) bool {
+	if !slugPattern.MatchString(slug) {
+		return false
+	}
+	return !strings.Contains(slug, "--")
 }
 
 // uniqueViolation reports whether err is a Postgres unique-constraint violation
@@ -230,6 +254,12 @@ func (s *Store) EnsureOrgProvisioned(ctx context.Context, t Tenant) error {
 // NOT public: a brand-new org has allow_external_sharing=false, and a public site
 // would be 403'd by the external-sharing trigger.
 func (s *Store) CreateSite(ctx context.Context, t Tenant, slug, accessMode string) (Site, error) {
+	// Validate the slug shape BEFORE it is interpolated into the canonical host
+	// or the KV route key (defense in depth — the handler validates too, but the
+	// store is also reachable from the MCP path and tests).
+	if !ValidSlug(slug) {
+		return Site{}, ErrInvalidSlug
+	}
 	if IsReservedSlug(slug) {
 		return Site{}, ErrReservedSlug
 	}

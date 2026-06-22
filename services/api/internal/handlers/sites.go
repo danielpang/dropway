@@ -84,6 +84,15 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, fmt.Errorf("%w: slug is required", httpx.ErrBadRequest))
 		return
 	}
+	// Reject malformed slugs early with a 400 (before spending a quota reservation).
+	// The slug becomes a DNS label in the canonical content host and part of the
+	// Cloudflare KV route-key path, so it must be a single safe lowercase label.
+	// The CLI and MCP reach this handler directly (only the dashboard slugifies
+	// client-side), so this server-side check is the real boundary.
+	if !store.ValidSlug(req.Slug) {
+		httpx.WriteError(w, fmt.Errorf("%w: slug must be 1-63 chars, lowercase letters/digits/hyphens, no leading/trailing or doubled hyphens", httpx.ErrBadRequest))
+		return
+	}
 	// Reject reserved slugs early with a 400 (before spending a quota reservation).
 	if store.IsReservedSlug(req.Slug) {
 		httpx.WriteError(w, fmt.Errorf("%w: slug %q is reserved", httpx.ErrBadRequest, req.Slug))
@@ -268,6 +277,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, store.ErrInvalidSlug):
+		httpx.WriteError(w, fmt.Errorf("%w: slug is not a valid single DNS label", httpx.ErrBadRequest))
 	case errors.Is(err, store.ErrReservedSlug):
 		httpx.WriteError(w, fmt.Errorf("%w: slug is reserved", httpx.ErrBadRequest))
 	case errors.Is(err, store.ErrSlugTaken):

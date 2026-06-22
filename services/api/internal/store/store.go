@@ -101,6 +101,11 @@ var (
 	// ErrReservedSlug is returned when a requested slug is on the reserved
 	// blocklist (reserved-slug blocklist).
 	ErrReservedSlug = errors.New("store: reserved slug")
+	// ErrInvalidSlug is returned when a requested slug is not a single, safe DNS
+	// label (see ValidSlug). The slug becomes part of the canonical content host
+	// and the Cloudflare KV route key, so a malformed slug is rejected before it
+	// can reach either.
+	ErrInvalidSlug = errors.New("store: invalid slug")
 	// ErrSlugTaken is returned when (org, slug) already exists.
 	ErrSlugTaken = errors.New("store: slug already in use for this org")
 	// ErrNotFound is returned when a row is absent (or invisible under RLS).

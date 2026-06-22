@@ -47,6 +47,35 @@ func TestCloudflareKV_PutRoute(t *testing.T) {
 	}
 }
 
+// TestCloudflareKV_kvValueURLEscapesKey verifies that a KV key carrying a
+// path-significant character (`/`) is percent-escaped into a single path
+// segment instead of injecting a new one against the Cloudflare API (H1
+// defense in depth — slugs are validated upstream, but the key is built from a
+// host string).
+func TestCloudflareKV_kvValueURLEscapesKey(t *testing.T) {
+	var gotEscapedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotEscapedPath = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer srv.Close()
+
+	c := NewCloudflareKV("a", "n", "t")
+	c.BaseURL = srv.URL
+
+	// A `/` in the host must NOT survive as a path separator in the request URI.
+	if err := c.PutRoute(context.Background(), "evil/../x.dropwaycontent.com", validRoute("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(gotEscapedPath, "route:evil/") {
+		t.Errorf("escaped path %q leaked a raw `/` from the key (path injection)", gotEscapedPath)
+	}
+	if !strings.Contains(gotEscapedPath, "%2F") {
+		t.Errorf("escaped path %q did not percent-escape the `/` in the key", gotEscapedPath)
+	}
+}
+
 func TestCloudflareKV_DeleteRoute(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

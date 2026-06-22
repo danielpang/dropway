@@ -54,10 +54,15 @@ func (c *CloudflareKV) httpClient() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second}
 }
 
-// kvValueURL builds the REST URL for a single KV key (write/delete).
+// kvValueURL builds the REST URL for a single KV key (write/delete). The key is
+// path-escaped so a key segment can never alter the request path or query
+// against the Cloudflare API: a well-formed key (route:/revoked:/org_status:
+// followed by a host/UUID) is unchanged by escaping, while any stray `/`, `?`,
+// `#`, or `%` is encoded instead of being interpreted (defense in depth — slugs
+// are validated upstream, but the KV key is built from a host string).
 func (c *CloudflareKV) kvValueURL(key string) string {
 	return fmt.Sprintf("%s/accounts/%s/storage/kv/namespaces/%s/values/%s",
-		c.baseURL(), c.AccountID, c.NamespaceID, key)
+		c.baseURL(), c.AccountID, c.NamespaceID, url.PathEscape(key))
 }
 
 // PutRoute writes the route value (PUT .../values/route:<host>).
