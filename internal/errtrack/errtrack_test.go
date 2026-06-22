@@ -10,7 +10,40 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/danielpang/dropway/internal/phclient"
 )
+
+func TestFromEnvBorrowsSharedPostHogClient(t *testing.T) {
+	// No env key: auto-detect would yield "none". An explicit provider + a lent
+	// client proves the injected client is used instead of building a second one.
+	t.Setenv("POSTHOG_KEY", "")
+	t.Setenv("ERROR_TRACKING_PROVIDER", "posthog")
+
+	client, err := phclient.New(phclient.Config{Key: "phc_test"})
+	if err != nil {
+		t.Fatalf("phclient.New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	rep, label := FromEnv("api", WithSharedPostHogClient(client))
+	if label != "posthog" {
+		t.Fatalf("label: want posthog, got %q", label)
+	}
+	pr, ok := rep.(*posthogReporter)
+	if !ok {
+		t.Fatalf("want *posthogReporter, got %T", rep)
+	}
+	if pr.owns {
+		t.Fatal("reporter must BORROW the shared client (owns=false), not own it")
+	}
+	if pr.client != client {
+		t.Fatal("reporter should reuse the injected client, not build a new one")
+	}
+	// Close must be a no-op on a borrowed client (the owner closes it); the
+	// t.Cleanup Close above must still succeed without a double-close panic.
+	rep.Close()
+}
 
 func TestNoopIsInert(t *testing.T) {
 	var n Noop

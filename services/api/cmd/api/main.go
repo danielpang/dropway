@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/posthog/posthog-go"
 
 	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/auth"
@@ -29,6 +30,7 @@ import (
 	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/pgpool"
+	"github.com/danielpang/dropway/internal/phclient"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/config"
@@ -61,27 +63,43 @@ type cloudDeps struct {
 }
 
 func main() {
-	// Error tracking is wired first so the default logger captures EVERY
-	// slog.Error from this point on (incl. startup failures). The provider is
-	// runtime-selected (PostHog by default, Noop when unconfigured). WrapSlogHandler
-	// mirrors Error-level records to the sink; Noop returns the JSON handler as-is.
-	rep, label := errtrack.FromEnv("api")
+	// One shared posthog-go client per process: error tracking AND product
+	// analytics both run over it (one flusher goroutine, one connection pool)
+	// instead of each building its own. nil when POSTHOG_KEY is unset → both seams
+	// fall back to disabled. Built from env here (before config.Load) so the logger
+	// can be wrapped immediately, capturing even startup failures.
+	phClient, phErr := phclient.New(phclient.ConfigFromEnv())
+	if phErr != nil {
+		slog.Warn("posthog client init failed — error tracking + analytics disabled", "err", phErr)
+	}
+
+	// Error tracking is wired first so the default logger captures EVERY slog.Error
+	// from this point on. The posthog provider BORROWS phClient (above); a custom
+	// ERROR_TRACKING_PROVIDER still works via the registry. WrapSlogHandler mirrors
+	// Error-level records to the sink; Noop returns the JSON handler as-is.
+	rep, label := errtrack.FromEnv("api", errtrack.WithSharedPostHogClient(phClient))
 	logger := slog.New(rep.WrapSlogHandler(slog.NewJSONHandler(os.Stdout, nil)))
 	slog.SetDefault(logger)
 	slog.Info("error tracking wired", "provider", label)
 
-	err := run(logger)
+	err := run(logger, phClient)
 	if err != nil {
 		// Log before Close so this final fatal error is captured + flushed.
 		slog.Error("server exited with error", "err", err)
 	}
-	rep.Close() // os.Exit skips defers; flush the sink explicitly.
+	// os.Exit skips defers; drain explicitly. rep.Close() is a no-op when it borrows
+	// phClient (and closes a custom provider otherwise); phClient.Close() drains the
+	// shared client once.
+	rep.Close()
+	if phClient != nil {
+		_ = phClient.Close()
+	}
 	if err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(baseLogger *slog.Logger) error {
+func run(baseLogger *slog.Logger, phClient posthog.Client) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -225,18 +243,14 @@ func run(baseLogger *slog.Logger) error {
 	mux.Get("/.well-known/oauth-protected-resource",
 		oauthProtectedResource(cfg.JWTAudience, cfg.DashboardURL))
 
-	// Product-analytics emitter (vendor-neutral seam; PostHog by default). Built once
-	// here so its lifecycle is owned by run(): flushed on graceful shutdown so no
-	// queued event is dropped. nil when POSTHOG_KEY is unset → analytics disabled.
+	// Product-analytics emitter (vendor-neutral seam; PostHog by default) over the
+	// SAME shared client as error tracking — one client per process. nil when
+	// POSTHOG_KEY is unset → analytics disabled. The shared client's lifecycle
+	// (flush on shutdown) is owned by main(), so the emitter borrows it.
 	var analyticsEmitter analytics.Emitter
-	if cfg.PostHogKey != "" {
-		if ph, err := analytics.NewPostHog(cfg.PostHogKey, cfg.PostHogHost, cfg.Environment, baseLogger); err != nil {
-			slog.Warn("analytics disabled: posthog emitter init failed", "err", err)
-		} else if ph != nil {
-			analyticsEmitter = ph
-			defer func() { _ = ph.Close() }()
-			slog.Info("product analytics emitter wired (posthog)", "environment", cfg.Environment)
-		}
+	if emitter := analytics.NewPostHogFromClient(phClient, baseLogger); emitter != nil {
+		analyticsEmitter = emitter
+		slog.Info("product analytics emitter wired (shared posthog client)", "environment", cfg.Environment)
 	}
 
 	mountCloud(mux, cloudDeps{

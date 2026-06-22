@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/posthog/posthog-go"
+
+	"github.com/danielpang/dropway/internal/phclient"
 )
 
 func init() {
@@ -36,34 +38,39 @@ func posthogKey() string {
 	return strings.TrimSpace(os.Getenv("POSTHOG_KEY"))
 }
 
-// newPostHogReporter constructs the PostHog Reporter. It errors (→ FromEnv falls
-// back to Noop) when no key is configured.
+// newPostHogReporter constructs the PostHog Reporter.
+//
+// When the caller lent a shared client (Options.SharedPostHogClient, e.g. the API
+// shares one client with product analytics), the reporter BORROWS it: it does not
+// build a second client and does not close it on shutdown. Otherwise it builds and
+// OWNS its own client via phclient, and Close() drains it. Errors (→ FromEnv falls
+// back to Noop) when no shared client is given and no key is configured.
 func newPostHogReporter(opts Options) (Reporter, error) {
-	key := posthogKey()
-	if key == "" {
-		return nil, errors.New("POSTHOG_KEY not set")
+	if opts.SharedPostHogClient != nil {
+		return &posthogReporter{
+			client:  opts.SharedPostHogClient,
+			service: opts.Service,
+			env:     opts.Environment,
+			owns:    false,
+		}, nil
 	}
-	cfg := posthog.Config{
-		// Bound shutdown so Close() can't hang the graceful-drain path; error
-		// reporting must never delay a deploy.
-		ShutdownTimeout: 3 * time.Second,
-	}
-	// Only override the ingestion endpoint when explicitly set; the SDK already
-	// defaults to https://us.i.posthog.com (the dedicated ingestion host).
-	if host := strings.TrimSpace(os.Getenv("POSTHOG_HOST")); host != "" {
-		cfg.Endpoint = host
-	}
-	client, err := posthog.NewWithConfig(key, cfg)
+	client, err := phclient.New(phclient.ConfigFromEnv())
 	if err != nil {
 		return nil, err
 	}
-	return &posthogReporter{client: client, service: opts.Service, env: opts.Environment}, nil
+	if client == nil {
+		return nil, errors.New("POSTHOG_KEY not set")
+	}
+	return &posthogReporter{client: client, service: opts.Service, env: opts.Environment, owns: true}, nil
 }
 
 type posthogReporter struct {
 	client  posthog.Client
 	service string
 	env     string
+	// owns reports whether this reporter built the client (and must close it) or
+	// borrowed a shared one (the caller closes it).
+	owns bool
 }
 
 // systemDistinctID attributes exceptions with no acting user (background work,
@@ -111,7 +118,14 @@ func (p *posthogReporter) WrapSlogHandler(base slog.Handler) slog.Handler {
 	)
 }
 
-func (p *posthogReporter) Close() { _ = p.client.Close() }
+// Close drains the client only when this reporter owns it. A borrowed shared
+// client is closed by its owner (e.g. the API main), so closing here would be a
+// double-close.
+func (p *posthogReporter) Close() {
+	if p.owns && p.client != nil {
+		_ = p.client.Close()
+	}
+}
 
 // exceptionType renders a stable title for the error-tracking issue: the error's
 // concrete Go type (e.g. "*pgconn.PgError"), falling back to "error".

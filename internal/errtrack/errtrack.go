@@ -30,6 +30,8 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+
+	"github.com/posthog/posthog-go"
 )
 
 // Reporter is the vendor-neutral error sink. Implementations must be safe for
@@ -94,6 +96,26 @@ type Constructor func(Options) (Reporter, error)
 type Options struct {
 	Service     string // logical service name, e.g. "api", "serve", "mcp"
 	Environment string // deployment label, e.g. "production"
+	// SharedPostHogClient, when non-nil, is a posthog-go client the caller already
+	// built (e.g. shared with product analytics). The posthog provider reuses it
+	// instead of constructing its own — one client per process. The provider then
+	// BORROWS the client and must not close it; the caller owns its lifecycle.
+	SharedPostHogClient posthog.Client
+}
+
+// Option customizes FromEnv.
+type Option func(*envOptions)
+
+type envOptions struct {
+	sharedPostHogClient posthog.Client
+}
+
+// WithSharedPostHogClient lends FromEnv an already-built posthog-go client so the
+// posthog provider reuses it instead of creating a second one. Use this when the
+// process also emits product analytics (internal/analytics) over the same client.
+// The caller retains ownership and must Close the client itself.
+func WithSharedPostHogClient(client posthog.Client) Option {
+	return func(o *envOptions) { o.sharedPostHogClient = client }
 }
 
 var registry = map[string]Constructor{}
@@ -116,7 +138,14 @@ func Register(name string, c Constructor) {
 //
 // A misconfigured or unknown provider degrades to Noop with a warning rather than
 // failing startup — error tracking must never be load-bearing.
-func FromEnv(service string) (Reporter, string) {
+//
+// Pass WithSharedPostHogClient to reuse an existing posthog-go client (shared with
+// product analytics) instead of building a second one.
+func FromEnv(service string, opts ...Option) (Reporter, string) {
+	var eo envOptions
+	for _, o := range opts {
+		o(&eo)
+	}
 	env := strings.TrimSpace(os.Getenv("ENVIRONMENT"))
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("ERROR_TRACKING_PROVIDER")))
 	if provider == "" {
@@ -135,7 +164,7 @@ func FromEnv(service string) (Reporter, string) {
 		slog.Warn("errtrack: unknown ERROR_TRACKING_PROVIDER — error tracking disabled", "provider", provider)
 		return Noop{}, "none (unknown provider: " + provider + ")"
 	}
-	rep, err := c(Options{Service: service, Environment: env})
+	rep, err := c(Options{Service: service, Environment: env, SharedPostHogClient: eo.sharedPostHogClient})
 	if err != nil {
 		slog.Warn("errtrack: provider init failed — error tracking disabled", "provider", provider, "err", err)
 		return Noop{}, "none (" + provider + " init failed)"
