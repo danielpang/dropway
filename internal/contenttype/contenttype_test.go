@@ -30,6 +30,23 @@ func TestForPath(t *testing.T) {
 	}
 }
 
+// Known distinguishes a recognized extension from the application/octet-stream
+// fallback, so callers can tell an extension-derived type apart from the default.
+func TestKnown(t *testing.T) {
+	known := []string{"index.html", "app.js", "styles.css", "data.json", "logo.png", "UPPER.HTML"}
+	for _, p := range known {
+		if !Known(p) {
+			t.Errorf("Known(%q) = false, want true", p)
+		}
+	}
+	unknown := []string{"x.unknown", "noext", "blob.bin", "feed.atom"}
+	for _, p := range unknown {
+		if Known(p) {
+			t.Errorf("Known(%q) = true, want false", p)
+		}
+	}
+}
+
 // JS/JSON/HTML/CSS are pinned (not left to the host mime table) so the result is
 // deterministic across machines and carries the charset we want.
 func TestForPath_PinnedDeterministic(t *testing.T) {

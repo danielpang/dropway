@@ -61,3 +61,13 @@ func ForPath(path string) string {
 	}
 	return "application/octet-stream"
 }
+
+// Known reports whether the path's extension is in the explicit table (i.e. ForPath
+// returns a table entry rather than the application/octet-stream fallback). Callers
+// that must derive an authoritative content type from the extension use this to tell
+// a recognized extension apart from the binary default.
+func Known(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	_, ok := byExt[ext]
+	return ok
+}
