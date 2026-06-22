@@ -72,6 +72,13 @@ type API struct {
 	// "verified". Surfaced on /v1/me so the dashboard hides the Domains UI when the
 	// feature can't actually work. Wired from config in main.go.
 	CustomDomainsEnabled bool
+
+	// PasswordRateLimiter throttles the unauthenticated POST /v1/authz/password
+	// exchange, keyed by (client IP + target host), as a first-layer brute-force /
+	// denial-of-wallet control (M3). Each attempt otherwise burns a cost-12 bcrypt.
+	// Optional: nil disables throttling (the bare unit-test constructor leaves it
+	// unset); main.go wires a limiter for the real server.
+	PasswordRateLimiter *rateLimiter
 }
 
 // ContentURL renders a content host as a client-facing display URL using the

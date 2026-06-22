@@ -5,7 +5,10 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/edgerevoke"
@@ -201,6 +204,20 @@ func (a *API) AuthzPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate-limit BEFORE the store lookup + bcrypt compare so a throttled attempt
+	// burns no work (it's a denial-of-wallet vector: each call runs a cost-12
+	// bcrypt, including DummyVerify on unknown hosts). Keyed by client IP + host so
+	// one attacker can't lock out another viewer's site, and one site's flood can't
+	// exhaust the bucket for every site. On limit, return a generic 429 that says
+	// nothing about whether the host or password exists.
+	if a.PasswordRateLimiter != nil {
+		key := clientIPForRateLimit(r) + "|" + host
+		if ok, retryAfter := a.PasswordRateLimiter.allow(key); !ok {
+			writePasswordRateLimited(w, retryAfter)
+			return
+		}
+	}
+
 	decision, hash, err := a.Store.ResolveForPassword(r.Context(), host)
 	if err != nil {
 		switch {
@@ -246,6 +263,20 @@ func (a *API) AuthzPassword(w http.ResponseWriter, r *http.Request) {
 // wrapPasswordUnauthorized maps to 401 for the password gate.
 func wrapPasswordUnauthorized() error {
 	return fmt.Errorf("%w: incorrect password", httpx.ErrUnauthorized)
+}
+
+// writePasswordRateLimited renders the throttle response for the password gate:
+// a 429 with a Retry-After header (seconds, rounded up) and a generic message.
+// The body deliberately says nothing about the host or password so it can't be
+// used as an existence oracle.
+func writePasswordRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
+	secs := int(math.Ceil(retryAfter.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	httpx.WriteJSON(w, http.StatusTooManyRequests,
+		httpx.ErrorBody{Error: "rate_limited", Message: "too many attempts, please try again later"})
 }
 
 // normalizeHost lowercases + trims a host (content hosts are case-insensitive).
