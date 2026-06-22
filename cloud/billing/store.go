@@ -174,13 +174,27 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 // reason is derived from the Stripe event type so the dashboard can split a portal
 // downgrade from a cancellation.
 func (s *BillingStore) emitPlanChange(ctx context.Context, orgID string, res applyResult, eventType string) {
-	if s.analytics == nil || orgID == "" {
+	if s.analytics == nil {
+		// No emitter wired (POSTHOG_KEY unset, or analytics not threaded through). Log
+		// at INFO so an absent plan-change metric is explained by config, not a guess.
+		s.logger().Info("billing: plan-change analytics not emitted (no emitter wired)",
+			"org_id", orgID, "from_tier", res.fromTier, "to_tier", res.toTier)
+		return
+	}
+	if orgID == "" {
 		return
 	}
 	dir := planDirection(res.fromTier, res.toTier)
 	if dir == directionNone {
+		// A seat/status refresh or a no-op re-apply (e.g. a deduped replay landed the
+		// same tier). Logged so "I upgraded but see no plan_upgraded" is explained.
+		s.logger().Info("billing: no tier change, skipping plan-change analytics",
+			"org_id", orgID, "tier", res.toTier, "event_type", eventType)
 		return
 	}
+	s.logger().Info("billing: emitting plan-change analytics",
+		"org_id", orgID, "from_tier", res.fromTier, "to_tier", res.toTier,
+		"direction", dir, "event_type", eventType)
 	s.analytics.CapturePlanChange(ctx, PlanChange{
 		OrgID:     orgID,
 		FromTier:  res.fromTier,
