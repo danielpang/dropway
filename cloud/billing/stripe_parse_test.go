@@ -43,8 +43,9 @@ func TestResolveData_EmptyAndUnhandled(t *testing.T) {
 }
 
 // fromCheckoutSession resolves the org from metadata.org_id when there is no
-// client_reference_id, honors the enterprise target_tier, and defaults to Free when
-// no purchasable target_tier is present (the follow-up subscription event sets it).
+// client_reference_id, honors any purchasable target_tier (pro/business/enterprise),
+// and defaults to Free when no purchasable target_tier is present (the follow-up
+// subscription event sets it).
 func TestFromCheckoutSession_OrgAndTierResolution(t *testing.T) {
 	v := newVerifier()
 
@@ -64,6 +65,19 @@ func TestFromCheckoutSession_OrgAndTierResolution(t *testing.T) {
 	}
 	if d.Status != "active" {
 		t.Errorf("checkout status should be active, got %q", d.Status)
+	}
+
+	// Pro target_tier is honored too — checkout.session.completed alone grants Pro
+	// (regression guard for the bug where Pro buyers were left on Free).
+	dPro, err := v.fromCheckoutSession([]byte(`{
+		"client_reference_id":"org_pro","customer":"cus_pro","subscription":"sub_pro",
+		"metadata":{"org_id":"org_pro","target_tier":"pro"}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if dPro.PlanTier != TierPro {
+		t.Errorf("tier = %q, want pro (checkout.session.completed must grant Pro from target_tier)", dPro.PlanTier)
 	}
 
 	// client_reference_id wins over metadata.org_id; no/invalid target_tier → Free.
