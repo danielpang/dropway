@@ -93,6 +93,13 @@ export default async function BillingPage({
   }
 
   const currentTier: PlanTier = plan.plan_tier ?? "free";
+  // Show "Manage billing" (→ Stripe portal: card, invoices, cancel) whenever the org
+  // has a Stripe customer to manage: a paid tier OR an existing subscription row
+  // (plan.status is set only when a row exists — active/past_due/canceled/…). Gating
+  // on the customer rather than `tier !== "free"` also surfaces the portal for
+  // cancellations, past_due, and the case where the tier still reads Free but a
+  // subscription exists, so a paying user is never stranded without a way to manage it.
+  const hasBillingCustomer = currentTier !== "free" || Boolean(plan.status);
   const isCheckoutReturn = checkoutReturn === "success";
   const isCheckoutCancel = checkoutReturn === "cancel";
 
@@ -180,10 +187,11 @@ export default async function BillingPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Paid orgs manage/switch/cancel via the Stripe portal. A single
-                "Upgrade" opens the change-plan drawer (every tier + the right CTA);
-                Enterprise has nothing higher, so it only gets Manage billing. */}
-            {currentTier !== "free" && <ManageBillingButton />}
+            {/* Orgs with a Stripe customer manage/switch/cancel/update-card via the
+                Stripe portal. A single "Upgrade" opens the change-plan drawer (every
+                tier + the right CTA); Enterprise has nothing higher, so it only gets
+                Manage billing. */}
+            {hasBillingCustomer && <ManageBillingButton />}
             {currentTier !== "enterprise" && (
               <ChangePlanDrawer currentTier={currentTier} />
             )}
