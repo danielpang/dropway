@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Dropway DB migrate — applies the goose migrations to the dev and production
+# databases after code lands on main, so neither schema drifts behind merged code.
+#
+# Two-stage pipeline:
+#   1. dev  — runs AUTOMATICALLY, no approval. Bound to the `development` GitHub
+#             Environment (which scopes the DEV_* secrets) but with NO required
+#             reviewers, so it does not pause. Migrating dev first also smoke-tests
+#             the migrations against a real database before they reach prod.
+#   2. prod — `needs: dev`, so it only runs once dev succeeds, AND is gated on the
+#             `production` GitHub Environment: it PAUSES for a required reviewer to
+#             approve before any DDL touches prod (configure that in Settings →
+#             Environments → production → Required reviewers).
+#
+# Trigger: a push to main that touches db/migrations/** (or a manual run from the
+# Actions tab).
+#
+# Two migration sets per database, applied in this order (the order is load-bearing):
+#   1. db/migrations/app      — open-core app schema. Default goose_db_version table.
+#   2. db/migrations/billing  — cloud-only. A SEPARATE -table goose_db_version_billing,
+#      because app and billing both start at 0001; with the shared default table goose
+#      would treat billing's 0001 as already-applied (same version id) and SKIP it.
+#   App must run first: the tier rename (app/0004) lands app.org_meta on the new key
+#   space before billing/0002 widens its CHECK constraint and migrates the mirror.
+#
+# `goose up` is idempotent — it applies only versions newer than what each table
+# records, so a re-run with no new migrations is a clean no-op.
+#
+# Required environment secrets (privileged OWNER connections, NOT the runtime
+# dropway_app role). Set each on its matching GitHub Environment:
+#   development → DEV_DATABASE_OWNER_URL  / DEV_BILLING_OWNER_URL   — dev schemas.
+#   production  → PROD_DATABASE_OWNER_URL / PROD_BILLING_OWNER_URL  — prod schemas.
+# All must be reachable from GitHub-hosted runners (Supabase egress is not a fixed
+# IP range; allowlist GH Actions or use a self-hosted runner if you restrict access).
+
+name: migrate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "db/migrations/**"
+      - ".github/workflows/migrate.yml"
+  workflow_dispatch:
+
+# Serialize whole-pipeline runs so two pushes never race the same databases.
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # dev — applies migrations to the dev database automatically (no approval gate).
+  # Doubles as a real-database smoke test before prod.
+  # ---------------------------------------------------------------------------
+  dev:
+    name: Apply goose migrations to dev
+    runs-on: ubuntu-latest
+    # The `development` GitHub Environment scopes the DEV_* secrets to this job.
+    # Leave its "Required reviewers" UNSET so dev keeps running automatically — an
+    # environment without protection rules adds no approval gate (unlike `production`).
+    environment: development
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      # Pin the goose version (matches the deploy/docker-compose.yml migrate one-shot)
+      # so runs are deterministic rather than tracking @latest.
+      - name: install goose
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: apply migrations (app then billing)
+        env:
+          APP_DSN: ${{ secrets.DEV_DATABASE_OWNER_URL }}
+          BILLING_DSN: ${{ secrets.DEV_BILLING_OWNER_URL }}
+        run: |
+          set -euo pipefail
+          echo "::group::app · status (before)"
+          goose -dir db/migrations/app postgres "$APP_DSN" status
+          echo "::endgroup::"
+          goose -dir db/migrations/app postgres "$APP_DSN" up
+
+          # Billing uses a SEPARATE version table — without it goose skips billing's
+          # 0001/0002 as "already applied" (same version ids as app).
+          echo "::group::billing · status (before)"
+          goose -table goose_db_version_billing -dir db/migrations/billing postgres "$BILLING_DSN" status
+          echo "::endgroup::"
+          goose -table goose_db_version_billing -dir db/migrations/billing postgres "$BILLING_DSN" up
+          echo "✅ app + billing migrations applied to dev"
+
+  # ---------------------------------------------------------------------------
+  # prod — runs only after dev succeeds, and pauses on the `production` environment
+  # for a required reviewer to approve before any DDL touches prod.
+  # ---------------------------------------------------------------------------
+  prod:
+    name: Apply goose migrations to production
+    runs-on: ubuntu-latest
+    needs: dev
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: install goose
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: apply migrations (app then billing)
+        env:
+          APP_DSN: ${{ secrets.PROD_DATABASE_OWNER_URL }}
+          BILLING_DSN: ${{ secrets.PROD_BILLING_OWNER_URL }}
+        run: |
+          set -euo pipefail
+          echo "::group::app · status (before)"
+          goose -dir db/migrations/app postgres "$APP_DSN" status
+          echo "::endgroup::"
+          goose -dir db/migrations/app postgres "$APP_DSN" up
+
+          echo "::group::billing · status (before)"
+          goose -table goose_db_version_billing -dir db/migrations/billing postgres "$BILLING_DSN" status
+          echo "::endgroup::"
+          goose -table goose_db_version_billing -dir db/migrations/billing postgres "$BILLING_DSN" up
+          echo "✅ app + billing migrations applied to production"
