@@ -164,8 +164,10 @@ export async function captureServerException(input: {
     const err =
       input.error instanceof Error ? input.error : new Error(String(input.error));
     await ph.captureExceptionImmediate(err, input.distinctId || SYSTEM_DISTINCT_ID, {
-      environment: appEnvironment(),
       ...input.properties,
+      // environment is platform-owned: spread first so a caller's properties can
+      // never clobber the canonical deployment label.
+      environment: appEnvironment(),
     });
   } catch {
     // Telemetry must never break the path that produced the error.
