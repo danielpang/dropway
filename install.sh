@@ -53,7 +53,7 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
   sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
 else
-  sha256() { echo ""; }   # no tool → checksum step is skipped with a warning
+  sha256() { echo ""; }   # no tool: verification fails closed (aborts) unless DROPWAY_INSECURE_SKIP_CHECKSUM=1
 fi
 
 # ---- detect platform ------------------------------------------------------
