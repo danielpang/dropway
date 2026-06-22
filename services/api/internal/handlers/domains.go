@@ -270,6 +270,11 @@ func mapDomainStatus(s customdomains.StatusResult) (verify, tls string) {
 // (e.g. "co.uk") because that needs the public-suffix list, and we deliberately
 // avoid pulling in that dependency here. Worth adding if/when a PSL is available.
 func looksLikeHostname(s string) bool {
+	// Normalize here too, so the security checks below (notably the content-domain
+	// squat guard) can't be sidestepped by a future caller that forgets to
+	// lowercase/trim. The sole current caller (AddDomain) already normalizes; this
+	// makes the gate self-defending rather than dependent on caller discipline.
+	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" || len(s) > 253 || strings.ContainsAny(s, " \t/:") {
 		return false
 	}
