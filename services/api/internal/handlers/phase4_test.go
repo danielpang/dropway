@@ -166,6 +166,7 @@ func TestAudit_AdminCanRead(t *testing.T) {
 func TestRevoke_MemberWritesDenylist(t *testing.T) {
 	f := newFakeStore()
 	f.p2().members["u-admin"] = store.RoleAdmin
+	f.p2().members["victim-123"] = store.RoleMember // target is a member of the caller's org
 	rev := newFakeRevoker()
 	a := New(quota.Unlimited{})
 	a.Store = f
@@ -201,6 +202,74 @@ func TestRevoke_MemberNonAdminForbidden(t *testing.T) {
 	}
 	if _, ok := rev.get(edgerevoke.KindUser, "victim-123"); ok {
 		t.Error("non-admin revoke must NOT write the denylist")
+	}
+}
+
+// --- L5: a user-targeted revoke is scoped to the caller's org -------------------
+
+// An admin of org A must NOT be able to revoke a user belonging to another org
+// (a cross-tenant DoS of that user's edge-token sessions). The target is not a
+// member of the caller's org, so RevokeMember refuses and writes nothing.
+func TestRevoke_MemberNotInOrgRejected(t *testing.T) {
+	f := newFakeStore()
+	f.p2().members["u-admin"] = store.RoleAdmin // caller is an admin of org-1
+	// "outsider-9" is NOT seeded as a member of org-1 (belongs to some other org).
+	rev := newFakeRevoker()
+	a := New(quota.Unlimited{})
+	a.Store = f
+	a.Revoker = rev
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/members/outsider-9/revoke", `{}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-org revoke: got %d, want 404\n%s", rr.Code, rr.Body)
+	}
+	if _, ok := rev.get(edgerevoke.KindUser, "outsider-9"); ok {
+		t.Error("cross-org revoke must NOT write the denylist")
+	}
+	if len(f.auditLog()) != 0 {
+		t.Error("cross-org revoke must NOT write an audit row")
+	}
+}
+
+// The generic /v1/orgs/revoke-access kind=user path is scoped the same way: a target
+// that is not a member of the caller's org is refused and nothing is written.
+func TestRevoke_GenericUserNotInOrgRejected(t *testing.T) {
+	f := newFakeStore()
+	f.p2().members["u-admin"] = store.RoleAdmin
+	rev := newFakeRevoker()
+	a := New(quota.Unlimited{})
+	a.Store = f
+	a.Revoker = rev
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/orgs/revoke-access", `{"kind":"user","id":"outsider-9"}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-org kind=user revoke: got %d, want 404\n%s", rr.Code, rr.Body)
+	}
+	if _, ok := rev.get(edgerevoke.KindUser, "outsider-9"); ok {
+		t.Error("cross-org kind=user revoke must NOT write the denylist")
+	}
+}
+
+// A same-org user-targeted revoke is unaffected by the scope check: the target is a
+// member of the caller's org, so the denylist write still succeeds.
+func TestRevoke_MemberInOrgSucceeds(t *testing.T) {
+	f := newFakeStore()
+	f.p2().members["u-admin"] = store.RoleAdmin
+	f.p2().members["teammate-2"] = store.RoleMember // same org as the caller
+	rev := newFakeRevoker()
+	a := New(quota.Unlimited{})
+	a.Store = f
+	a.Revoker = rev
+
+	h := mountPhase4(a, adminClaims())
+	rr := postJSON(h, "/v1/members/teammate-2/revoke", `{}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("same-org revoke: got %d, want 200\n%s", rr.Code, rr.Body)
+	}
+	if iat, ok := rev.get(edgerevoke.KindUser, "teammate-2"); !ok || iat <= 0 {
+		t.Fatalf("same-org revoke should write revoked:user (ok=%v iat=%d)", ok, iat)
 	}
 }
 
@@ -292,6 +361,7 @@ func TestRevoke_GenericByKind(t *testing.T) {
 		{
 			name:     "user",
 			body:     `{"kind":"user","id":"victim-1"}`,
+			seed:     func(f *fakeStore) { f.p2().members["victim-1"] = store.RoleMember },
 			wantCode: http.StatusOK,
 			check: func(t *testing.T, rev *fakeRevoker) {
 				if _, ok := rev.get(edgerevoke.KindUser, "victim-1"); !ok {

@@ -416,6 +416,7 @@ func TestRevokeSiteAccess_NotOwned_404(t *testing.T) {
 func TestRevokeAccess_RevokerError_500(t *testing.T) {
 	fs := newFakeStore()
 	fs.p2().members["u-admin"] = store.RoleAdmin
+	fs.p2().members["victim"] = store.RoleMember // same-org target so the revoke proceeds
 	rev := newFakeRevoker()
 	rev.err = errAnyRevoke
 	a := New(quota.Unlimited{})
