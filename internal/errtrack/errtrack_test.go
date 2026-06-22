@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/posthog/posthog-go"
+
 	"github.com/danielpang/dropway/internal/phclient"
 )
 
@@ -43,6 +45,34 @@ func TestFromEnvBorrowsSharedPostHogClient(t *testing.T) {
 	// Close must be a no-op on a borrowed client (the owner closes it); the
 	// t.Cleanup Close above must still succeed without a double-close panic.
 	rep.Close()
+}
+
+// closeCountingClient is a posthog.Client that records Close calls. It embeds the
+// interface (nil) so it satisfies posthog.Client; only Close is exercised here.
+type closeCountingClient struct {
+	posthog.Client
+	closes int
+}
+
+func (c *closeCountingClient) Close() error { c.closes++; return nil }
+
+func TestPostHogReporterBorrowedClientIsNotClosed(t *testing.T) {
+	fake := &closeCountingClient{}
+	rep := &posthogReporter{client: fake, service: "api", env: "test", owns: false}
+	rep.Close()
+	rep.Close() // idempotent / repeated shutdown must still not touch a borrowed client
+	if fake.closes != 0 {
+		t.Fatalf("borrowed client must never be closed by the reporter, got %d Close calls", fake.closes)
+	}
+}
+
+func TestPostHogReporterOwnedClientIsClosed(t *testing.T) {
+	fake := &closeCountingClient{}
+	rep := &posthogReporter{client: fake, service: "api", env: "test", owns: true}
+	rep.Close()
+	if fake.closes != 1 {
+		t.Fatalf("owned client must be closed exactly once, got %d Close calls", fake.closes)
+	}
 }
 
 func TestNoopIsInert(t *testing.T) {
