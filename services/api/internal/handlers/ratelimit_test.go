@@ -5,6 +5,9 @@ package handlers
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,6 +103,51 @@ func TestRateLimiter_SweepEvictsStaleBuckets(t *testing.T) {
 	l.sweep()
 	if len(l.buckets) != 0 {
 		t.Fatalf("stale bucket should be evicted, %d remain", len(l.buckets))
+	}
+}
+
+// The hard cap bounds the map even under a flood of DISTINCT, still-live keys
+// (the case the time-based sweeper alone can't catch between ticks).
+func TestRateLimiter_HardCapBoundsDistinctKeys(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := newRateLimiter(60, 5, time.Minute)
+	fixedClock(l, &now)
+	l.maxEntries = 10
+
+	// Spray 1000 distinct keys WITHOUT advancing the clock, so none expire — only
+	// the hard cap can bound growth here.
+	for i := 0; i < 1000; i++ {
+		l.allow("key-" + strconv.Itoa(i))
+	}
+	if len(l.buckets) > l.maxEntries {
+		t.Fatalf("map grew past the cap: %d entries, cap %d", len(l.buckets), l.maxEntries)
+	}
+}
+
+// Concurrency: many goroutines hammering ONE key with a frozen clock (no refill)
+// must let exactly `burst` through, proving the read-modify-write is atomic under
+// the lock with no race or over-grant. Run with -race.
+func TestRateLimiter_ConcurrentSingleKeyAllowsExactlyBurst(t *testing.T) {
+	now := time.Unix(0, 0)
+	const burst = 5
+	l := newRateLimiter(60, burst, time.Minute)
+	fixedClock(l, &now) // frozen: no refill during the test
+
+	const goroutines = 200
+	var allowed int64
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			if ok, _ := l.allow("same-key"); ok {
+				atomic.AddInt64(&allowed, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if allowed != burst {
+		t.Fatalf("concurrent allows on one key = %d, want exactly %d (burst)", allowed, burst)
 	}
 }
 

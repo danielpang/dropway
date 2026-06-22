@@ -22,16 +22,21 @@ import (
 //
 // Each key gets a bucket that refills at `rate` tokens per second up to `burst`.
 // A request costs one token; when the bucket is empty the request is throttled.
-// A mutex-guarded map holds the buckets, and a background sweeper evicts buckets
-// that have sat full (idle) past an expiry window so the map can't grow without
-// bound under a wide spray of distinct keys.
+// A mutex-guarded map holds the buckets. Growth is bounded two ways: a background
+// sweeper evicts buckets untouched past an expiry window, and a HARD cap
+// (maxEntries) drops the oldest bucket on insert if a wide spray of distinct keys
+// ever fills the map between sweeps (a backstop in case the Fly-Client-IP
+// assumption in clientIPForRateLimit ever breaks and keys become spoofable).
+const defaultMaxRateLimitEntries = 100_000
+
 type rateLimiter struct {
-	rate    float64       // tokens refilled per second
-	burst   float64       // bucket capacity (max tokens)
-	expiry  time.Duration // evict a full+idle bucket after this long
-	now     func() time.Time
-	mu      sync.Mutex
-	buckets map[string]*tokenBucket
+	rate       float64       // tokens refilled per second
+	burst      float64       // bucket capacity (max tokens)
+	expiry     time.Duration // evict an idle (untouched) bucket after this long
+	maxEntries int           // hard cap on tracked keys (memory backstop)
+	now        func() time.Time
+	mu         sync.Mutex
+	buckets    map[string]*tokenBucket
 }
 
 // tokenBucket is the per-key refill state. tokens is the current allowance;
@@ -56,11 +61,12 @@ func newRateLimiter(ratePerMinute, burst float64, expiry time.Duration) *rateLim
 		expiry = 10 * time.Minute
 	}
 	return &rateLimiter{
-		rate:    ratePerMinute / 60.0,
-		burst:   burst,
-		expiry:  expiry,
-		now:     time.Now,
-		buckets: make(map[string]*tokenBucket),
+		rate:       ratePerMinute / 60.0,
+		burst:      burst,
+		expiry:     expiry,
+		maxEntries: defaultMaxRateLimitEntries,
+		now:        time.Now,
+		buckets:    make(map[string]*tokenBucket),
 	}
 }
 
@@ -75,6 +81,15 @@ func (l *rateLimiter) allow(key string) (ok bool, retryAfter time.Duration) {
 
 	b := l.buckets[key]
 	if b == nil {
+		// Bound the map before inserting a new key: prune expired buckets, and if
+		// it's still at the cap (a live distinct-key flood), drop the oldest to make
+		// room so memory can't grow without limit.
+		if l.maxEntries > 0 && len(l.buckets) >= l.maxEntries {
+			l.pruneExpiredLocked(now)
+			if len(l.buckets) >= l.maxEntries {
+				l.dropOldestLocked()
+			}
+		}
 		b = &tokenBucket{tokens: l.burst, last: now}
 		l.buckets[key] = b
 	} else {
@@ -100,17 +115,41 @@ func (l *rateLimiter) allow(key string) (ok bool, retryAfter time.Duration) {
 	return false, wait
 }
 
-// sweep evicts buckets that are full (idle long enough to have refilled to
-// burst) and untouched for longer than expiry, bounding map growth. It is safe
-// to call concurrently with allow.
+// sweep evicts buckets untouched for longer than expiry, bounding map growth. It
+// is safe to call concurrently with allow.
 func (l *rateLimiter) sweep() {
-	cutoff := l.now().Add(-l.expiry)
+	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.pruneExpiredLocked(now)
+}
+
+// pruneExpiredLocked deletes every bucket untouched for longer than expiry. The
+// caller MUST hold l.mu.
+func (l *rateLimiter) pruneExpiredLocked(now time.Time) {
+	cutoff := now.Add(-l.expiry)
 	for key, b := range l.buckets {
 		if b.last.Before(cutoff) {
 			delete(l.buckets, key)
 		}
+	}
+}
+
+// dropOldestLocked evicts the single least-recently-touched bucket, the backstop
+// when the map is at its hard cap and every bucket is still live (a distinct-key
+// flood). The evicted key has refilled toward burst anyway, so dropping it only
+// resets a near-idle attacker bucket. The caller MUST hold l.mu.
+func (l *rateLimiter) dropOldestLocked() {
+	var oldestKey string
+	var oldest time.Time
+	first := true
+	for key, b := range l.buckets {
+		if first || b.last.Before(oldest) {
+			oldestKey, oldest, first = key, b.last, false
+		}
+	}
+	if !first {
+		delete(l.buckets, oldestKey)
 	}
 }
 
