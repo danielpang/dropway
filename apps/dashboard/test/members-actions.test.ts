@@ -44,6 +44,9 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { removeMemberAction } from "@/app/(app)/members/actions";
+// The mocked @/lib/api above exports this minimal ApiError; the action's catch
+// branches on `instanceof ApiError` + `.status`, so the test uses the same class.
+import { ApiError } from "@/lib/api";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -100,5 +103,51 @@ describe("removeMemberAction", () => {
       message: "Could not remove the member. Try again.",
     });
     expect(deleteUserSessions).not.toHaveBeenCalled();
+  });
+
+  // OSS build: the member is removed but the Go revoke endpoint is absent (404).
+  // revokeAccessAction maps that to { unavailable: true } (no `message`), so the
+  // member list shows NO error and still refreshes. Proves removed:true is
+  // returned with the unavailable shape.
+  it("returns removed:true with the unavailable shape when the revoke endpoint is absent", async () => {
+    removeMember.mockResolvedValueOnce({ member: { userId: "user-removed" } });
+    revokeAccess.mockRejectedValueOnce(new ApiError(404, "not found", null));
+
+    const res = await removeMemberAction({ memberId: "member-row-3" });
+
+    expect(res).toEqual({ removed: true, revoke: { ok: false, unavailable: true } });
+    // The session kill is best-effort and still runs for the removed user.
+    expect(deleteUserSessions).toHaveBeenCalledWith("user-removed");
+  });
+
+  // The member row is gone but the denylist write fails with a message: the
+  // contract is removed:true with the failure surfaced, so the UI can warn
+  // "removed, but revoking access failed" rather than claim full success.
+  it("returns removed:true and surfaces a revoke failure message", async () => {
+    removeMember.mockResolvedValueOnce({ member: { userId: "user-removed" } });
+    revokeAccess.mockRejectedValueOnce(
+      new ApiError(500, "boom", { message: "denylist write failed" }),
+    );
+
+    const res = await removeMemberAction({ memberId: "member-row-4" });
+
+    expect(res).toEqual({
+      removed: true,
+      revoke: { ok: false, message: "denylist write failed" },
+    });
+    expect(deleteUserSessions).toHaveBeenCalledWith("user-removed");
+  });
+
+  // A non-APIError throw (e.g. a network failure with only `.message`) still
+  // yields a clean not-removed result via the `.message` fallback, and never
+  // kills sessions.
+  it("falls back to .message when removeMember throws a plain Error", async () => {
+    removeMember.mockRejectedValueOnce(new Error("network down"));
+
+    const res = await removeMemberAction({ memberId: "member-row-5" });
+
+    expect(res).toEqual({ removed: false, message: "network down" });
+    expect(deleteUserSessions).not.toHaveBeenCalled();
+    expect(revokeAccess).not.toHaveBeenCalled();
   });
 });
