@@ -6,6 +6,7 @@ import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
 
 import { logIfConnectionCapacity } from "@/lib/db-capacity";
+import { oauthRateLimitRules } from "@/lib/oauth-ratelimit";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -287,6 +288,30 @@ export const auth = betterAuth({
     database: {
       generateId: () => randomUUID(),
     },
+  },
+
+  // Rate limiting for the unauthenticated OAuth surface (M4). The oauthProvider
+  // exposes a PUBLIC, unauthenticated Dynamic Client Registration endpoint
+  // (allowUnauthenticatedClientRegistration below) plus the authorize/token/
+  // consent endpoints, so without throttling an anonymous caller could flood
+  // /oauth2/register to exhaust oauth_application rows (and the tight Supabase
+  // pooler) and degrade login platform-wide.
+  //
+  // Keyed per client IP + path (Better Auth derives the IP from x-forwarded-for,
+  // which Fly/Vercel set). Enabled in production only so local dev + the OAuth
+  // e2e scripts aren't throttled; this mirrors Better Auth's own default of
+  // enabling rate limiting in production.
+  //
+  // NOTE (first layer): the default storage is in-memory, i.e. per instance. On a
+  // multi-instance serverless deployment that is a partial control. The durable
+  // follow-up is shared-storage rate limiting (Better Auth `storage: "database"`,
+  // which needs the `rateLimit` table migrated, or a secondary store) and/or an
+  // edge WAF rule on /api/auth/oauth2/register. The rules live in
+  // lib/oauth-ratelimit.ts so they can be unit-tested without this module.
+  rateLimit: {
+    enabled: process.env.NODE_ENV === "production",
+    storage: "memory",
+    customRules: oauthRateLimitRules,
   },
 
   plugins: [
