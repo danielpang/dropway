@@ -247,6 +247,21 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	api.ContentScheme = cfg.ContentScheme
 	api.ContentPort = cfg.ContentPort
 
+	// First-layer brute-force / denial-of-wallet control on the unauthenticated
+	// password exchange (M3): an in-memory token bucket keyed by client IP + target
+	// host. In-memory is acceptable because the API runs as a single always-on Fly
+	// machine; promote to a shared store if this is ever scaled horizontally. A
+	// background sweeper evicts idle buckets for the process lifetime.
+	pwLimiterStop := make(chan struct{})
+	defer close(pwLimiterStop)
+	api.WirePasswordRateLimiter(
+		cfg.PasswordRateLimitPerMin,
+		cfg.PasswordRateLimitBurst,
+		pwLimiterStop,
+	)
+	slog.Info("password endpoint rate limit",
+		"per_min", cfg.PasswordRateLimitPerMin, "burst", cfg.PasswordRateLimitBurst)
+
 	// Build the router (concrete *chi.Mux), then let the build-tag-selected
 	// mountCloud add cloud-only routes onto it. In the OSS build mountCloud is a
 	// no-op (wire_oss.go) → no /webhooks/stripe, no /v1/billing (self-host has no

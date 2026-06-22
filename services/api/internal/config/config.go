@@ -141,6 +141,15 @@ type Config struct {
 	// set CONTENT_SCHEME=http and CONTENT_PORT=8443 to point clients at a local edge.
 	ContentScheme string // CONTENT_SCHEME (default "https")
 	ContentPort   string // CONTENT_PORT (default "" → no explicit port)
+
+	// PasswordRateLimitPerMin / PasswordRateLimitBurst bound the unauthenticated
+	// POST /v1/authz/password exchange (M3), keyed by client IP + target host. Each
+	// attempt otherwise runs a cost-12 bcrypt, so this is both brute-force and
+	// denial-of-wallet protection. PerMin is the sustained refill rate; Burst is how
+	// many attempts may arrive back to back before throttling kicks in. Defaults: 10
+	// per minute, burst 5 (PASSWORD_RATELIMIT_PER_MIN / PASSWORD_RATELIMIT_BURST).
+	PasswordRateLimitPerMin int
+	PasswordRateLimitBurst  int
 }
 
 // Load reads the environment and returns a validated Config. It returns an error
@@ -185,6 +194,9 @@ func Load() (Config, error) {
 
 		ContentScheme: envOr("CONTENT_SCHEME", "https"),
 		ContentPort:   os.Getenv("CONTENT_PORT"),
+
+		PasswordRateLimitPerMin: envIntOr("PASSWORD_RATELIMIT_PER_MIN", 10),
+		PasswordRateLimitBurst:  envIntOr("PASSWORD_RATELIMIT_BURST", 5),
 	}
 
 	if p := os.Getenv("PORT"); p != "" {
@@ -223,6 +235,19 @@ func (c Config) Addr() string { return fmt.Sprintf(":%d", c.Port) }
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+// envIntOr parses the environment value for key as an int, falling back to def
+// when it's unset/empty or unparseable / non-positive. Kept lenient (no startup
+// failure) since these tune a non-critical limiter that also clamps to a safe
+// minimum internally.
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
 	}
 	return def
 }
