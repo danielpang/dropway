@@ -372,6 +372,10 @@ func (c *realStripeClient) CreateCheckoutSession(p CheckoutParams) (string, erro
 		ClientReferenceID: stripe.String(p.ClientReferenceID),
 		SuccessURL:        stripe.String(p.SuccessURL),
 		CancelURL:         stripe.String(p.CancelURL),
+		// Show the "Add promotion code" field in Checkout so customers can redeem a
+		// coupon/discount code. Codes must be created in the Stripe Dashboard
+		// (Products → Coupons → Promotion codes) to be accepted.
+		AllowPromotionCodes: stripe.Bool(true),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{{
 			Price:    stripe.String(p.PriceID),
 			Quantity: stripe.Int64(qty),
