@@ -4,10 +4,12 @@ package router
 
 import (
 	"log/slog"
+	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/logx"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/services/api/internal/handlers"
@@ -37,7 +39,10 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(logx.Middleware(baseLogger))
-	r.Use(chimw.Recoverer)
+	// errtrack.Recoverer replaces chi's Recoverer: same recover→500, but it logs
+	// the panic via slog.Error so the error-tracking-wrapped default logger mirrors
+	// it to the sink (carrying the stack as a property).
+	r.Use(errtrack.Recoverer)
 
 	// Public, unauthenticated.
 	r.Get("/healthz", api.Healthz)
@@ -56,6 +61,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	// verified EdDSA JWT (the authz boundary), then ensure-org-provisioned.
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.Auth(verifier))
+		// Attribute any downstream exception to the authenticated user (runs after
+		// Auth, before EnsureOrgProvisioned, so even provisioning errors carry the id).
+		r.Use(attributeErrors)
 		r.Use(api.EnsureOrgProvisioned)
 
 		r.Get("/me", api.Me)
@@ -134,4 +142,20 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	})
 
 	return r
+}
+
+// attributeErrors stamps the request context with the authenticated user's id so
+// any exception captured downstream (the slog bridge or errtrack.Recoverer) is
+// attributed to that user in error tracking. It runs after middleware.Auth, so
+// the verified claims are present; absent claims leave the context untouched (the
+// exception is then attributed to "system").
+func attributeErrors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if claims, ok := middleware.ClaimsFromContext(r.Context()); ok && claims != nil {
+			if id := claims.UserID(); id != "" {
+				r = r.WithContext(errtrack.WithDistinctID(r.Context(), id))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }

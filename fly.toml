@@ -17,6 +17,14 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   [build.args]
     DROPWAY_BUILD_TAGS = "cloud"
 
+[env]
+  # Error tracking (internal/errtrack). Non-secret config only; the project key is
+  # set out-of-band with `fly secrets set POSTHOG_KEY=phc_...`. With the key set,
+  # caught + uncaught errors and panics report to PostHog Error Tracking; without
+  # it the sink is a no-op.
+  ENVIRONMENT = "production"
+  POSTHOG_HOST = "https://us.i.posthog.com"
+
 [http_service]
   internal_port = 8080
   force_https = true
