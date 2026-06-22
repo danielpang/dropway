@@ -16,50 +16,23 @@ import (
 	"log/slog"
 
 	"github.com/posthog/posthog-go"
-
-	"github.com/danielpang/dropway/internal/phclient"
 )
 
-// PostHog is the PostHog-backed Emitter. Construct with NewPostHog (owns its
-// client) or NewPostHogFromClient (borrows a shared one).
+// PostHog is the PostHog-backed Emitter. It is a pure consumer of the posthog-go
+// client: construct with NewPostHogFromClient and let the composition root (main)
+// own the client's lifecycle.
 type PostHog struct {
 	client posthog.Client
 	log    *slog.Logger
-	// owns reports whether this emitter built the client (and must close it) or
-	// borrowed a shared one (the owner closes it).
-	owns bool
 }
 
 var _ Emitter = (*PostHog)(nil)
 
-// NewPostHog builds the PostHog emitter with its OWN client. host is the ingest
-// host (posthog-go defaults to PostHog US cloud when empty); environment, when set,
-// is stamped on every event as the `environment` property so PostHog can segment
-// deploys. Client construction is centralized in internal/phclient so it matches
-// the error-tracking client.
-//
-// Returns (nil, nil) when apiKey is empty so a deployment without analytics simply
-// wires nothing — callers treat a nil emitter as disabled. Prefer
-// NewPostHogFromClient when the process already has a shared client (e.g. error
-// tracking) so only ONE client is created per process.
-func NewPostHog(apiKey, host, environment string, log *slog.Logger) (*PostHog, error) {
-	client, err := phclient.New(phclient.Config{Key: apiKey, Host: host, Environment: environment})
-	if err != nil {
-		return nil, err
-	}
-	if client == nil {
-		return nil, nil
-	}
-	if log == nil {
-		log = slog.Default()
-	}
-	return &PostHog{client: client, log: log, owns: true}, nil
-}
-
-// NewPostHogFromClient builds the emitter over an already-built, shared posthog-go
-// client (e.g. one also used for error tracking) so the process runs a single
-// client. The emitter BORROWS the client: Close is a no-op, leaving the owner to
-// drain it. Returns nil when client is nil (PostHog disabled).
+// NewPostHogFromClient builds the emitter over the shared posthog-go client the
+// composition root built and owns (the same client used for error tracking, so the
+// process runs ONE client). The emitter BORROWS the client and never closes it.
+// Returns nil when client is nil (PostHog disabled), so callers treat a nil emitter
+// as disabled.
 func NewPostHogFromClient(client posthog.Client, log *slog.Logger) *PostHog {
 	if client == nil {
 		return nil
@@ -67,7 +40,7 @@ func NewPostHogFromClient(client posthog.Client, log *slog.Logger) *PostHog {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &PostHog{client: client, log: log, owns: false}
+	return &PostHog{client: client, log: log}
 }
 
 // Capture enqueues an event. Best-effort: a nil receiver, a missing event
@@ -99,15 +72,4 @@ func (p *PostHog) Capture(_ context.Context, ev Event) {
 	if err := p.client.Enqueue(capture); err != nil {
 		p.log.Debug("analytics: posthog enqueue failed", "event", ev.Event, "err", err)
 	}
-}
-
-// Close flushes buffered events and shuts the client down — but only when this
-// emitter owns the client. A borrowed shared client (NewPostHogFromClient) is
-// closed by its owner, so closing here would be a double-close. Safe on a nil
-// receiver.
-func (p *PostHog) Close() error {
-	if p == nil || p.client == nil || !p.owns {
-		return nil
-	}
-	return p.client.Close()
 }

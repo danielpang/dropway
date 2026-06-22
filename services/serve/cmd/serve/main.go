@@ -24,6 +24,7 @@ import (
 
 	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
+	"github.com/danielpang/dropway/internal/phclient"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/serve/internal/config"
@@ -35,9 +36,14 @@ import (
 )
 
 func main() {
-	// Wire error tracking first so the default logger mirrors every slog.Error to
-	// the sink (runtime-selected provider; Noop when unconfigured).
-	rep, label := errtrack.FromEnv("serve")
+	// Build the single shared posthog client (main owns its lifecycle) and wire
+	// error tracking over it first, so the default logger mirrors every slog.Error
+	// to the sink. Provider is runtime-selected; Noop when unconfigured.
+	phClient, phErr := phclient.New(phclient.ConfigFromEnv())
+	if phErr != nil {
+		slog.Warn("posthog client init failed — error tracking disabled", "err", phErr)
+	}
+	rep, label := errtrack.FromEnv("serve", phClient)
 	slog.SetDefault(slog.New(rep.WrapSlogHandler(slog.NewJSONHandler(os.Stdout, nil))))
 	slog.Info("error tracking wired", "provider", label)
 
@@ -45,7 +51,11 @@ func main() {
 	if err != nil {
 		slog.Error("serve exited with error", "err", err)
 	}
-	rep.Close() // os.Exit skips defers; flush the sink explicitly.
+	// main owns the shared client (the reporter only borrows it); os.Exit skips
+	// defers, so flush explicitly here.
+	if phClient != nil {
+		_ = phClient.Close()
+	}
 	if err != nil {
 		os.Exit(1)
 	}

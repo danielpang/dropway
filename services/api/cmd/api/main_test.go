@@ -37,6 +37,7 @@ func TestWireTelemetry_SharesOneClient(t *testing.T) {
 	t.Cleanup(func() { newPostHogClient = orig })
 
 	client, rep, label, emitter := wireTelemetry("api")
+	_ = rep // wrapped into the logger in main; not exercised here
 
 	if builds != 1 {
 		t.Fatalf("posthog client built %d times, want exactly 1 (one client per process)", builds)
@@ -51,16 +52,9 @@ func TestWireTelemetry_SharesOneClient(t *testing.T) {
 		t.Fatal("analytics emitter must be wired from the shared client")
 	}
 
-	// Both seams BORROW the shared client: closing them must NOT close it.
-	rep.Close()
-	if err := emitter.Close(); err != nil {
-		t.Fatalf("emitter.Close() = %v", err)
-	}
-	if fake.closes != 0 {
-		t.Fatalf("borrowing seams closed the shared client %d times, want 0", fake.closes)
-	}
-
-	// The owner (main) closes it exactly once.
+	// Both seams are pure borrowers (the Reporter and Emitter ports have no Close),
+	// so the only thing that can close the client is the owner. Closing it once
+	// (as main does) must reach the underlying client exactly once.
 	_ = client.Close()
 	if fake.closes != 1 {
 		t.Fatalf("owner Close count = %d, want exactly 1", fake.closes)
@@ -93,5 +87,4 @@ func TestWireTelemetry_DisabledWithoutClient(t *testing.T) {
 	if _, ok := rep.(errtrack.Noop); !ok {
 		t.Fatalf("want Noop reporter, got %T", rep)
 	}
-	rep.Close() // must be safe
 }

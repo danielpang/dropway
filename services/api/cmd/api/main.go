@@ -82,7 +82,7 @@ func wireTelemetry(service string) (posthog.Client, errtrack.Reporter, string, a
 	if err != nil {
 		slog.Warn("posthog client init failed — error tracking + analytics disabled", "err", err)
 	}
-	rep, label := errtrack.FromEnv(service, errtrack.WithSharedPostHogClient(client))
+	rep, label := errtrack.FromEnv(service, client)
 	var emitter analytics.Emitter
 	// Assign the interface only when the concrete emitter is non-nil, so a disabled
 	// (nil-client) emitter stays a nil interface rather than a non-nil interface
@@ -108,10 +108,8 @@ func main() {
 		// Log before Close so this final fatal error is captured + flushed.
 		slog.Error("server exited with error", "err", err)
 	}
-	// os.Exit skips defers; drain explicitly. rep.Close() is a no-op when it borrows
-	// phClient (and closes a custom provider otherwise); phClient.Close() drains the
-	// shared client once.
-	rep.Close()
+	// main is the sole owner of the shared client (the seams only borrow it):
+	// os.Exit skips defers, so drain it explicitly here to flush in-flight events.
 	if phClient != nil {
 		_ = phClient.Close()
 	}

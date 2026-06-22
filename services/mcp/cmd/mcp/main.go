@@ -29,6 +29,7 @@ import (
 	coreauth "github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
+	"github.com/danielpang/dropway/internal/phclient"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	mcpauth "github.com/danielpang/dropway/services/mcp/internal/auth"
@@ -38,23 +39,35 @@ import (
 
 func main() {
 	ctx := context.Background()
-	// Wire error tracking first so every log.Error (and any below) mirrors to the
-	// sink. Provider is runtime-selected; Noop when unconfigured.
-	rep, label := errtrack.FromEnv("mcp")
+	// Build the single shared posthog client (main owns its lifecycle) and wire
+	// error tracking over it first, so every log.Error mirrors to the sink. Provider
+	// is runtime-selected; Noop when unconfigured.
+	phClient, phErr := phclient.New(phclient.ConfigFromEnv())
+	if phErr != nil {
+		slog.Warn("posthog client init failed — error tracking disabled", "err", phErr)
+	}
+	rep, label := errtrack.FromEnv("mcp", phClient)
 	log := slog.New(rep.WrapSlogHandler(slog.NewJSONHandler(os.Stderr, nil)))
 	slog.SetDefault(log)
 	log.Info("error tracking wired", "provider", label)
-	// os.Exit skips defers; fatal logs (→ captured), flushes the sink, then exits.
+	// main owns the shared client (the reporter only borrows it). flush drains it
+	// before an os.Exit, which would otherwise skip deferred cleanup.
+	flush := func() {
+		if phClient != nil {
+			_ = phClient.Close()
+		}
+	}
+	// fatal logs (→ captured), flushes the sink, then exits.
 	fatal := func(msg string, err error) {
 		log.Error(msg, "err", err)
-		rep.Close()
+		flush()
 		os.Exit(1)
 	}
 
-	dbURL := mustEnv(rep, log, "DATABASE_URL")
-	jwksURL := mustEnv(rep, log, "JWKS_URL")
-	publicURL := strings.TrimRight(mustEnv(rep, log, "MCP_PUBLIC_URL"), "/") // this server's external URL
-	dashboardURL := mustEnv(rep, log, "DASHBOARD_URL")                       // the OAuth authorization server
+	dbURL := mustEnv(flush, log, "DATABASE_URL")
+	jwksURL := mustEnv(flush, log, "JWKS_URL")
+	publicURL := strings.TrimRight(mustEnv(flush, log, "MCP_PUBLIC_URL"), "/") // this server's external URL
+	dashboardURL := mustEnv(flush, log, "DASHBOARD_URL")                       // the OAuth authorization server
 	issuer := os.Getenv("JWT_ISSUER")
 	port := getenv("MCP_PORT", "8092")
 
@@ -119,9 +132,9 @@ func main() {
 	log.Info("mcp listening", "addr", srv.Addr, "resource", publicURL, "authz", dashboardURL)
 
 	// Run the listener on a goroutine so we can select against the shutdown signal.
-	// A graceful drain on SIGINT/SIGTERM is what lets rep.Close() actually flush
-	// buffered exception events before the process exits — without it, errors
-	// captured since the last flush interval would be lost on every deploy.
+	// A graceful drain on SIGINT/SIGTERM is what lets flush() actually drain the
+	// shared client before the process exits — without it, errors captured since the
+	// last flush interval would be lost on every deploy.
 	listenErr := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -143,7 +156,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
 	}
-	rep.Close() // flush buffered exceptions before exit.
+	flush() // drain the shared client before exit.
 }
 
 // newMux wires the HTTP surface: /healthz, the RFC 9728 protected-resource
@@ -244,11 +257,11 @@ func protectedResourceMetadata(resource, authServer string) http.HandlerFunc {
 	}
 }
 
-func mustEnv(rep errtrack.Reporter, log *slog.Logger, key string) string {
+func mustEnv(flush func(), log *slog.Logger, key string) string {
 	v := os.Getenv(key)
 	if v == "" {
 		log.Error("missing required env", "key", key)
-		rep.Close() // flush before os.Exit skips the deferred Close.
+		flush() // drain the shared client before os.Exit skips deferred cleanup.
 		os.Exit(1)
 	}
 	return v

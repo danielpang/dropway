@@ -11,14 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/posthog/posthog-go"
-
 	"github.com/danielpang/dropway/internal/phclient"
 )
 
-func TestFromEnvBorrowsSharedPostHogClient(t *testing.T) {
-	// No env key: auto-detect would yield "none". An explicit provider + a lent
-	// client proves the injected client is used instead of building a second one.
+func TestFromEnvBorrowsInjectedClient(t *testing.T) {
+	// No env key: auto-detect would yield "none". An explicit provider + an injected
+	// client proves the reporter reuses (borrows) the caller's client.
 	t.Setenv("POSTHOG_KEY", "")
 	t.Setenv("ERROR_TRACKING_PROVIDER", "posthog")
 
@@ -28,7 +26,7 @@ func TestFromEnvBorrowsSharedPostHogClient(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 
-	rep, label := FromEnv("api", WithSharedPostHogClient(client))
+	rep, label := FromEnv("api", client)
 	if label != "posthog" {
 		t.Fatalf("label: want posthog, got %q", label)
 	}
@@ -36,49 +34,29 @@ func TestFromEnvBorrowsSharedPostHogClient(t *testing.T) {
 	if !ok {
 		t.Fatalf("want *posthogReporter, got %T", rep)
 	}
-	if pr.owns {
-		t.Fatal("reporter must BORROW the shared client (owns=false), not own it")
-	}
 	if pr.client != client {
-		t.Fatal("reporter should reuse the injected client, not build a new one")
+		t.Fatal("reporter must reuse the injected client, not build a new one")
 	}
-	// Close must be a no-op on a borrowed client (the owner closes it); the
-	// t.Cleanup Close above must still succeed without a double-close panic.
-	rep.Close()
+	// The reporter has no Close: it is a pure borrower. The shared client's lifecycle
+	// belongs to the caller (the t.Cleanup Close), so there is no double-close to guard.
 }
 
-// closeCountingClient is a posthog.Client that records Close calls. It embeds the
-// interface (nil) so it satisfies posthog.Client; only Close is exercised here.
-type closeCountingClient struct {
-	posthog.Client
-	closes int
-}
-
-func (c *closeCountingClient) Close() error { c.closes++; return nil }
-
-func TestPostHogReporterBorrowedClientIsNotClosed(t *testing.T) {
-	fake := &closeCountingClient{}
-	rep := &posthogReporter{client: fake, service: "api", env: "test", owns: false}
-	rep.Close()
-	rep.Close() // idempotent / repeated shutdown must still not touch a borrowed client
-	if fake.closes != 0 {
-		t.Fatalf("borrowed client must never be closed by the reporter, got %d Close calls", fake.closes)
+func TestFromEnvPostHogWithoutClientDegradesToNoop(t *testing.T) {
+	// provider=posthog but no client injected ⇒ the posthog provider can't run and
+	// FromEnv degrades to Noop rather than failing startup.
+	t.Setenv("ERROR_TRACKING_PROVIDER", "posthog")
+	rep, label := FromEnv("api", nil)
+	if _, ok := rep.(Noop); !ok {
+		t.Fatalf("want Noop when no client is injected, got %T", rep)
 	}
-}
-
-func TestPostHogReporterOwnedClientIsClosed(t *testing.T) {
-	fake := &closeCountingClient{}
-	rep := &posthogReporter{client: fake, service: "api", env: "test", owns: true}
-	rep.Close()
-	if fake.closes != 1 {
-		t.Fatalf("owned client must be closed exactly once, got %d Close calls", fake.closes)
+	if label != "none (posthog init failed)" {
+		t.Fatalf("label: got %q", label)
 	}
 }
 
 func TestNoopIsInert(t *testing.T) {
 	var n Noop
 	n.CaptureException(context.Background(), errors.New("boom"), map[string]any{"k": "v"})
-	n.Close()
 	base := slog.NewTextHandler(io.Discard, nil)
 	if got := n.WrapSlogHandler(base); got != base {
 		t.Fatalf("Noop.WrapSlogHandler should return base unchanged")
@@ -101,6 +79,14 @@ func TestDistinctIDRoundTrip(t *testing.T) {
 }
 
 func TestFromEnvSelection(t *testing.T) {
+	// One shared client is injected into every case; provider selection is driven by
+	// env. The client is only consumed by the "posthog" case (others ignore it).
+	client, err := phclient.New(phclient.Config{Key: "phc_test"})
+	if err != nil {
+		t.Fatalf("phclient.New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
 	tests := []struct {
 		name      string
 		provider  string
@@ -117,8 +103,7 @@ func TestFromEnvSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ERROR_TRACKING_PROVIDER", tc.provider)
 			t.Setenv("POSTHOG_KEY", tc.key)
-			rep, label := FromEnv("api")
-			t.Cleanup(rep.Close)
+			rep, label := FromEnv("api", client)
 			if label != tc.wantLabel {
 				t.Fatalf("label: want %q, got %q", tc.wantLabel, label)
 			}
@@ -139,8 +124,8 @@ func TestRegisterCustomProvider(t *testing.T) {
 		return Noop{}, nil
 	})
 	t.Setenv("ERROR_TRACKING_PROVIDER", "fake-test-provider")
-	rep, label := FromEnv("serve")
-	t.Cleanup(rep.Close)
+	rep, label := FromEnv("serve", nil)
+	_ = rep
 	if !built {
 		t.Fatal("custom constructor was not invoked")
 	}
@@ -154,8 +139,7 @@ func TestRegisterConstructorErrorFallsBackToNoop(t *testing.T) {
 		return nil, errors.New("nope")
 	})
 	t.Setenv("ERROR_TRACKING_PROVIDER", "broken-test-provider")
-	rep, label := FromEnv("api")
-	t.Cleanup(rep.Close)
+	rep, label := FromEnv("api", nil)
 	if _, ok := rep.(Noop); !ok {
 		t.Fatalf("want Noop fallback, got %T", rep)
 	}
