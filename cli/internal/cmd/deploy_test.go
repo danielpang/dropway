@@ -144,6 +144,44 @@ func TestDeploy_FullFlow_NewSite(t *testing.T) {
 	}
 }
 
+// TestDeploy_NewSite_NormalizesSlug proves a loose --site value is slugified to
+// the canonical grammar (mirroring the dashboard) before it hits the API, and the
+// user is told what slug was used (H1: the API now rejects non-canonical slugs).
+func TestDeploy_NewSite_NormalizesSlug(t *testing.T) {
+	dir := tempSite(t)
+	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	fc := newFakeClient([]string{sha256Hex(t, filepath.Join(dir, "index.html"))})
+	factory := func(_, _ string) api.Client { return fc }
+
+	out, err := runDeploy(t, factory, dir, "--send", "--new", "--site", "My Blog!")
+	if err != nil {
+		t.Fatalf("deploy --send: %v\n%s", err, out)
+	}
+	if fc.createdSlug != "my-blog" {
+		t.Errorf("created slug = %q, want %q (normalized)", fc.createdSlug, "my-blog")
+	}
+	if !strings.Contains(out, `Using site slug "my-blog" (normalized from "My Blog!")`) {
+		t.Errorf("expected a normalization notice in output:\n%s", out)
+	}
+}
+
+// TestDeploy_NewSite_RejectsUnusableSlug proves a --site with no usable slug
+// characters errors locally (no API call) instead of producing an empty slug.
+func TestDeploy_NewSite_RejectsUnusableSlug(t *testing.T) {
+	dir := tempSite(t)
+	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	fc := newFakeClient(nil)
+	factory := func(_, _ string) api.Client { return fc }
+
+	_, err := runDeploy(t, factory, dir, "--send", "--new", "--site", "!!!")
+	if err == nil {
+		t.Fatal("expected an error for a slug with no usable characters")
+	}
+	if fc.createdSlug != "" {
+		t.Errorf("CreateSite should not have been called; got slug %q", fc.createdSlug)
+	}
+}
+
 // TestDeploy_SkipsAlreadyUploadedBlobs proves only-missing blobs are uploaded.
 func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
 	dir := tempSite(t)

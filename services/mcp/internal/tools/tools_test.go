@@ -58,7 +58,7 @@ type fakeAPI struct {
 	createErr                           error
 
 	setToken, setSiteID, setMode, setPassword string
-	setErr                                     error
+	setErr                                    error
 
 	deployToken, deploySiteID string
 	deployFiles               []apiclient.DeployFile
@@ -310,6 +310,31 @@ func TestCreateSite_APIErrorPropagates(t *testing.T) {
 	_, err := svc.CreateSite(context.Background(), "tok", "blog", "")
 	if err == nil {
 		t.Fatal("expected the API error to propagate")
+	}
+}
+
+// A loose agent-supplied slug is normalized to the canonical grammar BEFORE the
+// API call (mirroring the dashboard/CLI), so it never 400s on shape (H1).
+func TestCreateSite_NormalizesSlug(t *testing.T) {
+	api := &fakeAPI{createResp: apiclient.Site{Slug: "my-blog", AccessMode: "org_only"}}
+	svc := &Service{API: api}
+	if _, err := svc.CreateSite(context.Background(), "tok", "My Blog!", "org_only"); err != nil {
+		t.Fatalf("CreateSite: %v", err)
+	}
+	if api.createSlug != "my-blog" {
+		t.Errorf("API called with slug %q, want %q (normalized)", api.createSlug, "my-blog")
+	}
+}
+
+// A slug with no usable characters errors locally without an API call.
+func TestCreateSite_RejectsUnusableSlug(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{API: api}
+	if _, err := svc.CreateSite(context.Background(), "tok", "!!!", ""); err == nil {
+		t.Fatal("expected an error for a slug with no usable characters")
+	}
+	if api.createSlug != "" {
+		t.Errorf("API should not have been called; got slug %q", api.createSlug)
 	}
 }
 
