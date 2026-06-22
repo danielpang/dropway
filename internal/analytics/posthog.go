@@ -18,7 +18,9 @@ import (
 	"github.com/posthog/posthog-go"
 )
 
-// PostHog is the PostHog-backed Emitter. Construct with NewPostHog.
+// PostHog is the PostHog-backed Emitter. It is a pure consumer of the posthog-go
+// client: construct with NewPostHogFromClient and let the composition root (main)
+// own the client's lifecycle.
 type PostHog struct {
 	client posthog.Client
 	log    *slog.Logger
@@ -26,37 +28,19 @@ type PostHog struct {
 
 var _ Emitter = (*PostHog)(nil)
 
-// NewPostHog builds the PostHog emitter. host is the ingest host (posthog-go
-// defaults to PostHog US cloud when empty); environment, when set, is stamped on
-// every event as the `environment` property so PostHog can segment deploys.
-//
-// Returns (nil, nil) when apiKey is empty so a deployment without analytics simply
-// wires nothing — callers treat a nil emitter as disabled.
-func NewPostHog(apiKey, host, environment string, log *slog.Logger) (*PostHog, error) {
-	if apiKey == "" {
-		return nil, nil
+// NewPostHogFromClient builds the emitter over the shared posthog-go client the
+// composition root built and owns (the same client used for error tracking, so the
+// process runs ONE client). The emitter BORROWS the client and never closes it.
+// Returns nil when client is nil (PostHog disabled), so callers treat a nil emitter
+// as disabled.
+func NewPostHogFromClient(client posthog.Client, log *slog.Logger) *PostHog {
+	if client == nil {
+		return nil
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	cfg := posthog.Config{
-		// BatchSize 1 → dispatch each event promptly rather than waiting for a full
-		// batch; Close() drains anything pending on shutdown.
-		BatchSize: 1,
-	}
-	if host != "" {
-		cfg.Endpoint = host
-	}
-	if environment != "" {
-		// DefaultEventProperties rides on every captured event, so callers never have
-		// to restamp the deploy label.
-		cfg.DefaultEventProperties = posthog.NewProperties().Set("environment", environment)
-	}
-	client, err := posthog.NewWithConfig(apiKey, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &PostHog{client: client, log: log}, nil
+	return &PostHog{client: client, log: log}
 }
 
 // Capture enqueues an event. Best-effort: a nil receiver, a missing event
@@ -88,12 +72,4 @@ func (p *PostHog) Capture(_ context.Context, ev Event) {
 	if err := p.client.Enqueue(capture); err != nil {
 		p.log.Debug("analytics: posthog enqueue failed", "event", ev.Event, "err", err)
 	}
-}
-
-// Close flushes buffered events and shuts the client down. Safe on a nil receiver.
-func (p *PostHog) Close() error {
-	if p == nil || p.client == nil {
-		return nil
-	}
-	return p.client.Close()
 }

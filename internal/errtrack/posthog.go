@@ -32,32 +32,24 @@ func init() {
 
 // posthogKey returns the PostHog project key (phc_…) from POSTHOG_KEY — the same
 // var the edge worker and dashboard already use, so all services share one secret.
+// FromEnv uses it only for provider auto-detection.
 func posthogKey() string {
 	return strings.TrimSpace(os.Getenv("POSTHOG_KEY"))
 }
 
-// newPostHogReporter constructs the PostHog Reporter. It errors (→ FromEnv falls
-// back to Noop) when no key is configured.
+// newPostHogReporter builds the PostHog Reporter over the shared client the caller
+// injected (Options.PostHogClient). The reporter is a pure borrower: it never
+// constructs or closes the client — the composition root (main) owns its lifecycle.
+// A nil client errors → FromEnv degrades to Noop.
 func newPostHogReporter(opts Options) (Reporter, error) {
-	key := posthogKey()
-	if key == "" {
-		return nil, errors.New("POSTHOG_KEY not set")
+	if opts.PostHogClient == nil {
+		return nil, errors.New("no posthog client (POSTHOG_KEY not set)")
 	}
-	cfg := posthog.Config{
-		// Bound shutdown so Close() can't hang the graceful-drain path; error
-		// reporting must never delay a deploy.
-		ShutdownTimeout: 3 * time.Second,
-	}
-	// Only override the ingestion endpoint when explicitly set; the SDK already
-	// defaults to https://us.i.posthog.com (the dedicated ingestion host).
-	if host := strings.TrimSpace(os.Getenv("POSTHOG_HOST")); host != "" {
-		cfg.Endpoint = host
-	}
-	client, err := posthog.NewWithConfig(key, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &posthogReporter{client: client, service: opts.Service, env: opts.Environment}, nil
+	return &posthogReporter{
+		client:  opts.PostHogClient,
+		service: opts.Service,
+		env:     opts.Environment,
+	}, nil
 }
 
 type posthogReporter struct {
@@ -110,8 +102,6 @@ func (p *posthogReporter) WrapSlogHandler(base slog.Handler) slog.Handler {
 		}),
 	)
 }
-
-func (p *posthogReporter) Close() { _ = p.client.Close() }
 
 // exceptionType renders a stable title for the error-tracking issue: the error's
 // concrete Go type (e.g. "*pgconn.PgError"), falling back to "error".

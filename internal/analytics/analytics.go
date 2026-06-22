@@ -11,10 +11,7 @@
 // and depends only on this interface.
 package analytics
 
-import (
-	"context"
-	"io"
-)
+import "context"
 
 // Event is a single product-analytics event: who (DistinctID), what (Event), and
 // free-form Properties, optionally associated with analytics Groups (e.g. an
@@ -34,9 +31,11 @@ type Event struct {
 
 // Emitter sends product-analytics events to a sink. Implementations MUST be
 // best-effort: Capture never returns an error and must neither panic nor block the
-// caller's critical path. Close flushes any buffered events and is called on
-// graceful shutdown so nothing in flight is dropped.
+// caller's critical path.
+//
+// An Emitter is a pure consumer of its transport: it does NOT own the underlying
+// client and has no Close. The composition root (each service's main) owns the
+// shared client's lifecycle and flushes it on shutdown.
 type Emitter interface {
 	Capture(ctx context.Context, ev Event)
-	io.Closer
 }

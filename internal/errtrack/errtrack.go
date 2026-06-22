@@ -30,11 +30,17 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+
+	"github.com/posthog/posthog-go"
 )
 
 // Reporter is the vendor-neutral error sink. Implementations must be safe for
 // concurrent use and must never panic — error reporting is best-effort and must
 // not take down the path that produced the error.
+//
+// A Reporter is a pure consumer of its transport: it does NOT own the underlying
+// client and has no Close. Lifecycle (build + flush + close) is owned by the
+// composition root (each service's main), which closes the shared client once.
 type Reporter interface {
 	// CaptureException reports err to the sink with optional extra properties. The
 	// context may carry a distinct id (see WithDistinctID) used to attribute the
@@ -45,9 +51,6 @@ type Reporter interface {
 	// level are mirrored to the sink as exceptions, while still being passed
 	// through to base. Noop returns base unchanged.
 	WrapSlogHandler(base slog.Handler) slog.Handler
-
-	// Close flushes any buffered events. Call once on shutdown.
-	Close()
 }
 
 // Noop is the default Reporter: it sends nothing. Used when no provider is
@@ -56,7 +59,6 @@ type Noop struct{}
 
 func (Noop) CaptureException(context.Context, error, map[string]any) {}
 func (Noop) WrapSlogHandler(base slog.Handler) slog.Handler         { return base }
-func (Noop) Close()                                                 {}
 
 // ---- distinct-id context plumbing ------------------------------------------
 
@@ -86,14 +88,18 @@ func DistinctID(ctx context.Context) string {
 // ---- provider registry + env selection -------------------------------------
 
 // Constructor builds a Reporter from Options. It returns an error when the
-// provider can't be configured (e.g. a missing key); FromEnv then falls back to
+// provider can't be configured (e.g. a missing client); FromEnv then falls back to
 // Noop so a misconfiguration never crashes the service.
 type Constructor func(Options) (Reporter, error)
 
-// Options carry shared metadata stamped onto every reported exception.
+// Options carry the injected transport + shared metadata for a provider.
 type Options struct {
 	Service     string // logical service name, e.g. "api", "serve", "mcp"
 	Environment string // deployment label, e.g. "production"
+	// PostHogClient is the shared posthog-go client the composition root built and
+	// owns. The posthog provider BORROWS it (never closes it). nil ⇒ the posthog
+	// provider can't run and FromEnv degrades to Noop.
+	PostHogClient posthog.Client
 }
 
 var registry = map[string]Constructor{}
@@ -114,9 +120,12 @@ func Register(name string, c Constructor) {
 //	                         present, else "none".
 //	ENVIRONMENT              deployment label stamped onto every exception.
 //
-// A misconfigured or unknown provider degrades to Noop with a warning rather than
-// failing startup — error tracking must never be load-bearing.
-func FromEnv(service string) (Reporter, string) {
+// client is the shared posthog-go client built and owned by the caller (the
+// composition root); the posthog provider borrows it. Pass nil to run without a
+// posthog client (the posthog provider then degrades to Noop). A misconfigured or
+// unknown provider also degrades to Noop with a warning rather than failing startup
+// — error tracking must never be load-bearing.
+func FromEnv(service string, client posthog.Client) (Reporter, string) {
 	env := strings.TrimSpace(os.Getenv("ENVIRONMENT"))
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("ERROR_TRACKING_PROVIDER")))
 	if provider == "" {
@@ -135,7 +144,7 @@ func FromEnv(service string) (Reporter, string) {
 		slog.Warn("errtrack: unknown ERROR_TRACKING_PROVIDER — error tracking disabled", "provider", provider)
 		return Noop{}, "none (unknown provider: " + provider + ")"
 	}
-	rep, err := c(Options{Service: service, Environment: env})
+	rep, err := c(Options{Service: service, Environment: env, PostHogClient: client})
 	if err != nil {
 		slog.Warn("errtrack: provider init failed — error tracking disabled", "provider", provider, "err", err)
 		return Noop{}, "none (" + provider + " init failed)"
