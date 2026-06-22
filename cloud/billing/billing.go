@@ -185,11 +185,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Log the committed entitlement change at INFO so billing outcomes are visible in
+	// logs (not just a generic access-log line) — the audit trail for "what tier did
+	// this event apply, to which org".
+	h.log.Info("stripe event applied",
+		"event_id", ev.ID, "type", ev.Type,
+		"org_id", ev.Data.OrgID, "plan_tier", ev.Data.PlanTier, "status", ev.Data.Status)
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
-
-// errUnhandledEvent is returned for event types we acknowledge but don't act on.
-var errUnhandledEvent = errors.New("billing: unhandled event type")
 
 // errUnfulfillableEvent wraps a permanent (non-retryable) apply failure: the event
 // is well-formed and signed, but can never be persisted (e.g. it carries an empty
@@ -246,7 +249,9 @@ func applyEvent(ctx context.Context, subs SubscriptionStore, log *slog.Logger, e
 	default:
 		// Acknowledge-and-ignore: log at debug, return nil so we 200. The id is
 		// still recorded by the caller's tx so it isn't reprocessed.
-		log.Debug("ignoring unhandled stripe event", "type", ev.Type, "reason", errUnhandledEvent)
+		// INFO (not DEBUG) so a no-op acknowledgement is visible at the prod log level
+		// — an unsubscribed/unexpected event type otherwise leaves no trace.
+		log.Info("ignoring unhandled stripe event (acknowledged, no-op)", "type", ev.Type)
 		return nil
 	}
 }

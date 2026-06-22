@@ -196,15 +196,23 @@ func (v RealSignatureVerifier) fromCheckoutSession(raw json.RawMessage) (EventDa
 		StripeSubscriptionID: cs.Subscription.ID,
 		Status:               "active",
 	}
-	// Prefer the explicit target_tier from metadata (set at Checkout creation); it
-	// is the tier the user is paying for. If absent, leave Free — the follow-up
-	// customer.subscription.created/updated event carries the price → tier.
+	// Honor the explicit target_tier from metadata — set AND validated against the
+	// price map at Checkout creation (handlers.go), so it is the tier the user is
+	// paying for. Doing this for EVERY purchasable tier (incl. Pro) means
+	// checkout.session.completed alone grants entitlement; we no longer depend on a
+	// separate customer.subscription.* event being subscribed (a missing subscription
+	// event used to silently leave paying Pro customers on Free). The subscription
+	// event still reconciles the tier from the AUTHORITATIVE price id and drives
+	// renewals / downgrades / cancels. We can't read the price here: webhook payloads
+	// don't expand line_items, so target_tier metadata is the source for this event.
 	if cs.Metadata != nil {
-		if t := PlanTier(cs.Metadata["target_tier"]); t == TierBusiness || t == TierEnterprise {
+		if t := PlanTier(cs.Metadata["target_tier"]); t == TierPro || t == TierBusiness || t == TierEnterprise {
 			d.PlanTier = t
 		}
 	}
 	if d.PlanTier == "" {
+		// No (or non-purchasable) target_tier — default to Free and let the follow-up
+		// subscription event set the tier from the price.
 		d.PlanTier = TierFree
 	}
 	if d.OrgID == "" {
