@@ -24,9 +24,11 @@ describe("oauthRateLimitRules", () => {
   it("bounds unauthenticated DCR the most tightly", () => {
     const reg = oauthRateLimitRules["/oauth2/register"];
     if (!reg) throw new Error("missing /oauth2/register rule");
-    // A real user registers a client once; allow only a small burst per hour.
+    // A real user registers a client once; allow only a small burst per hour, and
+    // keep max no looser than the oauth-provider plugin's own short-window default
+    // (5) so this rule never relaxes the burst it overrides.
     expect(reg.window).toBeGreaterThanOrEqual(600);
-    expect(reg.max).toBeLessThanOrEqual(20);
+    expect(reg.max).toBeLessThanOrEqual(5);
   });
 
   it("uses positive, finite windows and maxes for every rule", () => {

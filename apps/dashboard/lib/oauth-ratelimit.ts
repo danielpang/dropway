@@ -18,8 +18,10 @@ export interface RateLimitRule {
 export const oauthRateLimitRules: Record<string, RateLimitRule> = {
   // Unauthenticated Dynamic Client Registration: the tightest bound. A user
   // connecting an MCP client registers once; a flood is abuse (oauth_application
-  // row exhaustion + pooler pressure).
-  "/oauth2/register": { window: 3600, max: 10 },
+  // row exhaustion + pooler pressure). max 5 keeps the short-window burst no looser
+  // than the oauth-provider plugin's own default (5/60s) while bounding the hour to
+  // 5 total (vs the plugin default's 5/min = 300/hr) per client IP.
+  "/oauth2/register": { window: 3600, max: 5 },
   // Consent + authorization-code start.
   "/oauth2/authorize": { window: 60, max: 30 },
   "/oauth2/consent": { window: 60, max: 30 },
