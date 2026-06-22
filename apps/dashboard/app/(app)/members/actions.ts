@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 
 import { api, ApiError } from "@/lib/api";
 import { auth } from "@/lib/auth";
@@ -138,8 +139,18 @@ export async function recordMemberJoinAction(): Promise<void> {
 }
 
 /**
- * Hard-finalize a member removal (C2). After the org plugin
- * deletes the member row, removal MUST also:
+ * Remove a member from the active org AND hard-revoke their access (C2), in one
+ * authorized server action. This is the ONLY entry point for the privileged
+ * session-kill below — it is deliberately the place authorization is enforced.
+ *
+ * Authorization is delegated to Better Auth's own `removeMember` endpoint, which
+ * requires the CALLER to be an owner/admin of the active org (the `member:delete`
+ * permission) and the TARGET member to belong to that org, rejecting otherwise.
+ * Crucially, we then revoke ONLY the userId Better Auth confirms it removed — so
+ * this can never be coerced into killing an arbitrary user's sessions across
+ * tenants (the previous version took a raw client-supplied userId with no check).
+ *
+ * After the member row is deleted, removal MUST also:
  *   1. revoke the removed user's Better Auth sessions, so the jwt() plugin can't
  *      re-mint a fresh JWT they'd use to re-authorize at /authz; and
  *   2. bump the edge denylist (revoked:user:<id>), so every edge token they hold is
@@ -147,27 +158,71 @@ export async function recordMemberJoinAction(): Promise<void> {
  *
  * Without this, a removed member kept a valid ~10m JWT + live edge tokens and could
  * keep viewing gated sites (and, paired with the /authz mint denylist check, re-mint
- * them) for minutes after removal. The session kill is best-effort; the denylist
- * write + the Go API's live membership re-check are the authoritative gated-access
- * controls. Called by the member list immediately after removeMember succeeds.
+ * them) for minutes after removal. Called by the member list; takes the `member`
+ * row id (the same handle the role/remove UI already uses).
  */
-export async function finalizeMemberRemovalAction(input: {
-  userId: string;
-}): Promise<RevokeActionResult> {
-  if (!input.userId) {
-    return { ok: false, message: "Missing user." };
+export type RemoveMemberResult =
+  // The member row was deleted; `revoke` reports whether the follow-up
+  // session/edge revocation also succeeded (the row is gone either way).
+  | { removed: true; revoke: RevokeActionResult }
+  // The removal itself was refused (e.g. unauthorized caller, not a member of
+  // this org) — nothing changed.
+  | { removed: false; message: string };
+
+export async function removeMemberAction(input: {
+  memberId: string;
+}): Promise<RemoveMemberResult> {
+  if (!input.memberId) {
+    return { removed: false, message: "Missing member." };
   }
+
+  // Remove the member through Better Auth, which is the authorization boundary:
+  // it verifies the caller is an owner/admin of the active org and the target is
+  // a member of it, and returns the member it actually removed. organizationId is
+  // omitted so it binds to the caller's active org (the members page's scope).
+  let removedUserId: string;
+  try {
+    const res = (await auth.api.removeMember({
+      body: { memberIdOrEmail: input.memberId },
+      headers: await headers(),
+    })) as { member?: { userId?: string } } | null;
+    const uid = res?.member?.userId;
+    if (!uid) {
+      return { removed: false, message: "Could not remove the member. Try again." };
+    }
+    removedUserId = uid;
+  } catch (err) {
+    // Better Auth throws an APIError on an unauthorized caller or a target that
+    // isn't in the org — surface its message (e.g. "you are not allowed…").
+    const msg = err as { body?: { message?: string }; message?: string } | null;
+    return {
+      removed: false,
+      message: msg?.body?.message ?? msg?.message ?? "Could not remove the member.",
+    };
+  }
+
+  return { removed: true, revoke: await finalizeMemberRevocation(removedUserId) };
+}
+
+/**
+ * Internal: revoke a just-removed user's live access. NOT a server action (not
+ * exported) — it must only ever run with a userId that removeMemberAction has
+ * already authorized, never a raw request input.
+ */
+async function finalizeMemberRevocation(
+  userId: string,
+): Promise<RevokeActionResult> {
   // 1. Kill the removed user's sessions so a still-valid session can't re-mint a JWT.
   try {
     const ctx = await auth.$context;
     // Better Auth 1.6 renamed the "delete all of a user's sessions" call to
     // deleteUserSessions (deleteSessions now takes specific session tokens).
-    await ctx.internalAdapter.deleteUserSessions(input.userId);
+    await ctx.internalAdapter.deleteUserSessions(userId);
   } catch {
     // Best-effort: a failed session delete still leaves the edge denylist + the live
     // membership re-check in force (gated access is revoked); it only leaves a ≤10m
     // dashboard-JWT window. Fall through to the authoritative denylist write.
   }
   // 2. Edge denylist write, the authoritative, edge-enforced revocation.
-  return revokeAccessAction({ kind: "user", id: input.userId });
+  return revokeAccessAction({ kind: "user", id: userId });
 }

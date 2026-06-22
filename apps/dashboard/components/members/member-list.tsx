@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
-import { finalizeMemberRemovalAction } from "@/app/(app)/members/actions";
+import { removeMemberAction } from "@/app/(app)/members/actions";
 import type { Role } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import type { OrgMember } from "@/lib/org";
@@ -99,20 +99,22 @@ export function MemberList({
     setError(null);
     setBusyId(removing.id);
     try {
-      const { error: err } = await authClient.organization.removeMember({
-        memberIdOrEmail: removing.id,
-        organizationId,
-      });
-      if (err) throw err;
-      // Removal isn't complete until the removed user's access is actually revoked
-      // (C2): kill their Better Auth sessions AND bump the edge
-      // denylist so they can't keep viewing, or re-mint tokens for, gated sites on
-      // a still-valid JWT. Do this BEFORE refreshing; a non-fatal failure here is
-      // surfaced (the member row is already gone, but access revocation matters).
-      const revoked = await finalizeMemberRemovalAction({ userId: removing.userId });
-      if (!revoked.ok && "message" in revoked) {
+      // Remove + revoke in one authorized server action. The action delegates the
+      // removal to Better Auth (which enforces owner/admin + same-org authz) and
+      // then kills the removed user's sessions and bumps the edge denylist (C2),
+      // so they can't keep viewing, or re-mint tokens for, gated sites on a
+      // still-valid JWT.
+      const res = await removeMemberAction({ memberId: removing.id });
+      if (!res.removed) {
+        // The removal itself was refused — keep the dialog open with the reason.
+        setError(res.message);
+        return;
+      }
+      // The member row is gone. If the follow-up access revocation failed, the
+      // removal still stands; surface a non-fatal warning to retry.
+      if (!res.revoke.ok && "message" in res.revoke) {
         setError(
-          `Member removed, but revoking their active access failed: ${revoked.message} Their tokens expire within ~15 minutes; retry "Sign out everywhere" to revoke immediately.`,
+          `Member removed, but revoking their active access failed: ${res.revoke.message} Their tokens expire within ~15 minutes; retry "Sign out everywhere" to revoke immediately.`,
         );
       }
       setRemoving(null);
