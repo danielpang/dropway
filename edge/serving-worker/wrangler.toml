@@ -54,6 +54,14 @@ RATE_LIMIT_WINDOW_SECONDS = "60"
 POSTHOG_HOST = "https://us.posthog.com"
 ENVIRONMENT = "production"
 
+# --- Free-tier attribution banner --------------------------------------------
+# When "true", the Worker injects a slim, dismissible "Deployed with Dropway" bar
+# at the top of every HTML page served for a FREE-tier org (RouteValue.plan_tier
+# === "free", written by the Go API). Paid tiers and non-HTML assets are never
+# touched. Set to "false" (or remove) to disable — an OSS self-host Worker leaves
+# it off, so self-hosted sites never carry the banner. See src/banner.ts.
+ATTRIBUTION_BANNER = "true"
+
 # Native, atomic Rate Limiting binding — the REAL denial-of-wallet control (it
 # correctly counts a single-IP flood the KV counter cannot). Keep `simple.limit`
 # /`period` in sync with the vars above; `namespace_id` is an arbitrary per-Worker

@@ -65,6 +65,7 @@ import {
 import type { RevokedKVLike } from "./revoke";
 import { type AnalyticsEnv, captureSiteVisit } from "./analytics";
 import { captureException } from "./errtrack";
+import { injectBanner, shouldInjectBanner } from "./banner";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -150,6 +151,13 @@ export interface Env {
   POSTHOG_HOST?: string;
   ENVIRONMENT?: string;
   VISIT_SALT?: string;
+  /**
+   * OPTIONAL: when truthy ("true"/"1"/"yes"/"on"), inject the slim, dismissible
+   * "Deployed with Dropway" attribution banner into HTML pages served for
+   * FREE-tier orgs (RouteValue.plan_tier === "free"). Unset/false → never inject
+   * (the default, so an OSS self-host Worker shows no banner). See src/banner.ts.
+   */
+  ATTRIBUTION_BANNER?: string;
 }
 
 /**
@@ -452,14 +460,18 @@ async function servePublic(
   // Best-effort per-site visit metric (HTML pages only; never blocks the response).
   scheduleVisit(env, request, route, url, resolved.contentType, opts);
 
+  // Free-tier attribution banner (HTML only). Done BEFORE the Response is built so
+  // the banner-injected body is what gets cached at the PoP below.
+  const out = await bannerize(env, route, resolved);
+
   const headers = publicResponseHeaders(resolved.servedPath, {
     contentType: resolved.contentType,
-    etag: resolved.etag,
-    lastModified: resolved.lastModified,
-    contentLength: resolved.contentLength,
+    etag: out.etag,
+    lastModified: out.lastModified,
+    contentLength: out.contentLength,
   });
 
-  const response = new Response(resolved.body, { status: 200, headers });
+  const response = new Response(out.body, { status: 200, headers });
 
   // Best-effort: populate the PoP cache for subsequent requests. We cache a
   // clone so the streamed body is still available to the caller.
@@ -490,13 +502,17 @@ async function servePublicBody(
   const resolved = await resolveBlob(request, env, route, url);
   if (resolved.kind === "not-found") return resolved.response;
 
+  // Free-tier attribution banner (HTML only). Gated responses are never cached,
+  // but a free-tier gated page still carries the banner ("each page").
+  const out = await bannerize(env, route, resolved);
+
   const headers = publicResponseHeaders(resolved.servedPath, {
     contentType: resolved.contentType,
-    etag: resolved.etag,
-    lastModified: resolved.lastModified,
-    contentLength: resolved.contentLength,
+    etag: out.etag,
+    lastModified: out.lastModified,
+    contentLength: out.contentLength,
   });
-  const response = new Response(resolved.body, { status: 200, headers });
+  const response = new Response(out.body, { status: 200, headers });
   return bodyFor(request, response);
 }
 
@@ -512,6 +528,45 @@ type BlobResolution =
       contentLength?: number;
     }
   | { kind: "not-found"; response: Response };
+
+/** The successful (200) arm of BlobResolution. */
+type ResolvedBlob = Extract<BlobResolution, { kind: "ok" }>;
+
+/** The body + header inputs for a 200 response, after optional banner injection. */
+interface ServeBody {
+  body: BodyInit | null;
+  etag?: string;
+  lastModified?: Date;
+  contentLength?: number;
+}
+
+/**
+ * Apply the free-tier "Deployed with Dropway" attribution banner to a resolved
+ * blob when the org is free-tier, the feature is enabled, and the document is
+ * HTML (shouldInjectBanner). Only HTML is buffered into memory; every other asset
+ * (and every paid/unknown-tier response) streams through untouched.
+ *
+ * When injecting we buffer the body to text, insert the banner, recompute
+ * Content-Length, and DROP the blob's ETag/Last-Modified — they describe the
+ * original (un-bannered) bytes and would otherwise mislabel the transformed body.
+ */
+async function bannerize(
+  env: Env,
+  route: RouteValue,
+  resolved: ResolvedBlob,
+): Promise<ServeBody> {
+  if (!shouldInjectBanner(env, route, resolved.servedPath)) {
+    return {
+      body: resolved.body,
+      etag: resolved.etag,
+      lastModified: resolved.lastModified,
+      contentLength: resolved.contentLength,
+    };
+  }
+  const original = resolved.body ? await new Response(resolved.body).text() : "";
+  const injected = injectBanner(original);
+  return { body: injected, contentLength: new TextEncoder().encode(injected).length };
+}
 
 /**
  * Resolve a request to its content-addressed blob via the deploy manifest:

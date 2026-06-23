@@ -25,16 +25,20 @@ export type AccessMode = (typeof ACCESS_MODES)[number];
  * the Go API WRITES on every value (the Worker reads it back). Bump on any change
  * to `KVRouteValue` / kv-route.schema.json, and update the Go constant in tandem.
  *
- * v1 → v2 (Phase 2): added the optional `expires_at` field. The parser stays
+ * v1 → v2 (Phase 2): added the optional `expires_at` field.
+ * v2 → v3: added the optional `plan_tier` field (the owning org's plan, used to
+ * gate the free-tier "Deployed with Dropway" attribution banner). The parser stays
  * backward compatible — it accepts any version in [MIN_SCHEMA_VERSION,
  * SCHEMA_VERSION] — so a stored v1 value (no expires_at) is read as "never
- * expires"; the Go API only ever writes SCHEMA_VERSION.
+ * expires" and a v2 value (no plan_tier) as "tier unknown"; the Go API only ever
+ * writes SCHEMA_VERSION.
  */
-export const SCHEMA_VERSION = 2 as const;
+export const SCHEMA_VERSION = 3 as const;
 
 /**
  * The oldest contract shape the parser still accepts. A v1 value carries no
- * `expires_at` and is treated as non-expiring.
+ * `expires_at` (treated as non-expiring); a v2 value carries no `plan_tier`
+ * (treated as tier unknown).
  */
 export const MIN_SCHEMA_VERSION = 1 as const;
 
@@ -59,6 +63,12 @@ export interface KVRouteValue {
    * edge expiry. Identity-gated expiry is refused at mint time in the Go API.
    */
   expires_at?: string;
+  /**
+   * OPTIONAL (v3+). The owning org's plan tier (app.org_meta.plan_tier, e.g.
+   * "free"/"pro"). The Worker uses it to gate the free-tier "Deployed with
+   * Dropway" attribution banner. Absent → tier unknown → no banner.
+   */
+  plan_tier?: string;
 }
 
 const UUID_RE =
@@ -100,6 +110,7 @@ export function parseKVRouteValue(input: unknown): KVRouteValue {
     "access_mode",
     "schema_version",
     "expires_at",
+    "plan_tier",
   ]);
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) {
@@ -152,6 +163,18 @@ export function parseKVRouteValue(input: unknown): KVRouteValue {
     expiresAt = obj.expires_at;
   }
 
+  // plan_tier is optional (v3+). When present it must be a non-empty string (the
+  // org's plan tier, e.g. "free"/"pro"); an empty string is treated as absent.
+  let planTier: string | undefined;
+  if (obj.plan_tier !== undefined && obj.plan_tier !== null) {
+    if (typeof obj.plan_tier !== "string") {
+      throw new KVRouteValidationError("plan_tier must be a string");
+    }
+    if (obj.plan_tier !== "") {
+      planTier = obj.plan_tier;
+    }
+  }
+
   const out: KVRouteValue = {
     org_id: obj.org_id as string,
     site_id: obj.site_id as string,
@@ -161,6 +184,9 @@ export function parseKVRouteValue(input: unknown): KVRouteValue {
   };
   if (expiresAt !== undefined) {
     out.expires_at = expiresAt;
+  }
+  if (planTier !== undefined) {
+    out.plan_tier = planTier;
   }
   return out;
 }
@@ -213,6 +239,9 @@ export function serializeKVRouteValue(value: KVRouteValue): string {
   };
   if (validated.expires_at !== undefined) {
     out.expires_at = validated.expires_at;
+  }
+  if (validated.plan_tier !== undefined) {
+    out.plan_tier = validated.plan_tier;
   }
   return JSON.stringify(out);
 }

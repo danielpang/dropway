@@ -27,6 +27,13 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 		if err != nil {
 			return err
 		}
+		// The org's plan tier rides on every route value (v3) so the serving Worker
+		// can gate the free-tier attribution banner. It is per-org (same for all of
+		// this org's routes), so read it once; GetPlanTier fail-softs to "free".
+		planTier, err := q.GetPlanTier(ctx, orgID)
+		if err != nil {
+			return err
+		}
 		for _, r := range rows {
 			if r.VersionID == nil {
 				continue
@@ -51,6 +58,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 					VersionID:     *r.VersionID,
 					AccessMode:    r.AccessMode,
 					SchemaVersion: projection.SchemaVersion,
+					PlanTier:      planTier,
 				}
 			}
 		}
