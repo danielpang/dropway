@@ -101,7 +101,7 @@ func main() {
 	// The dashboard registers the same set in validAudiences so the issued token's aud
 	// matches whatever form the client sent.
 	verifier := coreauth.NewVerifier(jwksURL, issuer, publicURL,
-		coreauth.WithExtraAudiences(publicURL+"/", publicURL+"/mcp", publicURL+"/mcp/"))
+		coreauth.WithExtraAudiences(coreauth.MCPResourceAudiences(publicURL)...))
 	st := store.New(pool)
 	svc := &tools.Service{Store: st, Blobs: objStore}
 
