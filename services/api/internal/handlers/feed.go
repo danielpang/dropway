@@ -23,6 +23,17 @@ const (
 // GET /v1/feed — the org feed
 // ---------------------------------------------------------------------------
 
+// feedItemResponse is one post in the org feed: the site plus its social metadata
+// (vote score, the caller's own vote, comment count). It embeds the standard
+// siteResponse so the dashboard renders each item like a site card and attributes
+// it to its owner, while the extra fields drive the vote controls + comment count.
+type feedItemResponse struct {
+	siteResponse
+	Score        int64 `json:"score"`
+	MyVote       int   `json:"my_vote"`
+	CommentCount int64 `json:"comment_count"`
+}
+
 // ListFeed returns the active org's feed: every site any member has shared (i.e.
 // not marked private), newest first so freshly created/published sites sit at the
 // top and older ones sink to the bottom. Any org member may read it (RLS scopes
@@ -30,9 +41,8 @@ const (
 // the per-user dashboard list. A site joins the feed automatically on create /
 // publish and leaves it only when its owner (or an admin) marks it private.
 //
-// The response reuses the standard siteResponse shape (owner_id, access_mode,
-// live_url, created_at, …) so the dashboard can render each feed item exactly
-// like a site card and attribute it to its owner.
+// Each item carries the post's title/description, its net vote score + the
+// caller's own vote, and its comment count, so the feed page is one round-trip.
 func (a *API) ListFeed(w http.ResponseWriter, r *http.Request) {
 	t, ok := tenant(r.Context())
 	if !ok {
@@ -65,11 +75,66 @@ func (a *API) ListFeed(w http.ResponseWriter, r *http.Request) {
 		bytesBySite[s.SiteID] = s.Bytes
 	}
 
-	out := make([]siteResponse, len(sites))
+	out := make([]feedItemResponse, len(sites))
 	for i, s := range sites {
-		out[i] = a.toSiteResponse(s, orgSlug, bytesBySite[s.ID])
+		out[i] = feedItemResponse{
+			siteResponse: a.toSiteResponse(s.Site, orgSlug, bytesBySite[s.ID]),
+			Score:        s.Score,
+			MyVote:       s.MyVote,
+			CommentCount: s.CommentCount,
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": out})
+}
+
+// ---------------------------------------------------------------------------
+// PUT /v1/sites/{id}/vote  {value}
+// ---------------------------------------------------------------------------
+
+type setVoteRequest struct {
+	// Value is +1 (upvote), -1 (downvote), or 0 (clear the caller's vote).
+	Value int `json:"value"`
+}
+
+// SetSiteVote records the caller's up/down vote on a feed post (or clears it).
+// Any org member may vote (RLS scopes the vote to their org). Returns the site's
+// new net score and the caller's resulting vote so the UI can re-sync.
+func (a *API) SetSiteVote(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	siteID := chi.URLParam(r, "id")
+
+	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	var req setVoteRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+	if req.Value < -1 || req.Value > 1 {
+		httpx.WriteError(w, fmt.Errorf("%w: value must be -1, 0, or 1", httpx.ErrBadRequest))
+		return
+	}
+
+	score, myVote, err := a.Store.SetSiteVote(r.Context(), t, siteID, req.Value)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"site_id": siteID,
+		"score":   score,
+		"my_vote": myVote,
+	})
 }
 
 // ---------------------------------------------------------------------------

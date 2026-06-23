@@ -1,12 +1,11 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { ArrowRight, Globe, Rss } from "lucide-react";
+import { Rss } from "lucide-react";
 
-import { AccessModeBadge } from "@/components/sites/access-mode-badge";
-import { Badge } from "@/components/ui/badge";
+import { FeedPost } from "@/components/feed/feed-post";
+import type { CommentMember } from "@/components/sites/site-comments";
 import { Card } from "@/components/ui/card";
-import { api, ApiError, type Site } from "@/lib/api";
-import { loadActiveOrg } from "@/lib/org";
+import { api, ApiError, type FeedItem } from "@/lib/api";
+import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Feed" };
 
@@ -14,12 +13,11 @@ export const metadata: Metadata = { title: "Feed" };
 export const dynamic = "force-dynamic";
 
 /**
- * The org feed (server component): every site teammates have shared, newest at
- * the top and older sites at the bottom. A site joins the feed automatically when
- * it's created or published, unless its owner makes it private. Each card is
- * attributed to its owner via the org's member list (Better Auth identities).
- *
- * The (app) layout already guarantees an authenticated session + an active org.
+ * The org feed (server component): a newsfeed of every site teammates have
+ * shared, newest first. Each post carries an owner-set title + description
+ * (editable inline by the owner/admin), an up/down vote control, and an
+ * expandable comment thread with @mentions. A site joins the feed automatically
+ * when created or published, unless its owner makes it private.
  */
 export default async function FeedPage() {
   const [feedResult, orgResult] = await Promise.allSettled([
@@ -27,10 +25,10 @@ export default async function FeedPage() {
     loadActiveOrg(),
   ]);
 
-  let sites: Site[] | null = null;
+  let items: FeedItem[] | null = null;
   let loadError: string | null = null;
   if (feedResult.status === "fulfilled") {
-    sites = feedResult.value;
+    items = feedResult.value;
   } else {
     const err = feedResult.reason;
     loadError =
@@ -42,14 +40,15 @@ export default async function FeedPage() {
   const org = orgResult.status === "fulfilled" ? orgResult.value : null;
   const myUserId = org?.myUserId ?? null;
   const orgName = org?.name ?? "your organization";
+  const manage = org ? canManage(org.myRole) : false;
 
-  // Map owner user id → display label so each card can be attributed. Falls back
-  // to "A teammate" when the identity isn't in the member list (e.g. a removed user).
+  // Teammates (for author/mention names + the tag picker) and an owner-label map.
+  const members: CommentMember[] = (org?.members ?? []).map((m) => ({
+    userId: m.userId,
+    name: m.name ?? m.email ?? "A teammate",
+  }));
   const ownerLabel = new Map<string, string>();
-  for (const m of org?.members ?? []) {
-    if (!m.userId) continue;
-    ownerLabel.set(m.userId, m.name ?? m.email ?? "A teammate");
-  }
+  for (const m of members) ownerLabel.set(m.userId, m.name);
   const labelFor = (ownerId: string | undefined): string => {
     if (ownerId && ownerId === myUserId) return "You";
     if (ownerId && ownerLabel.has(ownerId)) return ownerLabel.get(ownerId)!;
@@ -57,12 +56,12 @@ export default async function FeedPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8">
+    <div className="mx-auto max-w-2xl space-y-8">
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Feed</h1>
         <p className="text-muted-foreground">
-          Sites shared across {orgName}, newest first. Make a site private from its
-          access settings to keep it off the feed.
+          Sites shared across {orgName}. Vote, comment, and tag teammates. Make a
+          site private from its access settings to keep it off the feed.
         </p>
       </div>
 
@@ -70,11 +69,17 @@ export default async function FeedPage() {
         <Card className="border-dashed p-10 text-center text-sm text-muted-foreground">
           {loadError} Start the API (api.dropway.dev) and reload.
         </Card>
-      ) : sites && sites.length > 0 ? (
-        <ul className="space-y-3">
-          {sites.map((site) => (
-            <li key={site.id}>
-              <FeedRow site={site} owner={labelFor(site.owner_id)} />
+      ) : items && items.length > 0 ? (
+        <ul className="space-y-4">
+          {items.map((item) => (
+            <li key={item.id}>
+              <FeedPost
+                item={item}
+                owner={labelFor(item.owner_id)}
+                canEdit={manage || (!!myUserId && item.owner_id === myUserId)}
+                members={members}
+                currentUserId={myUserId}
+              />
             </li>
           ))}
         </ul>
@@ -82,59 +87,6 @@ export default async function FeedPage() {
         <EmptyState />
       )}
     </div>
-  );
-}
-
-/** One feed item: a teammate's shared site as a clickable card. */
-function FeedRow({ site, owner }: { site: Site; owner: string }) {
-  const isLive = Boolean(site.current_version_id);
-  return (
-    <Link
-      href={`/sites/${site.id}`}
-      className="group block rounded-lg border border-border bg-card p-5 shadow-sm transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
-              <Globe className="size-4" aria-hidden />
-            </span>
-            <span className="min-w-0 truncate font-medium text-foreground">
-              {site.title?.trim() ? site.title : site.slug}
-            </span>
-          </div>
-          {site.description?.trim() ? (
-            <p className="line-clamp-2 text-sm text-muted-foreground">
-              {site.description}
-            </p>
-          ) : null}
-          <p className="truncate text-xs text-muted-foreground">
-            <span className="text-foreground/80">{owner}</span>
-            {" · "}
-            {formatWhen(site.created_at)}
-          </p>
-          <p className="truncate font-mono text-xs text-muted-foreground">
-            {site.live_url ?? `${site.slug}.dropwaycontent.com`}
-          </p>
-        </div>
-        <ArrowRight
-          className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-          aria-hidden
-        />
-      </div>
-
-      <div className="mt-4 flex items-center gap-2">
-        {isLive ? (
-          <Badge variant="success">
-            <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
-            Live
-          </Badge>
-        ) : (
-          <Badge variant="muted">Not deployed</Badge>
-        )}
-        <AccessModeBadge mode={site.access_mode} />
-      </div>
-    </Link>
   );
 }
 
@@ -154,25 +106,4 @@ function EmptyState() {
       </div>
     </Card>
   );
-}
-
-/**
- * A compact "time ago" for the feed, falling back to an absolute date past a
- * week. Server-rendered against the request time; good enough for a discovery
- * list (no live ticking needed).
- */
-function formatWhen(iso: string | undefined): string {
-  if (!iso) return "recently";
-  const then = new Date(iso);
-  const ms = Date.now() - then.getTime();
-  if (Number.isNaN(ms)) return "recently";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 7) return `${day}d ago`;
-  return then.toLocaleDateString();
 }

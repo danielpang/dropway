@@ -285,6 +285,22 @@ func (q *Queries) DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (i
 	return size_bytes, err
 }
 
+const deleteSiteVote = `-- name: DeleteSiteVote :exec
+DELETE FROM app.site_votes
+WHERE site_id = $1 AND user_id = $2
+`
+
+type DeleteSiteVoteParams struct {
+	SiteID string
+	UserID string
+}
+
+// Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
+func (q *Queries) DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error {
+	_, err := q.db.Exec(ctx, deleteSiteVote, arg.SiteID, arg.UserID)
+	return err
+}
+
 const ensureOrgMeta = `-- name: EnsureOrgMeta :exec
 
 
@@ -607,6 +623,20 @@ func (q *Queries) GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVe
 	return i, err
 }
 
+const getSiteVoteScore = `-- name: GetSiteVoteScore :one
+SELECT COALESCE(SUM(value), 0)::bigint AS score
+FROM app.site_votes
+WHERE site_id = $1
+`
+
+// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+func (q *Queries) GetSiteVoteScore(ctx context.Context, siteID string) (int64, error) {
+	row := q.db.QueryRow(ctx, getSiteVoteScore, siteID)
+	var score int64
+	err := row.Scan(&score)
+	return score, err
+}
+
 const incSiteCount = `-- name: IncSiteCount :one
 UPDATE app.org_usage
 SET sites_count = sites_count + 1,
@@ -838,25 +868,47 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppD
 }
 
 const listFeedSites = `-- name: ListFeedSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
-FROM app.sites
-WHERE feed_visible
-ORDER BY created_at DESC
+SELECT
+    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id,
+    s.feed_visible, s.title, s.description, s.created_at,
+    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+FROM app.sites s
+WHERE s.feed_visible
+ORDER BY s.created_at DESC
 `
 
+type ListFeedSitesRow struct {
+	ID               string
+	OrgID            string
+	Slug             string
+	OwnerUserID      string
+	AccessMode       string
+	CurrentVersionID *string
+	FeedVisible      bool
+	Title            pgtype.Text
+	Description      pgtype.Text
+	CreatedAt        time.Time
+	Score            int64
+	MyVote           int32
+	CommentCount     int64
+}
+
 // The org feed: every site in the active org that is feed-visible (not private),
-// newest first (older sites sink to the bottom). RLS scopes the read to the
-// active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
-// WHERE feed_visible backs both the filter and the order.
-func (q *Queries) ListFeedSites(ctx context.Context) ([]AppSite, error) {
-	rows, err := q.db.Query(ctx, listFeedSites)
+// newest first (older sites sink to the bottom). Each row carries its net vote
+// score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
+// and its comment count, so the feed renders the up/down controls + counts in one
+// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error) {
+	rows, err := q.db.Query(ctx, listFeedSites, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppSite{}
+	items := []ListFeedSitesRow{}
 	for rows.Next() {
-		var i AppSite
+		var i ListFeedSitesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -868,6 +920,9 @@ func (q *Queries) ListFeedSites(ctx context.Context) ([]AppSite, error) {
 			&i.Title,
 			&i.Description,
 			&i.CreatedAt,
+			&i.Score,
+			&i.MyVote,
+			&i.CommentCount,
 		); err != nil {
 			return nil, err
 		}
@@ -1662,6 +1717,32 @@ func (q *Queries) UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAcce
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertSiteVote = `-- name: UpsertSiteVote :exec
+INSERT INTO app.site_votes (site_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (site_id, user_id) DO UPDATE
+SET value = EXCLUDED.value, updated_at = now()
+`
+
+type UpsertSiteVoteParams struct {
+	SiteID string
+	OrgID  string
+	UserID string
+	Value  int16
+}
+
+// Cast (or change) the caller's vote on a site. One row per (site, user); a flip
+// from up to down just overwrites value. RLS scopes the write to the active org.
+func (q *Queries) UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error {
+	_, err := q.db.Exec(ctx, upsertSiteVote,
+		arg.SiteID,
+		arg.OrgID,
+		arg.UserID,
+		arg.Value,
+	)
+	return err
 }
 
 const writeAuditLog = `-- name: WriteAuditLog :one

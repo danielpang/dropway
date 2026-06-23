@@ -27,6 +27,8 @@ import type { components, operations } from "@/lib/api-generated/schema";
 
 export type Me = components["schemas"]["Me"];
 export type Site = components["schemas"]["Site"];
+/** One post in the org feed: a Site plus vote score / the caller's vote / comment count. */
+export type FeedItem = components["schemas"]["FeedItem"];
 export type Version = components["schemas"]["Version"];
 /** One immutable deploy in a site's history (the rollback picker rows). */
 export type SiteVersion = components["schemas"]["SiteVersion"];
@@ -351,9 +353,23 @@ export const api = {
    * newest first. Any member may read it; it's the cross-user discovery surface
    * that complements the per-user site list. Private sites are filtered server-side.
    */
-  async listFeed(): Promise<Site[]> {
-    const body = (await apiGet("/v1/feed")) as { sites?: Site[] };
+  async listFeed(): Promise<FeedItem[]> {
+    const body = (await apiGet("/v1/feed")) as { sites?: FeedItem[] };
     return body.sites ?? [];
+  },
+
+  /**
+   * Cast the caller's vote on a feed post: value 1 (up), -1 (down), or 0 to clear.
+   * Returns the post's new net score and the caller's resulting vote.
+   */
+  setSiteVote(
+    siteId: string,
+    value: -1 | 0 | 1,
+  ): Promise<{ site_id?: string; score?: number; my_vote?: number }> {
+    return apiFetch<{ site_id?: string; score?: number; my_vote?: number }>(
+      `/v1/sites/${siteId}/vote`,
+      { method: "PUT", body: JSON.stringify({ value }) },
+    );
   },
 
   /**

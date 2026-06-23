@@ -4,7 +4,6 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AtSign, Loader2, MessageSquare } from "lucide-react";
 
-import { addCommentAction } from "@/app/(app)/sites/[id]/actions";
 import { Button } from "@/components/ui/button";
 import type { SiteComment } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -14,6 +13,19 @@ export interface CommentMember {
   userId: string;
   name: string;
 }
+
+/** The result shape every "add comment" server action returns. */
+export type AddCommentResult =
+  | { ok: true; comment: SiteComment }
+  | { ok: false; message: string };
+
+/** A server action that posts a comment; injected so the same thread UI works on
+ * both the site detail page and the feed (which revalidate different paths). */
+export type AddCommentFn = (input: {
+  siteId: string;
+  body: string;
+  mentionedUserIds: string[];
+}) => Promise<AddCommentResult>;
 
 const BODY_MAX = 4000;
 
@@ -28,11 +40,13 @@ export function SiteComments({
   initialComments,
   members,
   currentUserId,
+  addAction,
 }: {
   siteId: string;
   initialComments: SiteComment[];
   members: CommentMember[];
   currentUserId: string | null;
+  addAction: AddCommentFn;
 }) {
   const router = useRouter();
 
@@ -76,7 +90,7 @@ export function SiteComments({
       return;
     }
     setPending(true);
-    const result = await addCommentAction({
+    const result = await addAction({
       siteId,
       body,
       mentionedUserIds: Array.from(tagged),

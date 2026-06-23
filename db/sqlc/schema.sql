@@ -116,6 +116,29 @@ CREATE TABLE app.site_access_policy (
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- site_comments: org-internal discussion on a shared site, with @mentions.
+CREATE TABLE app.site_comments (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    author_user_id     uuid NOT NULL,
+    body               text NOT NULL,
+    mentioned_user_ids uuid[] NOT NULL DEFAULT '{}',
+    created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+-- site_votes: up/down votes on feed posts (one per site per user).
+CREATE TABLE app.site_votes (
+    site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    user_id    uuid NOT NULL,
+    value      smallint NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (site_id, user_id),
+    CONSTRAINT site_votes_value_check CHECK (value IN (-1, 1))
+);
+
 -- allowlist_entries: pre-registration email grants for allowlist sites.
 CREATE TABLE app.allowlist_entries (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -127,17 +150,6 @@ CREATE TABLE app.allowlist_entries (
     claimed_by_user_id uuid,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT allowlist_entries_site_email_key UNIQUE (site_id, email)
-);
-
--- site_comments: org-internal discussion on a shared site, with @mentions.
-CREATE TABLE app.site_comments (
-    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
-    author_user_id     uuid NOT NULL,
-    body               text NOT NULL,
-    mentioned_user_ids uuid[] NOT NULL DEFAULT '{}',
-    created_at         timestamptz NOT NULL DEFAULT now()
 );
 
 -- deploy_tokens: hashed bearer tokens for the CLI / CI deploy path.

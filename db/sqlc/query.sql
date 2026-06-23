@@ -189,13 +189,38 @@ ORDER BY created_at DESC;
 
 -- name: ListFeedSites :many
 -- The org feed: every site in the active org that is feed-visible (not private),
--- newest first (older sites sink to the bottom). RLS scopes the read to the
--- active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
--- WHERE feed_visible backs both the filter and the order.
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
-FROM app.sites
-WHERE feed_visible
-ORDER BY created_at DESC;
+-- newest first (older sites sink to the bottom). Each row carries its net vote
+-- score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
+-- and its comment count, so the feed renders the up/down controls + counts in one
+-- query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+SELECT
+    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id,
+    s.feed_visible, s.title, s.description, s.created_at,
+    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+FROM app.sites s
+WHERE s.feed_visible
+ORDER BY s.created_at DESC;
+
+-- name: UpsertSiteVote :exec
+-- Cast (or change) the caller's vote on a site. One row per (site, user); a flip
+-- from up to down just overwrites value. RLS scopes the write to the active org.
+INSERT INTO app.site_votes (site_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (site_id, user_id) DO UPDATE
+SET value = EXCLUDED.value, updated_at = now();
+
+-- name: DeleteSiteVote :exec
+-- Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
+DELETE FROM app.site_votes
+WHERE site_id = $1 AND user_id = $2;
+
+-- name: GetSiteVoteScore :one
+-- A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+SELECT COALESCE(SUM(value), 0)::bigint AS score
+FROM app.site_votes
+WHERE site_id = $1;
 
 -- name: SetSiteFeedVisible :one
 -- Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the

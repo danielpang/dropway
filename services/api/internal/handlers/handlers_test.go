@@ -41,6 +41,7 @@ type fakeStore struct {
 	sites     map[string]store.Site
 	versions  map[string]store.SiteVersion
 	comments  map[string][]store.SiteComment // siteID → thread (oldest first)
+	votes     map[string]map[string]int      // siteID → userID → vote (+1/-1)
 	createErr error
 
 	// orgSlug is the slug OrgSlug returns; defaults to "org" so the canonical host
@@ -69,6 +70,7 @@ func newFakeStore() *fakeStore {
 		sites:    map[string]store.Site{},
 		versions: map[string]store.SiteVersion{},
 		comments: map[string][]store.SiteComment{},
+		votes:    map[string]map[string]int{},
 	}
 }
 
@@ -105,18 +107,45 @@ func (f *fakeStore) ListSites(_ context.Context, t store.Tenant) ([]store.Site, 
 	return out, nil
 }
 
-func (f *fakeStore) ListFeedSites(_ context.Context, t store.Tenant) ([]store.Site, error) {
+func (f *fakeStore) ListFeedSites(_ context.Context, t store.Tenant) ([]store.FeedSite, error) {
 	f.lastTenant = t
-	out := make([]store.Site, 0, len(f.sites))
+	out := make([]store.FeedSite, 0, len(f.sites))
 	for _, s := range f.sites {
-		if s.FeedVisible { // mirror the SQL WHERE feed_visible
-			out = append(out, s)
+		if !s.FeedVisible { // mirror the SQL WHERE feed_visible
+			continue
 		}
+		var score int64
+		for _, v := range f.votes[s.ID] {
+			score += int64(v)
+		}
+		out = append(out, store.FeedSite{
+			Site:         s,
+			Score:        score,
+			MyVote:       f.votes[s.ID][t.UserID],
+			CommentCount: int64(len(f.comments[s.ID])),
+		})
 	}
 	// Newest first; the fake has no created_at, so fall back to a stable id order
 	// (the real store orders by created_at DESC, exercised in the integration test).
 	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
 	return out, nil
+}
+
+func (f *fakeStore) SetSiteVote(_ context.Context, t store.Tenant, siteID string, value int) (int64, int, error) {
+	f.lastTenant = t
+	if f.votes[siteID] == nil {
+		f.votes[siteID] = map[string]int{}
+	}
+	if value == 0 {
+		delete(f.votes[siteID], t.UserID)
+	} else {
+		f.votes[siteID][t.UserID] = value
+	}
+	var score int64
+	for _, v := range f.votes[siteID] {
+		score += int64(v)
+	}
+	return score, value, nil
 }
 
 func (f *fakeStore) SetSiteFeedVisible(_ context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error) {

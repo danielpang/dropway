@@ -135,3 +135,12 @@ type AppSiteVersion struct {
 	CreatedBy   string
 	CreatedAt   time.Time
 }
+
+type AppSiteVote struct {
+	SiteID    string
+	OrgID     string
+	UserID    string
+	Value     int16
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}

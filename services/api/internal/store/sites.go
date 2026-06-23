@@ -400,24 +400,88 @@ func (s *Store) ListSites(ctx context.Context, t Tenant) ([]Site, error) {
 	return out, err
 }
 
+// FeedSite is a feed post: a site plus its social metadata (net vote score, the
+// caller's own vote, and its comment count) for the org feed listing.
+type FeedSite struct {
+	Site
+	// Score is the net up/down vote total. MyVote is the caller's own vote
+	// (+1/-1/0). CommentCount is the number of comments on the site.
+	Score        int64
+	MyVote       int
+	CommentCount int64
+}
+
 // ListFeedSites returns the active org's feed — every site that is feed-visible
-// (not marked private), newest first. RLS scopes the query to the org, so a
+// (not marked private), newest first, each enriched with its vote score, the
+// caller's own vote, and its comment count. RLS scopes the query to the org, so a
 // member's feed is exactly their org's shared sites. Private sites (feed_visible
 // = false) are filtered in SQL and never leave the store on this path.
-func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]Site, error) {
-	var out []Site
+func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]FeedSite, error) {
+	var out []FeedSite
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListFeedSites(ctx)
+		rows, err := q.ListFeedSites(ctx, t.UserID)
 		if err != nil {
 			return err
 		}
-		out = make([]Site, len(rows))
+		out = make([]FeedSite, len(rows))
 		for i, r := range rows {
-			out[i] = siteFromDB(r)
+			site := Site{
+				ID:               r.ID,
+				OrgID:            r.OrgID,
+				Slug:             r.Slug,
+				OwnerUserID:      r.OwnerUserID,
+				AccessMode:       r.AccessMode,
+				CurrentVersionID: r.CurrentVersionID,
+				FeedVisible:      r.FeedVisible,
+				CreatedAt:        r.CreatedAt,
+			}
+			if r.Title.Valid {
+				site.Title = r.Title.String
+			}
+			if r.Description.Valid {
+				site.Description = r.Description.String
+			}
+			out[i] = FeedSite{
+				Site:         site,
+				Score:        r.Score,
+				MyVote:       int(r.MyVote),
+				CommentCount: r.CommentCount,
+			}
 		}
 		return nil
 	})
 	return out, err
+}
+
+// SetSiteVote records the caller's vote on a site: value +1 (up) or -1 (down)
+// upserts the single (site, user) row; value 0 removes it (un-vote). It returns
+// the site's new net score and the caller's resulting vote. RLS scopes the writes
+// to the active org.
+func (s *Store) SetSiteVote(ctx context.Context, t Tenant, siteID string, value int) (score int64, myVote int, err error) {
+	err = s.withTx(ctx, t, func(q *db.Queries) error {
+		if value == 0 {
+			if derr := q.DeleteSiteVote(ctx, db.DeleteSiteVoteParams{SiteID: siteID, UserID: t.UserID}); derr != nil {
+				return derr
+			}
+		} else {
+			if uerr := q.UpsertSiteVote(ctx, db.UpsertSiteVoteParams{
+				SiteID: siteID,
+				OrgID:  t.OrgID,
+				UserID: t.UserID,
+				Value:  int16(value),
+			}); uerr != nil {
+				return uerr
+			}
+		}
+		sc, serr := q.GetSiteVoteScore(ctx, siteID)
+		if serr != nil {
+			return serr
+		}
+		score = sc
+		myVote = value
+		return nil
+	})
+	return score, myVote, err
 }
 
 // SetSiteFeedVisible flips a site's feed visibility (share to the org feed vs.

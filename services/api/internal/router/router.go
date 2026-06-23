@@ -133,6 +133,8 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Put("/{id}/feed", api.SetSiteFeedVisibility)
 			// Feed metadata (title + description), same owner-or-admin gate.
 			r.Put("/{id}/feed-meta", api.SetSiteFeedMeta)
+			// Up/down vote a feed post (any member; +1/-1/0 to clear).
+			r.Put("/{id}/vote", api.SetSiteVote)
 
 			// Site comments: any org member may read + post (org-internal thread,
 			// RLS-scoped). Posting can tag teammates (@mentions).

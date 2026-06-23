@@ -7,6 +7,7 @@ import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployTabs } from "@/components/sites/deploy-tabs";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
+import { addCommentAction } from "@/app/(app)/sites/[id]/actions";
 import { SiteComments, type CommentMember } from "@/components/sites/site-comments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -235,6 +236,7 @@ export default async function SiteDetailPage({
             initialComments={comments}
             members={commentMembers}
             currentUserId={org?.myUserId ?? null}
+            addAction={addCommentAction}
           />
         </CardContent>
       </Card>

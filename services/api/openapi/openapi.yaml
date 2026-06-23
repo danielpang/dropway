@@ -338,7 +338,7 @@ paths:
                 properties:
                   sites:
                     type: array
-                    items: { $ref: "#/components/schemas/Site" }
+                    items: { $ref: "#/components/schemas/FeedItem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /v1/sites:
@@ -652,6 +652,43 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/vote:
+    put:
+      summary: Up/down vote a feed post (any org member)
+      description: >
+        Records the caller's vote on a site: value 1 (up), -1 (down), or 0 to clear
+        it. One vote per member per site. Returns the post's new net score and the
+        caller's resulting vote.
+      operationId: setSiteVote
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: integer
+                  enum: [-1, 0, 1]
+                  description: 1 upvote, -1 downvote, 0 clears the caller's vote.
+      responses:
+        "200":
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id: { type: string, format: uuid }
+                  score: { type: integer, format: int64 }
+                  my_vote: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/sites/{id}/comments:
@@ -1083,6 +1120,26 @@ components:
           type: string
           description: Owner-set description shown in the org feed (empty when unset).
         created_at: { type: string, format: date-time }
+
+    FeedItem:
+      description: >
+        One post in the org feed: a Site plus its social metadata (net vote score,
+        the caller's own vote, and its comment count).
+      allOf:
+        - $ref: "#/components/schemas/Site"
+        - type: object
+          properties:
+            score:
+              type: integer
+              format: int64
+              description: Net up/down vote total (sum of +1/-1).
+            my_vote:
+              type: integer
+              description: The caller's own vote on this post (1, -1, or 0).
+            comment_count:
+              type: integer
+              format: int64
+              description: Number of comments on this post.
 
     SiteComment:
       type: object

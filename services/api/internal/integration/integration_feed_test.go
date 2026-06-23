@@ -165,6 +165,40 @@ func TestIntegration_Feed(t *testing.T) {
 	if len(threadB) != 0 {
 		t.Fatalf("org B should see no comments on org A's site, got %d", len(threadB))
 	}
+
+	// --- Votes: two members upvote, one downvotes; score nets out, and the feed
+	// reflects each caller's own vote. ---
+	if _, _, err := st.SetSiteVote(ctx, tA, s1.ID, 1); err != nil { // owner +1
+		t.Fatalf("owner upvote: %v", err)
+	}
+	score, myVote, err := st.SetSiteVote(ctx, tAMember, s1.ID, 1) // member +1
+	must2(t, err)
+	if score != 2 || myVote != 1 {
+		t.Fatalf("after two upvotes score=%d my_vote=%d, want 2/1", score, myVote)
+	}
+	// The owner changes their mind and downvotes: 2 → 0 (member +1, owner -1).
+	score, _, err = st.SetSiteVote(ctx, tA, s1.ID, -1)
+	must2(t, err)
+	if score != 0 {
+		t.Fatalf("after owner flips to downvote, score=%d, want 0", score)
+	}
+	// The feed carries the score + the viewing member's own vote (+1).
+	feedA, err := st.ListFeedSites(ctx, tA)
+	must2(t, err)
+	if sc, mv, ok := feedScore(feedA, "oldest"); !ok || sc != 0 || mv != -1 {
+		t.Fatalf("feed score for owner = (%d,%d) ok=%v, want (0,-1)", sc, mv, ok)
+	}
+	feedM, err := st.ListFeedSites(ctx, tAMember)
+	must2(t, err)
+	if sc, mv, ok := feedScore(feedM, "oldest"); !ok || sc != 0 || mv != 1 {
+		t.Fatalf("feed score for member = (%d,%d) ok=%v, want (0,1)", sc, mv, ok)
+	}
+	// Un-voting removes the member's vote: score 0 → -1.
+	score, myVote, err = st.SetSiteVote(ctx, tAMember, s1.ID, 0)
+	must2(t, err)
+	if score != -1 || myVote != 0 {
+		t.Fatalf("after member un-votes score=%d my_vote=%d, want -1/0", score, myVote)
+	}
 }
 
 // must2 fails the test on a non-nil error (a two-value helper for the `x, err :=`
@@ -176,12 +210,22 @@ func must2(t *testing.T, err error) {
 	}
 }
 
-func slugs(sites []store.Site) []string {
+func slugs(sites []store.FeedSite) []string {
 	out := make([]string, len(sites))
 	for i, s := range sites {
 		out[i] = s.Slug
 	}
 	return out
+}
+
+// feedScore returns the score + the caller's vote for the named slug in a feed.
+func feedScore(feed []store.FeedSite, slug string) (int64, int, bool) {
+	for _, s := range feed {
+		if s.Slug == slug {
+			return s.Score, s.MyVote, true
+		}
+	}
+	return 0, 0, false
 }
 
 func equalStrings(a, b []string) bool {

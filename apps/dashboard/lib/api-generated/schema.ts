@@ -436,6 +436,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/vote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Up/down vote a feed post (any org member)
+         * @description Records the caller's vote on a site: value 1 (up), -1 (down), or 0 to clear it. One vote per member per site. Returns the post's new net score and the caller's resulting vote.
+         */
+        put: operations["setSiteVote"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{id}/comments": {
         parameters: {
             query?: never;
@@ -674,6 +694,21 @@ export interface components {
             description?: string;
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description One post in the org feed: a Site plus its social metadata (net vote score, the caller's own vote, and its comment count). */
+        FeedItem: components["schemas"]["Site"] & {
+            /**
+             * Format: int64
+             * @description Net up/down vote total (sum of +1/-1).
+             */
+            score?: number;
+            /** @description The caller's own vote on this post (1, -1, or 0). */
+            my_vote?: number;
+            /**
+             * Format: int64
+             * @description Number of comments on this post.
+             */
+            comment_count?: number;
         };
         /** @description One org-internal comment on a site, optionally tagging teammates. */
         SiteComment: {
@@ -1184,7 +1219,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        sites?: components["schemas"]["Site"][];
+                        sites?: components["schemas"]["FeedItem"][];
                     };
                 };
             };
@@ -1534,6 +1569,48 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteVote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description 1 upvote, -1 downvote, 0 clears the caller's vote.
+                     * @enum {integer}
+                     */
+                    value: -1 | 0 | 1;
+                };
+            };
+        };
+        responses: {
+            /** @description Vote recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        /** Format: int64 */
+                        score?: number;
+                        my_vote?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
         };
     };

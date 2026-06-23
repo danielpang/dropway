@@ -47,6 +47,8 @@ type Querier interface {
 	// size lets the caller decrement the running total. No row = it wasn't in the
 	// ledger (e.g. uploaded before metering existed) → nothing to decrement.
 	DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (int64, error)
+	// Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
+	DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error
 	// SPDX-License-Identifier: FSL-1.1-Apache-2.0
 	//
 	// db/sqlc/query.sql
@@ -97,6 +99,8 @@ type Querier interface {
 	// Used to make a re-deploy of identical content idempotent (the per-site
 	// content_hash unique constraint backs this).
 	GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVersionByContentHashParams) (AppSiteVersion, error)
+	// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+	GetSiteVoteScore(ctx context.Context, siteID string) (int64, error)
 	// Bump the org's sites_count counter, returning the new value. Run inside the
 	// create-site tx after the row is inserted.
 	IncSiteCount(ctx context.Context, orgID string) (int32, error)
@@ -128,10 +132,11 @@ type Querier interface {
 	ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error)
 	ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error)
 	// The org feed: every site in the active org that is feed-visible (not private),
-	// newest first (older sites sink to the bottom). RLS scopes the read to the
-	// active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
-	// WHERE feed_visible backs both the filter and the order.
-	ListFeedSites(ctx context.Context) ([]AppSite, error)
+	// newest first (older sites sink to the bottom). Each row carries its net vote
+	// score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
+	// and its comment count, so the feed renders the up/down controls + counts in one
+	// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+	ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error)
 	// Every host registered for a site in the GLOBAL registry — the canonical
 	// <slug>.dropwaycontent.com host AND every verified custom-domain host. RLS
 	// scopes the rows to the active org, so a caller only ever sees its own site's
@@ -262,6 +267,9 @@ type Querier interface {
 	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
 	// under a false org policy.
 	UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAccessPolicyParams) (AppSiteAccessPolicy, error)
+	// Cast (or change) the caller's vote on a site. One row per (site, user); a flip
+	// from up to down just overwrites value. RLS scopes the write to the active org.
+	UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error
 	// NOTE: resolving a content host → owning site via the RLS-bypassing
 	// app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
 	// pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types

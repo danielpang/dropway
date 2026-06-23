@@ -25,6 +25,7 @@ func mountFeed(a *API, c *auth.Claims) http.Handler {
 		r.Use(middleware.Auth(v))
 		r.Get("/v1/feed", a.ListFeed)
 		r.Put("/v1/sites/{id}/feed", a.SetSiteFeedVisibility)
+		r.Put("/v1/sites/{id}/vote", a.SetSiteVote)
 	})
 	return r
 }
@@ -131,6 +132,79 @@ func TestSetFeedVisibility_AdminCanToggleOthers(t *testing.T) {
 	rr := putJSON(h, "/v1/sites/site_1/feed", `{"visible":false}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("admin toggle status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestSetVote_UpThenClear verifies an upvote raises the score and a follow-up
+// value=0 clears it, and that the feed reflects the caller's own vote.
+func TestSetVote_UpThenClear(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s", OwnerUserID: "user_2", FeedVisible: true}
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+	h := mountFeed(a, claims("user_1", "org_1", "member"))
+
+	rr := putJSON(h, "/v1/sites/site_1/vote", `{"value":1}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upvote status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Score  int64 `json:"score"`
+		MyVote int   `json:"my_vote"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Score != 1 || resp.MyVote != 1 {
+		t.Fatalf("after upvote score=%d my_vote=%d, want 1/1", resp.Score, resp.MyVote)
+	}
+
+	// The feed shows the caller's vote + score.
+	var feed struct {
+		Sites []struct {
+			Score  int64 `json:"score"`
+			MyVote int   `json:"my_vote"`
+		} `json:"sites"`
+	}
+	if err := json.Unmarshal(getReq(h, "/v1/feed").Body.Bytes(), &feed); err != nil {
+		t.Fatalf("decode feed: %v", err)
+	}
+	if len(feed.Sites) != 1 || feed.Sites[0].Score != 1 || feed.Sites[0].MyVote != 1 {
+		t.Fatalf("feed = %+v, want score/my_vote 1", feed.Sites)
+	}
+
+	// Clearing the vote drops the score back to 0.
+	rr = putJSON(h, "/v1/sites/site_1/vote", `{"value":0}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear status = %d: %s", rr.Code, rr.Body.String())
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Score != 0 || resp.MyVote != 0 {
+		t.Fatalf("after clear score=%d my_vote=%d, want 0/0", resp.Score, resp.MyVote)
+	}
+}
+
+// TestSetVote_BadValue400 rejects an out-of-range vote.
+func TestSetVote_BadValue400(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s", FeedVisible: true}
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+	h := mountFeed(a, claims("user_1", "org_1", "member"))
+
+	rr := putJSON(h, "/v1/sites/site_1/vote", `{"value":5}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestSetVote_UnknownSite404 votes on an absent site → 404.
+func TestSetVote_UnknownSite404(t *testing.T) {
+	fs := newFakeStore()
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+	h := mountFeed(a, claims("user_1", "org_1", "member"))
+
+	rr := putJSON(h, "/v1/sites/missing/vote", `{"value":1}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rr.Code, rr.Body.String())
 	}
 }
 
