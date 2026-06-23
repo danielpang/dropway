@@ -2,16 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
-import { api, ApiError, type SiteComment } from "@/lib/api";
-
-/** Friendly message for a feed-action ApiError, with status fallbacks. */
-function messageFor(err: ApiError, fallback: string): string {
-  const apiMsg = (err.body as { message?: string } | null)?.message;
-  if (apiMsg) return apiMsg;
-  if (err.status === 403) return "You don't have permission to do that.";
-  if (err.status === 404) return "This site no longer exists.";
-  return fallback;
-}
+import { api, type SiteComment } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/action-errors";
 
 export type VoteActionResult =
   | { ok: true; score: number; myVote: number }
@@ -29,10 +21,7 @@ export async function voteAction(input: {
     const res = await api.setSiteVote(input.siteId, input.value);
     return { ok: true, score: res.score ?? 0, myVote: res.my_vote ?? 0 };
   } catch (err) {
-    if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not record your vote. Try again.") };
-    }
-    return { ok: false, message: "Could not reach the API. Try again." };
+    return { ok: false, message: apiErrorMessage(err, "Could not record your vote. Try again.") };
   }
 }
 
@@ -66,10 +55,7 @@ export async function setPostMetaAction(input: {
       description: res.description ?? description,
     };
   } catch (err) {
-    if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not update the post. Try again.") };
-    }
-    return { ok: false, message: "Could not reach the API. Try again." };
+    return { ok: false, message: apiErrorMessage(err, "Could not update the post. Try again.") };
   }
 }
 
@@ -98,10 +84,7 @@ export async function addFeedCommentAction(input: {
     revalidatePath("/feed");
     return { ok: true, comment };
   } catch (err) {
-    if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not post your comment. Try again.") };
-    }
-    return { ok: false, message: "Could not reach the API. Try again." };
+    return { ok: false, message: apiErrorMessage(err, "Could not post your comment. Try again.") };
   }
 }
 
@@ -117,9 +100,6 @@ export async function listFeedCommentsAction(
     const comments = await api.listComments(siteId);
     return { ok: true, comments };
   } catch (err) {
-    if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not load comments. Try again.") };
-    }
-    return { ok: false, message: "Could not reach the API. Try again." };
+    return { ok: false, message: apiErrorMessage(err, "Could not load comments. Try again.") };
   }
 }

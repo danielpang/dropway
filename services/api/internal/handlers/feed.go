@@ -110,8 +110,18 @@ func (a *API) SetSiteVote(w http.ResponseWriter, r *http.Request) {
 	}
 	siteID := chi.URLParam(r, "id")
 
-	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
+	// Voting is a FEED interaction (votes only rank the feed listing), so a site the
+	// owner has pulled from the feed accepts no votes. Resolve under RLS (404 for an
+	// absent/other-tenant site) and require it to be feed-visible. Comments, by
+	// contrast, are a site-level feature (shown on the site detail page) and are
+	// intentionally NOT gated on feed visibility.
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if !site.FeedVisible {
+		httpx.WriteError(w, fmt.Errorf("%w: this site is not on the org feed", httpx.ErrNotFound))
 		return
 	}
 
@@ -171,9 +181,15 @@ func (a *API) SetSiteFeedVisibility(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	// Owner-or-admin: the site owner manages their own feed sharing; everyone else
-	// must be an org admin/owner (requireAdmin writes the 403 on failure).
-	if site.OwnerUserID != t.UserID && !a.requireAdmin(w, r, t) {
+	// Owner-or-admin: the site owner manages their own feed sharing, but their
+	// membership must still be LIVE (an ex-member must not manage their old site on
+	// a stale JWT); everyone else must be an org admin/owner. Both helpers write the
+	// 403 on failure.
+	if site.OwnerUserID == t.UserID {
+		if !a.requireOrgMember(w, r, t) {
+			return
+		}
+	} else if !a.requireAdmin(w, r, t) {
 		return
 	}
 
@@ -230,7 +246,13 @@ func (a *API) SetSiteFeedMeta(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if site.OwnerUserID != t.UserID && !a.requireAdmin(w, r, t) {
+	// Owner-or-admin, with the owner's membership re-checked live (see
+	// SetSiteFeedVisibility).
+	if site.OwnerUserID == t.UserID {
+		if !a.requireOrgMember(w, r, t) {
+			return
+		}
+	} else if !a.requireAdmin(w, r, t) {
 		return
 	}
 

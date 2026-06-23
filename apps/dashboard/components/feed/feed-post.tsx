@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   ChevronDown,
@@ -29,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { FeedItem, SiteComment } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 
 /**
  * One post in the org feed (Facebook-newsfeed style): owner-set title +
@@ -153,18 +152,25 @@ function PostHeader({
   owner: string;
   canEdit: boolean;
 }) {
-  const router = useRouter();
   const siteId = item.id ?? "";
   const slug = item.slug ?? "";
 
   const [editing, setEditing] = React.useState(false);
+  // savedTitle/savedDescription drive the DISPLAY; title/description are the edit
+  // draft. The action returns the persisted values, so we update the display from
+  // them instead of a full-page router.refresh (the action revalidates the route
+  // cache for the next navigation).
+  const [savedTitle, setSavedTitle] = React.useState(item.title ?? "");
+  const [savedDescription, setSavedDescription] = React.useState(
+    item.description ?? "",
+  );
   const [title, setTitle] = React.useState(item.title ?? "");
   const [description, setDescription] = React.useState(item.description ?? "");
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const isLive = Boolean(item.current_version_id);
-  const displayTitle = (item.title ?? "").trim() || slug;
+  const displayTitle = savedTitle.trim() || slug;
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
@@ -173,8 +179,9 @@ function PostHeader({
     const result = await setPostMetaAction({ siteId, title, description });
     setPending(false);
     if (result.ok) {
+      setSavedTitle(result.title);
+      setSavedDescription(result.description);
       setEditing(false);
-      router.refresh();
     } else {
       setError(result.message);
     }
@@ -221,8 +228,8 @@ function PostHeader({
             variant="ghost"
             disabled={pending}
             onClick={() => {
-              setTitle(item.title ?? "");
-              setDescription(item.description ?? "");
+              setTitle(savedTitle);
+              setDescription(savedDescription);
               setError(null);
               setEditing(false);
             }}
@@ -250,7 +257,11 @@ function PostHeader({
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              setTitle(savedTitle);
+              setDescription(savedDescription);
+              setEditing(true);
+            }}
           >
             <Pencil aria-hidden />
             Edit
@@ -258,16 +269,16 @@ function PostHeader({
         )}
       </div>
 
-      {(item.description ?? "").trim() && (
+      {savedDescription.trim() && (
         <p className="whitespace-pre-wrap break-words text-sm text-foreground/90">
-          {item.description}
+          {savedDescription}
         </p>
       )}
 
       <p className="text-xs text-muted-foreground">
         <span className="text-foreground/80">{owner}</span>
         {" · "}
-        {formatWhen(item.created_at)}
+        {formatRelativeTime(item.created_at, "recently")}
       </p>
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -361,27 +372,11 @@ function CommentSection({
               members={members}
               currentUserId={currentUserId}
               addAction={addFeedCommentAction}
+              onCommentPosted={(c) => setComments((prev) => [...prev, c])}
             />
           )}
         </div>
       )}
     </div>
   );
-}
-
-/** Compact "time ago", falling back to an absolute date past a week. */
-function formatWhen(iso: string | undefined): string {
-  if (!iso) return "recently";
-  const then = new Date(iso);
-  const ms = Date.now() - then.getTime();
-  if (Number.isNaN(ms)) return "recently";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 7) return `${day}d ago`;
-  return then.toLocaleDateString();
 }

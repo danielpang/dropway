@@ -44,7 +44,7 @@ export function FeedVisibilityToggle({
       setNotice(
         result.feedVisible
           ? "Shared to the org feed."
-          : "Hidden from the org feed — this site is private.",
+          : "Hidden from the org feed. This site is private.",
       );
       router.refresh();
     } else {
@@ -62,8 +62,8 @@ export function FeedVisibilityToggle({
           </p>
           <p id="feed-vis-desc" className="text-sm text-muted-foreground">
             When on, this site appears in your organization&rsquo;s feed so
-            teammates can discover it. Turn it off to keep the site private — it
-            stays out of the feed but its access settings are unchanged.
+            teammates can discover it. Turn it off to keep the site private. It
+            stays out of the feed, but its access settings are unchanged.
           </p>
         </div>
         <div className="pt-0.5">

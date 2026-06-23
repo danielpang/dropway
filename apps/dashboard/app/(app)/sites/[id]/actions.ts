@@ -11,6 +11,7 @@ import {
   type SiteComment,
   type Version,
 } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/action-errors";
 
 export type AddCommentActionResult =
   | { ok: true; comment: SiteComment }
@@ -41,15 +42,7 @@ export async function addCommentAction(input: {
     revalidatePath(`/sites/${input.siteId}`);
     return { ok: true, comment };
   } catch (err) {
-    if (err instanceof ApiError) {
-      const message =
-        (err.body as { message?: string } | null)?.message ??
-        (err.status === 404
-          ? "This site no longer exists."
-          : "Could not post your comment. Try again.");
-      return { ok: false, message };
-    }
-    return { ok: false, message: "Could not reach the API. Try again." };
+    return { ok: false, message: apiErrorMessage(err, "Could not post your comment. Try again.") };
   }
 }
 

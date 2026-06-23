@@ -3,6 +3,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -151,7 +152,7 @@ func (a *API) validMentions(r *http.Request, t store.Tenant, requested []string)
 	if err != nil {
 		// A self-host without the Better Auth member table can't validate mentions;
 		// fail safe by dropping them rather than erroring the whole comment.
-		if err.Error() == store.ErrAuthSchemaUnavailable.Error() {
+		if errors.Is(err, store.ErrAuthSchemaUnavailable) {
 			return []string{}, nil
 		}
 		return nil, err

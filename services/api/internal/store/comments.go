@@ -9,6 +9,11 @@ import (
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
+// maxCommentsPerThread bounds how many comments a single thread read returns (the
+// most recent ones), so a long-lived thread can't load an unbounded result into
+// memory or over the wire. Full pagination is a future follow-up.
+const maxCommentsPerThread = 200
+
 // SiteComment is one org-internal comment on a site, optionally tagging teammates.
 type SiteComment struct {
 	ID               string
@@ -59,7 +64,10 @@ func (s *Store) CreateSiteComment(ctx context.Context, t Tenant, p CreateSiteCom
 func (s *Store) ListSiteComments(ctx context.Context, t Tenant, siteID string) ([]SiteComment, error) {
 	var out []SiteComment
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListSiteComments(ctx, siteID)
+		rows, err := q.ListSiteComments(ctx, db.ListSiteCommentsParams{
+			SiteID: siteID,
+			Limit:  maxCommentsPerThread,
+		})
 		if err != nil {
 			return err
 		}

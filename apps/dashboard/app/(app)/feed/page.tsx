@@ -101,7 +101,7 @@ function EmptyState() {
         <p className="font-medium text-foreground">Nothing shared yet</p>
         <p className="text-sm text-muted-foreground">
           When you or a teammate creates or publishes a site, it shows up here
-          automatically — unless it&rsquo;s marked private.
+          automatically, unless it&rsquo;s marked private.
         </p>
       </div>
     </Card>

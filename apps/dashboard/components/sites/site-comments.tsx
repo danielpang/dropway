@@ -1,12 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { AtSign, Loader2, MessageSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { SiteComment } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 
 /** A taggable org teammate (resolved from the org member list). */
 export interface CommentMember {
@@ -41,15 +40,17 @@ export function SiteComments({
   members,
   currentUserId,
   addAction,
+  onCommentPosted,
 }: {
   siteId: string;
   initialComments: SiteComment[];
   members: CommentMember[];
   currentUserId: string | null;
   addAction: AddCommentFn;
+  /** Notified when a comment is posted, so a parent (e.g. the feed post's count
+   * badge) can stay in sync without a full server refetch. */
+  onCommentPosted?: (comment: SiteComment) => void;
 }) {
-  const router = useRouter();
-
   const [comments, setComments] = React.useState<SiteComment[]>(initialComments);
   const [body, setBody] = React.useState("");
   const [tagged, setTagged] = React.useState<Set<string>>(new Set());
@@ -96,10 +97,13 @@ export function SiteComments({
       mentionedUserIds: Array.from(tagged),
     });
     if (result.ok) {
+      // Optimistic append (the action already revalidates the route cache for the
+      // next navigation, so no immediate full-page refetch is needed); notify the
+      // parent so any derived count stays in sync.
       setComments((prev) => [...prev, result.comment]);
+      onCommentPosted?.(result.comment);
       setBody("");
       setTagged(new Set());
-      router.refresh();
     } else {
       setError(result.message);
     }
@@ -124,7 +128,7 @@ export function SiteComments({
                     {labelFor(c.author_id ?? "")}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    {formatWhen(c.created_at)}
+                    {formatRelativeTime(c.created_at)}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap break-words text-sm text-foreground/90">
@@ -221,21 +225,4 @@ function initials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2);
   const s = parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
   return s || "?";
-}
-
-/** Compact "time ago", falling back to an absolute date past a week. */
-function formatWhen(iso: string | undefined): string {
-  if (!iso) return "just now";
-  const then = new Date(iso);
-  const ms = Date.now() - then.getTime();
-  if (Number.isNaN(ms)) return "just now";
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 7) return `${day}d ago`;
-  return then.toLocaleDateString();
 }

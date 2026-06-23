@@ -869,8 +869,7 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppD
 
 const listFeedSites = `-- name: ListFeedSites :many
 SELECT
-    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id,
-    s.feed_visible, s.title, s.description, s.created_at,
+    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at,
     COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
     COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
@@ -880,19 +879,10 @@ ORDER BY s.created_at DESC
 `
 
 type ListFeedSitesRow struct {
-	ID               string
-	OrgID            string
-	Slug             string
-	OwnerUserID      string
-	AccessMode       string
-	CurrentVersionID *string
-	FeedVisible      bool
-	Title            pgtype.Text
-	Description      pgtype.Text
-	CreatedAt        time.Time
-	Score            int64
-	MyVote           int32
-	CommentCount     int64
+	AppSite      AppSite
+	Score        int64
+	MyVote       int32
+	CommentCount int64
 }
 
 // The org feed: every site in the active org that is feed-visible (not private),
@@ -910,16 +900,16 @@ func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedS
 	for rows.Next() {
 		var i ListFeedSitesRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.Slug,
-			&i.OwnerUserID,
-			&i.AccessMode,
-			&i.CurrentVersionID,
-			&i.FeedVisible,
-			&i.Title,
-			&i.Description,
-			&i.CreatedAt,
+			&i.AppSite.ID,
+			&i.AppSite.OrgID,
+			&i.AppSite.Slug,
+			&i.AppSite.OwnerUserID,
+			&i.AppSite.AccessMode,
+			&i.AppSite.CurrentVersionID,
+			&i.AppSite.FeedVisible,
+			&i.AppSite.Title,
+			&i.AppSite.Description,
+			&i.AppSite.CreatedAt,
 			&i.Score,
 			&i.MyVote,
 			&i.CommentCount,
@@ -1067,15 +1057,27 @@ func (q *Queries) ListPublishedSitesForRebuild(ctx context.Context) ([]ListPubli
 
 const listSiteComments = `-- name: ListSiteComments :many
 SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-FROM app.site_comments
-WHERE site_id = $1
+FROM (
+    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.site_comments
+    WHERE site_id = $1
+    ORDER BY created_at DESC, id DESC
+    LIMIT $2
+) recent
 ORDER BY created_at ASC, id ASC
 `
 
-// A site's comment thread, oldest first (reads top-to-bottom like a conversation).
-// RLS scopes the read to the active org; the (site_id, created_at) index backs it.
-func (q *Queries) ListSiteComments(ctx context.Context, siteID string) ([]AppSiteComment, error) {
-	rows, err := q.db.Query(ctx, listSiteComments, siteID)
+type ListSiteCommentsParams struct {
+	SiteID string
+	Limit  int32
+}
+
+// A site's comment thread, displayed oldest-first (top-to-bottom like a
+// conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+// load an unbounded result. RLS scopes the read to the active org; the
+// (site_id, created_at) index backs both the inner ordering and the outer.
+func (q *Queries) ListSiteComments(ctx context.Context, arg ListSiteCommentsParams) ([]AppSiteComment, error) {
+	rows, err := q.db.Query(ctx, listSiteComments, arg.SiteID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

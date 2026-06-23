@@ -9,6 +9,7 @@ import {
   type AllowlistEntry,
   type SetAccessResult,
 } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/action-errors";
 
 /** UI-level access selection. "unlisted" maps to mode=public + unlisted flag. */
 export type AccessSelection =
@@ -22,15 +23,13 @@ export type SetAccessActionResult =
   | { ok: true; result: SetAccessResult }
   | { ok: false; message: string };
 
+// Thin wrapper over the shared apiErrorMessage with this surface's access-specific
+// 403/400 copy, so the mapping lives in one place (lib/action-errors).
 function messageFor(err: ApiError, fallback: string): string {
-  const apiMsg = (err.body as { message?: string } | null)?.message;
-  if (apiMsg) return apiMsg;
-  if (err.status === 403) {
-    return "You don't have permission to change this site's access, or external sharing is disabled for your org.";
-  }
-  if (err.status === 400) return "That access configuration is invalid.";
-  if (err.status === 404) return "This site no longer exists.";
-  return fallback;
+  return apiErrorMessage(err, fallback, {
+    403: "You don't have permission to change this site's access, or external sharing is disabled for your org.",
+    400: "That access configuration is invalid.",
+  });
 }
 
 /**

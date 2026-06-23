@@ -26,3 +26,27 @@ export function formatBytes(bytes: number): string {
   const formatted = i === 0 ? String(value) : value.toFixed(1);
   return `${formatted} ${units[i]}`;
 }
+
+/**
+ * Compact "time ago" for an ISO timestamp (e.g. "just now", "5m ago", "3h ago",
+ * "2d ago"), falling back to an absolute date past a week. `fallback` is returned
+ * for a missing or unparseable timestamp. Shared by the feed and comment threads.
+ */
+export function formatRelativeTime(
+  iso: string | undefined,
+  fallback = "just now",
+): string {
+  if (!iso) return fallback;
+  const then = new Date(iso);
+  const ms = Date.now() - then.getTime();
+  if (Number.isNaN(ms)) return fallback;
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return then.toLocaleDateString();
+}

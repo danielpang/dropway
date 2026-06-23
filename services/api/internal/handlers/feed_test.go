@@ -183,6 +183,41 @@ func TestSetVote_UpThenClear(t *testing.T) {
 	}
 }
 
+// TestSetVote_OffFeedSiteRejected verifies a site the owner has pulled from the
+// feed (feed_visible=false) accepts no votes: voting is a feed-only interaction.
+func TestSetVote_OffFeedSiteRejected(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s", OwnerUserID: "user_2", FeedVisible: false}
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+	h := mountFeed(a, claims("user_1", "org_1", "member"))
+
+	rr := putJSON(h, "/v1/sites/site_1/vote", `{"value":1}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("vote on off-feed site status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := fs.votes["site_1"]; ok {
+		t.Fatal("no vote should be recorded for an off-feed site")
+	}
+}
+
+// TestSetFeedVisibility_OwnerRemovedFromOrgForbidden verifies an owner whose
+// membership is no longer live (removed from the org) cannot manage their old
+// site's feed sharing on a still-valid JWT: owner identity is not proof of current
+// membership (the requireOrgMember re-check).
+func TestSetFeedVisibility_OwnerRemovedFromOrgForbidden(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "mine", OwnerUserID: "user_1", FeedVisible: true}
+	// user_1 owns the site but is NOT seeded as a member → MemberRole returns
+	// ErrNoMembership, so the live re-check denies.
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+	h := mountFeed(a, claims("user_1", "org_1", "member"))
+
+	rr := putJSON(h, "/v1/sites/site_1/feed", `{"visible":false}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("ex-member owner status = %d, want 403: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestSetVote_BadValue400 rejects an out-of-range vote.
 func TestSetVote_BadValue400(t *testing.T) {
 	fs := newFakeStore()

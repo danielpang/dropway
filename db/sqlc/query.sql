@@ -194,8 +194,7 @@ ORDER BY created_at DESC;
 -- and its comment count, so the feed renders the up/down controls + counts in one
 -- query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
 SELECT
-    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id,
-    s.feed_visible, s.title, s.description, s.created_at,
+    sqlc.embed(s),
     COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
     COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
@@ -262,11 +261,18 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at;
 
 -- name: ListSiteComments :many
--- A site's comment thread, oldest first (reads top-to-bottom like a conversation).
--- RLS scopes the read to the active org; the (site_id, created_at) index backs it.
+-- A site's comment thread, displayed oldest-first (top-to-bottom like a
+-- conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+-- load an unbounded result. RLS scopes the read to the active org; the
+-- (site_id, created_at) index backs both the inner ordering and the outer.
 SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-FROM app.site_comments
-WHERE site_id = $1
+FROM (
+    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.site_comments
+    WHERE site_id = $1
+    ORDER BY created_at DESC, id DESC
+    LIMIT $2
+) recent
 ORDER BY created_at ASC, id ASC;
 
 -- ===========================================================================

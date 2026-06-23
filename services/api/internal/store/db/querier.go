@@ -154,9 +154,11 @@ type Querier interface {
 	// access_mode source (the site row). Drives projection.RebuildFromDB: Postgres
 	// is authoritative, the KV/D1 projection is a rebuildable cache.
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
-	// A site's comment thread, oldest first (reads top-to-bottom like a conversation).
-	// RLS scopes the read to the active org; the (site_id, created_at) index backs it.
-	ListSiteComments(ctx context.Context, siteID string) ([]AppSiteComment, error)
+	// A site's comment thread, displayed oldest-first (top-to-bottom like a
+	// conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+	// load an unbounded result. RLS scopes the read to the active org; the
+	// (site_id, created_at) index backs both the inner ordering and the outer.
+	ListSiteComments(ctx context.Context, arg ListSiteCommentsParams) ([]AppSiteComment, error)
 	// LOGICAL storage per site for the active org (the current-version size of each
 	// site, 0 when it has no live version) paired with the owning user, so the caller
 	// can show per-site usage AND aggregate it per user. Same non-deduplicated model as

@@ -425,24 +425,11 @@ func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]FeedSite, error)
 		}
 		out = make([]FeedSite, len(rows))
 		for i, r := range rows {
-			site := Site{
-				ID:               r.ID,
-				OrgID:            r.OrgID,
-				Slug:             r.Slug,
-				OwnerUserID:      r.OwnerUserID,
-				AccessMode:       r.AccessMode,
-				CurrentVersionID: r.CurrentVersionID,
-				FeedVisible:      r.FeedVisible,
-				CreatedAt:        r.CreatedAt,
-			}
-			if r.Title.Valid {
-				site.Title = r.Title.String
-			}
-			if r.Description.Valid {
-				site.Description = r.Description.String
-			}
+			// siteFromDB is the single source of truth for the AppSite -> Site mapping
+			// (the query embeds the full sites row via sqlc.embed), so the feed can't
+			// drift from the regular site reads when a Site field is added.
 			out[i] = FeedSite{
-				Site:         site,
+				Site:         siteFromDB(r.AppSite),
 				Score:        r.Score,
 				MyVote:       int(r.MyVote),
 				CommentCount: r.CommentCount,

@@ -242,6 +242,37 @@ func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request, t store.Tenan
 	return true
 }
 
+// requireOrgMember confirms the caller is still a LIVE member of the active org
+// (any role) per the identity.member table. It is the lightweight sibling of
+// requireAdmin for actions allowed to a site's OWNER: owner identity alone is not
+// proof of current membership, so an owner removed from the org must not keep
+// managing their old site on a still-valid JWT. Same fail-closed posture as
+// requireAdmin: a missing member table denies by default unless
+// AllowJWTRoleFallback is set. Writes the 403 on failure.
+func (a *API) requireOrgMember(w http.ResponseWriter, r *http.Request, t store.Tenant) bool {
+	_, err := a.Store.MemberRole(r.Context(), t.OrgID, t.UserID)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, store.ErrAuthSchemaUnavailable) {
+		if a.AllowJWTRoleFallback {
+			logger(r).Warn("member table unavailable; allowing owner action from verified JWT (fallback enabled)",
+				"org_id", t.OrgID, "user_id", t.UserID)
+			return true
+		}
+		logger(r).Warn("member table unavailable and JWT role fallback disabled; denying owner action",
+			"org_id", t.OrgID, "user_id", t.UserID)
+		httpx.WriteError(w, fmt.Errorf("%w: org membership could not be verified", httpx.ErrForbidden))
+		return false
+	}
+	if errors.Is(err, store.ErrNoMembership) {
+		httpx.WriteError(w, fmt.Errorf("%w: not a member of this org", httpx.ErrForbidden))
+		return false
+	}
+	writeStoreError(w, err)
+	return false
+}
+
 // wrapUnauthorized yields an error httpx maps to 401, used for the defensive
 // "claims somehow absent" branch.
 func wrapUnauthorized() error { return errUnauthorized{} }
