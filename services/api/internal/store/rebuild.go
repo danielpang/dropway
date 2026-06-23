@@ -51,6 +51,16 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			if err != nil {
 				return err
 			}
+			// Public/unlisted link-expiry is part of the route value the Worker enforces
+			// at the edge, so it MUST survive a rebuild/reprojection (omitting it would
+			// silently un-expire a shared link). Read it per site exactly as Publish does;
+			// a missing policy row means "no expiry".
+			var expiresAt string
+			if pol, perr := q.GetSiteAccessPolicy(ctx, r.SiteID); perr == nil {
+				expiresAt = routeExpiry(r.AccessMode, accessPolicyFromDB(pol))
+			} else if !isNoRows(perr) {
+				return perr
+			}
 			for _, hr := range hostRoutes {
 				routes[hr.Host] = projection.RouteValue{
 					OrgID:         r.OrgID,
@@ -58,6 +68,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 					VersionID:     *r.VersionID,
 					AccessMode:    r.AccessMode,
 					SchemaVersion: projection.SchemaVersion,
+					ExpiresAt:     expiresAt,
 					PlanTier:      planTier,
 				}
 			}

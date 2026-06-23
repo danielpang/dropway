@@ -64,6 +64,26 @@ type BillingStore struct {
 	// (a deploy without POSTHOG_KEY simply records nothing). Set it with
 	// WithPlanAnalytics.
 	analytics PlanAnalytics
+	// routes re-projects the org's edge route values (route:<host> in KV) AFTER a
+	// tier change commits, so RouteValue.plan_tier updates at the serving Worker and
+	// the free-tier "Deployed with Dropway" attribution banner appears/disappears
+	// without waiting for the org to republish. Same best-effort, post-commit model
+	// as `status`: nil → no reprojection (the next publish / RebuildAllOrgs heals it).
+	// Set it with WithOrgRouteProjector.
+	routes OrgRouteProjector
+}
+
+// OrgRouteProjector re-projects all of an org's edge route values from Postgres so a
+// plan-tier change is reflected in the route:<host> KV the serving Worker reads
+// (RouteValue.plan_tier gates the free-tier attribution banner). cloud/billing cannot
+// import the API's internal store (Go internal-package rule), so the concrete
+// implementation is injected from services/api (wire_cloud.go), mirroring how
+// projection.OrgStatusWriter is injected for the org_status flag.
+type OrgRouteProjector interface {
+	// ReprojectOrgRoutes rewrites every published host's route value for orgID with
+	// the org's current state (incl. the live plan_tier). Best-effort from the
+	// caller's view — an error is logged, never fatal.
+	ReprojectOrgRoutes(ctx context.Context, orgID string) error
 }
 
 // NewStore wraps the shared dropway_app pool. The pool MUST be the non-BYPASSRLS
@@ -88,6 +108,16 @@ func (s *BillingStore) WithOrgStatusWriter(w projection.OrgStatusWriter) *Billin
 // leaves analytics disabled.
 func (s *BillingStore) WithPlanAnalytics(a PlanAnalytics) *BillingStore {
 	s.analytics = a
+	return s
+}
+
+// WithOrgRouteProjector attaches the edge route-reprojection writer so a billing
+// tier change re-projects the org's route:<host> KV values after the DB commit,
+// updating RouteValue.plan_tier at the serving Worker (the free-tier attribution
+// banner then clears on upgrade / reappears on downgrade) without a republish.
+// Returns the store for chaining. Passing nil leaves route reprojection disabled.
+func (s *BillingStore) WithOrgRouteProjector(p OrgRouteProjector) *BillingStore {
+	s.routes = p
 	return s
 }
 
@@ -161,6 +191,12 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 	// 500 the webhook (which would make Stripe retry an already-applied event).
 	s.projectOrgStatus(ctx, sink.orgID, sink.result.orgStatus)
 
+	// Best-effort edge route reprojection AFTER the commit: on a TIER change, rewrite
+	// the org's route:<host> values so RouteValue.plan_tier updates at the Worker and
+	// the free-tier attribution banner clears (upgrade) / reappears (downgrade). No-op
+	// when the tier didn't move.
+	s.reprojectOrgRoutes(ctx, sink.orgID, sink.result)
+
 	// Best-effort PostHog analytics AFTER the durable commit (same model as the edge
 	// projection): emit a plan_upgraded / plan_downgraded event for a tier move. No-op
 	// when there was no tier change (seat/status refresh) or no emitter is wired.
@@ -215,6 +251,23 @@ func (s *BillingStore) projectOrgStatus(ctx context.Context, orgID, status strin
 	if err := s.status.SetOrgStatus(ctx, orgID, status); err != nil {
 		s.logger().Error("edge org_status projection failed (DB is source of truth; will be rebuilt)",
 			"org_id", orgID, "org_status", status, "err", err)
+	}
+}
+
+// reprojectOrgRoutes re-projects the org's edge route values after a TIER CHANGE so
+// RouteValue.plan_tier updates at the serving Worker and the free-tier attribution
+// banner clears on upgrade (or reappears on downgrade). No-op when no projector is
+// wired, there's no org, or the tier did not actually move (a seat/status refresh —
+// the banner state is unchanged, so we avoid rewriting every host's KV on every
+// billing event). Best-effort + logged, never fatal: the DB is authoritative and the
+// projection is rebuildable, so a failure must not 500 the (already-applied) webhook.
+func (s *BillingStore) reprojectOrgRoutes(ctx context.Context, orgID string, res applyResult) {
+	if s.routes == nil || orgID == "" || res.fromTier == res.toTier {
+		return
+	}
+	if err := s.routes.ReprojectOrgRoutes(ctx, orgID); err != nil {
+		s.logger().Error("edge route reprojection failed (DB is source of truth; banner clears on next publish/rebuild)",
+			"org_id", orgID, "from_tier", res.fromTier, "to_tier", res.toTier, "err", err)
 	}
 }
 
@@ -319,6 +372,8 @@ func (s *BillingStore) UpsertSubscription(ctx context.Context, d EventData) erro
 	// change analytics is emitted by the webhook path (ProcessEvent), the sole
 	// production caller; this standalone writer only projects status.
 	s.projectOrgStatus(ctx, d.OrgID, res.orgStatus)
+	// On a tier change, also reproject the org's routes so the edge banner tracks it.
+	s.reprojectOrgRoutes(ctx, d.OrgID, res)
 	return nil
 }
 
@@ -437,6 +492,8 @@ func (s *BillingStore) SetCanceled(ctx context.Context, orgID string) error {
 	// ProcessEvent): a cancel may push the org to over_limit → block at the edge.
 	// Plan-change analytics is emitted by the webhook path (ProcessEvent).
 	s.projectOrgStatus(ctx, orgID, res.orgStatus)
+	// A cancel is a paid→free downgrade, so reproject routes to re-add the banner.
+	s.reprojectOrgRoutes(ctx, orgID, res)
 	return nil
 }
 
