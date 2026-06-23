@@ -85,7 +85,8 @@ func (f *fakeStore) CreateSite(_ context.Context, t store.Tenant, slug, mode str
 	if mode == "" {
 		mode = "org_only"
 	}
-	s := store.Site{ID: "site_" + slug, OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, AccessMode: mode}
+	// Mirror the DB default: a new site is feed-visible (auto-shared to the org feed).
+	s := store.Site{ID: "site_" + slug, OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, AccessMode: mode, FeedVisible: true}
 	f.sites[s.ID] = s
 	return s, nil
 }
@@ -97,6 +98,31 @@ func (f *fakeStore) ListSites(_ context.Context, t store.Tenant) ([]store.Site, 
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func (f *fakeStore) ListFeedSites(_ context.Context, t store.Tenant) ([]store.Site, error) {
+	f.lastTenant = t
+	out := make([]store.Site, 0, len(f.sites))
+	for _, s := range f.sites {
+		if s.FeedVisible { // mirror the SQL WHERE feed_visible
+			out = append(out, s)
+		}
+	}
+	// Newest first; the fake has no created_at, so fall back to a stable id order
+	// (the real store orders by created_at DESC, exercised in the integration test).
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	return out, nil
+}
+
+func (f *fakeStore) SetSiteFeedVisible(_ context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error) {
+	f.lastTenant = t
+	s, ok := f.sites[siteID]
+	if !ok {
+		return store.Site{}, store.ErrNotFound
+	}
+	s.FeedVisible = visible
+	f.sites[siteID] = s
+	return s, nil
 }
 
 func (f *fakeStore) GetSite(_ context.Context, t store.Tenant, id string) (store.Site, error) {

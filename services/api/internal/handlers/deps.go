@@ -26,6 +26,11 @@ type SiteStore interface {
 	CreateSite(ctx context.Context, t store.Tenant, slug, accessMode string) (store.Site, error)
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
+
+	// Org feed: ListFeedSites lists the active org's non-private sites (newest
+	// first); SetSiteFeedVisible flips one site's share-to-feed flag (owner/admin).
+	ListFeedSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
+	SetSiteFeedVisible(ctx context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error)
 	CreateSiteVersion(ctx context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error)
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)

@@ -88,6 +88,35 @@ export async function setAccessAction(input: {
   }
 }
 
+export type FeedVisibilityActionResult =
+  | { ok: true; feedVisible: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Share a site to the org feed or make it private (PUT /v1/sites/{id}/feed). The
+ * Go API authorizes this for the site's owner OR an org admin/owner. Feed
+ * visibility is orthogonal to access mode — this changes nothing at the edge, only
+ * whether the site shows up in teammates' feed.
+ */
+export async function setFeedVisibilityAction(input: {
+  siteId: string;
+  visible: boolean;
+}): Promise<FeedVisibilityActionResult> {
+  try {
+    const res = await api.setSiteFeedVisibility(input.siteId, input.visible);
+    revalidatePath(`/sites/${input.siteId}/settings`);
+    revalidatePath(`/sites/${input.siteId}`);
+    revalidatePath("/feed");
+    revalidatePath("/dashboard");
+    return { ok: true, feedVisible: res.feed_visible ?? input.visible };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return { ok: false, message: messageFor(err, "Could not update feed sharing. Try again.") };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 export type AllowlistActionResult =
   | { ok: true; entry?: AllowlistEntry }
   | { ok: false; message: string };

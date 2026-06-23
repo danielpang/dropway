@@ -55,6 +55,10 @@ CREATE TABLE app.sites (
     owner_user_id      uuid NOT NULL,
     access_mode        text NOT NULL DEFAULT 'public',
     current_version_id uuid,
+    -- Discovery axis (orthogonal to access_mode): does this site show up in the
+    -- org feed. Defaults to true (auto-shared); the owner flips it false to keep
+    -- the site private (off the feed). See migration 0005.
+    feed_visible       boolean NOT NULL DEFAULT true,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT sites_org_slug_key UNIQUE (org_id, slug)
 );

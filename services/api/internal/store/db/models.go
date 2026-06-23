@@ -97,6 +97,7 @@ type AppSite struct {
 	OwnerUserID      string
 	AccessMode       string
 	CurrentVersionID *string
+	FeedVisible      bool
 	CreatedAt        time.Time
 }
 

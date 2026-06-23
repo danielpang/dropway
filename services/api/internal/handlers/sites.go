@@ -31,7 +31,10 @@ type siteResponse struct {
 	CurrentVersionID *string   `json:"current_version_id,omitempty"`
 	LiveURL          string    `json:"live_url"`
 	StorageBytes     int64     `json:"storage_bytes"`
-	CreatedAt        time.Time `json:"created_at"`
+	// FeedVisible is the org-feed discovery flag: true (default) shares the site to
+	// teammates' feed; false keeps it private (off the feed). Orthogonal to access.
+	FeedVisible bool      `json:"feed_visible"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // toSiteResponse renders a site for the API. orgSlug is the org half of the
@@ -49,6 +52,7 @@ func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) s
 		CurrentVersionID: s.CurrentVersionID,
 		LiveURL:          a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
 		StorageBytes:     storageBytes,
+		FeedVisible:      s.FeedVisible,
 		CreatedAt:        s.CreatedAt,
 	}
 }

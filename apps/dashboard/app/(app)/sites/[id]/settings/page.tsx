@@ -6,6 +6,7 @@ import { ArrowLeft, ExternalLink, ShieldAlert } from "lucide-react";
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { AccessSettingsForm } from "@/components/sites/access-settings-form";
 import { AllowlistManager } from "@/components/sites/allowlist-manager";
+import { FeedVisibilityToggle } from "@/components/sites/feed-visibility-toggle";
 import {
   Card,
   CardContent,
@@ -53,6 +54,12 @@ export default async function SiteAccessSettingsPage({
   const org = await loadActiveOrg();
   const manage = org ? canManage(org.myRole) : false;
   const mode = site.access_mode ?? "public";
+
+  // The org-feed toggle is the site owner's call (it's their site to share), and
+  // admins/owners may toggle any site — mirrors the Go API's owner-or-admin gate.
+  const isOwner = Boolean(org?.myUserId && site.owner_id === org.myUserId);
+  const canToggleFeed = manage || isOwner;
+  const feedVisible = site.feed_visible ?? true;
 
   // Only fetch the allowlist when it's relevant (allowlist mode), and tolerate
   // a non-admin 403 by degrading to an empty list.
@@ -134,6 +141,24 @@ export default async function SiteAccessSettingsPage({
             siteId={id}
             currentMode={mode}
             disabled={!manage}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Org feed sharing (owner or admin). Orthogonal to the access mode. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Org feed</CardTitle>
+          <CardDescription>
+            Whether this site shows up in your organization&rsquo;s feed for
+            teammates to discover. New sites are shared by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FeedVisibilityToggle
+            siteId={id}
+            initialVisible={feedVisible}
+            disabled={!canToggleFeed}
           />
         </CardContent>
       </Card>

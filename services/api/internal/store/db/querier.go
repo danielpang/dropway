@@ -120,6 +120,11 @@ type Querier interface {
 	// adequate for an admin audit viewer (small N per page).
 	ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error)
 	ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error)
+	// The org feed: every site in the active org that is feed-visible (not private),
+	// newest first (older sites sink to the bottom). RLS scopes the read to the
+	// active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
+	// WHERE feed_visible backs both the filter and the order.
+	ListFeedSites(ctx context.Context) ([]AppSite, error)
 	// Every host registered for a site in the GLOBAL registry — the canonical
 	// <slug>.dropwaycontent.com host AND every verified custom-domain host. RLS
 	// scopes the rows to the active org, so a caller only ever sees its own site's
@@ -209,6 +214,11 @@ type Querier interface {
 	// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
 	// under a false org policy.
 	SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error
+	// Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
+	// UPDATE to the active org; the handler additionally restricts it to the site's
+	// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
+	// is unaffected (feed visibility is the discovery axis, not the access axis).
+	SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisibleParams) (AppSite, error)
 	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
 	// floors at zero so a reconciliation skew can never make the counter negative.
 	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error

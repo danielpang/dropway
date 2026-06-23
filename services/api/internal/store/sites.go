@@ -150,7 +150,11 @@ type Site struct {
 	OwnerUserID      string
 	AccessMode       string
 	CurrentVersionID *string
-	CreatedAt        time.Time
+	// FeedVisible is the org-feed discovery flag (orthogonal to AccessMode): true
+	// (default) shares the site to teammates' feed; false keeps it private (off
+	// the feed). It never affects edge access — see migration 0005.
+	FeedVisible bool
+	CreatedAt   time.Time
 }
 
 // SiteVersion is an immutable, content-addressed deploy.
@@ -391,6 +395,46 @@ func (s *Store) ListSites(ctx context.Context, t Tenant) ([]Site, error) {
 	return out, err
 }
 
+// ListFeedSites returns the active org's feed — every site that is feed-visible
+// (not marked private), newest first. RLS scopes the query to the org, so a
+// member's feed is exactly their org's shared sites. Private sites (feed_visible
+// = false) are filtered in SQL and never leave the store on this path.
+func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]Site, error) {
+	var out []Site
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		rows, err := q.ListFeedSites(ctx)
+		if err != nil {
+			return err
+		}
+		out = make([]Site, len(rows))
+		for i, r := range rows {
+			out[i] = siteFromDB(r)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// SetSiteFeedVisible flips a site's feed visibility (share to the org feed vs.
+// keep private). RLS scopes the UPDATE to the active org; the caller (handler)
+// additionally restricts it to the site owner or an org admin. A miss (absent or
+// other-tenant site) surfaces as ErrNotFound. Returns the updated site.
+func (s *Store) SetSiteFeedVisible(ctx context.Context, t Tenant, siteID string, visible bool) (Site, error) {
+	var out Site
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		row, err := q.SetSiteFeedVisible(ctx, db.SetSiteFeedVisibleParams{ID: siteID, FeedVisible: visible})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = siteFromDB(row)
+		return nil
+	})
+	return out, err
+}
+
 // GetSite returns one site by id (RLS makes other orgs' sites invisible → a miss
 // surfaces as ErrNotFound, never a cross-tenant leak).
 func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) {
@@ -417,6 +461,7 @@ func siteFromDB(r db.AppSite) Site {
 		OwnerUserID:      r.OwnerUserID,
 		AccessMode:       r.AccessMode,
 		CurrentVersionID: r.CurrentVersionID,
+		FeedVisible:      r.FeedVisible,
 		CreatedAt:        r.CreatedAt,
 	}
 }

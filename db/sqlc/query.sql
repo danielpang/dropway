@@ -151,10 +151,10 @@ WHERE app.org_usage.org_id = $1;
 -- name: CreateSite :one
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at;
 
 -- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 FROM app.sites
 WHERE id = $1;
 
@@ -183,9 +183,29 @@ LEFT JOIN app.site_versions v ON v.id = s.current_version_id
 ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 FROM app.sites
 ORDER BY created_at DESC;
+
+-- name: ListFeedSites :many
+-- The org feed: every site in the active org that is feed-visible (not private),
+-- newest first (older sites sink to the bottom). RLS scopes the read to the
+-- active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
+-- WHERE feed_visible backs both the filter and the order.
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+FROM app.sites
+WHERE feed_visible
+ORDER BY created_at DESC;
+
+-- name: SetSiteFeedVisible :one
+-- Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
+-- UPDATE to the active org; the handler additionally restricts it to the site's
+-- owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
+-- is unaffected (feed visibility is the discovery axis, not the access axis).
+UPDATE app.sites
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at;
 
 -- name: SetCurrentVersion :exec
 -- Flip the live-version pointer (publish / rollback). RLS guarantees we can only
@@ -457,7 +477,7 @@ WHERE id = $1;
 -- name: ListPublicSitesForOrg :many
 -- Every site in the active org whose access_mode = 'public' (used by the reconcile
 -- on disabling external sharing: these are downgraded to org_only).
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at;

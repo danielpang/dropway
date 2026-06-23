@@ -11,6 +11,7 @@ export type NavLink = { href: string; label: string; match: string; admin?: bool
 /** Shared by the desktop nav and the mobile menu so they never drift. */
 export const NAV_LINKS: NavLink[] = [
   { href: "/dashboard", label: "Sites", match: "/dashboard" },
+  { href: "/feed", label: "Feed", match: "/feed" },
   { href: "/members", label: "Members", match: "/members" },
   // Audit is owner/admin only (the page also re-gates server-side).
   { href: "/audit", label: "Audit", match: "/audit", admin: true },

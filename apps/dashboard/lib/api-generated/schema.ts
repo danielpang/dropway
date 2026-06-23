@@ -238,6 +238,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The org feed — sites shared across the org, newest first
+         * @description Returns every site in the caller's org that is feed-visible (not marked private), newest first so freshly created/published sites are at the top and older sites sink to the bottom. The cross-user discovery surface that complements the per-user site list. Any org member may read it (RLS-scoped to their org). Each item is a full Site (owner_id, access_mode, live_url, created_at, …) so the dashboard can render and attribute it like a site card.
+         */
+        get: operations["listFeed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites": {
         parameters: {
             query?: never;
@@ -369,6 +389,26 @@ export interface paths {
          * @description Owner/admin only (role re-checked against the member table). Sets the access_mode (public/password/allowlist/org_only) and the matching policy: a password mode's password is hashed server-side (bcrypt; plaintext is never stored), optional expires_at (RFC3339) sets a link expiry, unlisted marks a public-tier site as unlisted. Rewrites the edge RouteValue (mode + expires_at for the public tier). A public site under allow_external_sharing=false → 403.
          */
         put: operations["setSiteAccess"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Share a site to the org feed, or make it private (owner or admin)
+         * @description Toggles whether the site appears in the org feed. Unlike the access endpoints (admin/owner only), the site's OWNER may toggle their own site's feed visibility, and an org admin/owner may toggle any site. Feed visibility is the discovery axis — orthogonal to access_mode — so this changes nothing at the edge: a private site keeps serving under its existing access mode, it is just hidden from the feed listing.
+         */
+        put: operations["setSiteFeedVisibility"];
         post?: never;
         delete?: never;
         options?: never;
@@ -582,6 +622,8 @@ export interface components {
              * @description The site's LOGICAL storage in bytes: the size of its current live version (0 before the first deploy). "Logical" means NOT deduplicated across sites/versions — the per-folder size you'd expect from Dropbox or Drive, not the org's billed footprint.
              */
             storage_bytes?: number;
+            /** @description Whether the site appears in the org feed (the cross-user discovery surface). Defaults to true: a site is auto-shared to the feed on create and publish. The owner (or an admin) sets it false to keep the site private — off the feed. Orthogonal to access_mode (this never changes who can load the served bytes). */
+            feed_visible?: boolean;
             /** Format: date-time */
             created_at?: string;
         };
@@ -1064,6 +1106,29 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    listFeed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's shared sites, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sites?: components["schemas"]["Site"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listSites: {
         parameters: {
             query?: never;
@@ -1322,6 +1387,44 @@ export interface operations {
                         site_id?: string;
                         mode?: string;
                         unlisted?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteFeedVisibility: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description true shares the site to the org feed; false makes it private. */
+                    visible: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed visibility updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        feed_visible?: boolean;
                     };
                 };
             };

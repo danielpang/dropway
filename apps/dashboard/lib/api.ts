@@ -344,6 +344,32 @@ export const api = {
     return apiGet(`/v1/sites/${id}`) as Promise<Site>;
   },
 
+  /**
+   * The org feed: every site teammates have shared (feed-visible, not private),
+   * newest first. Any member may read it; it's the cross-user discovery surface
+   * that complements the per-user site list. Private sites are filtered server-side.
+   */
+  async listFeed(): Promise<Site[]> {
+    const body = (await apiGet("/v1/feed")) as { sites?: Site[] };
+    return body.sites ?? [];
+  },
+
+  /**
+   * Share a site to the org feed (visible=true) or make it private (visible=false).
+   * The site's owner may toggle their own site; org admins/owners may toggle any.
+   * 403 otherwise. Feed visibility is orthogonal to access mode — nothing changes
+   * at the edge.
+   */
+  setSiteFeedVisibility(
+    siteId: string,
+    visible: boolean,
+  ): Promise<{ site_id?: string; feed_visible?: boolean }> {
+    return apiFetch<{ site_id?: string; feed_visible?: boolean }>(
+      `/v1/sites/${siteId}/feed`,
+      { method: "PUT", body: JSON.stringify({ visible }) },
+    );
+  },
+
   /** A site's deploy history, newest first (each flagged is_current). */
   async listVersions(siteId: string): Promise<SiteVersion[]> {
     const body = (await apiGet(`/v1/sites/${siteId}/versions`)) as {

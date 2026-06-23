@@ -74,7 +74,7 @@ const createSite = `-- name: CreateSite :one
 
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 `
 
 type CreateSiteParams struct {
@@ -102,6 +102,7 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 		&i.OwnerUserID,
 		&i.AccessMode,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -444,7 +445,7 @@ func (q *Queries) GetPlanTier(ctx context.Context, id string) (string, error) {
 }
 
 const getSite = `-- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 FROM app.sites
 WHERE id = $1
 `
@@ -459,6 +460,7 @@ func (q *Queries) GetSite(ctx context.Context, id string) (AppSite, error) {
 		&i.OwnerUserID,
 		&i.AccessMode,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -789,6 +791,46 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppD
 	return items, nil
 }
 
+const listFeedSites = `-- name: ListFeedSites :many
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+FROM app.sites
+WHERE feed_visible
+ORDER BY created_at DESC
+`
+
+// The org feed: every site in the active org that is feed-visible (not private),
+// newest first (older sites sink to the bottom). RLS scopes the read to the
+// active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
+// WHERE feed_visible backs both the filter and the order.
+func (q *Queries) ListFeedSites(ctx context.Context) ([]AppSite, error) {
+	rows, err := q.db.Query(ctx, listFeedSites)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSite{}
+	for rows.Next() {
+		var i AppSite
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.OwnerUserID,
+			&i.AccessMode,
+			&i.CurrentVersionID,
+			&i.FeedVisible,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHostRoutesForSite = `-- name: ListHostRoutesForSite :many
 SELECT host, org_id, site_id, created_at
 FROM app.host_routes
@@ -828,7 +870,7 @@ func (q *Queries) ListHostRoutesForSite(ctx context.Context, siteID string) ([]A
 }
 
 const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at
@@ -852,6 +894,7 @@ func (q *Queries) ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error) 
 			&i.OwnerUserID,
 			&i.AccessMode,
 			&i.CurrentVersionID,
+			&i.FeedVisible,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -996,7 +1039,7 @@ func (q *Queries) ListSiteVersions(ctx context.Context, siteID string) ([]AppSit
 }
 
 const listSites = `-- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
 FROM app.sites
 ORDER BY created_at DESC
 `
@@ -1017,6 +1060,7 @@ func (q *Queries) ListSites(ctx context.Context) ([]AppSite, error) {
 			&i.OwnerUserID,
 			&i.AccessMode,
 			&i.CurrentVersionID,
+			&i.FeedVisible,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1286,6 +1330,38 @@ type SetSiteAccessModeParams struct {
 func (q *Queries) SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error {
 	_, err := q.db.Exec(ctx, setSiteAccessMode, arg.ID, arg.AccessMode)
 	return err
+}
+
+const setSiteFeedVisible = `-- name: SetSiteFeedVisible :one
+UPDATE app.sites
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+`
+
+type SetSiteFeedVisibleParams struct {
+	ID          string
+	FeedVisible bool
+}
+
+// Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
+// UPDATE to the active org; the handler additionally restricts it to the site's
+// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
+// is unaffected (feed visibility is the discovery axis, not the access axis).
+func (q *Queries) SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisibleParams) (AppSite, error) {
+	row := q.db.QueryRow(ctx, setSiteFeedVisible, arg.ID, arg.FeedVisible)
+	var i AppSite
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.AccessMode,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const subOrgStorage = `-- name: SubOrgStorage :exec
