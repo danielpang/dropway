@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
@@ -150,7 +151,15 @@ type Site struct {
 	OwnerUserID      string
 	AccessMode       string
 	CurrentVersionID *string
-	CreatedAt        time.Time
+	// FeedVisible is the org-feed discovery flag (orthogonal to AccessMode): true
+	// (default) shares the site to teammates' feed; false keeps it private (off
+	// the feed). It never affects edge access — see migration 0005.
+	FeedVisible bool
+	// Title / Description are the owner-set human feed metadata (empty when unset;
+	// the feed falls back to the slug for the title).
+	Title       string
+	Description string
+	CreatedAt   time.Time
 }
 
 // SiteVersion is an immutable, content-addressed deploy.
@@ -391,6 +400,122 @@ func (s *Store) ListSites(ctx context.Context, t Tenant) ([]Site, error) {
 	return out, err
 }
 
+// FeedSite is a feed post: a site plus its social metadata (net vote score, the
+// caller's own vote, and its comment count) for the org feed listing.
+type FeedSite struct {
+	Site
+	// Score is the net up/down vote total. MyVote is the caller's own vote
+	// (+1/-1/0). CommentCount is the number of comments on the site.
+	Score        int64
+	MyVote       int
+	CommentCount int64
+}
+
+// ListFeedSites returns the active org's feed — every site that is feed-visible
+// (not marked private), newest first, each enriched with its vote score, the
+// caller's own vote, and its comment count. RLS scopes the query to the org, so a
+// member's feed is exactly their org's shared sites. Private sites (feed_visible
+// = false) are filtered in SQL and never leave the store on this path.
+func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]FeedSite, error) {
+	var out []FeedSite
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		rows, err := q.ListFeedSites(ctx, t.UserID)
+		if err != nil {
+			return err
+		}
+		out = make([]FeedSite, len(rows))
+		for i, r := range rows {
+			// siteFromDB is the single source of truth for the AppSite -> Site mapping
+			// (the query embeds the full sites row via sqlc.embed), so the feed can't
+			// drift from the regular site reads when a Site field is added.
+			out[i] = FeedSite{
+				Site:         siteFromDB(r.AppSite),
+				Score:        r.Score,
+				MyVote:       int(r.MyVote),
+				CommentCount: r.CommentCount,
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
+// SetSiteVote records the caller's vote on a site: value +1 (up) or -1 (down)
+// upserts the single (site, user) row; value 0 removes it (un-vote). It returns
+// the site's new net score and the caller's resulting vote. RLS scopes the writes
+// to the active org.
+func (s *Store) SetSiteVote(ctx context.Context, t Tenant, siteID string, value int) (score int64, myVote int, err error) {
+	err = s.withTx(ctx, t, func(q *db.Queries) error {
+		if value == 0 {
+			if derr := q.DeleteSiteVote(ctx, db.DeleteSiteVoteParams{SiteID: siteID, UserID: t.UserID}); derr != nil {
+				return derr
+			}
+		} else {
+			if uerr := q.UpsertSiteVote(ctx, db.UpsertSiteVoteParams{
+				SiteID: siteID,
+				OrgID:  t.OrgID,
+				UserID: t.UserID,
+				Value:  int16(value),
+			}); uerr != nil {
+				return uerr
+			}
+		}
+		sc, serr := q.GetSiteVoteScore(ctx, siteID)
+		if serr != nil {
+			return serr
+		}
+		score = sc
+		myVote = value
+		return nil
+	})
+	return score, myVote, err
+}
+
+// SetSiteFeedVisible flips a site's feed visibility (share to the org feed vs.
+// keep private). RLS scopes the UPDATE to the active org; the caller (handler)
+// additionally restricts it to the site owner or an org admin. A miss (absent or
+// other-tenant site) surfaces as ErrNotFound. Returns the updated site.
+func (s *Store) SetSiteFeedVisible(ctx context.Context, t Tenant, siteID string, visible bool) (Site, error) {
+	var out Site
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		row, err := q.SetSiteFeedVisible(ctx, db.SetSiteFeedVisibleParams{ID: siteID, FeedVisible: visible})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = siteFromDB(row)
+		return nil
+	})
+	return out, err
+}
+
+// SetSiteFeedMeta sets a site's human feed metadata (title + description). Empty
+// strings are stored as SQL NULL so "clear it" round-trips to an unset column. RLS
+// scopes the UPDATE to the active org; the caller (handler) restricts it to the
+// site owner or an org admin. A miss surfaces as ErrNotFound. Returns the updated
+// site.
+func (s *Store) SetSiteFeedMeta(ctx context.Context, t Tenant, siteID, title, description string) (Site, error) {
+	var out Site
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		row, err := q.SetSiteFeedMeta(ctx, db.SetSiteFeedMetaParams{
+			ID:          siteID,
+			Title:       pgtype.Text{String: title, Valid: title != ""},
+			Description: pgtype.Text{String: description, Valid: description != ""},
+		})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = siteFromDB(row)
+		return nil
+	})
+	return out, err
+}
+
 // GetSite returns one site by id (RLS makes other orgs' sites invisible → a miss
 // surfaces as ErrNotFound, never a cross-tenant leak).
 func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) {
@@ -410,15 +535,23 @@ func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) 
 }
 
 func siteFromDB(r db.AppSite) Site {
-	return Site{
+	s := Site{
 		ID:               r.ID,
 		OrgID:            r.OrgID,
 		Slug:             r.Slug,
 		OwnerUserID:      r.OwnerUserID,
 		AccessMode:       r.AccessMode,
 		CurrentVersionID: r.CurrentVersionID,
+		FeedVisible:      r.FeedVisible,
 		CreatedAt:        r.CreatedAt,
 	}
+	if r.Title.Valid {
+		s.Title = r.Title.String
+	}
+	if r.Description.Valid {
+		s.Description = r.Description.String
+	}
+	return s
 }
 
 func versionFromDB(r db.AppSiteVersion) SiteVersion {

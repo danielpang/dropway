@@ -55,6 +55,13 @@ CREATE TABLE app.sites (
     owner_user_id      uuid NOT NULL,
     access_mode        text NOT NULL DEFAULT 'public',
     current_version_id uuid,
+    -- Discovery axis (orthogonal to access_mode): does this site show up in the
+    -- org feed. Defaults to true (auto-shared); the owner flips it false to keep
+    -- the site private (off the feed). See migration 0005.
+    feed_visible       boolean NOT NULL DEFAULT true,
+    -- Optional human-facing feed metadata the owner sets (null → fall back to slug).
+    title              text,
+    description        text,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT sites_org_slug_key UNIQUE (org_id, slug)
 );
@@ -107,6 +114,29 @@ CREATE TABLE app.site_access_policy (
     expires_at    timestamptz,
     unlisted      boolean NOT NULL DEFAULT false,
     updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- site_comments: org-internal discussion on a shared site, with @mentions.
+CREATE TABLE app.site_comments (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    author_user_id     uuid NOT NULL,
+    body               text NOT NULL,
+    mentioned_user_ids uuid[] NOT NULL DEFAULT '{}',
+    created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+-- site_votes: up/down votes on feed posts (one per site per user).
+CREATE TABLE app.site_votes (
+    site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    user_id    uuid NOT NULL,
+    value      smallint NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (site_id, user_id),
+    CONSTRAINT site_votes_value_check CHECK (value IN (-1, 1))
 );
 
 -- allowlist_entries: pre-registration email grants for allowlist sites.

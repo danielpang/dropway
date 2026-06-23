@@ -97,6 +97,9 @@ type AppSite struct {
 	OwnerUserID      string
 	AccessMode       string
 	CurrentVersionID *string
+	FeedVisible      bool
+	Title            pgtype.Text
+	Description      pgtype.Text
 	CreatedAt        time.Time
 }
 
@@ -110,6 +113,16 @@ type AppSiteAccessPolicy struct {
 	UpdatedAt    time.Time
 }
 
+type AppSiteComment struct {
+	ID               string
+	OrgID            string
+	SiteID           string
+	AuthorUserID     string
+	Body             string
+	MentionedUserIds []string
+	CreatedAt        time.Time
+}
+
 type AppSiteVersion struct {
 	ID          string
 	OrgID       string
@@ -121,4 +134,13 @@ type AppSiteVersion struct {
 	SizeBytes   int64
 	CreatedBy   string
 	CreatedAt   time.Time
+}
+
+type AppSiteVote struct {
+	SiteID    string
+	OrgID     string
+	UserID    string
+	Value     int16
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

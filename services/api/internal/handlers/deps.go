@@ -26,6 +26,20 @@ type SiteStore interface {
 	CreateSite(ctx context.Context, t store.Tenant, slug, accessMode string) (store.Site, error)
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
+
+	// Org feed: ListFeedSites lists the active org's non-private sites (newest
+	// first, each with vote score / the caller's vote / comment count);
+	// SetSiteFeedVisible flips one site's share-to-feed flag (owner/admin);
+	// SetSiteFeedMeta sets the owner-facing title/description shown in the feed;
+	// SetSiteVote records the caller's up/down vote (or un-vote).
+	ListFeedSites(ctx context.Context, t store.Tenant) ([]store.FeedSite, error)
+	SetSiteFeedVisible(ctx context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error)
+	SetSiteFeedMeta(ctx context.Context, t store.Tenant, siteID, title, description string) (store.Site, error)
+	SetSiteVote(ctx context.Context, t store.Tenant, siteID string, value int) (score int64, myVote int, err error)
+
+	// Site comments: an org-internal discussion thread per site, with @mentions.
+	CreateSiteComment(ctx context.Context, t store.Tenant, p store.CreateSiteCommentParams) (store.SiteComment, error)
+	ListSiteComments(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteComment, error)
 	CreateSiteVersion(ctx context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error)
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)

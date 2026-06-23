@@ -151,10 +151,10 @@ WHERE app.org_usage.org_id = $1;
 -- name: CreateSite :one
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
 
 -- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE id = $1;
 
@@ -183,9 +183,63 @@ LEFT JOIN app.site_versions v ON v.id = s.current_version_id
 ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 ORDER BY created_at DESC;
+
+-- name: ListFeedSites :many
+-- The org feed: every site in the active org that is feed-visible (not private),
+-- newest first (older sites sink to the bottom). Each row carries its net vote
+-- score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
+-- and its comment count, so the feed renders the up/down controls + counts in one
+-- query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+SELECT
+    sqlc.embed(s),
+    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+FROM app.sites s
+WHERE s.feed_visible
+ORDER BY s.created_at DESC;
+
+-- name: UpsertSiteVote :exec
+-- Cast (or change) the caller's vote on a site. One row per (site, user); a flip
+-- from up to down just overwrites value. RLS scopes the write to the active org.
+INSERT INTO app.site_votes (site_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (site_id, user_id) DO UPDATE
+SET value = EXCLUDED.value, updated_at = now();
+
+-- name: DeleteSiteVote :exec
+-- Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
+DELETE FROM app.site_votes
+WHERE site_id = $1 AND user_id = $2;
+
+-- name: GetSiteVoteScore :one
+-- A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+SELECT COALESCE(SUM(value), 0)::bigint AS score
+FROM app.site_votes
+WHERE site_id = $1;
+
+-- name: SetSiteFeedVisible :one
+-- Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
+-- UPDATE to the active org; the handler additionally restricts it to the site's
+-- owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
+-- is unaffected (feed visibility is the discovery axis, not the access axis).
+UPDATE app.sites
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
+
+-- name: SetSiteFeedMeta :one
+-- Set a site's human feed metadata (title + description). Empty strings are passed
+-- as NULL by the caller so "clear it" round-trips to a null column. RLS scopes the
+-- UPDATE to the active org; the handler restricts it to the owner or an org admin.
+UPDATE app.sites
+SET title       = $2,
+    description  = $3
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
 
 -- name: SetCurrentVersion :exec
 -- Flip the live-version pointer (publish / rollback). RLS guarantees we can only
@@ -193,6 +247,33 @@ ORDER BY created_at DESC;
 UPDATE app.sites
 SET current_version_id = $2
 WHERE id = $1;
+
+-- ===========================================================================
+-- site_comments — org-internal discussion on a shared site, with @mentions
+-- ===========================================================================
+
+-- name: CreateSiteComment :one
+-- Add a comment to a site. mentioned_user_ids is the set of tagged org users
+-- (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
+-- on the tenant policy rejects a row whose org_id isn't the active tenant).
+INSERT INTO app.site_comments (org_id, site_id, author_user_id, body, mentioned_user_ids)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at;
+
+-- name: ListSiteComments :many
+-- A site's comment thread, displayed oldest-first (top-to-bottom like a
+-- conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+-- load an unbounded result. RLS scopes the read to the active org; the
+-- (site_id, created_at) index backs both the inner ordering and the outer.
+SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+FROM (
+    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.site_comments
+    WHERE site_id = $1
+    ORDER BY created_at DESC, id DESC
+    LIMIT $2
+) recent
+ORDER BY created_at ASC, id ASC;
 
 -- ===========================================================================
 -- site_versions
@@ -457,7 +538,7 @@ WHERE id = $1;
 -- name: ListPublicSitesForOrg :many
 -- Every site in the active org whose access_mode = 'public' (used by the reconcile
 -- on disabling external sharing: these are downgraded to org_only).
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at;

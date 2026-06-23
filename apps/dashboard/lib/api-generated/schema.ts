@@ -238,6 +238,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The org feed — sites shared across the org, newest first
+         * @description Returns every site in the caller's org that is feed-visible (not marked private), newest first so freshly created/published sites are at the top and older sites sink to the bottom. The cross-user discovery surface that complements the per-user site list. Any org member may read it (RLS-scoped to their org). Each item is a full Site (owner_id, access_mode, live_url, created_at, …) so the dashboard can render and attribute it like a site card.
+         */
+        get: operations["listFeed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites": {
         parameters: {
             query?: never;
@@ -370,6 +390,90 @@ export interface paths {
          */
         put: operations["setSiteAccess"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Share a site to the org feed, or make it private (owner or admin)
+         * @description Toggles whether the site appears in the org feed. Unlike the access endpoints (admin/owner only), the site's OWNER may toggle their own site's feed visibility, and an org admin/owner may toggle any site. Feed visibility is the discovery axis — orthogonal to access_mode — so this changes nothing at the edge: a private site keeps serving under its existing access mode, it is just hidden from the feed listing.
+         */
+        put: operations["setSiteFeedVisibility"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/feed-meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a site's feed title + description (owner or admin)
+         * @description Sets the human-facing Title and Description the site shows in the org feed. Authorized for the site's owner or an org admin/owner (same gate as the feed-visibility toggle). Empty strings clear the corresponding field.
+         */
+        put: operations["setSiteFeedMeta"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/vote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Up/down vote a feed post (any org member)
+         * @description Records the caller's vote on a site: value 1 (up), -1 (down), or 0 to clear it. One vote per member per site. Returns the post's new net score and the caller's resulting vote.
+         */
+        put: operations["setSiteVote"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a site's comment thread (oldest first)
+         * @description The site's org-internal comment thread, oldest first. Any org member may read it (RLS-scoped to their org).
+         */
+        get: operations["listComments"];
+        put?: never;
+        /**
+         * Post a comment to a site, optionally tagging teammates
+         * @description Any org member may comment; the author is the authenticated caller. Tagged ids that aren't current org members are dropped so a mention always resolves to a real teammate.
+         */
+        post: operations["addComment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -582,6 +686,41 @@ export interface components {
              * @description The site's LOGICAL storage in bytes: the size of its current live version (0 before the first deploy). "Logical" means NOT deduplicated across sites/versions — the per-folder size you'd expect from Dropbox or Drive, not the org's billed footprint.
              */
             storage_bytes?: number;
+            /** @description Whether the site appears in the org feed (the cross-user discovery surface). Defaults to true: a site is auto-shared to the feed on create and publish. The owner (or an admin) sets it false to keep the site private — off the feed. Orthogonal to access_mode (this never changes who can load the served bytes). */
+            feed_visible?: boolean;
+            /** @description Owner-set human title shown in the org feed (empty when unset — the feed falls back to the slug). */
+            title?: string;
+            /** @description Owner-set description shown in the org feed (empty when unset). */
+            description?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description One post in the org feed: a Site plus its social metadata (net vote score, the caller's own vote, and its comment count). */
+        FeedItem: components["schemas"]["Site"] & {
+            /**
+             * Format: int64
+             * @description Net up/down vote total (sum of +1/-1).
+             */
+            score?: number;
+            /** @description The caller's own vote on this post (1, -1, or 0). */
+            my_vote?: number;
+            /**
+             * Format: int64
+             * @description Number of comments on this post.
+             */
+            comment_count?: number;
+        };
+        /** @description One org-internal comment on a site, optionally tagging teammates. */
+        SiteComment: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            site_id?: string;
+            /** Format: uuid */
+            author_id?: string;
+            body?: string;
+            /** @description The org users tagged in the comment (identity ids). */
+            mentioned_user_ids?: string[];
             /** Format: date-time */
             created_at?: string;
         };
@@ -1064,6 +1203,29 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    listFeed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's shared sites, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sites?: components["schemas"]["FeedItem"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listSites: {
         parameters: {
             query?: never;
@@ -1328,6 +1490,189 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteFeedVisibility: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description true shares the site to the org feed; false makes it private. */
+                    visible: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed visibility updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        feed_visible?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteFeedMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human title (empty clears it; max 120 chars). */
+                    title?: string;
+                    /** @description Description (empty clears it; max 500 chars). */
+                    description?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed metadata updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        title?: string;
+                        description?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteVote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description 1 upvote, -1 downvote, 0 clears the caller's vote.
+                     * @enum {integer}
+                     */
+                    value: -1 | 0 | 1;
+                };
+            };
+        };
+        responses: {
+            /** @description Vote recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        /** Format: int64 */
+                        score?: number;
+                        my_vote?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's comments */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        comments?: components["schemas"]["SiteComment"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The comment text (max 4000 chars). */
+                    body: string;
+                    /** @description Org users to tag. Non-members are dropped server-side. */
+                    mentioned_user_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Comment created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteComment"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
         };
     };

@@ -74,7 +74,7 @@ const createSite = `-- name: CreateSite :one
 
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 `
 
 type CreateSiteParams struct {
@@ -102,6 +102,51 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 		&i.OwnerUserID,
 		&i.AccessMode,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.Title,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSiteComment = `-- name: CreateSiteComment :one
+
+INSERT INTO app.site_comments (org_id, site_id, author_user_id, body, mentioned_user_ids)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+`
+
+type CreateSiteCommentParams struct {
+	OrgID            string
+	SiteID           string
+	AuthorUserID     string
+	Body             string
+	MentionedUserIds []string
+}
+
+// ===========================================================================
+// site_comments — org-internal discussion on a shared site, with @mentions
+// ===========================================================================
+// Add a comment to a site. mentioned_user_ids is the set of tagged org users
+// (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
+// on the tenant policy rejects a row whose org_id isn't the active tenant).
+func (q *Queries) CreateSiteComment(ctx context.Context, arg CreateSiteCommentParams) (AppSiteComment, error) {
+	row := q.db.QueryRow(ctx, createSiteComment,
+		arg.OrgID,
+		arg.SiteID,
+		arg.AuthorUserID,
+		arg.Body,
+		arg.MentionedUserIds,
+	)
+	var i AppSiteComment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.AuthorUserID,
+		&i.Body,
+		&i.MentionedUserIds,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -238,6 +283,22 @@ func (q *Queries) DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (i
 	var size_bytes int64
 	err := row.Scan(&size_bytes)
 	return size_bytes, err
+}
+
+const deleteSiteVote = `-- name: DeleteSiteVote :exec
+DELETE FROM app.site_votes
+WHERE site_id = $1 AND user_id = $2
+`
+
+type DeleteSiteVoteParams struct {
+	SiteID string
+	UserID string
+}
+
+// Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
+func (q *Queries) DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error {
+	_, err := q.db.Exec(ctx, deleteSiteVote, arg.SiteID, arg.UserID)
+	return err
 }
 
 const ensureOrgMeta = `-- name: EnsureOrgMeta :exec
@@ -444,7 +505,7 @@ func (q *Queries) GetPlanTier(ctx context.Context, id string) (string, error) {
 }
 
 const getSite = `-- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE id = $1
 `
@@ -459,6 +520,9 @@ func (q *Queries) GetSite(ctx context.Context, id string) (AppSite, error) {
 		&i.OwnerUserID,
 		&i.AccessMode,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.Title,
+		&i.Description,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -557,6 +621,20 @@ func (q *Queries) GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVe
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getSiteVoteScore = `-- name: GetSiteVoteScore :one
+SELECT COALESCE(SUM(value), 0)::bigint AS score
+FROM app.site_votes
+WHERE site_id = $1
+`
+
+// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+func (q *Queries) GetSiteVoteScore(ctx context.Context, siteID string) (int64, error) {
+	row := q.db.QueryRow(ctx, getSiteVoteScore, siteID)
+	var score int64
+	err := row.Scan(&score)
+	return score, err
 }
 
 const incSiteCount = `-- name: IncSiteCount :one
@@ -789,6 +867,63 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppD
 	return items, nil
 }
 
+const listFeedSites = `-- name: ListFeedSites :many
+SELECT
+    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at,
+    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+FROM app.sites s
+WHERE s.feed_visible
+ORDER BY s.created_at DESC
+`
+
+type ListFeedSitesRow struct {
+	AppSite      AppSite
+	Score        int64
+	MyVote       int32
+	CommentCount int64
+}
+
+// The org feed: every site in the active org that is feed-visible (not private),
+// newest first (older sites sink to the bottom). Each row carries its net vote
+// score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
+// and its comment count, so the feed renders the up/down controls + counts in one
+// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error) {
+	rows, err := q.db.Query(ctx, listFeedSites, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeedSitesRow{}
+	for rows.Next() {
+		var i ListFeedSitesRow
+		if err := rows.Scan(
+			&i.AppSite.ID,
+			&i.AppSite.OrgID,
+			&i.AppSite.Slug,
+			&i.AppSite.OwnerUserID,
+			&i.AppSite.AccessMode,
+			&i.AppSite.CurrentVersionID,
+			&i.AppSite.FeedVisible,
+			&i.AppSite.Title,
+			&i.AppSite.Description,
+			&i.AppSite.CreatedAt,
+			&i.Score,
+			&i.MyVote,
+			&i.CommentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHostRoutesForSite = `-- name: ListHostRoutesForSite :many
 SELECT host, org_id, site_id, created_at
 FROM app.host_routes
@@ -828,7 +963,7 @@ func (q *Queries) ListHostRoutesForSite(ctx context.Context, siteID string) ([]A
 }
 
 const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at
@@ -852,6 +987,9 @@ func (q *Queries) ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error) 
 			&i.OwnerUserID,
 			&i.AccessMode,
 			&i.CurrentVersionID,
+			&i.FeedVisible,
+			&i.Title,
+			&i.Description,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -906,6 +1044,55 @@ func (q *Queries) ListPublishedSitesForRebuild(ctx context.Context) ([]ListPubli
 			&i.Slug,
 			&i.AccessMode,
 			&i.VersionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSiteComments = `-- name: ListSiteComments :many
+SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+FROM (
+    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.site_comments
+    WHERE site_id = $1
+    ORDER BY created_at DESC, id DESC
+    LIMIT $2
+) recent
+ORDER BY created_at ASC, id ASC
+`
+
+type ListSiteCommentsParams struct {
+	SiteID string
+	Limit  int32
+}
+
+// A site's comment thread, displayed oldest-first (top-to-bottom like a
+// conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+// load an unbounded result. RLS scopes the read to the active org; the
+// (site_id, created_at) index backs both the inner ordering and the outer.
+func (q *Queries) ListSiteComments(ctx context.Context, arg ListSiteCommentsParams) ([]AppSiteComment, error) {
+	rows, err := q.db.Query(ctx, listSiteComments, arg.SiteID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSiteComment{}
+	for rows.Next() {
+		var i AppSiteComment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SiteID,
+			&i.AuthorUserID,
+			&i.Body,
+			&i.MentionedUserIds,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -996,7 +1183,7 @@ func (q *Queries) ListSiteVersions(ctx context.Context, siteID string) ([]AppSit
 }
 
 const listSites = `-- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 ORDER BY created_at DESC
 `
@@ -1017,6 +1204,9 @@ func (q *Queries) ListSites(ctx context.Context) ([]AppSite, error) {
 			&i.OwnerUserID,
 			&i.AccessMode,
 			&i.CurrentVersionID,
+			&i.FeedVisible,
+			&i.Title,
+			&i.Description,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1288,6 +1478,75 @@ func (q *Queries) SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModePa
 	return err
 }
 
+const setSiteFeedMeta = `-- name: SetSiteFeedMeta :one
+UPDATE app.sites
+SET title       = $2,
+    description  = $3
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+`
+
+type SetSiteFeedMetaParams struct {
+	ID          string
+	Title       pgtype.Text
+	Description pgtype.Text
+}
+
+// Set a site's human feed metadata (title + description). Empty strings are passed
+// as NULL by the caller so "clear it" round-trips to a null column. RLS scopes the
+// UPDATE to the active org; the handler restricts it to the owner or an org admin.
+func (q *Queries) SetSiteFeedMeta(ctx context.Context, arg SetSiteFeedMetaParams) (AppSite, error) {
+	row := q.db.QueryRow(ctx, setSiteFeedMeta, arg.ID, arg.Title, arg.Description)
+	var i AppSite
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.AccessMode,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.Title,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const setSiteFeedVisible = `-- name: SetSiteFeedVisible :one
+UPDATE app.sites
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+`
+
+type SetSiteFeedVisibleParams struct {
+	ID          string
+	FeedVisible bool
+}
+
+// Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
+// UPDATE to the active org; the handler additionally restricts it to the site's
+// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
+// is unaffected (feed visibility is the discovery axis, not the access axis).
+func (q *Queries) SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisibleParams) (AppSite, error) {
+	row := q.db.QueryRow(ctx, setSiteFeedVisible, arg.ID, arg.FeedVisible)
+	var i AppSite
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.AccessMode,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.Title,
+		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const subOrgStorage = `-- name: SubOrgStorage :exec
 UPDATE app.org_usage
 SET storage_bytes = GREATEST(0, storage_bytes - $1::bigint),
@@ -1460,6 +1719,32 @@ func (q *Queries) UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAcce
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertSiteVote = `-- name: UpsertSiteVote :exec
+INSERT INTO app.site_votes (site_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (site_id, user_id) DO UPDATE
+SET value = EXCLUDED.value, updated_at = now()
+`
+
+type UpsertSiteVoteParams struct {
+	SiteID string
+	OrgID  string
+	UserID string
+	Value  int16
+}
+
+// Cast (or change) the caller's vote on a site. One row per (site, user); a flip
+// from up to down just overwrites value. RLS scopes the write to the active org.
+func (q *Queries) UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error {
+	_, err := q.db.Exec(ctx, upsertSiteVote,
+		arg.SiteID,
+		arg.OrgID,
+		arg.UserID,
+		arg.Value,
+	)
+	return err
 }
 
 const writeAuditLog = `-- name: WriteAuditLog :one

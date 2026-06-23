@@ -9,6 +9,7 @@ import {
   type AllowlistEntry,
   type SetAccessResult,
 } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/action-errors";
 
 /** UI-level access selection. "unlisted" maps to mode=public + unlisted flag. */
 export type AccessSelection =
@@ -22,15 +23,13 @@ export type SetAccessActionResult =
   | { ok: true; result: SetAccessResult }
   | { ok: false; message: string };
 
+// Thin wrapper over the shared apiErrorMessage with this surface's access-specific
+// 403/400 copy, so the mapping lives in one place (lib/action-errors).
 function messageFor(err: ApiError, fallback: string): string {
-  const apiMsg = (err.body as { message?: string } | null)?.message;
-  if (apiMsg) return apiMsg;
-  if (err.status === 403) {
-    return "You don't have permission to change this site's access, or external sharing is disabled for your org.";
-  }
-  if (err.status === 400) return "That access configuration is invalid.";
-  if (err.status === 404) return "This site no longer exists.";
-  return fallback;
+  return apiErrorMessage(err, fallback, {
+    403: "You don't have permission to change this site's access, or external sharing is disabled for your org.",
+    400: "That access configuration is invalid.",
+  });
 }
 
 /**
@@ -83,6 +82,74 @@ export async function setAccessAction(input: {
   } catch (err) {
     if (err instanceof ApiError) {
       return { ok: false, message: messageFor(err, "Could not update access. Try again.") };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
+export type FeedVisibilityActionResult =
+  | { ok: true; feedVisible: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Share a site to the org feed or make it private (PUT /v1/sites/{id}/feed). The
+ * Go API authorizes this for the site's owner OR an org admin/owner. Feed
+ * visibility is orthogonal to access mode — this changes nothing at the edge, only
+ * whether the site shows up in teammates' feed.
+ */
+export async function setFeedVisibilityAction(input: {
+  siteId: string;
+  visible: boolean;
+}): Promise<FeedVisibilityActionResult> {
+  try {
+    const res = await api.setSiteFeedVisibility(input.siteId, input.visible);
+    revalidatePath(`/sites/${input.siteId}/settings`);
+    revalidatePath(`/sites/${input.siteId}`);
+    revalidatePath("/feed");
+    revalidatePath("/dashboard");
+    return { ok: true, feedVisible: res.feed_visible ?? input.visible };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return { ok: false, message: messageFor(err, "Could not update feed sharing. Try again.") };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
+export type FeedMetaActionResult =
+  | { ok: true; title: string; description: string }
+  | { ok: false; message: string };
+
+/**
+ * Set a site's feed title + description (PUT /v1/sites/{id}/feed-meta). The Go API
+ * authorizes the site's owner or an org admin/owner. Empty strings clear a field.
+ */
+export async function setFeedMetaAction(input: {
+  siteId: string;
+  title: string;
+  description: string;
+}): Promise<FeedMetaActionResult> {
+  const title = input.title.trim();
+  const description = input.description.trim();
+  if (title.length > 120) {
+    return { ok: false, message: "Title must be at most 120 characters." };
+  }
+  if (description.length > 500) {
+    return { ok: false, message: "Description must be at most 500 characters." };
+  }
+  try {
+    const res = await api.setSiteFeedMeta(input.siteId, { title, description });
+    revalidatePath(`/sites/${input.siteId}/settings`);
+    revalidatePath(`/sites/${input.siteId}`);
+    revalidatePath("/feed");
+    return {
+      ok: true,
+      title: res.title ?? title,
+      description: res.description ?? description,
+    };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return { ok: false, message: messageFor(err, "Could not update feed details. Try again.") };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }

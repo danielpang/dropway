@@ -26,6 +26,13 @@ type Querier interface {
 	// sites
 	// ===========================================================================
 	CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite, error)
+	// ===========================================================================
+	// site_comments — org-internal discussion on a shared site, with @mentions
+	// ===========================================================================
+	// Add a comment to a site. mentioned_user_ids is the set of tagged org users
+	// (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
+	// on the tenant policy rejects a row whose org_id isn't the active tenant).
+	CreateSiteComment(ctx context.Context, arg CreateSiteCommentParams) (AppSiteComment, error)
 	CreateSiteVersion(ctx context.Context, arg CreateSiteVersionParams) (AppSiteVersion, error)
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
 	// Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
@@ -40,6 +47,8 @@ type Querier interface {
 	// size lets the caller decrement the running total. No row = it wasn't in the
 	// ledger (e.g. uploaded before metering existed) → nothing to decrement.
 	DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (int64, error)
+	// Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
+	DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error
 	// SPDX-License-Identifier: FSL-1.1-Apache-2.0
 	//
 	// db/sqlc/query.sql
@@ -90,6 +99,8 @@ type Querier interface {
 	// Used to make a re-deploy of identical content idempotent (the per-site
 	// content_hash unique constraint backs this).
 	GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVersionByContentHashParams) (AppSiteVersion, error)
+	// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+	GetSiteVoteScore(ctx context.Context, siteID string) (int64, error)
 	// Bump the org's sites_count counter, returning the new value. Run inside the
 	// create-site tx after the row is inserted.
 	IncSiteCount(ctx context.Context, orgID string) (int32, error)
@@ -120,6 +131,12 @@ type Querier interface {
 	// adequate for an admin audit viewer (small N per page).
 	ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error)
 	ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error)
+	// The org feed: every site in the active org that is feed-visible (not private),
+	// newest first (older sites sink to the bottom). Each row carries its net vote
+	// score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
+	// and its comment count, so the feed renders the up/down controls + counts in one
+	// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+	ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error)
 	// Every host registered for a site in the GLOBAL registry — the canonical
 	// <slug>.dropwaycontent.com host AND every verified custom-domain host. RLS
 	// scopes the rows to the active org, so a caller only ever sees its own site's
@@ -137,6 +154,11 @@ type Querier interface {
 	// access_mode source (the site row). Drives projection.RebuildFromDB: Postgres
 	// is authoritative, the KV/D1 projection is a rebuildable cache.
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
+	// A site's comment thread, displayed oldest-first (top-to-bottom like a
+	// conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+	// load an unbounded result. RLS scopes the read to the active org; the
+	// (site_id, created_at) index backs both the inner ordering and the outer.
+	ListSiteComments(ctx context.Context, arg ListSiteCommentsParams) ([]AppSiteComment, error)
 	// LOGICAL storage per site for the active org (the current-version size of each
 	// site, 0 when it has no live version) paired with the owning user, so the caller
 	// can show per-site usage AND aggregate it per user. Same non-deduplicated model as
@@ -209,6 +231,15 @@ type Querier interface {
 	// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
 	// under a false org policy.
 	SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error
+	// Set a site's human feed metadata (title + description). Empty strings are passed
+	// as NULL by the caller so "clear it" round-trips to a null column. RLS scopes the
+	// UPDATE to the active org; the handler restricts it to the owner or an org admin.
+	SetSiteFeedMeta(ctx context.Context, arg SetSiteFeedMetaParams) (AppSite, error)
+	// Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
+	// UPDATE to the active org; the handler additionally restricts it to the site's
+	// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
+	// is unaffected (feed visibility is the discovery axis, not the access axis).
+	SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisibleParams) (AppSite, error)
 	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
 	// floors at zero so a reconciliation skew can never make the counter negative.
 	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error
@@ -238,6 +269,9 @@ type Querier interface {
 	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
 	// under a false org policy.
 	UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAccessPolicyParams) (AppSiteAccessPolicy, error)
+	// Cast (or change) the caller's vote on a site. One row per (site, user); a flip
+	// from up to down just overwrites value. RLS scopes the write to the active org.
+	UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error
 	// NOTE: resolving a content host → owning site via the RLS-bypassing
 	// app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
 	// pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types

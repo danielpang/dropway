@@ -27,6 +27,8 @@ import type { components, operations } from "@/lib/api-generated/schema";
 
 export type Me = components["schemas"]["Me"];
 export type Site = components["schemas"]["Site"];
+/** One post in the org feed: a Site plus vote score / the caller's vote / comment count. */
+export type FeedItem = components["schemas"]["FeedItem"];
 export type Version = components["schemas"]["Version"];
 /** One immutable deploy in a site's history (the rollback picker rows). */
 export type SiteVersion = components["schemas"]["SiteVersion"];
@@ -37,6 +39,8 @@ export type Member = components["schemas"]["Member"];
 /** One user's logical (non-deduplicated) storage total in the org, in bytes. */
 export type UserStorage = components["schemas"]["UserStorage"];
 export type AllowlistEntry = components["schemas"]["AllowlistEntry"];
+/** One org-internal comment on a site (with @mentions). */
+export type SiteComment = components["schemas"]["SiteComment"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
 
@@ -342,6 +346,82 @@ export const api = {
   /** Get one site by id (404 → ApiError with status 404). */
   getSite(id: string): Promise<Site> {
     return apiGet(`/v1/sites/${id}`) as Promise<Site>;
+  },
+
+  /**
+   * The org feed: every site teammates have shared (feed-visible, not private),
+   * newest first. Any member may read it; it's the cross-user discovery surface
+   * that complements the per-user site list. Private sites are filtered server-side.
+   */
+  async listFeed(): Promise<FeedItem[]> {
+    const body = (await apiGet("/v1/feed")) as { sites?: FeedItem[] };
+    return body.sites ?? [];
+  },
+
+  /**
+   * Cast the caller's vote on a feed post: value 1 (up), -1 (down), or 0 to clear.
+   * Returns the post's new net score and the caller's resulting vote.
+   */
+  setSiteVote(
+    siteId: string,
+    value: -1 | 0 | 1,
+  ): Promise<{ site_id?: string; score?: number; my_vote?: number }> {
+    return apiFetch<{ site_id?: string; score?: number; my_vote?: number }>(
+      `/v1/sites/${siteId}/vote`,
+      { method: "PUT", body: JSON.stringify({ value }) },
+    );
+  },
+
+  /**
+   * Share a site to the org feed (visible=true) or make it private (visible=false).
+   * The site's owner may toggle their own site; org admins/owners may toggle any.
+   * 403 otherwise. Feed visibility is orthogonal to access mode — nothing changes
+   * at the edge.
+   */
+  setSiteFeedVisibility(
+    siteId: string,
+    visible: boolean,
+  ): Promise<{ site_id?: string; feed_visible?: boolean }> {
+    return apiFetch<{ site_id?: string; feed_visible?: boolean }>(
+      `/v1/sites/${siteId}/feed`,
+      { method: "PUT", body: JSON.stringify({ visible }) },
+    );
+  },
+
+  /**
+   * Set a site's feed title + description (owner or admin → 403 otherwise). Empty
+   * strings clear the corresponding field.
+   */
+  setSiteFeedMeta(
+    siteId: string,
+    input: { title: string; description: string },
+  ): Promise<{ site_id?: string; title?: string; description?: string }> {
+    return apiFetch<{ site_id?: string; title?: string; description?: string }>(
+      `/v1/sites/${siteId}/feed-meta`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+  },
+
+  /** A site's comment thread, oldest first (any org member). */
+  async listComments(siteId: string): Promise<SiteComment[]> {
+    const body = (await apiGet(`/v1/sites/${siteId}/comments`)) as {
+      comments?: SiteComment[];
+    };
+    return body.comments ?? [];
+  },
+
+  /**
+   * Post a comment to a site, optionally tagging teammates by user id. Any org
+   * member may comment; mentioned ids that aren't org members are dropped server-side.
+   */
+  addComment(
+    siteId: string,
+    input: { body: string; mentioned_user_ids?: string[] },
+  ): Promise<SiteComment> {
+    return apiFetch<SiteComment>(`/v1/sites/${siteId}/comments`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 
   /** A site's deploy history, newest first (each flagged is_current). */

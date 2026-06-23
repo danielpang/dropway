@@ -8,8 +8,43 @@ import {
   type ManifestFile,
   type PublishResult,
   type QuotaExceeded,
+  type SiteComment,
   type Version,
 } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/action-errors";
+
+export type AddCommentActionResult =
+  | { ok: true; comment: SiteComment }
+  | { ok: false; message: string };
+
+/**
+ * Post a comment to a site (POST /v1/sites/{id}/comments), optionally tagging
+ * teammates by user id. Any org member may comment; the Go API drops mention ids
+ * that aren't current org members. Re-renders the site page on success.
+ */
+export async function addCommentAction(input: {
+  siteId: string;
+  body: string;
+  mentionedUserIds: string[];
+}): Promise<AddCommentActionResult> {
+  const body = input.body.trim();
+  if (!body) {
+    return { ok: false, message: "Write something before posting." };
+  }
+  if (body.length > 4000) {
+    return { ok: false, message: "Comment is too long (max 4000 characters)." };
+  }
+  try {
+    const comment = await api.addComment(input.siteId, {
+      body,
+      mentioned_user_ids: input.mentionedUserIds,
+    });
+    revalidatePath(`/sites/${input.siteId}`);
+    return { ok: true, comment };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err, "Could not post your comment. Try again.") };
+  }
+}
 
 /**
  * Result envelope for the publish/rollback action. Like create-site, server

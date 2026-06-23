@@ -317,6 +317,30 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  /v1/feed:
+    get:
+      summary: The org feed — sites shared across the org, newest first
+      description: >
+        Returns every site in the caller's org that is feed-visible (not marked
+        private), newest first so freshly created/published sites are at the top and
+        older sites sink to the bottom. The cross-user discovery surface that
+        complements the per-user site list. Any org member may read it (RLS-scoped to
+        their org). Each item is a full Site (owner_id, access_mode, live_url,
+        created_at, …) so the dashboard can render and attribute it like a site card.
+      operationId: listFeed
+      responses:
+        "200":
+          description: The org's shared sites, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeedItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/sites:
     post:
       summary: Create a site
@@ -554,6 +578,171 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/feed:
+    put:
+      summary: Share a site to the org feed, or make it private (owner or admin)
+      description: >
+        Toggles whether the site appears in the org feed. Unlike the access
+        endpoints (admin/owner only), the site's OWNER may toggle their own site's
+        feed visibility, and an org admin/owner may toggle any site. Feed visibility
+        is the discovery axis — orthogonal to access_mode — so this changes nothing
+        at the edge: a private site keeps serving under its existing access mode, it
+        is just hidden from the feed listing.
+      operationId: setSiteFeedVisibility
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visible]
+              properties:
+                visible:
+                  type: boolean
+                  description: true shares the site to the org feed; false makes it private.
+      responses:
+        "200":
+          description: Feed visibility updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id: { type: string, format: uuid }
+                  feed_visible: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/feed-meta:
+    put:
+      summary: Set a site's feed title + description (owner or admin)
+      description: >
+        Sets the human-facing Title and Description the site shows in the org feed.
+        Authorized for the site's owner or an org admin/owner (same gate as the
+        feed-visibility toggle). Empty strings clear the corresponding field.
+      operationId: setSiteFeedMeta
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, description: Human title (empty clears it; max 120 chars). }
+                description: { type: string, description: Description (empty clears it; max 500 chars). }
+      responses:
+        "200":
+          description: Feed metadata updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id: { type: string, format: uuid }
+                  title: { type: string }
+                  description: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/vote:
+    put:
+      summary: Up/down vote a feed post (any org member)
+      description: >
+        Records the caller's vote on a site: value 1 (up), -1 (down), or 0 to clear
+        it. One vote per member per site. Returns the post's new net score and the
+        caller's resulting vote.
+      operationId: setSiteVote
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: integer
+                  enum: [-1, 0, 1]
+                  description: 1 upvote, -1 downvote, 0 clears the caller's vote.
+      responses:
+        "200":
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id: { type: string, format: uuid }
+                  score: { type: integer, format: int64 }
+                  my_vote: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/comments:
+    get:
+      summary: List a site's comment thread (oldest first)
+      description: >
+        The site's org-internal comment thread, oldest first. Any org member may
+        read it (RLS-scoped to their org).
+      operationId: listComments
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteComment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Post a comment to a site, optionally tagging teammates
+      description: >
+        Any org member may comment; the author is the authenticated caller. Tagged
+        ids that aren't current org members are dropped so a mention always resolves
+        to a real teammate.
+      operationId: addComment
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, description: The comment text (max 4000 chars). }
+                mentioned_user_ids:
+                  type: array
+                  description: Org users to tag. Non-members are dropped server-side.
+                  items: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteComment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/sites/{id}/allowlist:
@@ -914,6 +1103,56 @@ components:
             version (0 before the first deploy). "Logical" means NOT deduplicated
             across sites/versions — the per-folder size you'd expect from Dropbox or
             Drive, not the org's billed footprint.
+        feed_visible:
+          type: boolean
+          description: >
+            Whether the site appears in the org feed (the cross-user discovery
+            surface). Defaults to true: a site is auto-shared to the feed on create
+            and publish. The owner (or an admin) sets it false to keep the site
+            private — off the feed. Orthogonal to access_mode (this never changes
+            who can load the served bytes).
+        title:
+          type: string
+          description: >
+            Owner-set human title shown in the org feed (empty when unset — the
+            feed falls back to the slug).
+        description:
+          type: string
+          description: Owner-set description shown in the org feed (empty when unset).
+        created_at: { type: string, format: date-time }
+
+    FeedItem:
+      description: >
+        One post in the org feed: a Site plus its social metadata (net vote score,
+        the caller's own vote, and its comment count).
+      allOf:
+        - $ref: "#/components/schemas/Site"
+        - type: object
+          properties:
+            score:
+              type: integer
+              format: int64
+              description: Net up/down vote total (sum of +1/-1).
+            my_vote:
+              type: integer
+              description: The caller's own vote on this post (1, -1, or 0).
+            comment_count:
+              type: integer
+              format: int64
+              description: Number of comments on this post.
+
+    SiteComment:
+      type: object
+      description: One org-internal comment on a site, optionally tagging teammates.
+      properties:
+        id: { type: string, format: uuid }
+        site_id: { type: string, format: uuid }
+        author_id: { type: string, format: uuid }
+        body: { type: string }
+        mentioned_user_ids:
+          type: array
+          description: The org users tagged in the comment (identity ids).
+          items: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
 
     UserStorage:

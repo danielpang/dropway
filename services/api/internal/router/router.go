@@ -92,6 +92,10 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// newest first, paginated (RLS-scoped).
 		r.Get("/audit", api.ListAudit)
 
+		// Org feed: any member reads their org's shared (non-private) sites, newest
+		// first — the cross-user discovery surface (RLS-scoped).
+		r.Get("/feed", api.ListFeed)
+
 		// Org-level policy: read the current value (any member, for the live toggle
 		// state — H10); writing it is admin/owner only (re-checked in the handler).
 		r.Get("/orgs/policy", api.GetOrgPolicy)
@@ -122,6 +126,20 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 			// Phase 2 — access control & domains.
 			r.Put("/{id}/access", api.SetSiteAccess)
+
+			// Org feed visibility: share a site to the org feed or make it private.
+			// Owner-or-admin (the handler re-checks: a site owner may toggle their
+			// own site; everyone else must be an org admin/owner).
+			r.Put("/{id}/feed", api.SetSiteFeedVisibility)
+			// Feed metadata (title + description), same owner-or-admin gate.
+			r.Put("/{id}/feed-meta", api.SetSiteFeedMeta)
+			// Up/down vote a feed post (any member; +1/-1/0 to clear).
+			r.Put("/{id}/vote", api.SetSiteVote)
+
+			// Site comments: any org member may read + post (org-internal thread,
+			// RLS-scoped). Posting can tag teammates (@mentions).
+			r.Get("/{id}/comments", api.ListComments)
+			r.Post("/{id}/comments", api.AddComment)
 
 			// Phase 4 — generic admin hard-revoke of a site's edge tokens (a
 			// "kill the share now" affordance independent of an access change).
