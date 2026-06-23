@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -205,10 +204,10 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	var vopts []auth.Option
 	if cfg.MCPAudience != "" {
 		// Also accept OAuth access tokens minted for the MCP resource, so the MCP
-		// server can forward a user's token for control-plane writes. Both URL forms
-		// (with/without a trailing slash) since clients canonicalize differently.
-		base := strings.TrimRight(cfg.MCPAudience, "/")
-		vopts = append(vopts, auth.WithExtraAudiences(base, base+"/"))
+		// server can forward a user's token for control-plane writes. Accept every
+		// canonical form the client may have sent (bare, trailing slash, /mcp, /mcp/);
+		// this MUST match the MCP server's own gate, so both use the shared helper.
+		vopts = append(vopts, auth.WithExtraAudiences(auth.MCPResourceAudiences(cfg.MCPAudience)...))
 	}
 	verifier := auth.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.JWTAudience, vopts...)
 	primeCtx, cancelPrime := context.WithTimeout(context.Background(), 5*time.Second)

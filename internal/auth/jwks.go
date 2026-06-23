@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,6 +86,20 @@ func WithMinRefreshInterval(d time.Duration) Option {
 // keeps its strict single-audience behavior.
 func WithExtraAudiences(auds ...string) Option {
 	return func(v *Verifier) { v.extraAudiences = append(v.extraAudiences, auds...) }
+}
+
+// MCPResourceAudiences returns every canonical `aud` form an OAuth client may mint
+// for the Dropway MCP resource at publicURL: the bare URL, a trailing-slash variant,
+// and the ".../mcp" and ".../mcp/" connection-URL forms (the last is the RFC 8707
+// resource Claude's built-in connector requests). Better Auth issues the token with
+// whichever form the client sent, so BOTH the MCP server's own gate AND the Go API
+// (which accepts forwarded MCP tokens for control-plane writes) must accept this same
+// set — otherwise a token minted for, e.g., ".../mcp/" verifies at the MCP (reads
+// work) but 401s at the API (writes fail). Centralized here so the two call sites
+// (services/mcp + services/api) cannot drift. publicURL's trailing slash is ignored.
+func MCPResourceAudiences(publicURL string) []string {
+	base := strings.TrimRight(publicURL, "/")
+	return []string{base, base + "/", base + "/mcp", base + "/mcp/"}
 }
 
 // NewVerifier builds a Verifier for the given JWKS URL, expected issuer and

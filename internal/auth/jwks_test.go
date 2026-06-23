@@ -287,3 +287,59 @@ func TestVerify_ExtraAudiences(t *testing.T) {
 		t.Fatal("unlisted audience must still be rejected with extra audiences set")
 	}
 }
+
+// MCPResourceAudiences must list exactly the four canonical resource forms (bare,
+// trailing slash, /mcp, /mcp/) and ignore a trailing slash on the input — the API
+// and the MCP server both build their accepted set from this, so the list is the
+// contract that keeps them in sync.
+func TestMCPResourceAudiences(t *testing.T) {
+	want := []string{
+		"https://mcp.dropway.dev",
+		"https://mcp.dropway.dev/",
+		"https://mcp.dropway.dev/mcp",
+		"https://mcp.dropway.dev/mcp/",
+	}
+	for _, in := range []string{"https://mcp.dropway.dev", "https://mcp.dropway.dev/"} {
+		got := MCPResourceAudiences(in)
+		if len(got) != len(want) {
+			t.Fatalf("MCPResourceAudiences(%q) = %v; want %v", in, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("MCPResourceAudiences(%q)[%d] = %q; want %q", in, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+// Regression: a verifier configured from MCPResourceAudiences accepts a token whose
+// aud is the ".../mcp/" connection-URL form (what Claude's built-in connector mints
+// and forwards to the API for writes). Before the fix the API only accepted the bare
+// and trailing-slash forms, so this token verified at the MCP gate (reads) but 401'd
+// at the API (writes). Every form in the set is accepted; an outsider is not.
+func TestVerify_AcceptsMCPResourceForms(t *testing.T) {
+	pub, priv := newKey(t)
+	js := newJWKSServer(map[string]ed25519.PublicKey{"k1": pub})
+	defer js.Close()
+
+	const resource = "https://mcp.dropway.test"
+	auds := MCPResourceAudiences(resource)
+	// Primary audience is the API's own; the MCP forms are accepted as extras —
+	// exactly how the API wires it (services/api/cmd/api/main.go).
+	v := NewVerifier(js.URL, testIssuer, testAud,
+		WithHTTPClient(js.Client()), WithExtraAudiences(auds...))
+
+	for _, aud := range append([]string{testAud}, auds...) {
+		c := goodClaims()
+		c.Audience = jwt.ClaimStrings{aud}
+		if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", c)); err != nil {
+			t.Fatalf("aud %q should be accepted: %v", aud, err)
+		}
+	}
+
+	cBad := goodClaims()
+	cBad.Audience = jwt.ClaimStrings{resource + "/mcp/evil"}
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", cBad)); err == nil {
+		t.Fatal("a non-canonical MCP audience must still be rejected")
+	}
+}
