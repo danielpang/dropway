@@ -25,6 +25,7 @@ func TestActionVocab(t *testing.T) {
 		{ActionMemberJoin, "member.join"},
 		{ActionSiteRevokeAccess, "site.revoke_access"},
 		{ActionSiteFeedVisibility, "site.feed_visibility"},
+		{ActionSiteFeedMeta, "site.feed_meta"},
 	}
 	for _, c := range cases {
 		if string(c.action) != c.want {
@@ -42,6 +43,7 @@ func TestActionVocab_NoDuplicates(t *testing.T) {
 		ActionDomainAdd, ActionDomainVerify, ActionDomainRemove,
 		ActionAllowExternalSharing, ActionMemberRevoke, ActionMemberInvite,
 		ActionMemberJoin, ActionSiteRevokeAccess, ActionSiteFeedVisibility,
+		ActionSiteFeedMeta,
 	}
 	seen := make(map[Action]bool, len(all))
 	for _, a := range all {

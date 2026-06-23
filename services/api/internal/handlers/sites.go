@@ -33,7 +33,11 @@ type siteResponse struct {
 	StorageBytes     int64     `json:"storage_bytes"`
 	// FeedVisible is the org-feed discovery flag: true (default) shares the site to
 	// teammates' feed; false keeps it private (off the feed). Orthogonal to access.
-	FeedVisible bool      `json:"feed_visible"`
+	FeedVisible bool `json:"feed_visible"`
+	// Title / Description are the owner-set human feed metadata (empty when unset;
+	// the feed UI falls back to the slug for the title).
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -53,6 +57,8 @@ func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) s
 		LiveURL:          a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
 		StorageBytes:     storageBytes,
 		FeedVisible:      s.FeedVisible,
+		Title:            s.Title,
+		Description:      s.Description,
 		CreatedAt:        s.CreatedAt,
 	}
 }

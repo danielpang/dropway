@@ -5,11 +5,18 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
+)
+
+// Feed-metadata length bounds (defensive caps; the dashboard also limits input).
+const (
+	maxFeedTitleLen       = 120
+	maxFeedDescriptionLen = 500
 )
 
 // ---------------------------------------------------------------------------
@@ -125,5 +132,73 @@ func (a *API) SetSiteFeedVisibility(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"site_id":      siteID,
 		"feed_visible": updated.FeedVisible,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// PUT /v1/sites/{id}/feed-meta  {title, description}
+// ---------------------------------------------------------------------------
+
+type setFeedMetaRequest struct {
+	// Title / Description are the human feed metadata. Empty clears the field.
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+// SetSiteFeedMeta sets the owner-facing Title + Description a site shows in the
+// org feed. Authorized for the site's OWNER or an org admin/owner (same gate as
+// the feed-visibility toggle — it's the owner's site to describe). Empty strings
+// clear the corresponding field (stored as NULL).
+func (a *API) SetSiteFeedMeta(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	siteID := chi.URLParam(r, "id")
+
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if site.OwnerUserID != t.UserID && !a.requireAdmin(w, r, t) {
+		return
+	}
+
+	var req setFeedMetaRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	description := strings.TrimSpace(req.Description)
+	if len(title) > maxFeedTitleLen {
+		httpx.WriteError(w, fmt.Errorf("%w: title must be at most %d characters", httpx.ErrBadRequest, maxFeedTitleLen))
+		return
+	}
+	if len(description) > maxFeedDescriptionLen {
+		httpx.WriteError(w, fmt.Errorf("%w: description must be at most %d characters", httpx.ErrBadRequest, maxFeedDescriptionLen))
+		return
+	}
+
+	updated, err := a.Store.SetSiteFeedMeta(r.Context(), t, siteID, title, description)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	logger(r).Info("site feed metadata changed", "site_id", siteID, "org_id", t.OrgID)
+	a.recordAudit(r, t, audit.ActionSiteFeedMeta, "site:"+siteID, map[string]any{
+		"title_set":       updated.Title != "",
+		"description_set": updated.Description != "",
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"site_id":     siteID,
+		"title":       updated.Title,
+		"description": updated.Description,
 	})
 }

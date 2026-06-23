@@ -10,7 +10,7 @@ import { api, ApiError, type Site } from "@/lib/api";
 import { loadOrgBillingState } from "@/lib/billing-server";
 import { loadActiveOrg } from "@/lib/org";
 
-export const metadata: Metadata = { title: "Sites" };
+export const metadata: Metadata = { title: "My Sites" };
 
 // Always render against live API data; sites are per-tenant and mutate often.
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ export default async function DashboardPage() {
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">My Sites</h1>
           <p className="text-muted-foreground">
             Deploy a folder, get a live, access-controlled URL.
           </p>

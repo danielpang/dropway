@@ -416,6 +416,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/feed-meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a site's feed title + description (owner or admin)
+         * @description Sets the human-facing Title and Description the site shows in the org feed. Authorized for the site's owner or an org admin/owner (same gate as the feed-visibility toggle). Empty strings clear the corresponding field.
+         */
+        put: operations["setSiteFeedMeta"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a site's comment thread (oldest first)
+         * @description The site's org-internal comment thread, oldest first. Any org member may read it (RLS-scoped to their org).
+         */
+        get: operations["listComments"];
+        put?: never;
+        /**
+         * Post a comment to a site, optionally tagging teammates
+         * @description Any org member may comment; the author is the authenticated caller. Tagged ids that aren't current org members are dropped so a mention always resolves to a real teammate.
+         */
+        post: operations["addComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{id}/allowlist": {
         parameters: {
             query?: never;
@@ -624,6 +668,24 @@ export interface components {
             storage_bytes?: number;
             /** @description Whether the site appears in the org feed (the cross-user discovery surface). Defaults to true: a site is auto-shared to the feed on create and publish. The owner (or an admin) sets it false to keep the site private — off the feed. Orthogonal to access_mode (this never changes who can load the served bytes). */
             feed_visible?: boolean;
+            /** @description Owner-set human title shown in the org feed (empty when unset — the feed falls back to the slug). */
+            title?: string;
+            /** @description Owner-set description shown in the org feed (empty when unset). */
+            description?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description One org-internal comment on a site, optionally tagging teammates. */
+        SiteComment: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            site_id?: string;
+            /** Format: uuid */
+            author_id?: string;
+            body?: string;
+            /** @description The org users tagged in the comment (identity ids). */
+            mentioned_user_ids?: string[];
             /** Format: date-time */
             created_at?: string;
         };
@@ -1431,6 +1493,109 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSiteFeedMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human title (empty clears it; max 120 chars). */
+                    title?: string;
+                    /** @description Description (empty clears it; max 500 chars). */
+                    description?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed metadata updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        title?: string;
+                        description?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's comments */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        comments?: components["schemas"]["SiteComment"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The comment text (max 4000 chars). */
+                    body: string;
+                    /** @description Org users to tag. Non-members are dropped server-side. */
+                    mentioned_user_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Comment created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteComment"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
         };
     };

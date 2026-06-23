@@ -26,6 +26,13 @@ type Querier interface {
 	// sites
 	// ===========================================================================
 	CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite, error)
+	// ===========================================================================
+	// site_comments — org-internal discussion on a shared site, with @mentions
+	// ===========================================================================
+	// Add a comment to a site. mentioned_user_ids is the set of tagged org users
+	// (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
+	// on the tenant policy rejects a row whose org_id isn't the active tenant).
+	CreateSiteComment(ctx context.Context, arg CreateSiteCommentParams) (AppSiteComment, error)
 	CreateSiteVersion(ctx context.Context, arg CreateSiteVersionParams) (AppSiteVersion, error)
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
 	// Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
@@ -142,6 +149,9 @@ type Querier interface {
 	// access_mode source (the site row). Drives projection.RebuildFromDB: Postgres
 	// is authoritative, the KV/D1 projection is a rebuildable cache.
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
+	// A site's comment thread, oldest first (reads top-to-bottom like a conversation).
+	// RLS scopes the read to the active org; the (site_id, created_at) index backs it.
+	ListSiteComments(ctx context.Context, siteID string) ([]AppSiteComment, error)
 	// LOGICAL storage per site for the active org (the current-version size of each
 	// site, 0 when it has no live version) paired with the owning user, so the caller
 	// can show per-site usage AND aggregate it per user. Same non-deduplicated model as
@@ -214,6 +224,10 @@ type Querier interface {
 	// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
 	// under a false org policy.
 	SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error
+	// Set a site's human feed metadata (title + description). Empty strings are passed
+	// as NULL by the caller so "clear it" round-trips to a null column. RLS scopes the
+	// UPDATE to the active org; the handler restricts it to the owner or an org admin.
+	SetSiteFeedMeta(ctx context.Context, arg SetSiteFeedMetaParams) (AppSite, error)
 	// Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
 	// UPDATE to the active org; the handler additionally restricts it to the site's
 	// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection

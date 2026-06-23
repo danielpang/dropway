@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
@@ -154,6 +155,10 @@ type Site struct {
 	// (default) shares the site to teammates' feed; false keeps it private (off
 	// the feed). It never affects edge access — see migration 0005.
 	FeedVisible bool
+	// Title / Description are the owner-set human feed metadata (empty when unset;
+	// the feed falls back to the slug for the title).
+	Title       string
+	Description string
 	CreatedAt   time.Time
 }
 
@@ -435,6 +440,31 @@ func (s *Store) SetSiteFeedVisible(ctx context.Context, t Tenant, siteID string,
 	return out, err
 }
 
+// SetSiteFeedMeta sets a site's human feed metadata (title + description). Empty
+// strings are stored as SQL NULL so "clear it" round-trips to an unset column. RLS
+// scopes the UPDATE to the active org; the caller (handler) restricts it to the
+// site owner or an org admin. A miss surfaces as ErrNotFound. Returns the updated
+// site.
+func (s *Store) SetSiteFeedMeta(ctx context.Context, t Tenant, siteID, title, description string) (Site, error) {
+	var out Site
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		row, err := q.SetSiteFeedMeta(ctx, db.SetSiteFeedMetaParams{
+			ID:          siteID,
+			Title:       pgtype.Text{String: title, Valid: title != ""},
+			Description: pgtype.Text{String: description, Valid: description != ""},
+		})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = siteFromDB(row)
+		return nil
+	})
+	return out, err
+}
+
 // GetSite returns one site by id (RLS makes other orgs' sites invisible → a miss
 // surfaces as ErrNotFound, never a cross-tenant leak).
 func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) {
@@ -454,7 +484,7 @@ func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) 
 }
 
 func siteFromDB(r db.AppSite) Site {
-	return Site{
+	s := Site{
 		ID:               r.ID,
 		OrgID:            r.OrgID,
 		Slug:             r.Slug,
@@ -464,6 +494,13 @@ func siteFromDB(r db.AppSite) Site {
 		FeedVisible:      r.FeedVisible,
 		CreatedAt:        r.CreatedAt,
 	}
+	if r.Title.Valid {
+		s.Title = r.Title.String
+	}
+	if r.Description.Valid {
+		s.Description = r.Description.String
+	}
+	return s
 }
 
 func versionFromDB(r db.AppSiteVersion) SiteVersion {

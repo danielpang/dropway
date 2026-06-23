@@ -28,9 +28,15 @@ type SiteStore interface {
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
 
 	// Org feed: ListFeedSites lists the active org's non-private sites (newest
-	// first); SetSiteFeedVisible flips one site's share-to-feed flag (owner/admin).
+	// first); SetSiteFeedVisible flips one site's share-to-feed flag (owner/admin);
+	// SetSiteFeedMeta sets the owner-facing title/description shown in the feed.
 	ListFeedSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	SetSiteFeedVisible(ctx context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error)
+	SetSiteFeedMeta(ctx context.Context, t store.Tenant, siteID, title, description string) (store.Site, error)
+
+	// Site comments: an org-internal discussion thread per site, with @mentions.
+	CreateSiteComment(ctx context.Context, t store.Tenant, p store.CreateSiteCommentParams) (store.SiteComment, error)
+	ListSiteComments(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteComment, error)
 	CreateSiteVersion(ctx context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error)
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)

@@ -131,6 +131,13 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			// Owner-or-admin (the handler re-checks: a site owner may toggle their
 			// own site; everyone else must be an org admin/owner).
 			r.Put("/{id}/feed", api.SetSiteFeedVisibility)
+			// Feed metadata (title + description), same owner-or-admin gate.
+			r.Put("/{id}/feed-meta", api.SetSiteFeedMeta)
+
+			// Site comments: any org member may read + post (org-internal thread,
+			// RLS-scoped). Posting can tag teammates (@mentions).
+			r.Get("/{id}/comments", api.ListComments)
+			r.Post("/{id}/comments", api.AddComment)
 
 			// Phase 4 — generic admin hard-revoke of a site's edge tokens (a
 			// "kill the share now" affordance independent of an access change).

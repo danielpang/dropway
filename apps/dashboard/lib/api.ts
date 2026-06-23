@@ -37,6 +37,8 @@ export type Member = components["schemas"]["Member"];
 /** One user's logical (non-deduplicated) storage total in the org, in bytes. */
 export type UserStorage = components["schemas"]["UserStorage"];
 export type AllowlistEntry = components["schemas"]["AllowlistEntry"];
+/** One org-internal comment on a site (with @mentions). */
+export type SiteComment = components["schemas"]["SiteComment"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
 
@@ -368,6 +370,42 @@ export const api = {
       `/v1/sites/${siteId}/feed`,
       { method: "PUT", body: JSON.stringify({ visible }) },
     );
+  },
+
+  /**
+   * Set a site's feed title + description (owner or admin → 403 otherwise). Empty
+   * strings clear the corresponding field.
+   */
+  setSiteFeedMeta(
+    siteId: string,
+    input: { title: string; description: string },
+  ): Promise<{ site_id?: string; title?: string; description?: string }> {
+    return apiFetch<{ site_id?: string; title?: string; description?: string }>(
+      `/v1/sites/${siteId}/feed-meta`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+  },
+
+  /** A site's comment thread, oldest first (any org member). */
+  async listComments(siteId: string): Promise<SiteComment[]> {
+    const body = (await apiGet(`/v1/sites/${siteId}/comments`)) as {
+      comments?: SiteComment[];
+    };
+    return body.comments ?? [];
+  },
+
+  /**
+   * Post a comment to a site, optionally tagging teammates by user id. Any org
+   * member may comment; mentioned ids that aren't org members are dropped server-side.
+   */
+  addComment(
+    siteId: string,
+    input: { body: string; mentioned_user_ids?: string[] },
+  ): Promise<SiteComment> {
+    return apiFetch<SiteComment>(`/v1/sites/${siteId}/comments`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 
   /** A site's deploy history, newest first (each flagged is_current). */

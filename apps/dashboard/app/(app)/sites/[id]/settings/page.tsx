@@ -6,6 +6,7 @@ import { ArrowLeft, ExternalLink, ShieldAlert } from "lucide-react";
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { AccessSettingsForm } from "@/components/sites/access-settings-form";
 import { AllowlistManager } from "@/components/sites/allowlist-manager";
+import { FeedMetaForm } from "@/components/sites/feed-meta-form";
 import { FeedVisibilityToggle } from "@/components/sites/feed-visibility-toggle";
 import {
   Card,
@@ -154,12 +155,20 @@ export default async function SiteAccessSettingsPage({
             teammates to discover. New sites are shared by default.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           <FeedVisibilityToggle
             siteId={id}
             initialVisible={feedVisible}
             disabled={!canToggleFeed}
           />
+          <div className="border-t border-border pt-6">
+            <FeedMetaForm
+              siteId={id}
+              initialTitle={site.title ?? ""}
+              initialDescription={site.description ?? ""}
+              disabled={!canToggleFeed}
+            />
+          </div>
         </CardContent>
       </Card>
 

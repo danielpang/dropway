@@ -117,6 +117,45 @@ export async function setFeedVisibilityAction(input: {
   }
 }
 
+export type FeedMetaActionResult =
+  | { ok: true; title: string; description: string }
+  | { ok: false; message: string };
+
+/**
+ * Set a site's feed title + description (PUT /v1/sites/{id}/feed-meta). The Go API
+ * authorizes the site's owner or an org admin/owner. Empty strings clear a field.
+ */
+export async function setFeedMetaAction(input: {
+  siteId: string;
+  title: string;
+  description: string;
+}): Promise<FeedMetaActionResult> {
+  const title = input.title.trim();
+  const description = input.description.trim();
+  if (title.length > 120) {
+    return { ok: false, message: "Title must be at most 120 characters." };
+  }
+  if (description.length > 500) {
+    return { ok: false, message: "Description must be at most 500 characters." };
+  }
+  try {
+    const res = await api.setSiteFeedMeta(input.siteId, { title, description });
+    revalidatePath(`/sites/${input.siteId}/settings`);
+    revalidatePath(`/sites/${input.siteId}`);
+    revalidatePath("/feed");
+    return {
+      ok: true,
+      title: res.title ?? title,
+      description: res.description ?? description,
+    };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return { ok: false, message: messageFor(err, "Could not update feed details. Try again.") };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 export type AllowlistActionResult =
   | { ok: true; entry?: AllowlistEntry }
   | { ok: false; message: string };

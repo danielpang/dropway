@@ -151,10 +151,10 @@ WHERE app.org_usage.org_id = $1;
 -- name: CreateSite :one
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
 
 -- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE id = $1;
 
@@ -183,7 +183,7 @@ LEFT JOIN app.site_versions v ON v.id = s.current_version_id
 ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 ORDER BY created_at DESC;
 
@@ -192,7 +192,7 @@ ORDER BY created_at DESC;
 -- newest first (older sites sink to the bottom). RLS scopes the read to the
 -- active org; the partial index app.sites_feed_idx (org_id, created_at DESC)
 -- WHERE feed_visible backs both the filter and the order.
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE feed_visible
 ORDER BY created_at DESC;
@@ -205,7 +205,17 @@ ORDER BY created_at DESC;
 UPDATE app.sites
 SET feed_visible = $2
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
+
+-- name: SetSiteFeedMeta :one
+-- Set a site's human feed metadata (title + description). Empty strings are passed
+-- as NULL by the caller so "clear it" round-trips to a null column. RLS scopes the
+-- UPDATE to the active org; the handler restricts it to the owner or an org admin.
+UPDATE app.sites
+SET title       = $2,
+    description  = $3
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
 
 -- name: SetCurrentVersion :exec
 -- Flip the live-version pointer (publish / rollback). RLS guarantees we can only
@@ -213,6 +223,26 @@ RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed
 UPDATE app.sites
 SET current_version_id = $2
 WHERE id = $1;
+
+-- ===========================================================================
+-- site_comments — org-internal discussion on a shared site, with @mentions
+-- ===========================================================================
+
+-- name: CreateSiteComment :one
+-- Add a comment to a site. mentioned_user_ids is the set of tagged org users
+-- (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
+-- on the tenant policy rejects a row whose org_id isn't the active tenant).
+INSERT INTO app.site_comments (org_id, site_id, author_user_id, body, mentioned_user_ids)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at;
+
+-- name: ListSiteComments :many
+-- A site's comment thread, oldest first (reads top-to-bottom like a conversation).
+-- RLS scopes the read to the active org; the (site_id, created_at) index backs it.
+SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+FROM app.site_comments
+WHERE site_id = $1
+ORDER BY created_at ASC, id ASC;
 
 -- ===========================================================================
 -- site_versions
@@ -477,7 +507,7 @@ WHERE id = $1;
 -- name: ListPublicSitesForOrg :many
 -- Every site in the active org whose access_mode = 'public' (used by the reconcile
 -- on disabling external sharing: these are downgraded to org_only).
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at;

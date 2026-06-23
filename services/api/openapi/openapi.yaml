@@ -619,6 +619,95 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/sites/{id}/feed-meta:
+    put:
+      summary: Set a site's feed title + description (owner or admin)
+      description: >
+        Sets the human-facing Title and Description the site shows in the org feed.
+        Authorized for the site's owner or an org admin/owner (same gate as the
+        feed-visibility toggle). Empty strings clear the corresponding field.
+      operationId: setSiteFeedMeta
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, description: Human title (empty clears it; max 120 chars). }
+                description: { type: string, description: Description (empty clears it; max 500 chars). }
+      responses:
+        "200":
+          description: Feed metadata updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  site_id: { type: string, format: uuid }
+                  title: { type: string }
+                  description: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/comments:
+    get:
+      summary: List a site's comment thread (oldest first)
+      description: >
+        The site's org-internal comment thread, oldest first. Any org member may
+        read it (RLS-scoped to their org).
+      operationId: listComments
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteComment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Post a comment to a site, optionally tagging teammates
+      description: >
+        Any org member may comment; the author is the authenticated caller. Tagged
+        ids that aren't current org members are dropped so a mention always resolves
+        to a real teammate.
+      operationId: addComment
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, description: The comment text (max 4000 chars). }
+                mentioned_user_ids:
+                  type: array
+                  description: Org users to tag. Non-members are dropped server-side.
+                  items: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteComment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/sites/{id}/allowlist:
     get:
       summary: List a site's allowlist
@@ -985,6 +1074,28 @@ components:
             and publish. The owner (or an admin) sets it false to keep the site
             private — off the feed. Orthogonal to access_mode (this never changes
             who can load the served bytes).
+        title:
+          type: string
+          description: >
+            Owner-set human title shown in the org feed (empty when unset — the
+            feed falls back to the slug).
+        description:
+          type: string
+          description: Owner-set description shown in the org feed (empty when unset).
+        created_at: { type: string, format: date-time }
+
+    SiteComment:
+      type: object
+      description: One org-internal comment on a site, optionally tagging teammates.
+      properties:
+        id: { type: string, format: uuid }
+        site_id: { type: string, format: uuid }
+        author_id: { type: string, format: uuid }
+        body: { type: string }
+        mentioned_user_ids:
+          type: array
+          description: The org users tagged in the comment (identity ids).
+          items: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
 
     UserStorage:

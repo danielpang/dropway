@@ -59,6 +59,9 @@ CREATE TABLE app.sites (
     -- org feed. Defaults to true (auto-shared); the owner flips it false to keep
     -- the site private (off the feed). See migration 0005.
     feed_visible       boolean NOT NULL DEFAULT true,
+    -- Optional human-facing feed metadata the owner sets (null → fall back to slug).
+    title              text,
+    description        text,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT sites_org_slug_key UNIQUE (org_id, slug)
 );
@@ -124,6 +127,17 @@ CREATE TABLE app.allowlist_entries (
     claimed_by_user_id uuid,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT allowlist_entries_site_email_key UNIQUE (site_id, email)
+);
+
+-- site_comments: org-internal discussion on a shared site, with @mentions.
+CREATE TABLE app.site_comments (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    author_user_id     uuid NOT NULL,
+    body               text NOT NULL,
+    mentioned_user_ids uuid[] NOT NULL DEFAULT '{}',
+    created_at         timestamptz NOT NULL DEFAULT now()
 );
 
 -- deploy_tokens: hashed bearer tokens for the CLI / CI deploy path.

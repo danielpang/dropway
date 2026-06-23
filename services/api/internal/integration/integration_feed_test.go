@@ -124,6 +124,47 @@ func TestIntegration_Feed(t *testing.T) {
 	if _, err := st.GetSite(ctx, tA, s1.ID); err != nil {
 		t.Fatalf("get s1 after cross-org toggle: %v", err)
 	}
+
+	// --- Feed metadata: set a title + description, then clear them. ---
+	withMeta, err := st.SetSiteFeedMeta(ctx, tA, s1.ID, "Quarterly Report", "Q3 numbers")
+	must2(t, err)
+	if withMeta.Title != "Quarterly Report" || withMeta.Description != "Q3 numbers" {
+		t.Fatalf("meta = %+v, want title/description set", withMeta)
+	}
+	// The metadata persists on a fresh read.
+	got1, err := st.GetSite(ctx, tA, s1.ID)
+	must2(t, err)
+	if got1.Title != "Quarterly Report" || got1.Description != "Q3 numbers" {
+		t.Fatalf("persisted meta = %+v", got1)
+	}
+	// Empty strings clear back to NULL (round-trips as empty).
+	cleared, err := st.SetSiteFeedMeta(ctx, tA, s1.ID, "", "")
+	must2(t, err)
+	if cleared.Title != "" || cleared.Description != "" {
+		t.Fatalf("cleared meta = %+v, want empty", cleared)
+	}
+
+	// --- Comments: post with a mention, list the thread, assert RLS isolation. ---
+	c1, err := st.CreateSiteComment(ctx, tAMember, store.CreateSiteCommentParams{
+		SiteID:           s1.ID,
+		Body:             "nice work",
+		MentionedUserIDs: []string{userOwnerA},
+	})
+	must2(t, err)
+	if c1.AuthorUserID != userMemberA || len(c1.MentionedUserIDs) != 1 || c1.MentionedUserIDs[0] != userOwnerA {
+		t.Fatalf("comment = %+v, want author=member, mention=owner", c1)
+	}
+	thread, err := st.ListSiteComments(ctx, tA, s1.ID)
+	must2(t, err)
+	if len(thread) != 1 || thread[0].Body != "nice work" {
+		t.Fatalf("thread = %+v, want one comment 'nice work'", thread)
+	}
+	// RLS: org B sees none of org A's comments.
+	threadB, err := st.ListSiteComments(ctx, tB, s1.ID)
+	must2(t, err)
+	if len(threadB) != 0 {
+		t.Fatalf("org B should see no comments on org A's site, got %d", len(threadB))
+	}
 }
 
 // must2 fails the test on a non-nil error (a two-value helper for the `x, err :=`

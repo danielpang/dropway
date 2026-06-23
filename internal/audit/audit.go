@@ -64,6 +64,9 @@ const (
 	// ActionSiteFeedVisibility records a change to a site's org-feed visibility
 	// (PUT /v1/sites/{id}/feed) — sharing it to the org feed or making it private.
 	ActionSiteFeedVisibility Action = "site.feed_visibility"
+	// ActionSiteFeedMeta records a change to a site's feed title/description
+	// (PUT /v1/sites/{id}/feed-meta).
+	ActionSiteFeedMeta Action = "site.feed_meta"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

@@ -98,6 +98,8 @@ type AppSite struct {
 	AccessMode       string
 	CurrentVersionID *string
 	FeedVisible      bool
+	Title            pgtype.Text
+	Description      pgtype.Text
 	CreatedAt        time.Time
 }
 
@@ -109,6 +111,16 @@ type AppSiteAccessPolicy struct {
 	ExpiresAt    pgtype.Timestamptz
 	Unlisted     bool
 	UpdatedAt    time.Time
+}
+
+type AppSiteComment struct {
+	ID               string
+	OrgID            string
+	SiteID           string
+	AuthorUserID     string
+	Body             string
+	MentionedUserIds []string
+	CreatedAt        time.Time
 }
 
 type AppSiteVersion struct {

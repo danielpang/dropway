@@ -100,9 +100,14 @@ function FeedRow({ site, owner }: { site: Site; owner: string }) {
               <Globe className="size-4" aria-hidden />
             </span>
             <span className="min-w-0 truncate font-medium text-foreground">
-              {site.slug}
+              {site.title?.trim() ? site.title : site.slug}
             </span>
           </div>
+          {site.description?.trim() ? (
+            <p className="line-clamp-2 text-sm text-muted-foreground">
+              {site.description}
+            </p>
+          ) : null}
           <p className="truncate text-xs text-muted-foreground">
             <span className="text-foreground/80">{owner}</span>
             {" · "}

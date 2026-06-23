@@ -40,6 +40,7 @@ func claims(user, org, role string) *auth.Claims {
 type fakeStore struct {
 	sites     map[string]store.Site
 	versions  map[string]store.SiteVersion
+	comments  map[string][]store.SiteComment // siteID → thread (oldest first)
 	createErr error
 
 	// orgSlug is the slug OrgSlug returns; defaults to "org" so the canonical host
@@ -64,7 +65,11 @@ func (f *fakeStore) OrgSlug(_ context.Context, t store.Tenant) (string, error) {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sites: map[string]store.Site{}, versions: map[string]store.SiteVersion{}}
+	return &fakeStore{
+		sites:    map[string]store.Site{},
+		versions: map[string]store.SiteVersion{},
+		comments: map[string][]store.SiteComment{},
+	}
 }
 
 func (f *fakeStore) EnsureOrgProvisioned(_ context.Context, t store.Tenant) error {
@@ -123,6 +128,40 @@ func (f *fakeStore) SetSiteFeedVisible(_ context.Context, t store.Tenant, siteID
 	s.FeedVisible = visible
 	f.sites[siteID] = s
 	return s, nil
+}
+
+func (f *fakeStore) SetSiteFeedMeta(_ context.Context, t store.Tenant, siteID, title, description string) (store.Site, error) {
+	f.lastTenant = t
+	s, ok := f.sites[siteID]
+	if !ok {
+		return store.Site{}, store.ErrNotFound
+	}
+	s.Title, s.Description = title, description
+	f.sites[siteID] = s
+	return s, nil
+}
+
+func (f *fakeStore) CreateSiteComment(_ context.Context, t store.Tenant, p store.CreateSiteCommentParams) (store.SiteComment, error) {
+	f.lastTenant = t
+	mentions := p.MentionedUserIDs
+	if mentions == nil {
+		mentions = []string{}
+	}
+	c := store.SiteComment{
+		ID:               "cmt_" + p.SiteID + "_" + p.Body,
+		OrgID:            t.OrgID,
+		SiteID:           p.SiteID,
+		AuthorUserID:     t.UserID,
+		Body:             p.Body,
+		MentionedUserIDs: mentions,
+	}
+	f.comments[p.SiteID] = append(f.comments[p.SiteID], c)
+	return c, nil
+}
+
+func (f *fakeStore) ListSiteComments(_ context.Context, t store.Tenant, siteID string) ([]store.SiteComment, error) {
+	f.lastTenant = t
+	return append([]store.SiteComment(nil), f.comments[siteID]...), nil
 }
 
 func (f *fakeStore) GetSite(_ context.Context, t store.Tenant, id string) (store.Site, error) {

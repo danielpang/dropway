@@ -7,6 +7,7 @@ import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployTabs } from "@/components/sites/deploy-tabs";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
+import { SiteComments, type CommentMember } from "@/components/sites/site-comments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,8 +17,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api, ApiError, type Site } from "@/lib/api";
+import { api, ApiError, type Site, type SiteComment } from "@/lib/api";
 import { MCP_URL } from "@/lib/env";
+import { loadActiveOrg } from "@/lib/org";
 import { formatBytes } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +63,10 @@ export default async function SiteDetailPage({
   // Deploy history for the rollback picker (newest first). Best-effort: an empty
   // list just renders the dialog's "no versions yet" state.
   const versionsPromise = api.listVersions(id).catch(() => []);
+  // The site's comment thread + the org member list (for author/mention names and
+  // the tag picker). Both best-effort so a hiccup never blocks the page.
+  const commentsPromise = api.listComments(id).catch((): SiteComment[] => []);
+  const orgPromise = loadActiveOrg().catch(() => null);
 
   let site: Site;
   try {
@@ -71,10 +77,17 @@ export default async function SiteDetailPage({
     throw err;
   }
 
-  const [customDomainsEnabled, versions] = await Promise.all([
+  const [customDomainsEnabled, versions, comments, org] = await Promise.all([
     customDomainsPromise,
     versionsPromise,
+    commentsPromise,
+    orgPromise,
   ]);
+
+  const commentMembers: CommentMember[] = (org?.members ?? []).map((m) => ({
+    userId: m.userId,
+    name: m.name ?? m.email ?? "A teammate",
+  }));
 
   const isLive = Boolean(site.current_version_id);
   const liveUrl = site.live_url ?? `https://${site.slug}.dropwaycontent.com`;
@@ -207,6 +220,24 @@ export default async function SiteDetailPage({
         slug={site.slug ?? id}
         mcpConnectorUrl={`${MCP_URL.replace(/\/$/, "")}/mcp`}
       />
+
+      {/* Comments: org-internal discussion, with @mentions of teammates. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Comments</CardTitle>
+          <CardDescription>
+            Discuss this site with your team. Tag a teammate to loop them in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SiteComments
+            siteId={site.id ?? id}
+            initialComments={comments}
+            members={commentMembers}
+            currentUserId={org?.myUserId ?? null}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }
