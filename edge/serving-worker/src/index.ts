@@ -65,7 +65,12 @@ import {
 import type { RevokedKVLike } from "./revoke";
 import { type AnalyticsEnv, captureSiteVisit } from "./analytics";
 import { captureException } from "./errtrack";
-import { injectBanner, shouldInjectBanner } from "./banner";
+import {
+  BANNER_BYTE_LENGTH,
+  injectBanner,
+  isInjectableContentType,
+  shouldInjectBanner,
+} from "./banner";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -462,20 +467,14 @@ async function servePublic(
 
   // Free-tier attribution banner (HTML only). Done BEFORE the Response is built so
   // the banner-injected body is what gets cached at the PoP below.
-  const out = await bannerize(env, route, resolved);
+  const out = await bannerize(env, route, resolved, request.method === "HEAD");
+  const response = contentResponse(resolved.servedPath, out);
 
-  const headers = publicResponseHeaders(resolved.servedPath, {
-    contentType: resolved.contentType,
-    etag: out.etag,
-    lastModified: out.lastModified,
-    contentLength: out.contentLength,
-  });
-
-  const response = new Response(out.body, { status: 200, headers });
-
-  // Best-effort: populate the PoP cache for subsequent requests. We cache a
-  // clone so the streamed body is still available to the caller.
-  if (cache) {
+  // Best-effort: populate the PoP cache for subsequent requests. We cache a clone so
+  // the streamed body is still available to the caller. Only GET responses are
+  // cached: a HEAD carries no body (and its banner length is derived without
+  // buffering), so caching it would poison the shared GET/HEAD key with an empty body.
+  if (cache && request.method === "GET") {
     const key = cacheKey(route, url);
     const write = cache.put(key, response.clone());
     if (opts.waitUntil) opts.waitUntil(write);
@@ -504,15 +503,8 @@ async function servePublicBody(
 
   // Free-tier attribution banner (HTML only). Gated responses are never cached,
   // but a free-tier gated page still carries the banner ("each page").
-  const out = await bannerize(env, route, resolved);
-
-  const headers = publicResponseHeaders(resolved.servedPath, {
-    contentType: resolved.contentType,
-    etag: out.etag,
-    lastModified: out.lastModified,
-    contentLength: out.contentLength,
-  });
-  const response = new Response(out.body, { status: 200, headers });
+  const out = await bannerize(env, route, resolved, request.method === "HEAD");
+  const response = contentResponse(resolved.servedPath, out);
   return bodyFor(request, response);
 }
 
@@ -534,6 +526,7 @@ type ResolvedBlob = Extract<BlobResolution, { kind: "ok" }>;
 
 /** The body + header inputs for a 200 response, after optional banner injection. */
 interface ServeBody {
+  contentType: string;
   body: BodyInit | null;
   etag?: string;
   lastModified?: Date;
@@ -543,29 +536,70 @@ interface ServeBody {
 /**
  * Apply the free-tier "Deployed with Dropway" attribution banner to a resolved
  * blob when the org is free-tier, the feature is enabled, and the document is
- * HTML (shouldInjectBanner). Only HTML is buffered into memory; every other asset
- * (and every paid/unknown-tier response) streams through untouched.
+ * injectable HTML. Only HTML is buffered into memory; every other asset (and every
+ * paid/unknown-tier response, and any non-UTF-8 page) streams through untouched.
  *
  * When injecting we buffer the body to text, insert the banner, recompute
  * Content-Length, and DROP the blob's ETag/Last-Modified — they describe the
  * original (un-bannered) bytes and would otherwise mislabel the transformed body.
+ *
+ * HEAD never returns a body (bodyFor strips it), so we skip the buffer entirely and
+ * derive the length arithmetically — the injected length is exactly the original
+ * length plus the (fixed, UTF-8-stable) banner, so a HEAD reports the same
+ * Content-Length a GET would without reading the whole document.
  */
 async function bannerize(
   env: Env,
   route: RouteValue,
   resolved: ResolvedBlob,
+  isHead: boolean,
 ): Promise<ServeBody> {
-  if (!shouldInjectBanner(env, route, resolved.servedPath)) {
+  const passthrough: ServeBody = {
+    contentType: resolved.contentType,
+    body: resolved.body,
+    etag: resolved.etag,
+    lastModified: resolved.lastModified,
+    contentLength: resolved.contentLength,
+  };
+  if (
+    !shouldInjectBanner(env, route, resolved.servedPath) ||
+    !isInjectableContentType(resolved.contentType)
+  ) {
+    return passthrough;
+  }
+
+  if (isHead) {
+    // No body will be sent. Avoid buffering: injected length = original + banner
+    // (injectBanner only inserts, and the inject path is UTF-8 so the round-trip is
+    // byte-stable). Omit Content-Length only when the original size is unknown.
     return {
-      body: resolved.body,
-      etag: resolved.etag,
-      lastModified: resolved.lastModified,
-      contentLength: resolved.contentLength,
+      contentType: resolved.contentType,
+      body: null,
+      contentLength:
+        resolved.contentLength === undefined
+          ? undefined
+          : resolved.contentLength + BANNER_BYTE_LENGTH,
     };
   }
+
   const original = resolved.body ? await new Response(resolved.body).text() : "";
   const injected = injectBanner(original);
-  return { body: injected, contentLength: new TextEncoder().encode(injected).length };
+  return {
+    contentType: resolved.contentType,
+    body: injected,
+    contentLength: new TextEncoder().encode(injected).length,
+  };
+}
+
+/** Build the 200 content Response from a (possibly banner-injected) ServeBody. */
+function contentResponse(servedPath: string, out: ServeBody): Response {
+  const headers = publicResponseHeaders(servedPath, {
+    contentType: out.contentType,
+    etag: out.etag,
+    lastModified: out.lastModified,
+    contentLength: out.contentLength,
+  });
+  return new Response(out.body, { status: 200, headers });
 }
 
 /**
@@ -672,6 +706,11 @@ async function readBodyJson(object: R2ObjectLike): Promise<unknown> {
  *  - the access_mode is PART of the key (M2) so a body cached while the route was
  *    `public` can never be matched to satisfy a request the route now resolves as
  *    gated — the cache is partitioned by mode, never reused across an access flip.
+ *  - the plan_tier is PART of the key so a plan change (which reprojects the route's
+ *    plan_tier in KV but keeps the same version_id) flips the attribution banner
+ *    IMMEDIATELY: free and paid resolve to different keys, so an upgraded org never
+ *    serves a stale banner-injected body (nor a downgraded org a stale un-bannered
+ *    one) — without it the banner would persist until the short HTML TTL expired.
  *
  * Residual (inherent to eventual consistency): during the brief KV propagation
  * window after a public→gated flip, a lagging PoP still reads `public` and serves
@@ -682,9 +721,12 @@ async function readBodyJson(object: R2ObjectLike): Promise<unknown> {
 function cacheKey(route: RouteValue, url: URL): Request {
   const keyUrl = new URL(url.toString());
   keyUrl.search = ""; // static content does not vary by query string
-  // Fold access_mode + version into the key path so neither an access change nor a
-  // publish/rollback can ever serve a stale or cross-mode cache entry.
-  keyUrl.pathname = `/${route.access_mode}/${route.version_id}${keyUrl.pathname}`;
+  // Fold access_mode + version + plan_tier into the key path so neither an access
+  // change, a publish/rollback, nor a plan change can ever serve a stale or
+  // cross-mode/cross-tier cache entry. plan_tier is optional (older projections) →
+  // "_" stands in for "absent".
+  const tier = route.plan_tier ?? "_";
+  keyUrl.pathname = `/${route.access_mode}/${route.version_id}/${tier}${keyUrl.pathname}`;
   return new Request(keyUrl.toString(), { method: "GET" });
 }
 

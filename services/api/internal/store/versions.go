@@ -368,15 +368,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		}
 
 		newRoute := func() projection.RouteValue {
-			return projection.RouteValue{
-				OrgID:         t.OrgID,
-				SiteID:        siteID,
-				VersionID:     versionID,
-				AccessMode:    site.AccessMode,
-				SchemaVersion: projection.SchemaVersion,
-				ExpiresAt:     expiresAt,
-				PlanTier:      planTier,
-			}
+			return routeValue(t.OrgID, siteID, versionID, site.AccessMode, expiresAt, planTier)
 		}
 
 		// Keep the canonical Host/Route populated for back-compat (the single-route

@@ -1979,4 +1979,52 @@ describe("attribution banner", () => {
     expect(warm.status).toBe(200);
     expect(await warm.text()).toContain("dropway-banner");
   });
+
+  it("does NOT inject into non-UTF-8 HTML (would corrupt the bytes)", async () => {
+    const html = "<body><h1>café</h1></body>";
+    const { objects } = deploy({
+      "index.html": { body: html, content_type: "text/html; charset=iso-8859-1" },
+    });
+    const res = await serveNoCache(get(HOST, "/"), bannerEnv(objects));
+    const body = await res.text();
+    expect(body).not.toContain("dropway-banner");
+    expect(body).toBe(html); // streamed through untouched
+  });
+
+  it("a HEAD reports the injected Content-Length with an empty body (no buffering)", async () => {
+    const { objects } = deploy({
+      "index.html": {
+        body: "<html><body><h1>home</h1></body></html>",
+        content_type: "text/html; charset=utf-8",
+      },
+    });
+    const getRes = await serveNoCache(get(HOST, "/"), bannerEnv(objects));
+    const getLen = Number(getRes.headers.get("Content-Length"));
+    expect((await getRes.text()).length).toBeGreaterThan(0);
+
+    const headReq = new Request(`https://${HOST}/`, { method: "HEAD" });
+    const headRes = await serveNoCache(headReq, bannerEnv(objects));
+    expect(headRes.status).toBe(200);
+    // Same Content-Length a GET would return — derived arithmetically, body empty.
+    expect(Number(headRes.headers.get("Content-Length"))).toBe(getLen);
+    expect(await headRes.text()).toBe("");
+  });
+
+  it("flips the banner immediately on a tier change (plan_tier is in the cache key)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    const cache = mockCache();
+    // Free-tier request caches the banner-injected body under a free-keyed entry.
+    const free = await serve(get(HOST, "/"), bannerEnv(objects), { cache });
+    expect(await free.text()).toContain("dropway-banner");
+
+    // The org upgrades: same version_id, plan_tier now "pro" (reprojected in KV).
+    // Because plan_tier is part of the cache key, this MISSES the free entry and
+    // serves a fresh, un-bannered body immediately — not the stale cached banner.
+    const proRoute: RouteValue = { ...FREE_ROUTE, plan_tier: "pro" };
+    const proEnv = { ...envFor(proRoute, HOST, objects), ATTRIBUTION_BANNER: "true" };
+    const pro = await serve(get(HOST, "/"), proEnv, { cache });
+    expect(await pro.text()).not.toContain("dropway-banner");
+  });
 });

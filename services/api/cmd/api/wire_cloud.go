@@ -52,25 +52,16 @@ func (c storeRoleChecker) LiveRole(ctx context.Context, orgID, userID string) (s
 // values so RouteValue.plan_tier updates at the serving Worker (the free-tier
 // attribution banner clears on upgrade / reappears on downgrade) without a republish.
 //
-// It collects the org's live routes under the org's own RLS tenant context
-// (CollectRoutesForOrg) and upserts each host (PutRoute) — NOT RebuildFromDB, which
-// would wipe the entire cross-org projection.
+// It delegates to store.ReprojectOrgRoutes, which collects the org's live routes
+// under the org's own RLS tenant context and upserts each host (PutRoute, continue-
+// on-error) — NOT RebuildFromDB, which would wipe the entire cross-org projection.
 type storeRouteProjector struct {
 	s *store.Store
 	w projection.Writer
 }
 
 func (p storeRouteProjector) ReprojectOrgRoutes(ctx context.Context, orgID string) error {
-	routes, err := p.s.CollectRoutesForOrg(ctx, orgID)
-	if err != nil {
-		return err
-	}
-	for host, val := range routes {
-		if err := p.w.PutRoute(ctx, host, val); err != nil {
-			return err
-		}
-	}
-	return nil
+	return p.s.ReprojectOrgRoutes(ctx, p.w, orgID)
 }
 
 // cloudBuild reports the build flavor for startup logging.
