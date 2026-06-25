@@ -11,9 +11,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildServe404Payload,
   buildVisitPayload,
+  captureServe404,
   captureSiteVisit,
   dailyVisitorId,
+  is404Reportable,
   isVisit,
   type CaptureFetch,
 } from "../src/analytics";
@@ -162,6 +165,128 @@ describe("captureSiteVisit", () => {
     const fetchImpl = vi.fn<CaptureFetch>().mockRejectedValue(new Error("network"));
     await expect(
       captureSiteVisit({ POSTHOG_KEY: "phc_test" }, ctx("text/html"), fetchImpl),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("is404Reportable", () => {
+  function req(headers: Record<string, string>, method = "GET"): Request {
+    return new Request("https://acme--docs.dropwaycontent.com/missing", {
+      method,
+      headers,
+    });
+  }
+
+  it("reports top-level document navigations", () => {
+    expect(is404Reportable(req({ "Sec-Fetch-Dest": "document" }))).toBe(true);
+    expect(is404Reportable(req({ "Sec-Fetch-Dest": "iframe" }))).toBe(true);
+  });
+
+  it("excludes sub-resource fetches (assets, not page loads)", () => {
+    expect(is404Reportable(req({ "Sec-Fetch-Dest": "image" }))).toBe(false);
+    expect(is404Reportable(req({ "Sec-Fetch-Dest": "script" }))).toBe(false);
+    expect(is404Reportable(req({ "Sec-Fetch-Dest": "style" }))).toBe(false);
+  });
+
+  it("falls back to an HTML-accepting GET when Sec-Fetch-Dest is absent", () => {
+    expect(is404Reportable(req({ Accept: "text/html,*/*" }))).toBe(true);
+    expect(is404Reportable(req({ Accept: "image/avif" }))).toBe(false);
+    expect(is404Reportable(req({}))).toBe(false);
+  });
+
+  it("excludes non-GET (HEAD probes)", () => {
+    expect(is404Reportable(req({ "Sec-Fetch-Dest": "document" }, "HEAD"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("buildServe404Payload", () => {
+  const base = {
+    apiKey: "phc_test",
+    distinctId: "d".repeat(32),
+    host: "acme--docs.dropwaycontent.com",
+    path: "/",
+    method: "GET",
+    environment: "production",
+    now: new Date("2026-06-25T00:00:00Z"),
+  };
+
+  it("carries the reason + org/site/version when a route resolved", () => {
+    const body = buildServe404Payload({
+      ...base,
+      reason: "manifest_missing",
+      route: ROUTE,
+    });
+    expect(body.event).toBe("serve_404");
+    const props = body.properties as Record<string, unknown>;
+    expect(props.reason).toBe("manifest_missing");
+    expect(props.org_id).toBe(ROUTE.org_id);
+    expect(props.site_id).toBe(ROUTE.site_id);
+    expect(props.path).toBe("/");
+  });
+
+  it("nulls org/site/version for an unknown-host 404 (no route)", () => {
+    const body = buildServe404Payload({
+      ...base,
+      reason: "route_not_found",
+      route: null,
+    });
+    const props = body.properties as Record<string, unknown>;
+    expect(props.reason).toBe("route_not_found");
+    expect(props.org_id).toBeNull();
+    expect(props.site_id).toBeNull();
+    expect(props.version_id).toBeNull();
+  });
+});
+
+describe("captureServe404", () => {
+  function pageReq(): Request {
+    return new Request("https://acme--docs.dropwaycontent.com/missing", {
+      method: "GET",
+      headers: { "Sec-Fetch-Dest": "document" },
+    });
+  }
+  const ctx = (request: Request) => ({
+    request,
+    reason: "manifest_missing",
+    route: ROUTE,
+    now: new Date("2026-06-25T00:00:00Z"),
+  });
+
+  it("no-ops without a POSTHOG_KEY", async () => {
+    const fetchImpl = vi.fn<CaptureFetch>();
+    await captureServe404({}, ctx(pageReq()), fetchImpl);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("no-ops for a non-page request (sub-resource 404)", async () => {
+    const fetchImpl = vi.fn<CaptureFetch>().mockResolvedValue(undefined);
+    const assetReq = new Request("https://acme--docs.dropwaycontent.com/app.js", {
+      method: "GET",
+      headers: { "Sec-Fetch-Dest": "script" },
+    });
+    await captureServe404({ POSTHOG_KEY: "phc_test" }, ctx(assetReq), fetchImpl);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("POSTs a serve_404 event for a page navigation when a key is set", async () => {
+    const fetchImpl = vi.fn<CaptureFetch>().mockResolvedValue(undefined);
+    await captureServe404({ POSTHOG_KEY: "phc_test" }, ctx(pageReq()), fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [endpoint, init] = fetchImpl.mock.calls[0]!;
+    expect(endpoint).toBe("https://us.posthog.com/capture/");
+    const body = JSON.parse(init.body);
+    expect(body.event).toBe("serve_404");
+    expect(body.properties.reason).toBe("manifest_missing");
+    expect(body.properties.site_id).toBe(ROUTE.site_id);
+    expect(body.distinct_id).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("never throws when the capture request fails", async () => {
+    const fetchImpl = vi.fn<CaptureFetch>().mockRejectedValue(new Error("network"));
+    await expect(
+      captureServe404({ POSTHOG_KEY: "phc_test" }, ctx(pageReq()), fetchImpl),
     ).resolves.toBeUndefined();
   });
 });
