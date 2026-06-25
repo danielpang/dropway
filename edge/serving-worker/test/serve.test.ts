@@ -6,7 +6,7 @@
 // (no Miniflare/Wrangler) on the plain vitest node pool.
 
 import { createHash } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   cleanPath,
@@ -2026,5 +2026,59 @@ describe("attribution banner", () => {
     const proEnv = { ...envFor(proRoute, HOST, objects), ATTRIBUTION_BANNER: "true" };
     const pro = await serve(get(HOST, "/"), proEnv, { cache });
     expect(await pro.text()).not.toContain("dropway-banner");
+  });
+});
+
+// --- serve_404 PostHog emission (the "why can't a user reach the site?" event) --
+
+describe("serve_404 emission", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function pageGet(host: string): Request {
+    // A top-level navigation (Sec-Fetch-Dest: document) is what is404Reportable
+    // counts as "a user trying to load a page".
+    return new Request(`https://${host}/missing`, {
+      method: "GET",
+      headers: { "Sec-Fetch-Dest": "document" },
+    });
+  }
+
+  it("schedules a serve_404 capture for a page 404 when POSTHOG_KEY is set", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const scheduled: Promise<unknown>[] = [];
+    const env: Env = {
+      ROUTES: mockRoutes({}), // unknown host → route_not_found
+      BUCKET: mockBucket({}),
+      POSTHOG_KEY: "phc_test",
+    };
+
+    const res = await serve(pageGet("unknown.dropwaycontent.com"), env, {
+      cache: null,
+      waitUntil: (p) => scheduled.push(p),
+    });
+
+    expect(res.status).toBe(404);
+    expect(scheduled).toHaveLength(1);
+    await Promise.all(scheduled);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [endpoint, init] = fetchMock.mock.calls[0]!;
+    expect(String(endpoint)).toContain("/capture/");
+    const body = JSON.parse((init as { body: string }).body);
+    expect(body.event).toBe("serve_404");
+    expect(body.properties.reason).toBe("route_not_found");
+  });
+
+  it("does not schedule a capture without a POSTHOG_KEY", async () => {
+    const scheduled: Promise<unknown>[] = [];
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+    const res = await serve(pageGet("unknown.dropwaycontent.com"), env, {
+      cache: null,
+      waitUntil: (p) => scheduled.push(p),
+    });
+    expect(res.status).toBe(404);
+    expect(scheduled).toHaveLength(0);
   });
 });

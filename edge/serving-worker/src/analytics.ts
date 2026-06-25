@@ -92,11 +92,119 @@ export function buildVisitPayload(input: {
   };
 }
 
+/**
+ * Whether a 404 should be reported as a "a user couldn't reach the site" event.
+ * We report top-level navigations (a browser asking for a document) and exclude
+ * sub-resource fetches (images/scripts/styles/fonts/…) and HEAD probes, so the
+ * metric tracks pages users can't load — not every missing favicon or asset path a
+ * bot scans for. When Sec-Fetch-Dest is absent (curl, old clients) we fall back to
+ * an HTML-accepting GET.
+ */
+export function is404Reportable(request: Request): boolean {
+  if (request.method !== "GET") return false;
+  const dest = request.headers.get("Sec-Fetch-Dest");
+  if (dest) return dest === "document" || dest === "iframe";
+  return (request.headers.get("Accept") ?? "").includes("text/html");
+}
+
+/** The PostHog `/capture` payload for a serve-time 404 (pure → unit-tested). */
+export function buildServe404Payload(input: {
+  apiKey: string;
+  distinctId: string;
+  host: string;
+  path: string;
+  method: string;
+  reason: string;
+  route: RouteValue | null;
+  environment: string;
+  now: Date;
+}): Record<string, unknown> {
+  return {
+    api_key: input.apiKey,
+    event: "serve_404",
+    distinct_id: input.distinctId,
+    timestamp: input.now.toISOString(),
+    properties: {
+      $host: input.host,
+      path: input.path,
+      method: input.method,
+      // Why it 404'd — route_not_found | manifest_missing | no_manifest_entry |
+      // blob_missing | unsafe_path | service_worker_blocked | unknown_access_mode.
+      reason: input.reason,
+      // Present only when the host resolved to a route (a known site); null for an
+      // unknown-host 404. Lets the dashboard attribute 404s to an org/site.
+      site_id: input.route?.site_id ?? null,
+      org_id: input.route?.org_id ?? null,
+      version_id: input.route?.version_id ?? null,
+      environment: input.environment,
+      $lib: "dropway-serving-worker",
+    },
+  };
+}
+
 /** Minimal fetch surface (so tests can inject without the runtime global). */
 export type CaptureFetch = (
   input: string,
   init: { method: string; headers: Record<string, string>; body: string },
 ) => Promise<unknown>;
+
+export interface Serve404Context {
+  request: Request;
+  /** Stable reason code (NotFoundReason in index.ts). */
+  reason: string;
+  /** The resolved route when the host was known, else null (unknown-host 404). */
+  route: RouteValue | null;
+  now: Date;
+}
+
+/**
+ * Best-effort serve-404 capture. No-ops without a key or for non-page requests
+ * (is404Reportable); otherwise POSTs a `serve_404` event to PostHog. Never throws.
+ * Scheduled by the caller via `waitUntil`, so it runs after the response is sent —
+ * mirrors captureSiteVisit, and uses the SAME daily-rotating anonymous visitor id
+ * (no raw IP) so "unique visitors hitting a 404" lines up with the visit metric.
+ */
+export async function captureServe404(
+  env: AnalyticsEnv,
+  ctx: Serve404Context,
+  fetchImpl: CaptureFetch = (input, init) =>
+    fetch(input, init as RequestInit),
+): Promise<void> {
+  const key = env.POSTHOG_KEY;
+  if (!key) return;
+  if (!is404Reportable(ctx.request)) return;
+
+  try {
+    const url = new URL(ctx.request.url);
+    const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "";
+    const ua = ctx.request.headers.get("User-Agent") ?? "";
+    const distinctId = await dailyVisitorId({
+      ip,
+      ua,
+      salt: env.VISIT_SALT ?? key,
+      now: ctx.now,
+    });
+    const payload = buildServe404Payload({
+      apiKey: key,
+      distinctId,
+      host: url.host,
+      path: url.pathname,
+      method: ctx.request.method,
+      reason: ctx.reason,
+      route: ctx.route,
+      environment: env.ENVIRONMENT ?? "production",
+      now: ctx.now,
+    });
+    const host = (env.POSTHOG_HOST ?? DEFAULT_HOST).replace(/\/$/, "");
+    await fetchImpl(`${host}/capture/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Analytics must never affect content serving.
+  }
+}
 
 export interface VisitContext {
   request: Request;

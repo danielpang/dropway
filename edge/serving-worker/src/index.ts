@@ -63,7 +63,7 @@ import {
   readOrgStatus,
 } from "./ratelimit";
 import type { RevokedKVLike } from "./revoke";
-import { type AnalyticsEnv, captureSiteVisit } from "./analytics";
+import { type AnalyticsEnv, captureServe404, captureSiteVisit } from "./analytics";
 import { captureException } from "./errtrack";
 import {
   BANNER_BYTE_LENGTH,
@@ -278,7 +278,11 @@ export async function serve(
   // registrable SW script). isServiceWorkerScript() (in resolveBlob) additionally
   // 404s the conventional SW filenames as belt-and-suspenders.
   if (isServiceWorkerRequest(request)) {
-    return notFound(null);
+    return notFound("service_worker_blocked", {
+      request,
+      env,
+      waitUntil: opts.waitUntil,
+    });
   }
 
   const url = new URL(request.url);
@@ -310,7 +314,11 @@ export async function serve(
     // Unknown host or malformed/old projection → fail closed. The contract
     // validator accepts schema_version 1 AND 2 (v2 adds optional expires_at);
     // anything else (or a malformed shape) parses to null here.
-    return notFound(null);
+    return notFound("route_not_found", {
+      request,
+      env,
+      waitUntil: opts.waitUntil,
+    });
   }
 
   // 2. Edge link-expiry (v2 RouteValue.expires_at). A public/unlisted share can
@@ -336,7 +344,7 @@ export async function serve(
   //     /llms.txt index. Runs before content dispatch: public sites welcome crawlers
   //     and expose /llms.txt; gated sites disallow crawlers (robots + 403) so their
   //     content is reachable by LLMs only through the authenticated Dropway MCP.
-  const llmMeta = await handleLLMMeta(request, env, route, url);
+  const llmMeta = await handleLLMMeta(request, env, route, url, opts);
   if (llmMeta !== null) return bodyFor(request, llmMeta);
 
   // 4. Dispatch by access mode.
@@ -347,13 +355,18 @@ export async function serve(
     case "allowlist":
     case "org_only":
       return serveGated(request, env, route, url, gateOpts(env, opts), {
-        serveContent: () => servePublicBody(request, env, route, url),
+        serveContent: () => servePublicBody(request, env, route, url, opts),
         revokedKV: revokedKV(env),
         orgId: route.org_id,
       });
     default:
       // Unreachable given parseRouteValue, but fail closed.
-      return notFound(route);
+      return notFound("unknown_access_mode", {
+        request,
+        route,
+        env,
+        waitUntil: opts.waitUntil,
+      });
   }
 }
 
@@ -367,6 +380,7 @@ async function handleLLMMeta(
   env: Env,
   route: RouteValue,
   url: URL,
+  opts: ServeOptions,
 ): Promise<Response | null> {
   const clean = cleanPath(url.pathname);
   if (clean === null) return null; // unsafe path → let the normal flow 404
@@ -399,7 +413,13 @@ async function handleLLMMeta(
   // other content (gated/404), never exposed to discovery.
   if (clean === "llms.txt" && isPublic) {
     const manifest = await loadManifest(env, route);
-    if (manifest === null) return notFound(route);
+    if (manifest === null)
+      return notFound("manifest_missing", {
+        request,
+        route,
+        env,
+        waitUntil: opts.waitUntil,
+      });
     const headers = new Headers(securityHeaders());
     headers.set("Content-Type", "text/plain; charset=utf-8");
     headers.set("Cache-Control", "public, max-age=300");
@@ -459,7 +479,7 @@ async function servePublic(
     }
   }
 
-  const resolved = await resolveBlob(request, env, route, url);
+  const resolved = await resolveBlob(request, env, route, url, opts);
   if (resolved.kind === "not-found") return resolved.response;
 
   // Best-effort per-site visit metric (HTML pages only; never blocks the response).
@@ -497,8 +517,9 @@ async function servePublicBody(
   env: Env,
   route: RouteValue,
   url: URL,
+  opts: ServeOptions,
 ): Promise<Response> {
-  const resolved = await resolveBlob(request, env, route, url);
+  const resolved = await resolveBlob(request, env, route, url, opts);
   if (resolved.kind === "not-found") return resolved.response;
 
   // Free-tier attribution banner (HTML only). Gated responses are never cached,
@@ -611,16 +632,25 @@ function contentResponse(servedPath: string, out: ServeBody): Response {
  * surrounding Cache-Control / Cache-API behavior differs.
  */
 async function resolveBlob(
-  _request: Request,
+  request: Request,
   env: Env,
   route: RouteValue,
   url: URL,
+  opts: ServeOptions,
 ): Promise<BlobResolution> {
   // Sanitize the request path before resolving it against the manifest.
   const clean = cleanPath(url.pathname);
   if (clean === null) {
     // Unsafe path (traversal etc.) → 404, never an error that leaks structure.
-    return { kind: "not-found", response: await notFound(route) };
+    return {
+      kind: "not-found",
+      response: await notFound("unsafe_path", {
+        request,
+        route,
+        env,
+        waitUntil: opts.waitUntil,
+      }),
+    };
   }
 
   // BLOCK SERVICE-WORKER REGISTRATION on the content origin: refuse
@@ -630,25 +660,59 @@ async function resolveBlob(
   // fail-closed shape as any unmatched path) rather than leak that the path is
   // special.
   if (isServiceWorkerScript(clean)) {
-    return { kind: "not-found", response: await notFound(route) };
+    return {
+      kind: "not-found",
+      response: await notFound("service_worker_blocked", {
+        request,
+        route,
+        env,
+        waitUntil: opts.waitUntil,
+      }),
+    };
   }
 
   const manifest = await loadManifest(env, route);
   if (manifest === null) {
     // Missing/corrupt manifest → fail closed with the default 404.
-    return { kind: "not-found", response: await notFound(route) };
+    return {
+      kind: "not-found",
+      response: await notFound("manifest_missing", {
+        request,
+        route,
+        env,
+        waitUntil: opts.waitUntil,
+      }),
+    };
   }
 
   const match = resolveManifestEntry(manifest, clean);
   if (match === null) {
     // No served path matched → the version's custom 404 page, else the default.
-    return { kind: "not-found", response: await notFound(route, env, manifest) };
+    return {
+      kind: "not-found",
+      response: await notFound("no_manifest_entry", {
+        request,
+        route,
+        env,
+        manifest,
+        waitUntil: opts.waitUntil,
+      }),
+    };
   }
 
   const object = await env.BUCKET.get(blobKey(route.org_id, match.entry.sha256));
   if (object === null) {
     // Manifest referenced a blob not in R2 — projection drift. Fail closed.
-    return { kind: "not-found", response: await notFound(route, env, manifest) };
+    return {
+      kind: "not-found",
+      response: await notFound("blob_missing", {
+        request,
+        route,
+        env,
+        manifest,
+        waitUntil: opts.waitUntil,
+      }),
+    };
   }
 
   return {
@@ -767,16 +831,63 @@ function bodyFor(request: Request, response: Response): Response {
 }
 
 /**
- * 404 response. If a route + manifest are known, prefer the version's own
- * `404.html` (resolved through the manifest → blob); otherwise a minimal
- * platform 404. Always carries security headers and short, public cache (a 404
- * is still safe to cache).
+ * Why a request resolved to 404 — emitted with EVERY notFound() so an operator can
+ * tell "a user can't reach the site" cases apart in PostHog
+ * (route_not_found vs manifest_missing vs no_manifest_entry vs blob_missing)
+ * instead of seeing an unattributed `status: 404`. Stable strings, safe to filter
+ * and aggregate on.
+ */
+type NotFoundReason =
+  | "route_not_found" // host has no valid route in KV (unknown host or rejected projection)
+  | "service_worker_blocked" // a service-worker script registration was refused
+  | "unknown_access_mode" // route carried an access_mode the Worker doesn't handle
+  | "unsafe_path" // traversal / bad-encoding path rejected before lookup
+  | "manifest_missing" // route resolved but the version's manifest is absent/corrupt in R2
+  | "no_manifest_entry" // manifest loaded but no file matched the request path
+  | "blob_missing"; // manifest referenced a blob that isn't in R2 (projection drift)
+
+/**
+ * Inputs for building + reporting a 404. `request` is required so every 404 records
+ * its host + path; `env` + `waitUntil` enable the best-effort PostHog `serve_404`
+ * event (off the response path); `route` enriches it with org/site/version (and,
+ * with `env` + `manifest`, selects the version's own custom 404.html).
+ */
+interface NotFoundContext {
+  request: Request;
+  route?: RouteValue | null;
+  env?: Env;
+  manifest?: Manifest;
+  /** Schedules the PostHog emit past the response (so it never adds latency). */
+  waitUntil?: (p: Promise<unknown>) => void;
+}
+
+/**
+ * 404 response. Emits a best-effort `serve_404` event to PostHog (so "why can't
+ * this user reach their site?" is answerable — and graphable — from analytics
+ * instead of an unattributed `status: 404`), then: if a route + manifest are
+ * known, prefer the version's own `404.html` (resolved through the manifest →
+ * blob); otherwise a minimal platform 404. Always carries security headers and
+ * short, public cache (a 404 is still safe to cache).
+ *
+ * The emit is scheduled via `waitUntil` and gated to page navigations
+ * (is404Reportable) so it tracks pages users can't load, not every missing asset;
+ * it is a custom event, NOT a `$exception`, so it doesn't pollute Error Tracking.
  */
 async function notFound(
-  route: RouteValue | null,
-  env?: Env,
-  manifest?: Manifest,
+  reason: NotFoundReason,
+  ctx: NotFoundContext,
 ): Promise<Response> {
+  const { route, env, manifest } = ctx;
+  if (env?.POSTHOG_KEY && ctx.waitUntil) {
+    ctx.waitUntil(
+      captureServe404(env, {
+        request: ctx.request,
+        reason,
+        route: route ?? null,
+        now: new Date(),
+      }),
+    );
+  }
   if (route && env && manifest) {
     const entry = manifest.files[NOT_FOUND_PATH];
     if (entry !== undefined) {
