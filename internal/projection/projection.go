@@ -26,13 +26,19 @@ import (
 // v1 → v2 (Phase 2): adds the optional `expires_at` (RFC3339) field so the
 // Worker can enforce public/unlisted link expiry at the edge from the RouteValue
 // (identity-gated expiry is refused at mint time in the Go API). The parse is
-// kept backward compatible — a v1 value (no expires_at) is still accepted — but
-// the Go API now writes v2.
-const SchemaVersion = 2
+// kept backward compatible — a v1 value (no expires_at) is still accepted.
+//
+// v2 → v3: adds the optional `plan_tier` field (the owning org's plan, e.g.
+// "free"/"pro") so the Worker can decide whether to inject the free-tier
+// "Deployed with Dropway" attribution banner. Absent → tier unknown → no banner.
+// The parse stays backward compatible (v1/v2 values are still accepted); the Go
+// API now writes v3.
+const SchemaVersion = 3
 
 // MinSchemaVersion is the oldest contract shape the parser still accepts. v1
 // values (written by a Phase-1 Go API) carry no expires_at and are read as
-// "never expires"; the Worker upgrades them on the next publish.
+// "never expires"; a v2 value carries no plan_tier and is read as "tier unknown".
+// The Worker upgrades them on the next publish.
 const MinSchemaVersion = 1
 
 // Access modes mirror app.sites.access_mode and the enum in
@@ -53,6 +59,12 @@ const (
 // edge). Empty → no edge expiry. It is `omitempty` so a non-expiring route
 // serializes byte-for-byte like a value without the field, keeping the contract
 // compact and a v1↔v2 round-trip clean.
+//
+// PlanTier (v3) is the OPTIONAL owning-org plan tier (e.g. "free"/"pro"), read
+// from app.org_meta.plan_tier when the projection is written. The Worker uses it
+// to gate the free-tier "Deployed with Dropway" attribution banner. Empty → tier
+// unknown → no banner. It is `omitempty` so a paid/unknown route serializes
+// compactly and a value without it round-trips cleanly.
 type RouteValue struct {
 	OrgID         string `json:"org_id"`
 	SiteID        string `json:"site_id"`
@@ -60,6 +72,7 @@ type RouteValue struct {
 	AccessMode    string `json:"access_mode"`
 	SchemaVersion int    `json:"schema_version"`
 	ExpiresAt     string `json:"expires_at,omitempty"`
+	PlanTier      string `json:"plan_tier,omitempty"`
 }
 
 // Validate checks the value is well-formed before it can be written, mirroring

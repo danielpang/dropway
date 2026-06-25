@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -524,5 +525,101 @@ func TestStoreSentinelsAreDistinct(t *testing.T) {
 				t.Errorf("sentinels %d (%v) and %d (%v) must be distinct", i, a, j, b)
 			}
 		}
+	}
+}
+
+// --- routeValue: the single RouteValue builder (publish + rebuild share it) -------
+
+// TestRouteValue_BuildsCurrentContract asserts the shared builder stamps the live
+// SchemaVersion and carries every field — the regression guard for the class of bug
+// where publish and rebuild/reprojection drift (e.g. rebuild silently dropping
+// expires_at or plan_tier). Both call sites go through this one builder.
+func TestRouteValue_BuildsCurrentContract(t *testing.T) {
+	rv := routeValue("org-1", "site-1", "ver-1", projection.AccessPublic, "2026-12-31T23:59:59Z", "free")
+	want := projection.RouteValue{
+		OrgID:         "org-1",
+		SiteID:        "site-1",
+		VersionID:     "ver-1",
+		AccessMode:    projection.AccessPublic,
+		SchemaVersion: projection.SchemaVersion,
+		ExpiresAt:     "2026-12-31T23:59:59Z",
+		PlanTier:      "free",
+	}
+	if rv != want {
+		t.Fatalf("routeValue mismatch:\n got %+v\nwant %+v", rv, want)
+	}
+	if err := rv.Validate(); err != nil {
+		t.Fatalf("built route value failed Validate: %v", err)
+	}
+	// A paid org with no link-expiry still round-trips with the tier set and no expiry.
+	paid := routeValue("o", "s", "v", projection.AccessPublic, "", "pro")
+	if paid.PlanTier != "pro" || paid.ExpiresAt != "" || paid.SchemaVersion != projection.SchemaVersion {
+		t.Fatalf("paid route value wrong: %+v", paid)
+	}
+}
+
+// fakeRouteWriter is a projection.Writer that records PutRoute calls and can fail a
+// chosen host, so writeRoutes' continue-on-error contract is testable with no DB.
+type fakeRouteWriter struct {
+	puts     map[string]projection.RouteValue
+	failHost string
+}
+
+func (f *fakeRouteWriter) PutRoute(_ context.Context, host string, val projection.RouteValue) error {
+	if host == f.failHost {
+		return fmt.Errorf("boom %s", host)
+	}
+	if f.puts == nil {
+		f.puts = map[string]projection.RouteValue{}
+	}
+	f.puts[host] = val
+	return nil
+}
+func (f *fakeRouteWriter) DeleteRoute(context.Context, string) error { return nil }
+func (f *fakeRouteWriter) RebuildFromDB(context.Context, map[string]projection.RouteValue) error {
+	return nil
+}
+
+// TestWriteRoutes_ContinueOnError asserts writeRoutes attempts EVERY host even when
+// one PutRoute fails (no early abort that would leave the org's hosts split across
+// tiers), and returns the failure(s) joined.
+func TestWriteRoutes_ContinueOnError(t *testing.T) {
+	w := &fakeRouteWriter{failHost: "b.example.com"}
+	routes := map[string]projection.RouteValue{
+		"a.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro"),
+		"b.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro"),
+		"c.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro"),
+	}
+	err := writeRoutes(context.Background(), w, routes)
+	if err == nil {
+		t.Fatal("expected a joined error for the failing host")
+	}
+	if !strings.Contains(err.Error(), "b.example.com") {
+		t.Fatalf("error should name the failing host, got: %v", err)
+	}
+	// The two healthy hosts were still written despite b failing mid-iteration.
+	if _, ok := w.puts["a.example.com"]; !ok {
+		t.Error("a.example.com should have been written")
+	}
+	if _, ok := w.puts["c.example.com"]; !ok {
+		t.Error("c.example.com should have been written")
+	}
+	if _, ok := w.puts["b.example.com"]; ok {
+		t.Error("b.example.com failed and must not be recorded")
+	}
+}
+
+// TestWriteRoutes_AllSucceed asserts the happy path writes every host and returns nil.
+func TestWriteRoutes_AllSucceed(t *testing.T) {
+	w := &fakeRouteWriter{}
+	routes := map[string]projection.RouteValue{
+		"a.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "free"),
+		"b.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "free"),
+	}
+	if err := writeRoutes(context.Background(), w, routes); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(w.puts) != 2 {
+		t.Fatalf("expected 2 routes written, got %d", len(w.puts))
 	}
 }

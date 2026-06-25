@@ -194,7 +194,7 @@ describe("parseRouteValue", () => {
     expect(parseRouteValue({ ...PUBLIC_ROUTE })).toEqual(PUBLIC_ROUTE);
   });
 
-  it("accepts schema_version 1 and 2 (Phase 2 added optional expires_at)", () => {
+  it("accepts schema_version 1, 2 and 3 (v2 added expires_at, v3 added plan_tier)", () => {
     // v1: no expires_at (read as non-expiring).
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 1 })).not.toBeNull();
     // v2: optional expires_at allowed.
@@ -206,13 +206,24 @@ describe("parseRouteValue", () => {
         expires_at: "2030-01-01T00:00:00Z",
       }),
     ).not.toBeNull();
+    // v3: optional plan_tier allowed.
+    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3 })).not.toBeNull();
+    expect(
+      parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3, plan_tier: "free" }),
+    ).toEqual({ ...PUBLIC_ROUTE, schema_version: 3, plan_tier: "free" });
   });
 
   it("rejects an out-of-range / mistyped schema_version", () => {
-    // 3 is newer than this build understands; "1" is a string, not a number.
-    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3 })).toBeNull();
+    // 4 is newer than this build understands; "1" is a string, not a number.
+    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4 })).toBeNull();
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 0 })).toBeNull();
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: "1" })).toBeNull();
+  });
+
+  it("rejects a non-string plan_tier", () => {
+    expect(
+      parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3, plan_tier: 7 }),
+    ).toBeNull();
   });
 
   it("rejects a malformed expires_at", () => {
@@ -1860,5 +1871,160 @@ describe("LLM access", () => {
     expect(body).toContain(`https://${HOST}/about`);
     expect(body).toContain(`https://${HOST}/docs/`);
     expect(body).not.toContain("style.css");
+  });
+});
+
+// --- Free-tier attribution banner -------------------------------------------
+
+describe("attribution banner", () => {
+  const FREE_ROUTE: RouteValue = {
+    ...PUBLIC_ROUTE,
+    schema_version: 3,
+    plan_tier: "free",
+  };
+
+  /** Env for the free-tier route with the banner feature enabled. */
+  function bannerEnv(objects: Record<string, string>, route = FREE_ROUTE): Env {
+    return { ...envFor(route, HOST, objects), ATTRIBUTION_BANNER: "true" };
+  }
+
+  it("injects the banner into HTML for a free-tier org", async () => {
+    const { objects } = deploy({
+      "index.html": {
+        body: "<html><body><h1>home</h1></body></html>",
+        content_type: "text/html; charset=utf-8",
+      },
+    });
+    const res = await serveNoCache(get(HOST, "/"), bannerEnv(objects));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Deployed with");
+    expect(body).toContain('href="https://dropway.dev"');
+    expect(body).toContain('id="dropway-banner"');
+    // Dismiss control + persistence hook are present.
+    expect(body).toContain("dropway-banner-dismissed");
+    // Original content is preserved.
+    expect(body).toContain("<h1>home</h1>");
+    // Injected right after <body>, before the tenant's own content.
+    expect(body.indexOf("dropway-banner")).toBeLessThan(body.indexOf("<h1>home</h1>"));
+    // Content-Length reflects the (larger) injected body.
+    expect(Number(res.headers.get("Content-Length"))).toBe(
+      new TextEncoder().encode(body).length,
+    );
+  });
+
+  it("prepends the banner when the HTML has no <body>", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>fragment</h1>", content_type: "text/html" },
+    });
+    const res = await serveNoCache(get(HOST, "/"), bannerEnv(objects));
+    const body = await res.text();
+    expect(body.indexOf("dropway-banner")).toBeLessThan(body.indexOf("<h1>fragment</h1>"));
+  });
+
+  it("does NOT inject for a non-free tier", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    const proRoute: RouteValue = { ...FREE_ROUTE, plan_tier: "pro" };
+    const res = await serveNoCache(get(HOST, "/"), bannerEnv(objects, proRoute));
+    const body = await res.text();
+    expect(body).not.toContain("dropway-banner");
+    expect(body).toBe("<body><h1>home</h1></body>");
+  });
+
+  it("does NOT inject when plan_tier is absent (older projection)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    // PUBLIC_ROUTE has no plan_tier.
+    const res = await serveNoCache(get(HOST, "/"), bannerEnv(objects, PUBLIC_ROUTE));
+    const body = await res.text();
+    expect(body).not.toContain("dropway-banner");
+  });
+
+  it("does NOT inject when the feature flag is unset", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    // envFor() leaves ATTRIBUTION_BANNER unset.
+    const res = await serveNoCache(get(HOST, "/"), envFor(FREE_ROUTE, HOST, objects));
+    const body = await res.text();
+    expect(body).not.toContain("dropway-banner");
+  });
+
+  it("leaves non-HTML assets byte-identical", async () => {
+    const css = "body{color:red}";
+    const { objects } = deploy({
+      "index.html": { body: "<body></body>", content_type: "text/html" },
+      "style.css": { body: css, content_type: "text/css" },
+    });
+    const res = await serveNoCache(get(HOST, "/style.css"), bannerEnv(objects));
+    const body = await res.text();
+    expect(body).toBe(css);
+    expect(body).not.toContain("dropway-banner");
+  });
+
+  it("caches the banner-injected body (warm PoP hit carries the banner)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    const cache = mockCache();
+    const env = bannerEnv(objects);
+    // Cold miss populates the cache with the injected body.
+    const cold = await serve(get(HOST, "/"), env, { cache });
+    expect(await cold.text()).toContain("dropway-banner");
+    // Warm hit returns the cached (already-injected) body without re-resolving.
+    const warm = await serve(get(HOST, "/"), { ...env, BUCKET: mockBucket({}) }, { cache });
+    expect(warm.status).toBe(200);
+    expect(await warm.text()).toContain("dropway-banner");
+  });
+
+  it("does NOT inject into non-UTF-8 HTML (would corrupt the bytes)", async () => {
+    const html = "<body><h1>café</h1></body>";
+    const { objects } = deploy({
+      "index.html": { body: html, content_type: "text/html; charset=iso-8859-1" },
+    });
+    const res = await serveNoCache(get(HOST, "/"), bannerEnv(objects));
+    const body = await res.text();
+    expect(body).not.toContain("dropway-banner");
+    expect(body).toBe(html); // streamed through untouched
+  });
+
+  it("a HEAD reports the injected Content-Length with an empty body (no buffering)", async () => {
+    const { objects } = deploy({
+      "index.html": {
+        body: "<html><body><h1>home</h1></body></html>",
+        content_type: "text/html; charset=utf-8",
+      },
+    });
+    const getRes = await serveNoCache(get(HOST, "/"), bannerEnv(objects));
+    const getLen = Number(getRes.headers.get("Content-Length"));
+    expect((await getRes.text()).length).toBeGreaterThan(0);
+
+    const headReq = new Request(`https://${HOST}/`, { method: "HEAD" });
+    const headRes = await serveNoCache(headReq, bannerEnv(objects));
+    expect(headRes.status).toBe(200);
+    // Same Content-Length a GET would return — derived arithmetically, body empty.
+    expect(Number(headRes.headers.get("Content-Length"))).toBe(getLen);
+    expect(await headRes.text()).toBe("");
+  });
+
+  it("flips the banner immediately on a tier change (plan_tier is in the cache key)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    const cache = mockCache();
+    // Free-tier request caches the banner-injected body under a free-keyed entry.
+    const free = await serve(get(HOST, "/"), bannerEnv(objects), { cache });
+    expect(await free.text()).toContain("dropway-banner");
+
+    // The org upgrades: same version_id, plan_tier now "pro" (reprojected in KV).
+    // Because plan_tier is part of the cache key, this MISSES the free entry and
+    // serves a fresh, un-bannered body immediately — not the stale cached banner.
+    const proRoute: RouteValue = { ...FREE_ROUTE, plan_tier: "pro" };
+    const proEnv = { ...envFor(proRoute, HOST, objects), ATTRIBUTION_BANNER: "true" };
+    const pro = await serve(get(HOST, "/"), proEnv, { cache });
+    expect(await pro.text()).not.toContain("dropway-banner");
   });
 });

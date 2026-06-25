@@ -32,14 +32,18 @@
     },
     "schema_version": {
       "type": "integer",
-      "description": "Version of THIS contract shape. Lets the Worker reject/upgrade projections written by an older/newer Go API. Bump on any breaking change to this schema. v2 (Phase 2) added the optional expires_at field; the parser accepts v1 and v2.",
+      "description": "Version of THIS contract shape. Lets the Worker reject/upgrade projections written by an older/newer Go API. Bump on any breaking change to this schema. v2 (Phase 2) added the optional expires_at field; v3 added the optional plan_tier field. The parser accepts v1, v2, and v3.",
       "minimum": 1,
-      "maximum": 2
+      "maximum": 3
     },
     "expires_at": {
       "type": "string",
       "format": "date-time",
       "description": "OPTIONAL (v2+). RFC3339 timestamp after which the Worker refuses to serve this host — public/unlisted link expiry enforced at the edge. Absent → no edge expiry. Identity-gated (allowlist/org_only) expiry is refused at mint time in the Go API instead."
+    },
+    "plan_tier": {
+      "type": "string",
+      "description": "OPTIONAL (v3+). The owning org's plan tier (app.org_meta.plan_tier, e.g. \"free\"/\"pro\"). The Worker uses it to decide whether to inject the free-tier \"Deployed with Dropway\" attribution banner. Absent → tier unknown → no banner."
     }
   }
 }

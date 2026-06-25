@@ -66,7 +66,7 @@ func TestRouteValue_RoundTrip_MatchesSchema(t *testing.T) {
 		t.Fatalf("round-trip changed value: %+v != %+v", back, v)
 	}
 
-	// schema_version must equal the contract's SCHEMA_VERSION (=2).
+	// schema_version must equal the contract's SCHEMA_VERSION.
 	if got["schema_version"].(float64) != float64(SchemaVersion) {
 		t.Fatalf("schema_version = %v, want %d", got["schema_version"], SchemaVersion)
 	}
@@ -110,6 +110,41 @@ func TestRouteValue_RoundTrip_WithExpiry(t *testing.T) {
 	bad.ExpiresAt = "not-a-timestamp"
 	if err := bad.Validate(); err == nil {
 		t.Fatal("expected validation error for bad expires_at")
+	}
+}
+
+// TestRouteValue_RoundTrip_WithPlanTier exercises the v3 optional plan_tier field:
+// when set it serializes as an extra key and round-trips losslessly; when unset it
+// is omitted (kept above by TestRouteValue_RoundTrip_MatchesSchema).
+func TestRouteValue_RoundTrip_WithPlanTier(t *testing.T) {
+	v := RouteValue{
+		OrgID:         "11111111-1111-1111-1111-111111111111",
+		SiteID:        "22222222-2222-2222-2222-222222222222",
+		VersionID:     "33333333-3333-3333-3333-333333333333",
+		AccessMode:    AccessPublic,
+		SchemaVersion: SchemaVersion,
+		PlanTier:      "free",
+	}
+	if err := v.Validate(); err != nil {
+		t.Fatalf("valid value rejected: %v", err)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["plan_tier"] != "free" {
+		t.Fatalf("plan_tier not serialized: %v", got["plan_tier"])
+	}
+	var back RouteValue
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back != v {
+		t.Fatalf("round-trip changed value: %+v != %+v", back, v)
 	}
 }
 

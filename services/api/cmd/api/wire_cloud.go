@@ -45,6 +45,25 @@ func (c storeRoleChecker) LiveRole(ctx context.Context, orgID, userID string) (s
 	return role, false, nil
 }
 
+// storeRouteProjector adapts the core *store.Store + the edge projection.Writer to
+// cloud/billing's store-free OrgRouteProjector (Go's internal-package rule forbids
+// cloud/ from importing the internal store directly, same as storeRoleChecker). On a
+// billing tier change the BillingStore calls this to re-project the org's route:<host>
+// values so RouteValue.plan_tier updates at the serving Worker (the free-tier
+// attribution banner clears on upgrade / reappears on downgrade) without a republish.
+//
+// It delegates to store.ReprojectOrgRoutes, which collects the org's live routes
+// under the org's own RLS tenant context and upserts each host (PutRoute, continue-
+// on-error) — NOT RebuildFromDB, which would wipe the entire cross-org projection.
+type storeRouteProjector struct {
+	s *store.Store
+	w projection.Writer
+}
+
+func (p storeRouteProjector) ReprojectOrgRoutes(ctx context.Context, orgID string) error {
+	return p.s.ReprojectOrgRoutes(ctx, p.w, orgID)
+}
+
 // cloudBuild reports the build flavor for startup logging.
 const cloudBuild = true
 
@@ -116,6 +135,17 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 		slog.Info("cloud billing: plan-change analytics wired")
 	} else {
 		slog.Info("cloud billing: analytics disabled (POSTHOG_KEY unset)")
+	}
+
+	// Edge route reprojection: on a tier change, re-project the org's route:<host>
+	// values so RouteValue.plan_tier updates at the serving Worker — the free-tier
+	// "Deployed with Dropway" attribution banner then clears on upgrade (or reappears
+	// on downgrade) without the org republishing. Best-effort, post-commit, logged.
+	if deps.Store != nil && deps.Projection != nil {
+		store = store.WithOrgRouteProjector(storeRouteProjector{s: deps.Store, w: deps.Projection})
+		slog.Info("cloud billing: edge route reprojection wired (plan change updates the attribution banner)")
+	} else {
+		slog.Warn("cloud billing: no route reprojector — the attribution banner will not update until the org republishes")
 	}
 	prices := cloudbilling.NewPriceMap(deps.Cfg.StripePricePro, deps.Cfg.StripePriceBusiness, deps.Cfg.StripePriceEnterprise)
 

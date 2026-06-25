@@ -4,10 +4,30 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
+
+// routeValue assembles a projection.RouteValue at the current SchemaVersion. It is
+// the SINGLE place both the publish path (versions.go Publish) and the
+// rebuild/reprojection path (CollectRoutesForOrg) construct a route value, so a new
+// contract field (e.g. a future v4 field) can't be populated in one and silently
+// dropped in the other — the exact "rebuild un-sets expires_at / plan_tier" class of
+// drift this consolidates away.
+func routeValue(orgID, siteID, versionID, accessMode, expiresAt, planTier string) projection.RouteValue {
+	return projection.RouteValue{
+		OrgID:         orgID,
+		SiteID:        siteID,
+		VersionID:     versionID,
+		AccessMode:    accessMode,
+		SchemaVersion: projection.SchemaVersion,
+		ExpiresAt:     expiresAt,
+		PlanTier:      planTier,
+	}
+}
 
 // CollectRoutesForOrg returns every live (published) route for one org as a
 // host→RouteValue map. It runs under the org's RLS tenant context (no BYPASSRLS),
@@ -24,6 +44,13 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 	routes := map[string]projection.RouteValue{}
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		rows, err := q.ListPublishedSitesForRebuild(ctx)
+		if err != nil {
+			return err
+		}
+		// The org's plan tier rides on every route value (v3) so the serving Worker
+		// can gate the free-tier attribution banner. It is per-org (same for all of
+		// this org's routes), so read it once; GetPlanTier fail-softs to "free".
+		planTier, err := q.GetPlanTier(ctx, orgID)
 		if err != nil {
 			return err
 		}
@@ -44,14 +71,18 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			if err != nil {
 				return err
 			}
+			// Public/unlisted link-expiry is part of the route value the Worker enforces
+			// at the edge, so it MUST survive a rebuild/reprojection (omitting it would
+			// silently un-expire a shared link). Read it per site exactly as Publish does;
+			// a missing policy row means "no expiry".
+			var expiresAt string
+			if pol, perr := q.GetSiteAccessPolicy(ctx, r.SiteID); perr == nil {
+				expiresAt = routeExpiry(r.AccessMode, accessPolicyFromDB(pol))
+			} else if !isNoRows(perr) {
+				return perr
+			}
 			for _, hr := range hostRoutes {
-				routes[hr.Host] = projection.RouteValue{
-					OrgID:         r.OrgID,
-					SiteID:        r.SiteID,
-					VersionID:     *r.VersionID,
-					AccessMode:    r.AccessMode,
-					SchemaVersion: projection.SchemaVersion,
-				}
+				routes[hr.Host] = routeValue(r.OrgID, r.SiteID, *r.VersionID, r.AccessMode, expiresAt, planTier)
 			}
 		}
 		return nil
@@ -60,6 +91,35 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 		return nil, err
 	}
 	return routes, nil
+}
+
+// ReprojectOrgRoutes re-projects every published host of ONE org from Postgres
+// through w. It is used after a per-org change — notably a billing plan-tier flip —
+// to refresh RouteValue.plan_tier at the edge (so the free-tier attribution banner
+// clears on upgrade / reappears on downgrade) WITHOUT a full cross-org rebuild and
+// WITHOUT the org republishing. Unlike RebuildProjection it upserts each host
+// (PutRoute) and never calls RebuildFromDB, so it touches only this org's keys.
+func (s *Store) ReprojectOrgRoutes(ctx context.Context, w projection.Writer, orgID string) error {
+	routes, err := s.CollectRoutesForOrg(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	return writeRoutes(ctx, w, routes)
+}
+
+// writeRoutes upserts every host→RouteValue through w. It is CONTINUE-ON-ERROR: a
+// failed PutRoute does not abort the remaining hosts, and all per-host errors are
+// joined into the return. This keeps a single flaky KV write from leaving an org's
+// hosts split across tiers (some reprojected, the rest stale) — every host is
+// attempted, and the caller (best-effort, post-commit) logs the joined error.
+func writeRoutes(ctx context.Context, w projection.Writer, routes map[string]projection.RouteValue) error {
+	var errs []error
+	for host, val := range routes {
+		if err := w.PutRoute(ctx, host, val); err != nil {
+			errs = append(errs, fmt.Errorf("reproject route %s: %w", host, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // RebuildProjection rebuilds the entire edge routing projection from Postgres for

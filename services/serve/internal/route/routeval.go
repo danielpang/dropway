@@ -20,7 +20,7 @@ type RouteValue = projection.RouteValue
 // schema range, reusing the projection constants so the pin stays in lock-step
 // with the Go API writer + the Worker.
 const (
-	SupportedSchemaVersion    = projection.SchemaVersion    // 2
+	SupportedSchemaVersion    = projection.SchemaVersion    // 3
 	MinSupportedSchemaVersion = projection.MinSchemaVersion // 1
 )
 
@@ -34,6 +34,7 @@ var allowedRouteKeys = map[string]struct{}{
 	"access_mode":    {},
 	"schema_version": {},
 	"expires_at":     {},
+	"plan_tier":      {},
 }
 
 // ParseRouteValue validates an untrusted JSON route value into a RouteValue,
@@ -45,7 +46,8 @@ var allowedRouteKeys = map[string]struct{}{
 //   - org_id/site_id/version_id must be UUID strings,
 //   - access_mode must be one of the enum,
 //   - schema_version must be an integer in [MIN, SUPPORTED],
-//   - expires_at optional; if present (non-null) must be an RFC3339 timestamp.
+//   - expires_at optional; if present (non-null) must be an RFC3339 timestamp,
+//   - plan_tier optional (v3+); if present (non-null) must be a string.
 func ParseRouteValue(raw []byte) (RouteValue, bool) {
 	var generic map[string]json.RawMessage
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -132,6 +134,20 @@ func ParseRouteValue(raw []byte) (RouteValue, bool) {
 				return RouteValue{}, false
 			}
 			out.ExpiresAt = ea
+		}
+	}
+
+	// plan_tier: optional string (v3+; null/absent → empty). The serve service does
+	// not act on it — the free-tier banner is an edge-Worker feature — but it is
+	// parsed (and rejected if non-string) so this stays a faithful port of the
+	// contract and a v3 value carrying it isn't tripped by the unknown-key guard.
+	if ptRaw, present := generic["plan_tier"]; present {
+		if string(ptRaw) != "null" {
+			var pt string
+			if err := json.Unmarshal(ptRaw, &pt); err != nil {
+				return RouteValue{}, false
+			}
+			out.PlanTier = pt
 		}
 	}
 

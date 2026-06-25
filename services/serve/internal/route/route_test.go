@@ -95,8 +95,10 @@ func TestParseRouteValue(t *testing.T) {
 		`null`,
 		`{"org_id":"not-a-uuid","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":2}`,
 		`{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"bogus","schema_version":2}`,
-		// schema_version 3 (newer than supported)
-		`{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":3}`,
+		// schema_version 4 (newer than supported)
+		`{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":4}`,
+		// plan_tier must be a string (v3+)
+		`{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":3,"plan_tier":7}`,
 		// unknown extra field (drift tripwire)
 		`{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":2,"extra":1}`,
 		// non-integer schema_version
@@ -114,6 +116,15 @@ func TestParseRouteValue(t *testing.T) {
 	v1 := `{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":1}`
 	if _, ok := ParseRouteValue([]byte(v1)); !ok {
 		t.Errorf("v1 route value should be accepted")
+	}
+
+	// v3 with plan_tier is accepted; the tier is parsed (the serve service does not
+	// act on it, but it must not be tripped by the unknown-key guard).
+	v3 := `{"org_id":"11111111-1111-1111-1111-111111111111","site_id":"22222222-2222-2222-2222-222222222222","version_id":"44444444-4444-4444-4444-444444444444","access_mode":"public","schema_version":3,"plan_tier":"free"}`
+	if rv, ok := ParseRouteValue([]byte(v3)); !ok {
+		t.Errorf("v3 route value should be accepted")
+	} else if rv.PlanTier != "free" {
+		t.Errorf("plan_tier parsed wrong: %+v", rv)
 	}
 }
 

@@ -369,11 +369,12 @@ describe("cleanPath (additional sanitization branches)", () => {
 });
 
 describe("parseRouteValue (schema_version + access_mode boundaries)", () => {
-  it("accepts MIN (1) and MAX (2) schema versions, rejects below/above", () => {
+  it("accepts MIN (1) and MAX (3) schema versions, rejects below/above", () => {
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 1 })).not.toBeNull();
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 2 })).not.toBeNull();
+    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3 })).not.toBeNull();
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 0 })).toBeNull();
-    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3 })).toBeNull();
+    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4 })).toBeNull();
   });
 
   it("parses expires_at independent of schema_version, but rejects a malformed timestamp", () => {

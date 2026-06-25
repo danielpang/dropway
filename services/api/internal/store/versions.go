@@ -359,15 +359,16 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 			return err
 		}
 
+		// The owning org's plan tier rides on the projection (v3) so the serving
+		// Worker can gate the free-tier "Deployed with Dropway" attribution banner
+		// without a Postgres read. GetPlanTier fail-softs to "free" when absent.
+		planTier, err := q.GetPlanTier(ctx, t.OrgID)
+		if err != nil {
+			return err
+		}
+
 		newRoute := func() projection.RouteValue {
-			return projection.RouteValue{
-				OrgID:         t.OrgID,
-				SiteID:        siteID,
-				VersionID:     versionID,
-				AccessMode:    site.AccessMode,
-				SchemaVersion: projection.SchemaVersion,
-				ExpiresAt:     expiresAt,
-			}
+			return routeValue(t.OrgID, siteID, versionID, site.AccessMode, expiresAt, planTier)
 		}
 
 		// Keep the canonical Host/Route populated for back-compat (the single-route
