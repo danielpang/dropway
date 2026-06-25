@@ -737,6 +737,8 @@ export interface components {
             version_no?: number;
             /** Format: uri */
             preview_url?: string;
+            /** @description Non-fatal advisories about the finalized deploy. The deploy still succeeds; clients surface these. Today the only warning is a missing root index.html (the site root URL would 404). */
+            warnings?: string[];
         };
         /** @description One immutable deploy in a site's history. */
         SiteVersion: {

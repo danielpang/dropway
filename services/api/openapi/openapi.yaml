@@ -1168,6 +1168,13 @@ components:
         version_id: { type: string, format: uuid }
         version_no: { type: integer }
         preview_url: { type: string, format: uri }
+        warnings:
+          type: array
+          items: { type: string }
+          description: >-
+            Non-fatal advisories about the finalized deploy. The deploy still
+            succeeds; clients surface these. Today the only warning is a missing
+            root index.html (the site root URL would 404).
 
     SiteVersion:
       type: object

@@ -371,3 +371,32 @@ func itoa(n int) string {
 // Ensure the store sentinel type is referenced (keeps the import honest as the
 // flow tests use ErrNotFound semantics indirectly via the fake store).
 var _ = store.ErrNotFound
+
+// TestDeployWarnings_RootIndex covers the only deploy advisory today: a missing
+// root index.html (the Worker resolves "/" to exactly that key, so its absence
+// 404s the site root). It is a WARNING, not an error — the deploy still succeeds.
+func TestDeployWarnings_RootIndex(t *testing.T) {
+	// No root index.html → one warning. A NESTED index.html does not count: the
+	// Worker only resolves "/" to a top-level "index.html".
+	got := deployWarnings(map[string]manifestTarget{
+		"about.html":      {},
+		"assets/app.js":   {},
+		"blog/index.html": {},
+	})
+	if len(got) != 1 || !strings.Contains(got[0], "index.html") {
+		t.Fatalf("expected a missing-root-index warning, got %v", got)
+	}
+
+	// Root index.html present → no warnings.
+	if got := deployWarnings(map[string]manifestTarget{
+		"index.html":    {},
+		"assets/app.js": {},
+	}); len(got) != 0 {
+		t.Fatalf("expected no warnings with a root index.html, got %v", got)
+	}
+
+	// Empty deploy → still warns (no root index).
+	if got := deployWarnings(map[string]manifestTarget{}); len(got) != 1 {
+		t.Fatalf("expected a warning for an empty deploy, got %v", got)
+	}
+}

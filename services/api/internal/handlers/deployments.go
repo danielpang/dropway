@@ -144,6 +144,31 @@ type finalizeResponse struct {
 	VersionID  string `json:"version_id"`
 	VersionNo  int32  `json:"version_no"`
 	PreviewURL string `json:"preview_url"`
+	// Warnings are non-fatal advisories about the finalized deploy (e.g. a missing
+	// root index.html). The deploy still succeeds; clients (dashboard, MCP, CLI)
+	// surface these so a publishable-but-likely-broken upload doesn't 404 silently.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// rootIndexFile is the manifest key the serving Worker resolves the root URL ("/")
+// to — exactly this, lowercase, at the upload root (see edge/serving-worker
+// resolveManifestEntry / candidatePaths). A deploy without it serves a 404 at "/".
+const rootIndexFile = "index.html"
+
+// deployWarnings returns non-fatal advisories about a finalized deploy's file set.
+// Today it warns when there is no root index.html: the Worker resolves "/" to
+// exactly that key, so its absence makes the site root 404. It is a WARNING, not
+// an error — a site may intentionally serve only sub-paths — but it is by far the
+// most common cause of a "my new site 404s" report (usually an upload nested one
+// folder too deep), so we surface it instead of letting it fail silently.
+func deployWarnings(files map[string]manifestTarget) []string {
+	var warnings []string
+	if _, ok := files[rootIndexFile]; !ok {
+		warnings = append(warnings, "No index.html at the site root, so the root URL (/) will return 404. "+
+			"If you uploaded a folder that wraps your site (e.g. its files are under a subfolder), "+
+			"deploy the inner folder instead, or rename your entry page to index.html.")
+	}
+	return warnings
 }
 
 // FinalizeDeployment verifies every referenced blob is present AND its stored
@@ -297,6 +322,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		VersionID:  ver.ID,
 		VersionNo:  ver.VersionNo,
 		PreviewURL: a.ContentURL(previewHost),
+		Warnings:   deployWarnings(files),
 	})
 }
 
