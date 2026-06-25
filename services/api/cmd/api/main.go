@@ -224,6 +224,7 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	api := handlers.NewFull(qp, siteStore, obj, proj)
 	api.EdgeSigner = edgeSigner
 	api.Domains = domains
+	api.Analytics = analyticsEmitter
 	api.CustomDomainsEnabled = customDomainsConfigured(cfg)
 	// The edge revoker (hard-revocation denylist writer) is the SAME KV writer as
 	// the route projection — both the Cloudflare KV and the local writer implement

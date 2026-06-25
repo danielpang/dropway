@@ -3,13 +3,22 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/quota"
 )
+
+// spyEmitter records the analytics events captured during a test.
+type spyEmitter struct{ events []analytics.Event }
+
+func (s *spyEmitter) Capture(_ context.Context, ev analytics.Event) {
+	s.events = append(s.events, ev)
+}
 
 // CreateSite's access_mode handling (the default-visibility fix): omit → the org
 // default (org_only via the fake); explicit public/org_only pass through;
@@ -79,5 +88,59 @@ func TestCreateSite_RejectsMalformedSlug(t *testing.T) {
 				t.Errorf("status = %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 			}
 		})
+	}
+}
+
+// TestCreateSite_EmitsSiteCreated asserts a successful create emits a
+// `site_created` product-analytics event carrying org_id (property + group) so
+// the "new sites created" dashboard can roll up per org. Best-effort: the emit
+// never affects the response.
+func TestCreateSite_EmitsSiteCreated(t *testing.T) {
+	spy := &spyEmitter{}
+	a := NewFull(quota.Unlimited{}, newFakeStore(), nil, nil)
+	a.Analytics = spy
+	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq(http.MethodPost, "/v1/sites", `{"slug":"rocket"}`))
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if len(spy.events) != 1 {
+		t.Fatalf("expected 1 analytics event, got %d", len(spy.events))
+	}
+	ev := spy.events[0]
+	if ev.Event != "site_created" {
+		t.Errorf("event = %q, want site_created", ev.Event)
+	}
+	if ev.DistinctID != "user_1" {
+		t.Errorf("distinct_id = %q, want user_1 (the acting user)", ev.DistinctID)
+	}
+	if ev.Properties["org_id"] != "org_1" {
+		t.Errorf("org_id property = %v, want org_1", ev.Properties["org_id"])
+	}
+	if ev.Properties["slug"] != "rocket" {
+		t.Errorf("slug property = %v, want rocket", ev.Properties["slug"])
+	}
+	if ev.Groups["organization"] != "org_1" {
+		t.Errorf("organization group = %v, want org_1", ev.Groups["organization"])
+	}
+}
+
+// TestCreateSite_NoEmitOnFailure asserts a rejected create emits nothing (the
+// event fires only on a real, successful creation).
+func TestCreateSite_NoEmitOnFailure(t *testing.T) {
+	spy := &spyEmitter{}
+	a := NewFull(quota.Unlimited{}, newFakeStore(), nil, nil)
+	a.Analytics = spy
+	h := authed(a.CreateSite, claims("user_1", "org_1", "member"))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, jsonReq(http.MethodPost, "/v1/sites", `{"slug":"Bad/Slug"}`))
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if len(spy.events) != 0 {
+		t.Fatalf("expected no analytics events on a rejected create, got %d", len(spy.events))
 	}
 }

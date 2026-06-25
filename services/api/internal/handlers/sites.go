@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/projection"
@@ -23,14 +24,14 @@ import (
 // NOT deduplicated across sites, so it's the "how big is this site on its own"
 // number, like a Dropbox/Drive folder size.
 type siteResponse struct {
-	ID               string    `json:"id"`
-	OrgID            string    `json:"org_id"`
-	Slug             string    `json:"slug"`
-	OwnerID          string    `json:"owner_id"`
-	AccessMode       string    `json:"access_mode"`
-	CurrentVersionID *string   `json:"current_version_id,omitempty"`
-	LiveURL          string    `json:"live_url"`
-	StorageBytes     int64     `json:"storage_bytes"`
+	ID               string  `json:"id"`
+	OrgID            string  `json:"org_id"`
+	Slug             string  `json:"slug"`
+	OwnerID          string  `json:"owner_id"`
+	AccessMode       string  `json:"access_mode"`
+	CurrentVersionID *string `json:"current_version_id,omitempty"`
+	LiveURL          string  `json:"live_url"`
+	StorageBytes     int64   `json:"storage_bytes"`
 	// FeedVisible is the org-feed discovery flag: true (default) shares the site to
 	// teammates' feed; false keeps it private (off the feed). Orthogonal to access.
 	FeedVisible bool `json:"feed_visible"`
@@ -141,6 +142,24 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		"slug":        site.Slug,
 		"access_mode": site.AccessMode,
 	})
+	// Best-effort product analytics: a new site was created. Attributed to the
+	// acting user (DistinctID) and rolled up per org via group analytics + an
+	// org_id property, so the "new sites created" dashboard can break down by org.
+	// Capture is non-blocking and never errors; a nil emitter (tests / no key) is a
+	// no-op.
+	if a.Analytics != nil {
+		a.Analytics.Capture(r.Context(), analytics.Event{
+			DistinctID: t.UserID,
+			Event:      "site_created",
+			Properties: map[string]any{
+				"org_id":      t.OrgID,
+				"site_id":     site.ID,
+				"slug":        site.Slug,
+				"access_mode": site.AccessMode,
+			},
+			Groups: map[string]string{"organization": t.OrgID},
+		})
+	}
 	// A just-created site has no live version yet → 0 logical bytes.
 	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0))
 }

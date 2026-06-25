@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/logx"
 	"github.com/danielpang/dropway/internal/middleware"
@@ -39,6 +40,12 @@ type API struct {
 	Projection ProjectionWriter
 	EdgeSigner EdgeSigner
 	Domains    DomainProvider
+
+	// Analytics is the optional product-analytics emitter (internal/analytics; a
+	// PostHog client when POSTHOG_KEY is set, else nil/Noop). Handlers use it for
+	// best-effort product events (e.g. site_created). nil → emissions are skipped.
+	// The shared client's lifecycle is owned by main(); handlers only enqueue.
+	Analytics analytics.Emitter
 
 	// Revoker writes the hard-revocation denylist (revoked:user/site/org) the
 	// serving Worker + /authz read. Optional: when nil, hard revocation degrades to
