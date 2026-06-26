@@ -21,7 +21,9 @@
 
 import {
   type RouteValue,
+  SUPPORTED_SCHEMA_VERSION,
   cleanPath,
+  diagnoseRouteParseFailure,
   isRouteExpired,
   parseRouteValue,
   routeKey,
@@ -203,6 +205,53 @@ export default {
   },
 };
 
+/**
+ * Report a NON-NULL KV route value that failed validation to error tracking. The
+ * caller still fails closed (a 500); this makes the otherwise-silent rejection
+ * observable. The deploy-skew case — a schema_version newer than this Worker
+ * supports — gets an explicit, unmistakable message and a `schema_too_new` flag so
+ * it stands out in PostHog Error Tracking from ordinary malformed-projection drift.
+ * Scheduled via `waitUntil` (off the response path); a no-op without one.
+ */
+function reportRejectedRoute(
+  env: Env,
+  host: string,
+  raw: unknown,
+  opts: ServeOptions,
+): void {
+  if (!opts.waitUntil) return;
+  const diag = diagnoseRouteParseFailure(raw);
+  const message = diag.schemaTooNew
+    ? `route projection rejected: schema_version ${diag.schemaVersion} is newer than this Worker accepts (${SUPPORTED_SCHEMA_VERSION}) — deploy skew, the API writer is ahead of this reader; deploy the serving Worker`
+    : `route projection rejected: ${diag.reason}`;
+  opts.waitUntil(
+    captureException(env, new Error(message), {
+      kind: "route_projection_rejected",
+      host,
+      route_schema_version: diag.schemaVersion ?? null,
+      supported_schema_version: SUPPORTED_SCHEMA_VERSION,
+      schema_too_new: diag.schemaTooNew,
+    }),
+  );
+}
+
+/**
+ * 500 for a route value that EXISTS in KV but this Worker cannot parse (a
+ * schema_version newer than supported, or a malformed/drifted projection). Unlike
+ * an unknown host (a genuine 404), this is a server-side problem — bad projection
+ * data or a reader behind the writer — so it is surfaced as a 500: never cached
+ * (no-store), visible in server-error monitoring, and distinct from "no such
+ * site." Strict platform headers (our page, not tenant content).
+ */
+function projectionError(): Response {
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    ...platformSecurityHeaders(),
+  });
+  return new Response(PROJECTION_ERROR_HTML, { status: 500, headers });
+}
+
 /** Best-effort path extraction for the error report (never throws). */
 function safePath(rawURL: string): string {
   try {
@@ -311,9 +360,18 @@ export async function serve(
   const raw = await env.ROUTES.get(routeKey(url.host), "json");
   const route = parseRouteValue(raw);
   if (route === null) {
-    // Unknown host or malformed/old projection → fail closed. The contract
-    // validator accepts schema_version 1 AND 2 (v2 adds optional expires_at);
-    // anything else (or a malformed shape) parses to null here.
+    // Two very different failures both parse to null — split them by status:
+    //  - raw === null: no route for this host → genuinely "not found" → 404.
+    //  - raw !== null: a route value EXISTS but this Worker can't parse it
+    //    (schema_version newer than supported, or a malformed/drifted projection).
+    //    That is a SERVER-SIDE problem, not "no such site", so we report it AND
+    //    fail with 500 — uncached, visible in server-error monitoring, and honestly
+    //    distinct from an unknown host. (A genuinely MISSING route — e.g. written to
+    //    the wrong KV namespace — still looks like an unknown host → 404.)
+    if (raw !== null) {
+      reportRejectedRoute(env, url.host, raw, opts);
+      return projectionError();
+    }
     return notFound("route_not_found", {
       request,
       env,
@@ -992,6 +1050,32 @@ const DEFAULT_404_HTML = `<!doctype html>
   <main>
     <h1>404</h1>
     <p>This page could not be found.</p>
+  </main>
+</body>
+</html>
+`;
+
+// Platform 500 — a route value exists for this host but can't be served (bad/too-new
+// projection). Generic copy: it must not leak the internal reason to a visitor.
+const PROJECTION_ERROR_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>500 — Temporarily Unavailable</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; }
+  h1 { font-size: 3rem; margin: 0 0 .25rem; }
+  p { opacity: .7; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>500</h1>
+    <p>This site is temporarily unavailable. Please try again shortly.</p>
   </main>
 </body>
 </html>
