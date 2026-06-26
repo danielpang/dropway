@@ -246,10 +246,9 @@ export function DeployDropzone({
               A folder without an <code className="font-mono">index.html</code> will
               not render as a website. Your root URL (
               <code className="font-mono">/</code>) will show a list of the files in
-              the folder instead. If you dropped a folder that wraps your site, drop
-              the <strong>inner</strong> folder, or rename your entry page to{" "}
-              <code className="font-mono">index.html</code>. You can deploy anyway to
-              publish the file listing.
+              the folder instead. Make sure{" "}
+              <code className="font-mono">index.html</code> lives at the root of your
+              folder. You can deploy anyway to publish the file listing.
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
