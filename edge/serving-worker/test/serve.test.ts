@@ -867,6 +867,49 @@ describe("serve() gated path — edge-token verification", () => {
     });
   }
 
+  it("records a site_visit when serving gated (org_only) HTML to an authed viewer", async () => {
+    // Regression: gated sites took servePublicBody, which did NOT scheduleVisit, so
+    // an org whose sites are all org_only saw ZERO site_visit events even for
+    // logged-in page views. A served gated HTML page must now emit site_visit.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const scheduled: Promise<unknown>[] = [];
+
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
+    const { objects } = gatedDeploy();
+    const env: Env = { ...gatedEnv(route, GATED_HOST, objects), POSTHOG_KEY: "phc_test" };
+    const token = await signer.mint({ mode: "org_only", host: GATED_HOST, siteId: SITE_ID });
+
+    const res = await serve(getWithCookie(GATED_HOST, "/", token), env, {
+      cache: null,
+      // The JWKS fetch and the analytics POST both go through this stub; the JWKS
+      // call is matched by URL, everything else resolves to the 200 above.
+      fetchImpl: mockJwksFetch(signer.jwks),
+      waitUntil: (p) => scheduled.push(p),
+    });
+
+    expect(res.status).toBe(200);
+    expect(scheduled.length).toBeGreaterThanOrEqual(1);
+    await Promise.all(scheduled);
+
+    const visit = fetchMock.mock.calls.find(([, init]) => {
+      try {
+        return JSON.parse((init as { body: string }).body).event === "site_visit";
+      } catch {
+        return false;
+      }
+    });
+    expect(visit, "expected a site_visit capture POST").toBeTruthy();
+    const body = JSON.parse((visit![1] as { body: string }).body);
+    expect(body.properties.site_id).toBe(SITE_ID);
+    expect(body.properties.access_mode).toBe("org_only");
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
   it("302s to /authz when the edge cookie is ABSENT (carrying host + safe next)", async () => {
     const signer = await makeEdgeSigner();
     const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "org_only" };
