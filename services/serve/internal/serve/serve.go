@@ -13,6 +13,7 @@ import (
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/serve/internal/edgeverify"
+	"github.com/danielpang/dropway/services/serve/internal/listing"
 	"github.com/danielpang/dropway/services/serve/internal/manifest"
 	"github.com/danielpang/dropway/services/serve/internal/ratelimit"
 	"github.com/danielpang/dropway/services/serve/internal/route"
@@ -226,6 +227,15 @@ func (h *Handler) resolveBlob(w http.ResponseWriter, r *http.Request, rt *Route,
 
 	match, ok := m.Resolve(clean)
 	if !ok {
+		// No page matched. If the request targets a DIRECTORY that actually
+		// contains files (an upload with no index.html, or any subfolder lacking
+		// one), synthesize an autoindex listing instead of 404ing so the files
+		// stay browsable. A directory with no descendants (a genuine typo) returns
+		// nil and falls through to the custom/platform 404.
+		if entries := listing.ListDirectory(m, listing.DirectoryPrefix(clean)); entries != nil {
+			h.writeListing(w, r, listing.DirectoryPrefix(clean), entries, gated)
+			return resolvedBlob{}, false
+		}
 		// No served path matched ⇒ custom 404.html if present, else platform.
 		h.notFound(w, r, rt, &m, gated)
 		return resolvedBlob{}, false
@@ -323,6 +333,30 @@ func (h *Handler) writeContent(w http.ResponseWriter, r *http.Request, rb resolv
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
 		_, _ = io.Copy(w, rb.body)
+	}
+}
+
+// writeListing writes a synthesized directory-listing page as a 200 HTML
+// response. It mirrors writeContent's header policy (content CSP; gated →
+// private/no-store + Vary: Cookie, public → short-TTL HTML by treating the
+// served path as index.html) so a listing is cached/protected exactly like any
+// HTML page. HEAD strips the body. Mirrors index.ts directoryListing.
+func (h *Handler) writeListing(w http.ResponseWriter, r *http.Request, dirPrefix string, entries []listing.Entry, gated bool) {
+	body := []byte(listing.RenderDirectoryListing(dirPrefix, entries))
+
+	hd := w.Header()
+	servehttp.ApplyHeaders(hd, servehttp.ContentSecurityHeaders())
+	hd.Set("Content-Type", "text/html; charset=utf-8")
+	if gated {
+		hd.Set("Cache-Control", "private, no-store, max-age=0, must-revalidate")
+		hd.Set("Vary", "Cookie")
+	} else {
+		hd.Set("Cache-Control", servehttp.CacheControlFor("index.html"))
+	}
+	hd.Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(body)
 	}
 }
 

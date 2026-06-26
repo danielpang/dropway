@@ -374,7 +374,8 @@ var _ = store.ErrNotFound
 
 // TestDeployWarnings_RootIndex covers the only deploy advisory today: a missing
 // root index.html (the Worker resolves "/" to exactly that key, so its absence
-// 404s the site root). It is a WARNING, not an error — the deploy still succeeds.
+// makes the root show a file listing instead of a page). It is a WARNING, not an
+// error — the deploy still succeeds.
 func TestDeployWarnings_RootIndex(t *testing.T) {
 	// No root index.html → one warning. A NESTED index.html does not count: the
 	// Worker only resolves "/" to a top-level "index.html".

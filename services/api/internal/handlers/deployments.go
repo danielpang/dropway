@@ -152,21 +152,24 @@ type finalizeResponse struct {
 
 // rootIndexFile is the manifest key the serving Worker resolves the root URL ("/")
 // to — exactly this, lowercase, at the upload root (see edge/serving-worker
-// resolveManifestEntry / candidatePaths). A deploy without it serves a 404 at "/".
+// resolveManifestEntry / candidatePaths). Without it the root has no page, so the
+// server falls back to an autoindex (a browsable file listing).
 const rootIndexFile = "index.html"
 
 // deployWarnings returns non-fatal advisories about a finalized deploy's file set.
 // Today it warns when there is no root index.html: the Worker resolves "/" to
-// exactly that key, so its absence makes the site root 404. It is a WARNING, not
-// an error — a site may intentionally serve only sub-paths — but it is by far the
-// most common cause of a "my new site 404s" report (usually an upload nested one
-// folder too deep), so we surface it instead of letting it fail silently.
+// exactly that key, so its absence means the root URL shows a generated file
+// listing instead of a rendered page. It is a WARNING, not an error — a site may
+// intentionally publish a folder of files to browse — but a missing root
+// index.html is by far the most common cause of a "my site looks wrong" report
+// (usually an upload nested one folder too deep), so we surface it instead of
+// letting it pass silently.
 func deployWarnings(files map[string]manifestTarget) []string {
 	var warnings []string
 	if _, ok := files[rootIndexFile]; !ok {
-		warnings = append(warnings, "No index.html at the site root, so the root URL (/) will return 404. "+
-			"If you uploaded a folder that wraps your site (e.g. its files are under a subfolder), "+
-			"deploy the inner folder instead, or rename your entry page to index.html.")
+		warnings = append(warnings, "No index.html at the site root, so the root URL (/) shows a file listing "+
+			"instead of a web page. If you uploaded a folder that wraps your site (e.g. its files are under a "+
+			"subfolder), deploy the inner folder instead, or rename your entry page to index.html.")
 	}
 	return warnings
 }

@@ -35,6 +35,7 @@ import {
   resolveManifestEntry,
 } from "./manifest";
 import { publicResponseHeaders, securityHeaders } from "./http";
+import { directoryPrefix, listDirectory, renderDirectoryListing } from "./listing";
 import {
   applyHeaders,
   isServiceWorkerRequest,
@@ -695,6 +696,14 @@ async function resolveBlob(
 
   const match = resolveManifestEntry(manifest, clean);
   if (match === null) {
+    // No page matched. If the request targets a DIRECTORY that actually contains
+    // files (e.g. an upload with no index.html, or any subfolder lacking one),
+    // synthesize an autoindex listing from the manifest instead of 404ing, so the
+    // files stay browsable. A directory with no descendants (a genuine typo) still
+    // returns null below and falls through to the custom/default 404.
+    const listing = directoryListing(manifest, clean);
+    if (listing !== null) return listing;
+
     // No served path matched → the version's custom 404 page, else the default.
     return {
       kind: "not-found",
@@ -731,6 +740,32 @@ async function resolveBlob(
     etag: object.httpEtag,
     lastModified: object.uploaded,
     contentLength: object.size ?? match.entry.size,
+  };
+}
+
+/**
+ * Synthesize an autoindex listing for a directory request that matched no page.
+ * Returns an "ok" BlobResolution carrying generated HTML when `clean` targets a
+ * directory with children, or null when it has none (so the caller 404s). The
+ * resolution is shaped exactly like a served HTML page — `servedPath` is set to
+ * "index.html" so the short-TTL HTML cache policy and the page-view metric apply,
+ * and the body flows through the same banner/header path as any HTML document
+ * (so a free-tier listing still carries the attribution banner, and a gated
+ * site's listing is only reachable after auth, since the gated path calls this
+ * same resolver). The body is encoded UTF-8 with an exact Content-Length.
+ */
+function directoryListing(manifest: Manifest, clean: string): BlobResolution | null {
+  const entries = listDirectory(manifest, directoryPrefix(clean));
+  if (entries === null) return null;
+
+  const html = renderDirectoryListing(directoryPrefix(clean), entries);
+  const bytes = new TextEncoder().encode(html);
+  return {
+    kind: "ok",
+    servedPath: "index.html",
+    contentType: "text/html; charset=utf-8",
+    body: new Response(bytes).body,
+    contentLength: bytes.length,
   };
 }
 
