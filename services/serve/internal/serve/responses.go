@@ -74,6 +74,15 @@ func (h *Handler) linkExpired(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, http.StatusGone, "no-store", servehttp.LinkExpiredHTML, nil)
 }
 
+// serverError writes the 500 platform page (no-store) for a SERVER-SIDE failure
+// resolving the host — a resolver/backend error, as opposed to a genuinely unknown
+// host (which is a clean 404). The page is generic so it never leaks the internal
+// reason. Mirrors the serving Worker's projectionError(): our problem is a visible,
+// uncached 5xx (surfaces in monitoring), not a silent 404.
+func (h *Handler) serverError(w http.ResponseWriter, r *http.Request) {
+	writePage(w, r, http.StatusInternalServerError, "no-store", servehttp.ServerError500HTML, nil)
+}
+
 // tooManyRequests writes the 429 platform page with Retry-After (no-store).
 func (h *Handler) tooManyRequests(w http.ResponseWriter, r *http.Request, retryAfterSeconds int) {
 	if retryAfterSeconds < 1 {

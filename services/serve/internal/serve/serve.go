@@ -4,6 +4,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -125,13 +126,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// STEP 1: resolve host → route (authoritative; never client input). Unknown host
-	// or no live version ⇒ 404 (fail closed). A backend error also ⇒ 404 (never a
-	// 5xx that leaks structure).
+	// STEP 1: resolve host → route (authoritative; never client input). Split the
+	// two failure shapes by status (mirrors the serving Worker's 404-vs-500 split):
+	//   - unknown host / no live version (ErrHostNotFound) ⇒ 404 ("no such site").
+	//   - any OTHER resolver/backend error ⇒ 500: a server-side failure is our
+	//     problem, not "not found", so it's a visible, uncached 5xx that surfaces in
+	//     monitoring (the generic page leaks no structure) rather than a silent 404.
 	rt, err := h.resolver.Resolve(ctx, host)
 	if err != nil {
-		// Both "not found" and any backend error fail closed to the platform 404.
-		h.notFound(w, r, nil, nil, false)
+		if errors.Is(err, ErrHostNotFound) {
+			h.notFound(w, r, nil, nil, false)
+			return
+		}
+		h.serverError(w, r)
 		return
 	}
 
