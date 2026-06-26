@@ -522,6 +522,14 @@ async function servePublicBody(
   const resolved = await resolveBlob(request, env, route, url, opts);
   if (resolved.kind === "not-found") return resolved.response;
 
+  // Count the visit for GATED sites too (org_only/password/allowlist). A served
+  // HTML page is a page view regardless of access mode; the public path records it
+  // in servePublic, and without this the `site_visit` metric silently excludes
+  // EVERY gated site (an org whose sites are all org_only would see zero visits).
+  // isVisit (inside captureSiteVisit) still gates to a GET of an HTML document, so
+  // assets and HEAD probes don't count.
+  scheduleVisit(env, request, route, url, resolved.contentType, opts);
+
   // Free-tier attribution banner (HTML only). Gated responses are never cached,
   // but a free-tier gated page still carries the banner ("each page").
   const out = await bannerize(env, route, resolved, request.method === "HEAD");
