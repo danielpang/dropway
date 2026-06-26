@@ -2197,4 +2197,27 @@ describe("serve() projection rejection — 500 vs 404", () => {
     expect(res.status).toBe(404);
     expect(scheduled).toHaveLength(0);
   });
+
+  it("serves the Dropway sign-up 404 page for an unknown host", async () => {
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+    const res = await serve(get(HOST, "/"), env, { cache: null });
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain("https://dropway.dev");
+    expect(body).toMatch(/create your site/i);
+  });
+
+  it("does NOT advertise sign-up on a missing page within a real tenant site", async () => {
+    // A known (public) site, but the requested path doesn't exist and the deploy
+    // ships no custom 404.html → the PLAIN platform 404, never the sign-up pitch
+    // (we must not advertise Dropway on a customer's own domain).
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/does-not-exist"), env);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).not.toContain("dropway.dev");
+  });
 });

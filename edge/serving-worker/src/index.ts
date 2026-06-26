@@ -971,13 +971,20 @@ async function notFound(
     }
   }
 
-  // The platform default 404 is our own page → strict platform headers.
+  // The platform default 404 is our own page → strict platform headers. For an
+  // UNKNOWN HOST (route_not_found — no site is served on this hostname) we show the
+  // Dropway-branded page with a sign-up CTA: the visitor reached a content domain
+  // with no site behind it, so they're a candidate to make one. Every other 404 is
+  // a miss WITHIN a real tenant's site (a bad path / drift) — that's served the
+  // tenant's own custom 404.html above, or this plain platform page; we must NOT
+  // advertise Dropway sign-up on a customer's own domain.
   const headers = new Headers({
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "public, max-age=30",
     ...platformSecurityHeaders(),
   });
-  return new Response(DEFAULT_404_HTML, { status: 404, headers });
+  const body = reason === "route_not_found" ? UNKNOWN_HOST_404_HTML : DEFAULT_404_HTML;
+  return new Response(body, { status: 404, headers });
 }
 
 /**
@@ -1050,6 +1057,39 @@ const DEFAULT_404_HTML = `<!doctype html>
   <main>
     <h1>404</h1>
     <p>This page could not be found.</p>
+  </main>
+</body>
+</html>
+`;
+
+// Unknown-host 404 — the visitor reached a content domain with no site behind it
+// (route_not_found). Unlike the plain 404 above (a miss inside a real tenant site),
+// this is shown only on our own un-claimed hostnames, so it's safe + useful to
+// pitch Dropway with a sign-up CTA to dropway.dev.
+const UNKNOWN_HOST_404_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>404 — No site here</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
+  h1 { font-size: 3rem; margin: 0 0 .25rem; }
+  p { opacity: .75; }
+  .cta { display: inline-block; margin-top: 1.25rem; padding: .6rem 1.1rem;
+         border-radius: .5rem; background: #1d4aff; color: #fff;
+         text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>404</h1>
+    <p>There's no site at this address yet.</p>
+    <p>Dropway lets you publish a static site in seconds.</p>
+    <a class="cta" href="https://dropway.dev">Create your site →</a>
   </main>
 </body>
 </html>
