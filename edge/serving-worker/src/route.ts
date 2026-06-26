@@ -20,9 +20,11 @@
 import {
   type AccessMode,
   type KVRouteValue,
+  KVRouteValidationError,
   MIN_SCHEMA_VERSION,
   SCHEMA_VERSION,
   isRouteExpired as contractsIsRouteExpired,
+  parseKVRouteValue,
   safeParseKVRouteValue,
 } from "@dropway/contracts";
 
@@ -76,6 +78,51 @@ export function normalizeHost(rawHost: string): string {
  */
 export function parseRouteValue(raw: unknown): RouteValue | null {
   return safeParseKVRouteValue(raw);
+}
+
+/** Why a NON-NULL KV route value failed validation — for observability only. */
+export interface RouteParseFailure {
+  /** Human-/machine-readable reason from the contract validator. */
+  reason: string;
+  /** The value's `schema_version` when it is a readable finite number. */
+  schemaVersion?: number;
+  /**
+   * True when `schema_version` is NEWER than this Worker accepts — the deploy-skew
+   * signal that the Go API writer was rolled out AHEAD of this reader, so every
+   * freshly published site is projected at a version this Worker rejects.
+   */
+  schemaTooNew: boolean;
+}
+
+/**
+ * Explain why a NON-NULL KV route value failed to parse. A `null` raw is an
+ * ordinary unknown-host miss (not drift), so callers MUST only invoke this when
+ * `raw !== null`. For error reporting only — it re-runs the throwing validator to
+ * recover the failure message, which only happens on the (rare) rejection path,
+ * never on the hot success path.
+ */
+export function diagnoseRouteParseFailure(raw: unknown): RouteParseFailure {
+  let reason = "route value failed validation";
+  try {
+    parseKVRouteValue(raw);
+    // Parsed on retry — non-deterministic input; treat as transient.
+    reason = "route value parsed on retry (transient)";
+  } catch (err) {
+    if (err instanceof KVRouteValidationError) reason = err.message;
+  }
+
+  let schemaVersion: number | undefined;
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    const sv = (raw as Record<string, unknown>).schema_version;
+    if (typeof sv === "number" && Number.isFinite(sv)) schemaVersion = sv;
+  }
+
+  return {
+    reason,
+    schemaVersion,
+    schemaTooNew:
+      schemaVersion !== undefined && schemaVersion > SUPPORTED_SCHEMA_VERSION,
+  };
 }
 
 /**

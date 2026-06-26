@@ -10,9 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   cleanPath,
+  diagnoseRouteParseFailure,
   normalizeHost,
   parseRouteValue,
   routeKey,
+  SUPPORTED_SCHEMA_VERSION,
   type RouteValue,
 } from "../src/route";
 import {
@@ -560,15 +562,19 @@ describe("serve() public path — manifest resolution + content-addressed blobs"
     expect(await res.text()).toBe("<h1>home</h1>");
   });
 
-  it("fails closed (404) when KV carries a schema_version newer than this build", async () => {
-    // The Go API published a value this Worker does not understand (v > MAX).
+  it("fails closed (500, not 404) when KV carries a schema_version newer than this build", async () => {
+    // The Go API published a value this Worker does not understand (v > MAX). A
+    // route value that EXISTS but can't be parsed is a server-side projection
+    // problem, not "no such site", so it's a 500 (uncached) — distinct from the
+    // 404 an unknown host gets.
     const badRoute = { ...PUBLIC_ROUTE, schema_version: 99 } as RouteValue;
     const { objects } = deploy({
       "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
     });
     const env = envFor(badRoute, HOST, objects);
     const res = await serveNoCache(get(HOST, "/"), env);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
   it("fails closed (404) when the manifest carries an unsupported schema_version", async () => {
@@ -2123,5 +2129,95 @@ describe("serve_404 emission", () => {
     });
     expect(res.status).toBe(404);
     expect(scheduled).toHaveLength(0);
+  });
+});
+
+// --- diagnoseRouteParseFailure + 500-vs-404 for a rejected projection ---------
+
+describe("diagnoseRouteParseFailure", () => {
+  const ROUTE_FIXTURE: RouteValue = {
+    org_id: "11111111-1111-1111-1111-111111111111",
+    site_id: "22222222-2222-2222-2222-222222222222",
+    version_id: "33333333-3333-3333-3333-333333333333",
+    access_mode: "public",
+    schema_version: 1,
+  };
+
+  it("flags a schema_version newer than this Worker accepts (deploy skew)", () => {
+    const tooNew = SUPPORTED_SCHEMA_VERSION + 1;
+    const diag = diagnoseRouteParseFailure({ ...ROUTE_FIXTURE, schema_version: tooNew });
+    expect(diag.schemaVersion).toBe(tooNew);
+    expect(diag.schemaTooNew).toBe(true);
+  });
+
+  it("does NOT flag schemaTooNew for ordinary malformed drift", () => {
+    const diag = diagnoseRouteParseFailure({ ...ROUTE_FIXTURE, org_id: "not-a-uuid" });
+    expect(diag.schemaTooNew).toBe(false);
+    expect(diag.reason).toMatch(/uuid/i);
+  });
+
+  it("reports an unknown/absent schema_version without throwing", () => {
+    const diag = diagnoseRouteParseFailure({ not: "a route" });
+    expect(diag.schemaVersion).toBeUndefined();
+    expect(diag.schemaTooNew).toBe(false);
+  });
+});
+
+describe("serve() projection rejection — 500 vs 404", () => {
+  it("returns 500 (not 404) and reports when a present route value can't be parsed", async () => {
+    const scheduled: Promise<unknown>[] = [];
+    const tooNew = { ...PUBLIC_ROUTE, schema_version: SUPPORTED_SCHEMA_VERSION + 1 };
+    const env: Env = {
+      ROUTES: mockRoutes({ [routeKey(HOST)]: tooNew as unknown as RouteValue }),
+      BUCKET: mockBucket({}),
+    };
+
+    const res = await serve(get(HOST, "/"), env, {
+      cache: null,
+      waitUntil: (p) => scheduled.push(p),
+    });
+
+    // A present-but-unparseable projection is a server-side problem, not "not found".
+    expect(res.status).toBe(500);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    // The rejection was surfaced (off the response path).
+    expect(scheduled).toHaveLength(1);
+    await Promise.all(scheduled);
+  });
+
+  it("returns 404 (not 500) and does not report for an unknown host (null KV value)", async () => {
+    const scheduled: Promise<unknown>[] = [];
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+
+    const res = await serve(get(HOST, "/"), env, {
+      cache: null,
+      waitUntil: (p) => scheduled.push(p),
+    });
+
+    expect(res.status).toBe(404);
+    expect(scheduled).toHaveLength(0);
+  });
+
+  it("serves the Dropway sign-up 404 page for an unknown host", async () => {
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+    const res = await serve(get(HOST, "/"), env, { cache: null });
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toContain("https://dropway.dev");
+    expect(body).toMatch(/create your site/i);
+  });
+
+  it("does NOT advertise sign-up on a missing page within a real tenant site", async () => {
+    // A known (public) site, but the requested path doesn't exist and the deploy
+    // ships no custom 404.html → the PLAIN platform 404, never the sign-up pitch
+    // (we must not advertise Dropway on a customer's own domain).
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/does-not-exist"), env);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).not.toContain("dropway.dev");
   });
 });
