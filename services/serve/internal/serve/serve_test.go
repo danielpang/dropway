@@ -335,6 +335,26 @@ func TestPublic_AutoindexStill404sEmptyDirectory(t *testing.T) {
 	}
 }
 
+func TestPublic_Custom404WinsOverAutoindex(t *testing.T) {
+	// A site that ships a custom 404.html has opted into its own miss handling,
+	// so a populated subdirectory must serve that 404 page, not an autoindex.
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "index.html", body: []byte("<h1>home</h1>"), contentType: "text/html"},
+		{path: "404.html", body: []byte("<h1>custom missing</h1>"), contentType: "text/html"},
+		{path: "assets/app.js", body: []byte("console.log(1)"), contentType: "text/javascript"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/assets/", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if rec.Body.String() != "<h1>custom missing</h1>" {
+		t.Errorf("want custom 404 body, got %q", rec.Body.String())
+	}
+}
+
 func TestPublic_HashedAssetImmutable(t *testing.T) {
 	store := storage.NewFake()
 	stageVersion(t, store, []fileSpec{

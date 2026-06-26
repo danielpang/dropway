@@ -232,9 +232,17 @@ func (h *Handler) resolveBlob(w http.ResponseWriter, r *http.Request, rt *Route,
 		// one), synthesize an autoindex listing instead of 404ing so the files
 		// stay browsable. A directory with no descendants (a genuine typo) returns
 		// nil and falls through to the custom/platform 404.
-		if entries := listing.ListDirectory(m, listing.DirectoryPrefix(clean)); entries != nil {
-			h.writeListing(w, r, listing.DirectoryPrefix(clean), entries, gated)
-			return resolvedBlob{}, false
+		//
+		// A site that ships its own 404.html has opted into custom miss handling,
+		// so that takes precedence: we only auto-index when there is NO custom 404
+		// page. This keeps a real website's subdirectory misses (e.g. an SPA's
+		// /assets/) serving its 404.html rather than a surprise file listing; the
+		// autoindex is for plain file-dump uploads, which don't ship a 404.html.
+		if _, hasCustom404 := m.NotFoundEntry(); !hasCustom404 {
+			if entries := listing.ListDirectory(m, listing.DirectoryPrefix(clean)); entries != nil {
+				h.writeListing(w, r, listing.DirectoryPrefix(clean), entries, gated)
+				return resolvedBlob{}, false
+			}
 		}
 		// No served path matched ⇒ custom 404.html if present, else platform.
 		h.notFound(w, r, rt, &m, gated)

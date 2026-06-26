@@ -701,8 +701,16 @@ async function resolveBlob(
     // synthesize an autoindex listing from the manifest instead of 404ing, so the
     // files stay browsable. A directory with no descendants (a genuine typo) still
     // returns null below and falls through to the custom/default 404.
-    const listing = directoryListing(manifest, clean);
-    if (listing !== null) return listing;
+    //
+    // A site that ships its own 404.html has opted into custom miss handling, so
+    // that takes precedence: we only auto-index when there is NO custom 404 page.
+    // This keeps a real website's subdirectory misses (e.g. an SPA's /assets/)
+    // serving its 404.html rather than a surprise file listing; the autoindex is
+    // for plain file-dump uploads, which don't ship a 404.html.
+    if (manifest.files[NOT_FOUND_PATH] === undefined) {
+      const listing = directoryListing(manifest, clean);
+      if (listing !== null) return listing;
+    }
 
     // No served path matched → the version's custom 404 page, else the default.
     return {

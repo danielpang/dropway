@@ -535,6 +535,21 @@ describe("serve() public path — manifest resolution + content-addressed blobs"
     expect(await res.text()).toBe("<h1>home</h1>");
   });
 
+  it("serves a shipped 404.html instead of a listing for a populated subdirectory", async () => {
+    // A real site that ships a custom 404.html has opted into its own miss
+    // handling, so a subdirectory request must serve that 404 page, NOT an
+    // autoindex of the directory's files.
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+      "404.html": { body: "<h1>custom missing</h1>", content_type: "text/html" },
+      "assets/app.js": { body: "console.log(1)", content_type: "text/javascript" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/assets/"), env);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("<h1>custom missing</h1>");
+  });
+
   it("still 404s a directory request with no matching descendants", async () => {
     const { objects } = deploy({
       "notes.md": { body: "# notes", content_type: "text/markdown" },
