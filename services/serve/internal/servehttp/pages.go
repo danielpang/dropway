@@ -32,6 +32,35 @@ const Default404HTML = `<!doctype html>
 </html>
 `
 
+// ServerError500HTML is the platform 500 page — shown when a host resolves to a
+// SERVER-SIDE failure (a resolver/backend error), as opposed to an unknown host
+// (a clean 404). Copied verbatim from the Worker's PROJECTION_ERROR_HTML so the
+// self-host server stays visually identical. Generic copy — it must not leak the
+// internal reason to a visitor.
+const ServerError500HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>500 — Temporarily Unavailable</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 0;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { text-align: center; padding: 2rem; }
+  h1 { font-size: 3rem; margin: 0 0 .25rem; }
+  p { opacity: .7; }
+</style>
+</head>
+<body>
+  <main>
+    <h1>500</h1>
+    <p>This site is temporarily unavailable. Please try again shortly.</p>
+  </main>
+</body>
+</html>
+`
+
 // LinkExpiredHTML is the platform "link expired" page (410).
 const LinkExpiredHTML = `<!doctype html>
 <html lang="en">

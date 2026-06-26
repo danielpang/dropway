@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -337,6 +338,33 @@ func TestUnknownHost404(t *testing.T) {
 	// Platform 404 uses the strict platform CSP.
 	if got := rec.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") {
 		t.Errorf("platform 404 must use strict CSP, got %q", got)
+	}
+}
+
+// errResolver always fails with a generic (non-ErrHostNotFound) backend error.
+type errResolver struct{}
+
+func (errResolver) Resolve(_ context.Context, _ string) (serve.Route, error) {
+	return serve.Route{}, errors.New("resolve backend down")
+}
+
+// TestResolverBackendError500 asserts a SERVER-SIDE resolve failure is a 500 (our
+// problem), distinct from the 404 a genuinely unknown host gets — mirroring the
+// serving Worker's 404-vs-500 split.
+func TestResolverBackendError500(t *testing.T) {
+	store := storage.NewFake()
+	h := newHandler(errResolver{}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, "anyhost.dropwaycontent.com", "/", nil, "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a resolver backend error must be 500 (not 404), got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("500 must be no-store, got %q", got)
+	}
+	// Generic platform page → strict CSP, no structure leak.
+	if got := rec.Header().Get("Content-Security-Policy"); !strings.Contains(got, "default-src 'none'") {
+		t.Errorf("platform 500 must use strict CSP, got %q", got)
 	}
 }
 
