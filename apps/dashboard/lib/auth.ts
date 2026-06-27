@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware, isAPIError } from "better-auth/api";
 import { jwt, magicLink, organization } from "better-auth/plugins";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
@@ -227,8 +228,67 @@ export const auth = betterAuth({
           if (orgId) return { data: { ...session, activeOrganizationId: orgId } };
           return { data: session };
         },
+        // A session was created => a successful authentication. This is the one
+        // reliable signal that covers EVERY sign-in method (email/password,
+        // Google, magic link); it also fires for the session Better Auth opens
+        // right after signup, so `sign_in_succeeded` counts successful auths
+        // (logins + signups), the denominator for the sign_in_failed rate. The
+        // matching FAILURE event is emitted from `hooks.after` below. Org is read
+        // off the (possibly just-backfilled) session. Lazily imported +
+        // self-swallowing like the signup hook; never blocks authentication.
+        after: async (session) => {
+          try {
+            const s = session as { userId: string; activeOrganizationId?: string | null };
+            const { captureSignInSucceeded } = await import("@/lib/analytics-server");
+            await captureSignInSucceeded({
+              userId: s.userId,
+              organization: s.activeOrganizationId ?? null,
+            });
+          } catch {
+            // Analytics must never block authentication.
+          }
+        },
       },
     },
+  },
+
+  // Record a `sign_in_failed` event for every sign-in attempt that errors out.
+  // `hooks.after` runs EVEN WHEN THE ENDPOINT THROWS: Better Auth's dispatch
+  // catches the APIError into `ctx.context.returned` before after-hooks run, so a
+  // rejected login (401 bad credentials, 400 validation, 403 unverified email,
+  // 500 server error) is observable here with its HTTP status. Scoped to the
+  // interactive /sign-in/* endpoints and emits ONLY on an APIError, so it never
+  // double-counts the successes already captured at session creation above. Pure
+  // observation: it returns nothing, so the response is untouched. Analytics is
+  // lazily imported + self-swallowing so telemetry can't block or break auth.
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      if (!ctx.path?.startsWith("/sign-in/")) return;
+      const returned: unknown = (ctx.context as { returned?: unknown }).returned;
+      if (!isAPIError(returned)) return;
+      try {
+        const method =
+          ctx.path === "/sign-in/email"
+            ? "email"
+            : ctx.path === "/sign-in/social"
+              ? "google"
+              : ctx.path === "/sign-in/magic-link"
+                ? "magic_link"
+                : ctx.path.slice("/sign-in/".length);
+        const body = ctx.body as { email?: unknown } | undefined;
+        const email = typeof body?.email === "string" ? body.email : null;
+        const code = (returned.body as { code?: unknown } | undefined)?.code;
+        const { captureSignInFailed } = await import("@/lib/analytics-server");
+        await captureSignInFailed({
+          status: returned.statusCode,
+          code: typeof code === "string" ? code : undefined,
+          method,
+          email,
+        });
+      } catch {
+        // Telemetry must never break the auth path.
+      }
+    }),
   },
 
   emailAndPassword: {
