@@ -252,39 +252,44 @@ export const auth = betterAuth({
     },
   },
 
-  // Record a `sign_in_failed` event for every sign-in attempt that errors out.
-  // `hooks.after` runs EVEN WHEN THE ENDPOINT THROWS: Better Auth's dispatch
-  // catches the APIError into `ctx.context.returned` before after-hooks run, so a
-  // rejected login (401 bad credentials, 400 validation, 403 unverified email,
-  // 500 server error) is observable here with its HTTP status. Scoped to the
-  // interactive /sign-in/* endpoints and emits ONLY on an APIError, so it never
-  // double-counts the successes already captured at session creation above. Pure
-  // observation: it returns nothing, so the response is untouched. Analytics is
-  // lazily imported + self-swallowing so telemetry can't block or break auth.
+  // Record a `sign_in_failed` / `sign_up_failed` event for every auth attempt that
+  // errors out. `hooks.after` runs EVEN WHEN THE ENDPOINT THROWS: Better Auth's
+  // dispatch catches the APIError into `ctx.context.returned` before after-hooks
+  // run, so a rejected login (401 bad credentials, 400 validation, 403 unverified
+  // email, 500 server error) or a rejected signup (422 email already in use, 400
+  // weak password, 500) is observable here with its HTTP status. Scoped to the
+  // interactive /sign-in/* and /sign-up/* endpoints and emits ONLY on an APIError:
+  // it never double-counts the successes already captured at session creation
+  // (sign_in_succeeded) or user creation (user_signed_up). Pure observation: it
+  // returns nothing, so the response is untouched. Analytics is lazily imported +
+  // self-swallowing so telemetry can't block or break auth.
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
-      if (!ctx.path?.startsWith("/sign-in/")) return;
+      const path = ctx.path;
+      const isSignIn = path?.startsWith("/sign-in/");
+      const isSignUp = path?.startsWith("/sign-up/");
+      if (!path || (!isSignIn && !isSignUp)) return;
       const returned: unknown = (ctx.context as { returned?: unknown }).returned;
       if (!isAPIError(returned)) return;
       try {
+        // method: the leaf endpoint (email | social→google | magic-link), labelled
+        // for readability and falling back to the raw leaf for any future provider.
+        const leaf = path.slice(path.indexOf("/", 1) + 1);
         const method =
-          ctx.path === "/sign-in/email"
-            ? "email"
-            : ctx.path === "/sign-in/social"
-              ? "google"
-              : ctx.path === "/sign-in/magic-link"
-                ? "magic_link"
-                : ctx.path.slice("/sign-in/".length);
+          leaf === "social" ? "google" : leaf === "magic-link" ? "magic_link" : leaf;
         const body = ctx.body as { email?: unknown } | undefined;
         const email = typeof body?.email === "string" ? body.email : null;
         const code = (returned.body as { code?: unknown } | undefined)?.code;
-        const { captureSignInFailed } = await import("@/lib/analytics-server");
-        await captureSignInFailed({
+        const failure = {
           status: returned.statusCode,
           code: typeof code === "string" ? code : undefined,
           method,
           email,
-        });
+        };
+        const analytics = await import("@/lib/analytics-server");
+        await (isSignUp
+          ? analytics.captureSignUpFailed(failure)
+          : analytics.captureSignInFailed(failure));
       } catch {
         // Telemetry must never break the auth path.
       }

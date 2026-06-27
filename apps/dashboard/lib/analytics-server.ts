@@ -135,6 +135,29 @@ export function captureSignInFailed(input: {
   });
 }
 
+/** A sign-up attempt failed at the auth API with an HTTP error status (e.g. 422
+ * email already in use, 400 weak/invalid password, 500 server error). The
+ * counterpart to `user_signed_up` (which only fires on success), so the two
+ * together give the sign-up success rate. No user exists, so it's attributed to
+ * the system distinct_id; the attempted email rides along as a property. */
+export function captureSignUpFailed(input: {
+  status: number;
+  code?: string | null;
+  method?: string;
+  email?: string | null;
+}): Promise<void> {
+  return captureServerEvent({
+    event: "sign_up_failed",
+    distinctId: SYSTEM_DISTINCT_ID,
+    properties: {
+      status: input.status,
+      code: input.code ?? undefined,
+      method: input.method,
+      email: input.email ?? undefined,
+    },
+  });
+}
+
 /** A site was created in the active org. */
 export function captureSiteCreated(input: {
   userId: string;
