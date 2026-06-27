@@ -89,6 +89,71 @@ describe("analytics-server captures (serverless-safe)", () => {
     expect(sent.properties).toMatchObject({ environment: "production", method: "google" });
   });
 
+  it("captureSignInSucceeded sends sign_in_succeeded, attaching the org group when known", async () => {
+    const { captureSignInSucceeded } = await import("@/lib/analytics-server");
+    await captureSignInSucceeded({ userId: "user_3", organization: "org_3", method: "email" });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    expect(capture).not.toHaveBeenCalled();
+    expect(flush).not.toHaveBeenCalled();
+
+    const sent = captureImmediate.mock.calls[0]![0];
+    expect(sent).toMatchObject({
+      distinctId: "user_3",
+      event: "sign_in_succeeded",
+      groups: { organization: "org_3" },
+    });
+    expect(sent.properties).toMatchObject({ environment: "production", method: "email" });
+  });
+
+  it("captureSignInFailed attributes to the system id (not the typed email) and records status/code/email props", async () => {
+    const { captureSignInFailed } = await import("@/lib/analytics-server");
+    await captureSignInFailed({
+      status: 401,
+      code: "INVALID_EMAIL_OR_PASSWORD",
+      method: "email",
+      email: "typo@b.co",
+    });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    const sent = captureImmediate.mock.calls[0]![0];
+    expect(sent.event).toBe("sign_in_failed");
+    // No authenticated user: attributed to the system id so a typed email never
+    // mints a person profile. No org → no group.
+    expect(sent.distinctId).toBe("system");
+    expect(sent.groups).toBeUndefined();
+    expect(sent.properties).toMatchObject({
+      environment: "production",
+      status: 401,
+      code: "INVALID_EMAIL_OR_PASSWORD",
+      method: "email",
+      email: "typo@b.co",
+    });
+  });
+
+  it("captureSignUpFailed sends sign_up_failed attributed to the system id with status/code/email props", async () => {
+    const { captureSignUpFailed } = await import("@/lib/analytics-server");
+    await captureSignUpFailed({
+      status: 422,
+      code: "USER_ALREADY_EXISTS",
+      method: "email",
+      email: "taken@b.co",
+    });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    const sent = captureImmediate.mock.calls[0]![0];
+    expect(sent.event).toBe("sign_up_failed");
+    expect(sent.distinctId).toBe("system");
+    expect(sent.groups).toBeUndefined();
+    expect(sent.properties).toMatchObject({
+      environment: "production",
+      status: 422,
+      code: "USER_ALREADY_EXISTS",
+      method: "email",
+      email: "taken@b.co",
+    });
+  });
+
   it("captureDbCapacityIssue reports via captureExceptionImmediate, not captureException()+flush()", async () => {
     const { captureDbCapacityIssue } = await import("@/lib/analytics-server");
     const error = new Error("max clients reached in session mode");

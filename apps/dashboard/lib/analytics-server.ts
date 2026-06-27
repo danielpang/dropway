@@ -94,6 +94,70 @@ export function captureSignup(input: {
   });
 }
 
+/** A user successfully authenticated: a new session was created. Fires for every
+ * sign-in method (email/password, Google, magic link) AND for the initial session
+ * Better Auth creates right after signup, so this count is "successful
+ * authentications" (logins + signups), not logins alone. Org is best-effort (a
+ * brand-new user has none until onboarding). */
+export function captureSignInSucceeded(input: {
+  userId: string;
+  organization?: string | null;
+  method?: string;
+}): Promise<void> {
+  return captureServerEvent({
+    event: "sign_in_succeeded",
+    distinctId: input.userId,
+    organization: input.organization ?? null,
+    properties: { method: input.method },
+  });
+}
+
+/** A sign-in attempt failed at the auth API with an HTTP error status (e.g. 400
+ * bad request, 401 invalid credentials, 403 unverified email, 500 server error).
+ * There is no authenticated user, so the event is attributed to the system
+ * distinct_id (not the attempted email — that would mint a person profile for
+ * every typo); the attempted email rides along as a queryable property. */
+export function captureSignInFailed(input: {
+  status: number;
+  code?: string | null;
+  method?: string;
+  email?: string | null;
+}): Promise<void> {
+  return captureServerEvent({
+    event: "sign_in_failed",
+    distinctId: SYSTEM_DISTINCT_ID,
+    properties: {
+      status: input.status,
+      code: input.code ?? undefined,
+      method: input.method,
+      email: input.email ?? undefined,
+    },
+  });
+}
+
+/** A sign-up attempt failed at the auth API with an HTTP error status (e.g. 422
+ * email already in use, 400 weak/invalid password, 500 server error). The
+ * counterpart to `user_signed_up` (which only fires on success), so the two
+ * together give the sign-up success rate. No user exists, so it's attributed to
+ * the system distinct_id; the attempted email rides along as a property. */
+export function captureSignUpFailed(input: {
+  status: number;
+  code?: string | null;
+  method?: string;
+  email?: string | null;
+}): Promise<void> {
+  return captureServerEvent({
+    event: "sign_up_failed",
+    distinctId: SYSTEM_DISTINCT_ID,
+    properties: {
+      status: input.status,
+      code: input.code ?? undefined,
+      method: input.method,
+      email: input.email ?? undefined,
+    },
+  });
+}
+
 /** A site was created in the active org. */
 export function captureSiteCreated(input: {
   userId: string;
