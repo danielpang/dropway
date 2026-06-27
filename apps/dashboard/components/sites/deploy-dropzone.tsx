@@ -30,10 +30,11 @@ type State =
   | { status: "error"; message: string };
 
 /**
- * The manifest key the serving Worker resolves the root URL ("/") to — exactly
- * this, lowercase, at the upload root. A deploy without it serves a 404 at "/",
- * which is the most common "my new site doesn't load" cause (usually a folder
- * dropped one level too deep). Mirrors the API's rootIndexFile check.
+ * The manifest key the serving Worker resolves the root URL ("/") to: exactly
+ * this, lowercase, at the upload root. A deploy without it makes the root show a
+ * file listing instead of a rendered page, which is the most common "my new site
+ * doesn't load" cause (usually a folder dropped one level too deep). Mirrors the
+ * API's rootIndexFile check.
  */
 const ROOT_INDEX_PATH = "index.html";
 
@@ -145,7 +146,8 @@ export function DeployDropzone({
         return;
       }
       // Warn (but don't block) when there's no root index.html: the site root
-      // would 404. Catch it BEFORE hashing/uploading so the fix is a quick re-drop.
+      // shows a file listing instead of a rendered page. Catch it BEFORE
+      // hashing/uploading so the fix is a quick re-drop.
       if (!hasRootIndex(files)) {
         setState({ status: "confirm", files });
         return;
@@ -241,11 +243,12 @@ export function DeployDropzone({
               No <code className="font-mono">index.html</code> at the folder root
             </p>
             <p className="text-sm text-muted-foreground">
-              Your site&rsquo;s root URL (<code className="font-mono">/</code>) will
-              return 404. If you dropped a folder that wraps your site, drop the{" "}
-              <strong>inner</strong> folder instead — or rename your entry page to{" "}
-              <code className="font-mono">index.html</code>. You can deploy anyway
-              if the site only serves sub-paths.
+              A folder without an <code className="font-mono">index.html</code> will
+              not render as a website. Your root URL (
+              <code className="font-mono">/</code>) will show a list of the files in
+              the folder instead. Make sure{" "}
+              <code className="font-mono">index.html</code> lives at the root of your
+              folder. You can deploy anyway to publish the file listing.
             </p>
           </div>
           <div className="flex shrink-0 gap-2">

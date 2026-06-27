@@ -261,6 +261,101 @@ func TestPublic_ServesIndexHTML(t *testing.T) {
 	}
 }
 
+func TestPublic_AutoindexForUploadWithoutIndex(t *testing.T) {
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "notes.md", body: []byte("# notes"), contentType: "text/markdown"},
+		{path: "readme.txt", body: []byte("hello"), contentType: "text/plain"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/html; charset=utf-8", got)
+	}
+	// A listing is treated as HTML: short-TTL, must-revalidate.
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=60, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want public, max-age=60, must-revalidate", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Index of /", `href="/notes.md"`, `href="/readme.txt"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("listing body missing %q; got:\n%s", want, body)
+		}
+	}
+}
+
+func TestPublic_AutoindexSubdirectory(t *testing.T) {
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "index.html", body: []byte("<h1>home</h1>"), contentType: "text/html"},
+		{path: "docs/a.md", body: []byte("a"), contentType: "text/markdown"},
+		{path: "docs/b.md", body: []byte("b"), contentType: "text/markdown"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/docs/", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Index of /docs/", `href="/docs/a.md"`, `href="/docs/b.md"`, "Parent directory"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("listing body missing %q; got:\n%s", want, body)
+		}
+	}
+}
+
+func TestPublic_IndexHTMLWinsOverAutoindex(t *testing.T) {
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "index.html", body: []byte("<h1>home</h1>"), contentType: "text/html"},
+		{path: "notes.md", body: []byte("# notes"), contentType: "text/markdown"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/", nil, "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "<h1>home</h1>" {
+		t.Fatalf("want served index.html, got status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPublic_AutoindexStill404sEmptyDirectory(t *testing.T) {
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "notes.md", body: []byte("# notes"), contentType: "text/markdown"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/missing/", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestPublic_Custom404WinsOverAutoindex(t *testing.T) {
+	// A site that ships a custom 404.html has opted into its own miss handling,
+	// so a populated subdirectory must serve that 404 page, not an autoindex.
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "index.html", body: []byte("<h1>home</h1>"), contentType: "text/html"},
+		{path: "404.html", body: []byte("<h1>custom missing</h1>"), contentType: "text/html"},
+		{path: "assets/app.js", body: []byte("console.log(1)"), contentType: "text/javascript"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/assets/", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if rec.Body.String() != "<h1>custom missing</h1>" {
+		t.Errorf("want custom 404 body, got %q", rec.Body.String())
+	}
+}
+
 func TestPublic_HashedAssetImmutable(t *testing.T) {
 	store := storage.NewFake()
 	stageVersion(t, store, []fileSpec{

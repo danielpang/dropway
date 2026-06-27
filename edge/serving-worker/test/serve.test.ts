@@ -480,6 +480,87 @@ describe("serve() public path — manifest resolution + content-addressed blobs"
     expect(await res.text()).toContain("404");
   });
 
+  it("lists the directory (autoindex) for an upload with no index.html", async () => {
+    const { objects } = deploy({
+      "notes.md": { body: "# notes", content_type: "text/markdown" },
+      "readme.txt": { body: "hello", content_type: "text/plain" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    // Short-TTL HTML cache policy (served path is treated as index.html).
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=60, must-revalidate",
+    );
+    const body = await res.text();
+    expect(body).toContain("Index of /");
+    expect(body).toContain('href="/notes.md"');
+    expect(body).toContain('href="/readme.txt"');
+  });
+
+  it("lists a subdirectory that has no index.html", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+      "docs/a.md": { body: "a", content_type: "text/markdown" },
+      "docs/b.md": { body: "b", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/docs/"), env);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Index of /docs/");
+    expect(body).toContain('href="/docs/a.md"');
+    expect(body).toContain('href="/docs/b.md"');
+    expect(body).toContain("Parent directory");
+  });
+
+  it("lists a directory for a pretty path with no trailing slash", async () => {
+    const { objects } = deploy({
+      "docs/a.md": { body: "a", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/docs"), env);
+    expect(res.status).toBe(200);
+    // Absolute links resolve correctly even without the trailing slash.
+    expect(await res.text()).toContain('href="/docs/a.md"');
+  });
+
+  it("serves index.html in preference to a listing when one exists", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+      "notes.md": { body: "# notes", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/"), env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("<h1>home</h1>");
+  });
+
+  it("serves a shipped 404.html instead of a listing for a populated subdirectory", async () => {
+    // A real site that ships a custom 404.html has opted into its own miss
+    // handling, so a subdirectory request must serve that 404 page, NOT an
+    // autoindex of the directory's files.
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+      "404.html": { body: "<h1>custom missing</h1>", content_type: "text/html" },
+      "assets/app.js": { body: "console.log(1)", content_type: "text/javascript" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/assets/"), env);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("<h1>custom missing</h1>");
+  });
+
+  it("still 404s a directory request with no matching descendants", async () => {
+    const { objects } = deploy({
+      "notes.md": { body: "# notes", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/missing/"), env);
+    expect(res.status).toBe(404);
+  });
+
   it("404s when the manifest is missing entirely (no projection)", async () => {
     // KV route exists, but no manifest object in R2 → fail closed.
     const env = envFor(PUBLIC_ROUTE, HOST, {});
