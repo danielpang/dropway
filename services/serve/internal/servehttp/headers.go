@@ -54,9 +54,11 @@ const shortTTLSeconds = 60
 // '.', '-' or '_' before the extension (http.ts isHashedAsset).
 var hashedAssetRE = regexp.MustCompile(`[.\-_][0-9a-zA-Z]{8,}\.[0-9a-zA-Z]+$`)
 
-// extensionOf returns the lowercased final extension of a key, or "" — a faithful
+// ExtensionOf returns the lowercased final extension of a key, or "" — a faithful
 // port of http.ts extensionOf (a leading-dot-only or trailing-dot is no extension).
-func extensionOf(key string) string {
+// Exported so other serve packages (e.g. internal/markdown) share the one
+// definition rather than re-implementing it.
+func ExtensionOf(key string) string {
 	last := key
 	if i := strings.LastIndex(key, "/"); i != -1 {
 		last = key[i+1:]
@@ -71,7 +73,7 @@ func extensionOf(key string) string {
 // ContentTypeFor maps a key to a Content-Type via the MIME table, defaulting to
 // octet-stream. Only used as a fallback when the manifest entry has no content_type.
 func ContentTypeFor(key string) string {
-	if mt, ok := mimeTable[extensionOf(key)]; ok {
+	if mt, ok := mimeTable[ExtensionOf(key)]; ok {
 		return mt
 	}
 	return defaultContentType
@@ -79,7 +81,7 @@ func ContentTypeFor(key string) string {
 
 // IsHTML reports whether a key is an HTML entry document (never immutable).
 func IsHTML(key string) bool {
-	ext := extensionOf(key)
+	ext := ExtensionOf(key)
 	return ext == "html" || ext == "htm"
 }
 

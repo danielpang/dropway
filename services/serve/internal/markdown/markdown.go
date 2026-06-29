@@ -11,8 +11,15 @@
 //
 // The converter supports the common CommonMark subset (headings, emphasis, code,
 // lists, blockquotes, links, images, rules, paragraphs); it is intentionally NOT
-// a full CommonMark implementation, and its output is kept byte-for-byte identical
-// to the TypeScript port so both serve paths produce the same page.
+// a full CommonMark implementation.
+//
+// PARITY: this port and the TypeScript original are kept in lockstep and produce
+// identical output for typical (ASCII-whitespace) Markdown — a golden-fixture suite
+// (markdown_test.go + markdown.test.ts read the shared testdata/markdown fixtures)
+// guards against drift. They are NOT guaranteed identical on exotic Unicode
+// whitespace (NBSP, vertical tab, form feed) at a block-marker boundary: Go's RE2
+// `\s` and TrimLeft(" \t") are ASCII-only while JS's `\s`/trimStart() are
+// Unicode-aware. That corner is documented, not relied upon.
 //
 // SECURITY: every byte of tenant source is HTML-escaped before any Markdown
 // transform, so raw HTML in the source is shown literally and can never inject
@@ -24,7 +31,16 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/danielpang/dropway/services/serve/internal/servehttp"
 )
+
+// MarkdownMaxRenderBytes is the maximum source size (bytes) the serving paths will
+// render into the viewer page. Rendering buffers the whole document into memory, so
+// a larger file is streamed as raw bytes instead, bounding worst-case memory.
+// Generous vs any human-written doc (1 MiB). Mirrors markdown.ts
+// MARKDOWN_MAX_RENDER_BYTES.
+const MarkdownMaxRenderBytes = 1024 * 1024
 
 // nul is the placeholder sentinel (impossible in normal text) used to hold code
 // spans out of the escape + emphasis passes. Mirrors markdown.ts NUL.
@@ -47,22 +63,8 @@ func esc(s string) string { return htmlEscaper.Replace(s) }
 // IsMarkdownPath reports whether a served path is a Markdown document we should
 // render (.md / .mdx, case-insensitive). Mirrors isMarkdownPath.
 func IsMarkdownPath(path string) bool {
-	ext := extensionOf(path)
+	ext := servehttp.ExtensionOf(path)
 	return ext == "md" || ext == "mdx"
-}
-
-// extensionOf returns the lowercased final extension of a path, or "" (a leading-
-// dot-only or trailing-dot is no extension). Mirrors http.ts extensionOf.
-func extensionOf(key string) string {
-	last := key
-	if i := strings.LastIndex(key, "/"); i != -1 {
-		last = key[i+1:]
-	}
-	dot := strings.LastIndex(last, ".")
-	if dot <= 0 || dot == len(last)-1 {
-		return ""
-	}
-	return strings.ToLower(last[dot+1:])
 }
 
 // baseName returns the final path segment (basename) for the page title/header.
@@ -346,6 +348,8 @@ header { position: sticky; top: 0; z-index: 10; display: flex; align-items: cent
 header .name { font-size: 0.9rem; font-weight: 600; word-break: break-all; margin-right: auto; }
 header button { font: inherit; font-size: 0.82rem; font-weight: 500; cursor: pointer; padding: 0.35rem 0.7rem; border: 1px solid #d4d4d4; border-radius: 0.4rem; background: #fff; color: #1a1a1a; }
 header button:hover { background: #f0f0f0; }
+header a.raw { font-size: 0.82rem; font-weight: 500; text-decoration: none; color: #1a56db; white-space: nowrap; }
+header a.raw:hover { text-decoration: underline; }
 main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
 .markdown-body h1, .markdown-body h2 { border-bottom: 1px solid #e3e3e3; padding-bottom: 0.3rem; }
 .markdown-body h1 { font-size: 1.9rem; } .markdown-body h2 { font-size: 1.5rem; }
@@ -363,7 +367,7 @@ main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
   header button { background: #1f2228; border-color: #34383f; color: #e6e6e6; }
   header button:hover { background: #2a2d34; }
   .markdown-body h1, .markdown-body h2 { border-bottom-color: #2a2d34; }
-  .markdown-body a { color: #6ea8ff; }
+  .markdown-body a, header a.raw { color: #6ea8ff; }
   .markdown-body code { background: rgba(110,118,129,0.25); }
   .markdown-body pre, #md-raw { background: #1f2228; }
   .markdown-body blockquote { color: #9aa0a8; border-left-color: #2a2d34; }
@@ -375,6 +379,7 @@ main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
 <span class="name">` + name + `</span>
 <button type="button" id="md-toggle">View raw</button>
 <button type="button" id="md-copy">Copy</button>
+<a class="raw" href="?raw=1" title="Open the original source — append ?raw to the URL">Open raw ↗</a>
 </header>
 <main>
 <article class="markdown-body" id="md-rendered">

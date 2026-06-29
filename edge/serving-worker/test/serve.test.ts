@@ -723,6 +723,59 @@ describe("serve() renders .md/.mdx as a viewer page (not raw bytes)", () => {
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     expect(await res.text()).toBe("");
   });
+
+  it("?raw serves the original source bytes instead of the viewer page", async () => {
+    const source = "# Title\n\nbody";
+    const { objects } = deploy({
+      "notes.md": { body: source, content_type: "text/markdown; charset=utf-8" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/notes.md?raw=1"), env);
+    expect(res.status).toBe(200);
+    // The manifest content_type is served verbatim — no HTML rendering.
+    expect(res.headers.get("Content-Type")).toBe("text/markdown; charset=utf-8");
+    expect(await res.text()).toBe(source);
+  });
+
+  it("streams a too-large Markdown file as raw instead of rendering (OOM guard)", async () => {
+    // Just over MARKDOWN_MAX_RENDER_BYTES (1 MiB) → served raw, never buffered+rendered.
+    const big = "#".repeat(1024 * 1024 + 1);
+    const { objects } = deploy({
+      "huge.md": { body: big, content_type: "text/markdown; charset=utf-8" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/huge.md"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/markdown; charset=utf-8");
+    expect(await res.text()).toBe(big);
+  });
+
+  it("caches the rendered page and ?raw response under distinct keys", async () => {
+    const source = "# Title";
+    const { objects } = deploy({
+      "notes.md": { body: source, content_type: "text/markdown; charset=utf-8" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const cache = mockCache();
+
+    const rendered = await serve(get(HOST, "/notes.md"), env, { cache });
+    const raw = await serve(get(HOST, "/notes.md?raw=1"), env, { cache });
+
+    expect(rendered.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(raw.headers.get("Content-Type")).toBe("text/markdown; charset=utf-8");
+    // Two separate cache entries (no cross-contamination between raw and rendered).
+    expect(cache.store.size).toBe(2);
+    expect(await raw.text()).toBe(source);
+  });
+
+  it("the viewer page links to the ?raw source", async () => {
+    const { objects } = deploy({
+      "notes.md": { body: "# Title", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/notes.md"), env);
+    expect(await res.text()).toContain('href="?raw=1"');
+  });
 });
 
 // --- Cache API behavior -----------------------------------------------------

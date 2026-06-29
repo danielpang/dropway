@@ -38,7 +38,11 @@ import {
 } from "./manifest";
 import { publicResponseHeaders, securityHeaders } from "./http";
 import { directoryPrefix, listDirectory, renderDirectoryListing } from "./listing";
-import { isMarkdownPath, renderMarkdownPage } from "./markdown";
+import {
+  MARKDOWN_MAX_RENDER_BYTES,
+  isMarkdownPath,
+  renderMarkdownPage,
+} from "./markdown";
 import {
   applyHeaders,
   isServiceWorkerRequest,
@@ -805,7 +809,20 @@ async function resolveBlob(
   // page is HTML, so it flows through the SAME banner/header/cache path as any
   // served HTML document: servedPath is set to "index.html" (exactly as the
   // autoindex does) so the short-TTL HTML cache policy + free-tier banner apply.
-  if (isMarkdownPath(match.path)) {
+  //
+  // Two opt-OUTs of rendering, both serving the original bytes via the normal path
+  // below:
+  //  - `?raw` (or `?raw=1`): an explicit escape hatch so a deep link can still
+  //    fetch the source (the viewer page surfaces this link). Cached under a
+  //    distinct key (see cacheKey) so it never collides with the rendered page.
+  //  - oversized files: rendering buffers the whole document into memory (twice,
+  //    counting the banner pass), and the Worker isolate has a hard memory cap, so
+  //    a file larger than MARKDOWN_MAX_RENDER_BYTES is streamed raw instead of
+  //    risking an OOM. The size comes from the manifest (no extra read); an
+  //    unknown size renders (the deploy always records one in practice).
+  const size = object.size ?? match.entry.size;
+  const tooBigToRender = size !== undefined && size > MARKDOWN_MAX_RENDER_BYTES;
+  if (isMarkdownPath(match.path) && !isRawRequested(url) && !tooBigToRender) {
     const source = object.body ? await new Response(object.body).text() : "";
     const html = renderMarkdownPage(match.path, source);
     const bytes = new TextEncoder().encode(html);
@@ -910,17 +927,36 @@ async function readBodyJson(object: R2ObjectLike): Promise<unknown> {
  * the public path; the route rewrite + the revocation denylist (gated path) are the
  * authoritative immediate controls. Method is normalized to GET so HEAD reuses the
  * entry.
+ *
+ * The ONE query parameter that varies the body is `?raw` (it opts a Markdown file
+ * out of the viewer page and serves the source bytes), so it — and only it — is
+ * folded into the key; every other query string is still ignored. Without this a
+ * raw response and a rendered response would collide under one key.
  */
 function cacheKey(route: RouteValue, url: URL): Request {
+  const raw = isRawRequested(url);
   const keyUrl = new URL(url.toString());
-  keyUrl.search = ""; // static content does not vary by query string
+  keyUrl.search = ""; // static content does not vary by query string (except ?raw)
   // Fold access_mode + version + plan_tier into the key path so neither an access
   // change, a publish/rollback, nor a plan change can ever serve a stale or
   // cross-mode/cross-tier cache entry. plan_tier is optional (older projections) →
-  // "_" stands in for "absent".
+  // "_" stands in for "absent". The `raw` segment partitions ?raw from the rendered
+  // page (see resolveBlob's Markdown branch).
   const tier = route.plan_tier ?? "_";
-  keyUrl.pathname = `/${route.access_mode}/${route.version_id}/${tier}${keyUrl.pathname}`;
+  const rawSeg = raw ? "/raw" : "";
+  keyUrl.pathname = `/${route.access_mode}/${route.version_id}/${tier}${rawSeg}${keyUrl.pathname}`;
   return new Request(keyUrl.toString(), { method: "GET" });
+}
+
+/** The query parameter that opts a Markdown file out of the rendered viewer. */
+const RAW_QUERY_PARAM = "raw";
+
+/**
+ * True when the request asks for the raw source instead of the rendered Markdown
+ * viewer — the presence of `?raw` (any value, including empty: `?raw`, `?raw=1`).
+ */
+function isRawRequested(url: URL): boolean {
+  return url.searchParams.has(RAW_QUERY_PARAM);
 }
 
 /**
