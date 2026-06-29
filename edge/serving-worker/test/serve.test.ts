@@ -673,6 +673,58 @@ describe("serve() public path — manifest resolution + content-addressed blobs"
   });
 });
 
+// --- Markdown rendering -----------------------------------------------------
+
+describe("serve() renders .md/.mdx as a viewer page (not raw bytes)", () => {
+  it("renders a Markdown file to an HTML viewer page with the raw source + controls", async () => {
+    const source = "# Title\n\nsome **bold** text";
+    const { objects } = deploy({
+      "notes.md": { body: source, content_type: "text/markdown; charset=utf-8" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/notes.md"), env);
+
+    expect(res.status).toBe(200);
+    // Served as HTML, not as the raw text/markdown the manifest recorded.
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    // Treated as an HTML entry doc → short-TTL cache policy.
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=60, must-revalidate");
+
+    const body = await res.text();
+    expect(body.startsWith("<!doctype html>")).toBe(true);
+    expect(body).toContain("<h1>Title</h1>");
+    expect(body).toContain("<strong>bold</strong>");
+    // Raw source is embedded (escaped) for the toggle + copy controls.
+    expect(body).toContain('<pre id="md-raw" hidden># Title\n\nsome **bold** text</pre>');
+    expect(body).toContain('id="md-toggle"');
+    expect(body).toContain('id="md-copy"');
+  });
+
+  it("renders .mdx the same way", async () => {
+    const { objects } = deploy({
+      "guide.mdx": { body: "# Guide", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serveNoCache(get(HOST, "/guide.mdx"), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(await res.text()).toContain("<h1>Guide</h1>");
+  });
+
+  it("a HEAD request reports the rendered page's length and carries no body", async () => {
+    const { objects } = deploy({
+      "notes.md": { body: "# Title", content_type: "text/markdown" },
+    });
+    const env = envFor(PUBLIC_ROUTE, HOST, objects);
+    const res = await serve(new Request(`https://${HOST}/notes.md`, { method: "HEAD" }), env, {
+      cache: null,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(await res.text()).toBe("");
+  });
+});
+
 // --- Cache API behavior -----------------------------------------------------
 
 describe("serve() caches public blob responses via the Cache API", () => {

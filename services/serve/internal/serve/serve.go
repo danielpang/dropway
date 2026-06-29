@@ -3,6 +3,7 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/danielpang/dropway/services/serve/internal/edgeverify"
 	"github.com/danielpang/dropway/services/serve/internal/listing"
 	"github.com/danielpang/dropway/services/serve/internal/manifest"
+	"github.com/danielpang/dropway/services/serve/internal/markdown"
 	"github.com/danielpang/dropway/services/serve/internal/ratelimit"
 	"github.com/danielpang/dropway/services/serve/internal/route"
 	"github.com/danielpang/dropway/services/serve/internal/servehttp"
@@ -261,6 +263,29 @@ func (h *Handler) resolveBlob(w http.ResponseWriter, r *http.Request, rt *Route,
 		// A manifest entry whose blob is absent = projection drift ⇒ fail closed.
 		h.notFound(w, r, rt, &m, gated)
 		return resolvedBlob{}, false
+	}
+
+	// A Markdown upload (.md/.mdx) is rendered into a self-contained viewer page
+	// (formatted by default, with a raw toggle + copy button) instead of streaming
+	// its raw bytes — which a browser would show as plain text or download. The
+	// page is HTML, so servedPath is set to "index.html" (exactly as the autoindex
+	// does) to inherit the short-TTL HTML cache policy; gated stays private/no-store.
+	if markdown.IsMarkdownPath(match.Path) {
+		src, rerr := io.ReadAll(body)
+		body.Close()
+		if rerr != nil {
+			// A blob we can't read is treated like projection drift ⇒ fail closed.
+			h.notFound(w, r, rt, &m, gated)
+			return resolvedBlob{}, false
+		}
+		page := []byte(markdown.RenderMarkdownPage(match.Path, string(src)))
+		return resolvedBlob{
+			servedPath:  "index.html",
+			contentType: "text/html; charset=utf-8",
+			body:        io.NopCloser(bytes.NewReader(page)),
+			contentLen:  int64(len(page)),
+			hasLen:      true,
+		}, true
 	}
 
 	rb := resolvedBlob{

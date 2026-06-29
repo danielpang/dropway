@@ -38,6 +38,7 @@ import {
 } from "./manifest";
 import { publicResponseHeaders, securityHeaders } from "./http";
 import { directoryPrefix, listDirectory, renderDirectoryListing } from "./listing";
+import { isMarkdownPath, renderMarkdownPage } from "./markdown";
 import {
   applyHeaders,
   isServiceWorkerRequest,
@@ -795,6 +796,25 @@ async function resolveBlob(
         manifest,
         waitUntil: opts.waitUntil,
       }),
+    };
+  }
+
+  // A Markdown upload (.md/.mdx) is rendered into a self-contained viewer page
+  // (formatted by default, with a raw toggle + copy button) instead of streaming
+  // its raw bytes — which a browser would show as plain text or download. The
+  // page is HTML, so it flows through the SAME banner/header/cache path as any
+  // served HTML document: servedPath is set to "index.html" (exactly as the
+  // autoindex does) so the short-TTL HTML cache policy + free-tier banner apply.
+  if (isMarkdownPath(match.path)) {
+    const source = object.body ? await new Response(object.body).text() : "";
+    const html = renderMarkdownPage(match.path, source);
+    const bytes = new TextEncoder().encode(html);
+    return {
+      kind: "ok",
+      servedPath: "index.html",
+      contentType: "text/html; charset=utf-8",
+      body: new Response(bytes).body,
+      contentLength: bytes.length,
     };
   }
 
