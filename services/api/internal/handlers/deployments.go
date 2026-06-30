@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/audit"
+	"github.com/danielpang/dropway/internal/contenttype"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
 	"github.com/danielpang/dropway/internal/projection"
@@ -253,8 +256,19 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 				httpx.ErrBadRequest, f.Path, f.Size, f.SHA256, observed))
 			return
 		}
-		// The manifest records the server-observed size, not the client's claim.
-		files[f.Path] = manifestTarget{SHA256: f.SHA256, ContentType: f.ContentType, Size: observed}
+		// Derive the served content_type from the file's path extension and only fall
+		// back to the client-supplied value when the extension is unknown AND that value
+		// passes a strict MIME grammar (M2). The client never controls the Content-Type
+		// for a recognized extension, so a blob can't be labeled text/html on a .txt path
+		// and rendered inline within the tenant's own origin.
+		ct, err := servedContentType(f.Path, f.ContentType)
+		if err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		// The manifest records the server-observed size and the validated content_type,
+		// not the client's raw claims.
+		files[f.Path] = manifestTarget{SHA256: f.SHA256, ContentType: ct, Size: observed}
 	}
 
 	// Total size from server-observed blob lengths (one count per unique blob).
@@ -451,6 +465,45 @@ func (a *API) requireProjection(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+// servedContentType returns the content_type to RECORD in the deploy manifest for a
+// file, which the serving tier sends verbatim as the response Content-Type (M2).
+//
+// Design: extension-derived wins. For a recognized path extension the authoritative
+// type comes from internal/contenttype, so the client cannot mislabel a blob (e.g.
+// claim text/html on a .txt path) and have it rendered inline within the tenant's own
+// origin. The client-supplied value is honored ONLY for an unknown extension, and only
+// when it parses as a strict type/subtype MIME grammar (optionally with ; charset=... or
+// other parameters). A non-empty but malformed client content_type is a 400. An empty
+// client value on an unknown extension falls back to the binary default, never to the
+// client's bytes being sniffed (the serving tier always sends X-Content-Type-Options:
+// nosniff). Recognized extensions keep stable behavior: index.html still serves text/html.
+func servedContentType(path, clientCT string) (string, error) {
+	if contenttype.Known(path) {
+		return contenttype.ForPath(path), nil
+	}
+	if clientCT == "" {
+		return contenttype.ForPath(path), nil // application/octet-stream
+	}
+	if !validMIMEType(clientCT) {
+		return "", fmt.Errorf("%w: file %q has a malformed content_type %q",
+			httpx.ErrBadRequest, path, clientCT)
+	}
+	return clientCT, nil
+}
+
+// validMIMEType reports whether s is a well-formed media type: a non-empty type and
+// subtype (mime.ParseMediaType enforces the RFC 2045 token grammar) with valid optional
+// parameters such as "; charset=utf-8". It rejects bare tokens ("text"), empty subtypes
+// ("text/"), and stray characters, so only a real type/subtype passes through.
+func validMIMEType(s string) bool {
+	mt, _, err := mime.ParseMediaType(s)
+	if err != nil {
+		return false
+	}
+	slash := strings.IndexByte(mt, '/')
+	return slash > 0 && slash < len(mt)-1
 }
 
 // validSHA256 reports whether s is a 64-char lowercase hex string.

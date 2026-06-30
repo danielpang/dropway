@@ -292,6 +292,154 @@ func TestFinalize_RejectsSizeMismatch(t *testing.T) {
 	}
 }
 
+// finalizeOne finalizes a single-file deploy with the given path + client
+// content_type and returns the response recorder. The blob is staged first so the
+// deploy reaches the content_type validation seam.
+func finalizeOne(t *testing.T, h http.Handler, obj *storage.Fake, siteID, path, content, clientCT string) *httptest.ResponseRecorder {
+	t.Helper()
+	b := []byte(content)
+	bs := sha(b)
+	must(t, obj.PutBlobBytes(context.Background(), "org_1", bs, b))
+	mf := `[{"path":"` + path + `","sha256":"` + bs + `","size":` + itoa(len(b)) +
+		`,"content_type":"` + clientCT + `"}]`
+	digest := manifest.Digest([]manifest.File{{Path: path, SHA256: bs}})
+	return do(t, h, http.MethodPost, "/v1/sites/"+siteID+"/deployments",
+		`{"digest":"`+digest+`","manifest":`+mf+`}`)
+}
+
+// manifestCTFor reads the stored deploy manifest for a finalized version and returns
+// the recorded content_type for a given request path.
+func manifestCTFor(t *testing.T, obj *storage.Fake, siteID, versionID, path string) string {
+	t.Helper()
+	b, err := obj.GetManifest(context.Background(), "org_1", siteID, versionID)
+	if err != nil {
+		t.Fatalf("manifest not written: %v", err)
+	}
+	var m struct {
+		Files map[string]struct {
+			ContentType string `json:"content_type"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("manifest not valid JSON: %v", err)
+	}
+	return m.Files[path].ContentType
+}
+
+// TestFinalize_ContentType_ExtensionWins proves a recognized extension derives its
+// served content_type from internal/contenttype, not from any client claim. index.html
+// keeps serving text/html (stable behavior) regardless of the manifest's content_type.
+func TestFinalize_ContentType_ExtensionWins(t *testing.T) {
+	fs := newFakeStore()
+	obj := storage.NewFake()
+	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
+	h := routerFor(a, "org_1", "user_1")
+
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"site"}`)
+	var site siteResponse
+	mustJSON(t, rr, &site)
+
+	// Client lies that index.html is application/octet-stream; the extension wins.
+	rr = finalizeOne(t, h, obj, site.ID, "index.html", "<h1>hi</h1>", "application/octet-stream")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("finalize: %d %s, want 201", rr.Code, rr.Body.String())
+	}
+	var fin finalizeResponse
+	mustJSON(t, rr, &fin)
+	if got := manifestCTFor(t, obj, site.ID, fin.VersionID, "index.html"); got != "text/html; charset=utf-8" {
+		t.Errorf("index.html content_type = %q, want text/html; charset=utf-8", got)
+	}
+}
+
+// TestFinalize_ContentType_HTMLLabelOnTxtNeutralized proves a text/html label on a
+// .txt path is normalized to the extension's type (text/plain), so a publisher cannot
+// get a blob rendered inline as HTML within the tenant's own origin (M2).
+func TestFinalize_ContentType_HTMLLabelOnTxtNeutralized(t *testing.T) {
+	fs := newFakeStore()
+	obj := storage.NewFake()
+	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
+	h := routerFor(a, "org_1", "user_1")
+
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"site"}`)
+	var site siteResponse
+	mustJSON(t, rr, &site)
+
+	rr = finalizeOne(t, h, obj, site.ID, "notes.txt", "<script>alert(1)</script>", "text/html")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("finalize: %d %s, want 201", rr.Code, rr.Body.String())
+	}
+	var fin finalizeResponse
+	mustJSON(t, rr, &fin)
+	if got := manifestCTFor(t, obj, site.ID, fin.VersionID, "notes.txt"); got != "text/plain; charset=utf-8" {
+		t.Errorf("notes.txt content_type = %q, want text/plain; charset=utf-8 (html label neutralized)", got)
+	}
+}
+
+// TestFinalize_ContentType_UnknownExtValidPassthrough proves an unknown extension with a
+// valid client content_type is accepted and recorded verbatim (with parameters preserved).
+func TestFinalize_ContentType_UnknownExtValidPassthrough(t *testing.T) {
+	fs := newFakeStore()
+	obj := storage.NewFake()
+	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
+	h := routerFor(a, "org_1", "user_1")
+
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"site"}`)
+	var site siteResponse
+	mustJSON(t, rr, &site)
+
+	rr = finalizeOne(t, h, obj, site.ID, "feed.atom", "<feed/>", "application/atom+xml; charset=utf-8")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("finalize: %d %s, want 201", rr.Code, rr.Body.String())
+	}
+	var fin finalizeResponse
+	mustJSON(t, rr, &fin)
+	if got := manifestCTFor(t, obj, site.ID, fin.VersionID, "feed.atom"); got != "application/atom+xml; charset=utf-8" {
+		t.Errorf("feed.atom content_type = %q, want passthrough application/atom+xml; charset=utf-8", got)
+	}
+}
+
+// TestFinalize_ContentType_RejectsMalformed proves a non-empty but malformed client
+// content_type on an unknown extension is a 400.
+func TestFinalize_ContentType_RejectsMalformed(t *testing.T) {
+	fs := newFakeStore()
+	obj := storage.NewFake()
+	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
+	h := routerFor(a, "org_1", "user_1")
+
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"site"}`)
+	var site siteResponse
+	mustJSON(t, rr, &site)
+
+	// "not a mime type" has no type/subtype slash → rejected.
+	rr = finalizeOne(t, h, obj, site.ID, "blob.bin", "some bytes", "not a mime type")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("finalize malformed content_type: %d %s, want 400", rr.Code, rr.Body.String())
+	}
+}
+
+// TestFinalize_ContentType_UnknownExtEmptyFallsBack proves an unknown extension with no
+// client content_type falls back to the binary default rather than being rejected.
+func TestFinalize_ContentType_UnknownExtEmptyFallsBack(t *testing.T) {
+	fs := newFakeStore()
+	obj := storage.NewFake()
+	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
+	h := routerFor(a, "org_1", "user_1")
+
+	rr := do(t, h, http.MethodPost, "/v1/sites", `{"slug":"site"}`)
+	var site siteResponse
+	mustJSON(t, rr, &site)
+
+	rr = finalizeOne(t, h, obj, site.ID, "blob.bin", "some bytes", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("finalize: %d %s, want 201", rr.Code, rr.Body.String())
+	}
+	var fin finalizeResponse
+	mustJSON(t, rr, &fin)
+	if got := manifestCTFor(t, obj, site.ID, fin.VersionID, "blob.bin"); got != "application/octet-stream" {
+		t.Errorf("blob.bin content_type = %q, want application/octet-stream", got)
+	}
+}
+
 // TestRollback_PublishOlderVersion proves publishing an older version flips the
 // pointer back (rollback == publish an earlier version_id).
 func TestRollback_PublishOlderVersion(t *testing.T) {
