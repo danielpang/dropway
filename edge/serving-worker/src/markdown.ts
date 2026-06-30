@@ -306,7 +306,10 @@ export function renderMarkdownPage(path: string, source: string): string {
 * { box-sizing: border-box; }
 body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background: #fafafa; color: #1a1a1a; }
 header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1.25rem; background: rgba(250,250,250,0.85); backdrop-filter: saturate(1.8) blur(8px); border-bottom: 1px solid #e3e3e3; }
-header .name { font-size: 0.9rem; font-weight: 600; word-break: break-all; margin-right: auto; }
+header a.brand { display: inline-flex; align-items: center; gap: 0.45rem; text-decoration: none; color: inherit; font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
+header a.brand svg { width: 1.3rem; height: 1.3rem; display: block; }
+header .sep { color: #c4c4c4; }
+header .name { font-size: 0.85rem; font-weight: 500; color: #555; word-break: break-all; margin-right: auto; }
 header button { font: inherit; font-size: 0.82rem; font-weight: 500; cursor: pointer; padding: 0.35rem 0.7rem; border: 1px solid #d4d4d4; border-radius: 0.4rem; background: #fff; color: #1a1a1a; }
 header button:hover { background: #f0f0f0; }
 header a.raw { font-size: 0.82rem; font-weight: 500; text-decoration: none; color: #1a56db; white-space: nowrap; }
@@ -328,6 +331,8 @@ main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
   header button { background: #1f2228; border-color: #34383f; color: #e6e6e6; }
   header button:hover { background: #2a2d34; }
   .markdown-body h1, .markdown-body h2 { border-bottom-color: #2a2d34; }
+  header .sep { color: #41454d; }
+  header .name { color: #9aa0a8; }
   .markdown-body a, header a.raw { color: #6ea8ff; }
   .markdown-body code { background: rgba(110,118,129,0.25); }
   .markdown-body pre, #md-raw { background: #1f2228; }
@@ -337,6 +342,11 @@ main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
 </head>
 <body>
 <header>
+<a class="brand" href="https://dropway.dev" target="_blank" rel="noopener noreferrer">
+<svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="18" fill="#5647e1"></rect><g transform="translate(17 17) scale(0.66)"><path fill="#ffffff" fill-rule="evenodd" d="M50 7 L85 55 L62 92 L38 92 L15 55 Z M50 7 L34 51 L46 58 Z"></path></g></svg>
+<span>Dropway</span>
+</a>
+<span class="sep">/</span>
 <span class="name">${esc(name)}</span>
 <button type="button" id="md-toggle">View raw</button>
 <button type="button" id="md-copy">Copy</button>

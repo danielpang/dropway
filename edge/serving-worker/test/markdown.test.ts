@@ -139,6 +139,11 @@ describe("renderMarkdownPage", () => {
     expect(page).toContain("navigator.clipboard");
   });
 
+  it("brands the toolbar with a Dropway link to the marketing site", () => {
+    expect(page).toContain('<a class="brand" href="https://dropway.dev"');
+    expect(page).toContain("<span>Dropway</span>");
+  });
+
   it("escapes the raw source so it cannot break out of the pre", () => {
     const p = renderMarkdownPage("x.md", "</pre><script>bad</script>");
     expect(p).toContain("&lt;/pre&gt;&lt;script&gt;bad&lt;/script&gt;");

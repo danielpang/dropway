@@ -91,6 +91,8 @@ func TestRenderMarkdownPage(t *testing.T) {
 		`id="md-toggle"`,
 		`id="md-copy"`,
 		"navigator.clipboard",
+		`<a class="brand" href="https://dropway.dev"`,
+		"<span>Dropway</span>",
 	}
 	for _, c := range checks {
 		if !contains(page, c) {
