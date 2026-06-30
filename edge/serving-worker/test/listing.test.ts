@@ -111,6 +111,13 @@ describe("renderDirectoryListing", () => {
     expect(html).not.toContain("Parent directory");
   });
 
+  it("brands the page with a Dropway link to the marketing site", () => {
+    const m = manifestOf({ "notes.md": 1500 });
+    const html = renderDirectoryListing("", listDirectory(m, "")!);
+    expect(html).toContain('<a class="brand" href="https://dropway.dev"');
+    expect(html).toContain("<span>Dropway</span>");
+  });
+
   it("includes a parent-directory link below the root", () => {
     const m = manifestOf({ "docs/sub/a.md": 1 });
     const html = renderDirectoryListing("docs/sub/", listDirectory(m, "docs/sub/")!);

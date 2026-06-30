@@ -118,6 +118,8 @@ func TestRenderDirectoryListing_Root(t *testing.T) {
 		`href="/readme.txt"`,
 		"1.5 KB",
 		"2 items",
+		`<a class="brand" href="https://dropway.dev"`,
+		"<span>Dropway</span>",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered listing missing %q", want)
