@@ -3,6 +3,7 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/danielpang/dropway/services/serve/internal/edgeverify"
 	"github.com/danielpang/dropway/services/serve/internal/listing"
 	"github.com/danielpang/dropway/services/serve/internal/manifest"
+	"github.com/danielpang/dropway/services/serve/internal/markdown"
 	"github.com/danielpang/dropway/services/serve/internal/ratelimit"
 	"github.com/danielpang/dropway/services/serve/internal/route"
 	"github.com/danielpang/dropway/services/serve/internal/servehttp"
@@ -263,6 +265,37 @@ func (h *Handler) resolveBlob(w http.ResponseWriter, r *http.Request, rt *Route,
 		return resolvedBlob{}, false
 	}
 
+	// A Markdown upload (.md/.mdx) is rendered into a self-contained viewer page
+	// (formatted by default, with a raw toggle + copy button) instead of streaming
+	// its raw bytes — which a browser would show as plain text or download. The
+	// page is HTML, so servedPath is set to "index.html" (exactly as the autoindex
+	// does) to inherit the short-TTL HTML cache policy; gated stays private/no-store.
+	//
+	// Two opt-OUTs of rendering, both falling through to serve the original bytes:
+	//  - `?raw` (or `?raw=1`): an explicit escape hatch so a deep link can fetch the
+	//    source (the viewer page surfaces this link).
+	//  - oversized files: rendering buffers the whole document into memory, so a file
+	//    larger than MarkdownMaxRenderBytes is streamed raw instead. The size comes
+	//    from the manifest (no extra read); an unknown size renders.
+	tooBigToRender := match.Entry.HasSize && match.Entry.Size > markdown.MarkdownMaxRenderBytes
+	if markdown.IsMarkdownPath(match.Path) && !isRawRequested(r) && !tooBigToRender {
+		src, rerr := io.ReadAll(body)
+		body.Close()
+		if rerr != nil {
+			// A blob we can't read is treated like projection drift ⇒ fail closed.
+			h.notFound(w, r, rt, &m, gated)
+			return resolvedBlob{}, false
+		}
+		page := []byte(markdown.RenderMarkdownPage(match.Path, string(src)))
+		return resolvedBlob{
+			servedPath:  "index.html",
+			contentType: "text/html; charset=utf-8",
+			body:        io.NopCloser(bytes.NewReader(page)),
+			contentLen:  int64(len(page)),
+			hasLen:      true,
+		}, true
+	}
+
 	rb := resolvedBlob{
 		servedPath:  match.Path,
 		contentType: contentTypeFor(match.Entry, match.Path),
@@ -474,6 +507,16 @@ func (h *Handler) edgeCookie(token string) string {
 		c += "; Secure"
 	}
 	return c
+}
+
+// isRawRequested reports whether the request opts a Markdown file out of the
+// rendered viewer and asks for the source bytes — the presence of `?raw` (any
+// value, including empty: `?raw`, `?raw=1`). Mirrors index.ts isRawRequested.
+func isRawRequested(r *http.Request) bool {
+	if r.URL == nil {
+		return false
+	}
+	return r.URL.Query().Has("raw")
 }
 
 // pathOf returns the request URL pathname in its RAW, still-percent-encoded form

@@ -323,6 +323,102 @@ func TestPublic_IndexHTMLWinsOverAutoindex(t *testing.T) {
 	}
 }
 
+func TestPublic_RendersMarkdownAsViewerPage(t *testing.T) {
+	store := storage.NewFake()
+	source := "# Title\n\nsome **bold** text"
+	stageVersion(t, store, []fileSpec{
+		{path: "notes.md", body: []byte(source), contentType: "text/markdown; charset=utf-8"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/notes.md", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	// Served as HTML, not the raw text/markdown the manifest recorded.
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/html; charset=utf-8", got)
+	}
+	// Treated as an HTML entry doc → short-TTL cache policy.
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=60, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want public, max-age=60, must-revalidate", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"<!doctype html>",
+		"<h1>Title</h1>",
+		"<strong>bold</strong>",
+		`<pre id="md-raw" hidden># Title`,
+		`id="md-toggle"`,
+		`id="md-copy"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("viewer page missing %q; got:\n%s", want, body)
+		}
+	}
+}
+
+func TestPublic_RendersMDXAsViewerPage(t *testing.T) {
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "guide.mdx", body: []byte("# Guide"), contentType: "text/markdown"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/guide.mdx", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/html; charset=utf-8", got)
+	}
+	if !strings.Contains(rec.Body.String(), "<h1>Guide</h1>") {
+		t.Errorf("MDX not rendered; got:\n%s", rec.Body.String())
+	}
+}
+
+func TestPublic_MarkdownRawQueryServesSource(t *testing.T) {
+	store := storage.NewFake()
+	source := "# Title\n\nbody"
+	stageVersion(t, store, []fileSpec{
+		{path: "notes.md", body: []byte(source), contentType: "text/markdown; charset=utf-8"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/notes.md?raw=1", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	// ?raw opts out of rendering: the manifest content_type is served verbatim.
+	if got := rec.Header().Get("Content-Type"); got != "text/markdown; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/markdown; charset=utf-8", got)
+	}
+	if rec.Body.String() != source {
+		t.Errorf("body = %q, want raw source", rec.Body.String())
+	}
+}
+
+func TestPublic_MarkdownOversizedServedRaw(t *testing.T) {
+	store := storage.NewFake()
+	// Just over MarkdownMaxRenderBytes (1 MiB) → streamed raw, never buffered+rendered.
+	big := strings.Repeat("#", 1024*1024+1)
+	stageVersion(t, store, []fileSpec{
+		{path: "huge.md", body: []byte(big), contentType: "text/markdown; charset=utf-8"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/huge.md", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/markdown; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/markdown; charset=utf-8 (raw)", got)
+	}
+	if rec.Body.String() != big {
+		t.Errorf("oversized markdown not served raw")
+	}
+}
+
 func TestPublic_AutoindexStill404sEmptyDirectory(t *testing.T) {
 	store := storage.NewFake()
 	stageVersion(t, store, []fileSpec{
