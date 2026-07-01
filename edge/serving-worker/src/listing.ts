@@ -117,8 +117,12 @@ export function renderDirectoryListing(
 <title>Index of ${esc(display)}</title>
 <style>
 :root { color-scheme: light dark; }
-body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 2.5rem 1.25rem; background: #fafafa; color: #1a1a1a; }
-main { max-width: 760px; margin: 0 auto; }
+body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background: #fafafa; color: #1a1a1a; }
+header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 0.75rem; min-height: 3.4rem; box-sizing: border-box; padding: 0.6rem 1.25rem; background: rgba(250,250,250,0.85); backdrop-filter: saturate(1.8) blur(8px); border-bottom: 1px solid #e3e3e3; }
+header a.brand { display: inline-flex; align-items: center; gap: 0.45rem; text-decoration: none; color: inherit; font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
+header a.brand:hover { text-decoration: none; }
+header a.brand svg { width: 1.3rem; height: 1.3rem; display: block; }
+main { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.25rem; }
 h1 { font-size: 1.05rem; font-weight: 600; margin: 0 0 1.25rem; word-break: break-all; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: #888; font-weight: 600; padding: 0 0 0.5rem; border-bottom: 1px solid #e3e3e3; }
@@ -130,6 +134,7 @@ a.dir { font-weight: 600; }
 footer { margin-top: 1.5rem; font-size: 0.8rem; color: #999; }
 @media (prefers-color-scheme: dark) {
   body { background: #16181c; color: #e6e6e6; }
+  header { background: rgba(22,24,28,0.85); border-bottom-color: #2a2d34; }
   th { color: #8a8f98; border-bottom-color: #2a2d34; }
   th:last-child, td:last-child { color: #8a8f98; }
   td { border-bottom-color: #23262c; }
@@ -139,6 +144,12 @@ footer { margin-top: 1.5rem; font-size: 0.8rem; color: #999; }
 </style>
 </head>
 <body>
+<header>
+<a class="brand" href="https://dropway.dev" target="_blank" rel="noopener noreferrer">
+<svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="18" fill="#5647e1"></rect><g transform="translate(17 17) scale(0.66)"><path fill="#ffffff" fill-rule="evenodd" d="M50 7 L85 55 L62 92 L38 92 L15 55 Z M50 7 L34 51 L46 58 Z"></path></g></svg>
+<span>Dropway</span>
+</a>
+</header>
 <main>
 <h1>Index of ${esc(display)}</h1>
 <table>
