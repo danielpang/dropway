@@ -62,9 +62,23 @@ type PublishResponse struct {
 
 // Site is the API's site representation (subset the CLI needs).
 type Site struct {
-	ID      string `json:"id"`
-	Slug    string `json:"slug"`
-	LiveURL string `json:"live_url"`
+	ID         string `json:"id"`
+	Slug       string `json:"slug"`
+	OwnerID    string `json:"owner_id"`
+	AccessMode string `json:"access_mode"`
+	LiveURL    string `json:"live_url"`
+}
+
+// SitesResponse is the GET /v1/sites body: every site in the caller's active org
+// (the API scopes it to the org; the CLI filters to the caller for the personal view).
+type SitesResponse struct {
+	Sites []Site `json:"sites"`
+}
+
+// MeResponse is the subset of GET /v1/me the CLI needs — the caller's user id,
+// used to pick out the sites they own.
+type MeResponse struct {
+	UserID string `json:"user_id"`
 }
 
 // CreateSiteRequest creates a site by slug.
@@ -81,6 +95,14 @@ type Client interface {
 	UploadBlob(ctx context.Context, presignedURL string, data []byte) error
 	FinalizeDeployment(ctx context.Context, siteID string, req FinalizeRequest) (*FinalizeResponse, error)
 	Publish(ctx context.Context, siteID string, req PublishRequest) (*PublishResponse, error)
+}
+
+// ReadClient is the read-only control-plane surface the `sites` and `read`
+// commands need. Separate from Client (and its deploy fake) so the read commands
+// stay testable with a small fake and don't widen the deploy interface.
+type ReadClient interface {
+	ListSites(ctx context.Context) (*SitesResponse, error)
+	Me(ctx context.Context) (*MeResponse, error)
 }
 
 // HTTPClient is the real Client. Token is the Bearer credential (DROPWAY_TOKEN).
@@ -124,6 +146,45 @@ func (c *HTTPClient) postJSON(ctx context.Context, path string, body, out any) e
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// getJSON GETs the API path with the Bearer token and decodes the JSON response
+// into out. The read-only counterpart to postJSON.
+func (c *HTTPClient) getJSON(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("GET %s: server returned %d: %s", path, resp.StatusCode, bytes.TrimSpace(rb))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// ListSites returns every site in the caller's active org.
+func (c *HTTPClient) ListSites(ctx context.Context) (*SitesResponse, error) {
+	var out SitesResponse
+	if err := c.getJSON(ctx, "/v1/sites", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Me returns the authenticated caller's identity (used to filter to owned sites).
+func (c *HTTPClient) Me(ctx context.Context) (*MeResponse, error) {
+	var out MeResponse
+	if err := c.getJSON(ctx, "/v1/me", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // CreateSite creates a site.
