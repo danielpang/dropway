@@ -118,7 +118,7 @@ export function renderDirectoryListing(
 <style>
 :root { color-scheme: light dark; }
 body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background: #fafafa; color: #1a1a1a; }
-header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1.25rem; background: rgba(250,250,250,0.85); backdrop-filter: saturate(1.8) blur(8px); border-bottom: 1px solid #e3e3e3; }
+header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 0.75rem; min-height: 3.4rem; box-sizing: border-box; padding: 0.6rem 1.25rem; background: rgba(250,250,250,0.85); backdrop-filter: saturate(1.8) blur(8px); border-bottom: 1px solid #e3e3e3; }
 header a.brand { display: inline-flex; align-items: center; gap: 0.45rem; text-decoration: none; color: inherit; font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
 header a.brand:hover { text-decoration: none; }
 header a.brand svg { width: 1.3rem; height: 1.3rem; display: block; }
