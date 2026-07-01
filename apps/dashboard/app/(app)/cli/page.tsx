@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 export const metadata: Metadata = {
   title: "CLI reference",
   description:
-    "The Dropway CLI: deploy a folder of static files to a live, access-controlled URL from your terminal. Install, authenticate, create a site, and upload a folder.",
+    "The Dropway CLI: deploy a folder of static files to a live, access-controlled URL from your terminal. Install, authenticate, create a site, upload a folder, and list or read your sites.",
 };
 
 /** The Go module path users `go install` to build the CLI from source. */
@@ -95,7 +95,7 @@ export default function CliReferencePage() {
       <Section
         id="commands"
         title="Commands"
-        lead="dropway <command> [flags]. The everyday command is deploy; the rest are operator utilities."
+        lead="dropway <command> [flags]. The everyday commands are deploy, sites, and read; gc and dr rebuild are operator utilities."
       >
         <DocTable
           head={["Command", "What it does"]}
@@ -108,6 +108,14 @@ export default function CliReferencePage() {
             [
               <Code key="c">deploy &lt;dir&gt;</Code>,
               "Hash a folder, upload changed files, finalize, and publish to a live URL.",
+            ],
+            [
+              <Code key="c">sites</Code>,
+              "List the sites you own, or every site in the org with --all.",
+            ],
+            [
+              <Code key="c">read &lt;url-or-slug&gt;</Code>,
+              "Fetch a site's served content over HTTP and print it to stdout.",
             ],
             [<Code key="c">version</Code>, "Print the CLI version."],
             [
@@ -205,6 +213,38 @@ export default function CliReferencePage() {
           code={`dropway login --api http://localhost:8080
 dropway deploy ./dist --api http://localhost:8080 --new --site demo --send`}
         />
+      </Section>
+
+      <Section
+        id="browse"
+        title="List and read sites"
+        lead="dropway sites lists what you've shipped; dropway read fetches a site's served content straight to your terminal."
+      >
+        <p>
+          <Code>dropway sites</Code> lists the sites you own. Add{" "}
+          <Code>--all</Code> to list every site in your organization, with an
+          owner column.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`dropway sites          # sites you own
+dropway sites --all    # every site in the org`}
+        />
+        <p className="pt-2 text-foreground">Read a site over HTTP</p>
+        <p>
+          <Code>dropway read</Code> fetches served content and writes it to
+          stdout, so you can pipe it elsewhere. Pass a full URL, or a site slug
+          the CLI resolves to its live URL first.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`dropway read my-docs
+dropway read https://my-org--my-docs.dropwaycontent.com`}
+        />
+        <p>
+          Public sites need no sign-in. A gated site returns its sign-in page
+          instead of the content, since the fetch is a plain HTTP request.
+        </p>
       </Section>
 
       <Section
