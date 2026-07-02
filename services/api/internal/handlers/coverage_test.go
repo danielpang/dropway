@@ -385,6 +385,8 @@ func TestGetDomainStatus_VerifiesAndWritesRoute(t *testing.T) {
 		ID: "dom_1", OrgID: "org_1", SiteID: "site_1", Hostname: "docs.acme.com",
 		VerifyStatus: store.DomainPending, TLSStatus: store.TLSPending, CFHostnameID: created.ID,
 	}
+	// Advancing a domain's verify/route state is admin/owner only (live re-check).
+	fs.p2().members["user_1"] = store.RoleAdmin
 	// Advance the CF hostname to active (verified + cert issued).
 	if err := dom.AdvanceTo(created.ID, customdomains.StateActive); err != nil {
 		t.Fatal(err)
@@ -416,6 +418,7 @@ func TestGetDomainStatus_NoCFHostname_ReturnsCurrent(t *testing.T) {
 	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s"}
 	// A domain with no CF hostname id recorded → nothing to poll, return current.
 	fs.p2().domains["dom_1"] = store.Domain{ID: "dom_1", OrgID: "org_1", SiteID: "site_1", Hostname: "x.io", VerifyStatus: store.DomainPending}
+	fs.p2().members["user_1"] = store.RoleAdmin // admin/owner only (live re-check)
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.Domains = customdomains.NewFake()
 	h := mountAccess(a, claims("user_1", "org_1", "member"))
@@ -433,6 +436,7 @@ func TestGetDomainStatus_NoCFHostname_ReturnsCurrent(t *testing.T) {
 
 func TestGetDomainStatus_NotFound_404(t *testing.T) {
 	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleAdmin // admin gate passes, then the domain lookup 404s
 	a := NewFull(quota.Unlimited{}, fs, nil, nil)
 	a.Domains = customdomains.NewFake()
 	h := mountAccess(a, claims("user_1", "org_1", "member"))

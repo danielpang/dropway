@@ -130,6 +130,12 @@ func (a *API) ListDomains(w http.ResponseWriter, r *http.Request) {
 // state, advances the app.domains state machine, and — on verified+TLS — writes the
 // global host route → site so the custom host serves (asserting global uniqueness
 // → 409 if taken). Returns the updated domain row.
+//
+// ADMIN/OWNER only (live role re-check): despite the GET verb this endpoint MUTATES
+// — it advances the verify/TLS state machine, can register the global host route,
+// and records an audit row — so it carries the SAME gate as its sibling mutations
+// AddDomain and DeleteDomain. Without it any plain member could drive a pending
+// custom domain to verified and register its edge route, an admin-only action.
 func (a *API) GetDomainStatus(w http.ResponseWriter, r *http.Request) {
 	t, ok := tenant(r.Context())
 	if !ok {
@@ -137,6 +143,9 @@ func (a *API) GetDomainStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.requireStore(w) || !a.requireDomains(w) {
+		return
+	}
+	if !a.requireAdmin(w, r, t) {
 		return
 	}
 	domainID := chi.URLParam(r, "domainID")

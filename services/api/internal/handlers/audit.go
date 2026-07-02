@@ -60,6 +60,11 @@ func clientIP(r *http.Request) string { return r.RemoteAddr }
 // GET /v1/audit?limit=&offset=   (admin/owner only, RLS-scoped, newest first)
 // ---------------------------------------------------------------------------
 
+// maxAuditPageLimit caps the audit page size a client may request. The audit log
+// is append-only and unbounded, so an unclamped limit lets one request pull the
+// entire history in a single scan+serialize.
+const maxAuditPageLimit = 500
+
 type auditEntryResponse struct {
 	ID         string         `json:"id"`
 	ActorUser  *string        `json:"actor_user,omitempty"`
@@ -89,7 +94,13 @@ func (a *API) ListAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clamp the page size: the audit log is append-only and grows without bound, so
+	// an unclamped client-supplied limit is a cheap way to force a huge scan +
+	// response. Default 50, hard ceiling maxAuditPageLimit.
 	limit := parseIntDefault(r.URL.Query().Get("limit"), 50)
+	if limit > maxAuditPageLimit {
+		limit = maxAuditPageLimit
+	}
 	offset := parseIntDefault(r.URL.Query().Get("offset"), 0)
 
 	entries, err := a.Store.ListAudit(r.Context(), t, store.ListAuditParams{
