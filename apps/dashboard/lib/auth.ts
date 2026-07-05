@@ -332,6 +332,34 @@ export const auth = betterAuth({
     },
   },
 
+  // Short-lived signed session cookie so session verification doesn't hit
+  // Postgres on every call. Without this, EVERY `auth.api.*` call (getSession,
+  // listOrganizations, getActiveMember, getFullOrganization, getToken, …)
+  // independently resolves the cookie against identity.session — one dashboard
+  // render does ~5 such lookups through the Supabase pooler, and that DB fan-out
+  // was the dominant server-side page-load cost. With the cache, a still-fresh
+  // signed cookie satisfies those lookups with zero DB reads; the DB remains the
+  // fallback (and re-signs the cookie) whenever the cache is absent or stale.
+  //
+  // Revocation tradeoff: a revoked/expired session stays usable for up to maxAge
+  // on cookie-only reads. 5 minutes sits INSIDE the posture the app already
+  // accepts — minted API JWTs are valid (and unrevocable) for 10 minutes, and
+  // lib/token-cache.ts reuses them across requests — so this adds no new exposure
+  // class, only extends it to the dashboard's own session reads.
+  //
+  // NOTE: server components can't set cookies, so an RSC render can READ the
+  // cache but never refresh it; only requests through the /api/auth handler
+  // (sign-in, client fetches) can re-sign it. SessionCacheRefresh in the (app)
+  // layout pings get-session from the browser to keep the cookie warm — without
+  // that, the cache would expire maxAge after sign-in and every later render
+  // would silently fall back to per-call DB reads.
+  session: {
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60,
+    },
+  },
+
   // Cookie hardening for the dashboard origin (app.dropway.dev). The session
   // cookie is host-only (no Domain=) so it never reaches the content domain.
   advanced: {

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
 import { AnalyticsIdentify } from "@/components/analytics/analytics-identify";
+import { SessionCacheRefresh } from "@/components/auth/session-cache-refresh";
 import { BrandMark } from "@/components/brand-mark";
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { MainNav } from "@/components/main-nav";
@@ -29,23 +30,25 @@ export default async function AppLayout({
   const session = await getCurrentSession();
   if (!session) redirect("/sign-in");
 
-  // A signed-in user with no org (e.g. a fresh Google sign-up) must create one
-  // before reaching the app. /onboarding lives outside this group so it renders
-  // without the org-gated shell.
-  const orgs = await auth.api
-    .listOrganizations({ headers: requestHeaders })
-    .catch(() => []);
-  if (!orgs || orgs.length === 0) redirect("/onboarding");
-
-  // Billing-derived account state (over_limit / past_due) → drives the
-  // non-dismissible banner. UX mirror of the server-side quota enforcement; a
-  // billing-API hiccup degrades to "active" so the shell never wrongly locks.
-  // The viewer's role gates admin-only nav (the Audit link). Resolved in
-  // parallel; both fail soft (active / member) so the shell always renders.
-  const [{ orgStatus }, role] = await Promise.all([
+  // Three independent reads, resolved in ONE parallel step so the shell waits
+  // on the slowest of them rather than their sum (previously listOrganizations
+  // was awaited on its own first, a serial round trip on every app page):
+  //  - orgs: a signed-in user with no org (e.g. a fresh Google sign-up) must
+  //    create one before reaching the app. /onboarding lives outside this group
+  //    so it renders without the org-gated shell.
+  //  - billing: account state (over_limit / past_due) → drives the
+  //    non-dismissible banner. UX mirror of the server-side quota enforcement;
+  //    a billing-API hiccup degrades to "active" so the shell never wrongly locks.
+  //  - role: gates admin-only nav (the Audit link); fails soft to "member".
+  // For the rare org-less user the billing/role reads are wasted work before the
+  // onboarding redirect, but both fail soft, and the common case saves a full
+  // round trip.
+  const [orgs, { orgStatus }, role] = await Promise.all([
+    auth.api.listOrganizations({ headers: requestHeaders }).catch(() => []),
     loadOrgBillingState(),
     loadActiveRole(),
   ]);
+  if (!orgs || orgs.length === 0) redirect("/onboarding");
   const isAdmin = canManage(role);
 
   // Attribute browser analytics to this user + their active org (client-side;
@@ -57,6 +60,7 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-dvh flex-col">
+      <SessionCacheRefresh />
       {sessionUser?.id ? (
         <AnalyticsIdentify
           userId={sessionUser.id}
