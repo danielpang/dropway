@@ -60,8 +60,6 @@ export type SkillUploadResult =
 /** Successful body of `GET /v1/skill-folders/{id}/download`. */
 export type SkillFolderDownload =
   operations["downloadSkillFolder"]["responses"]["200"]["content"]["application/json"];
-/** The uploader id that marks a Dropway-seeded preset skill. */
-export const SKILL_SEED_OWNER = "00000000-0000-0000-0000-000000000000";
 
 // ---- Phase 4: audit log + hard revocation --------------------------------
 //

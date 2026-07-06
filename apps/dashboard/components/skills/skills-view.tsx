@@ -29,7 +29,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { SKILL_SEED_OWNER, type Skill, type SkillDownload, type SkillFolder } from "@/lib/api";
+import type { Skill, SkillDownload, SkillFolder } from "@/lib/api";
+import { SKILL_SEED_OWNER } from "@/lib/skills-shared";
 import { buildZip, type ZipEntry } from "@/lib/zip";
 
 // ---- Download helpers -------------------------------------------------------
