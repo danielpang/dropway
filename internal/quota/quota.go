@@ -44,6 +44,15 @@ const (
 	// AllowN(current, delta) rather than Allow's "+1" — a deploy adds `delta` bytes
 	// of new (dedup-aware) blob storage.
 	ResourceStorageBytesPerOrg Resource = "storage_bytes_per_org"
+	// ResourceSkillPerOrg caps the number of shared skills in an org. Unlimited on
+	// every tier today (the seam exists so the cloud provider can tighten it
+	// without a store/handler change).
+	ResourceSkillPerOrg Resource = "skills_per_org"
+	// ResourceSkillPerFolder caps how many skills a single skill FOLDER may hold.
+	// The cloud provider limits the free tier to 10 skills per folder
+	// (pro/business/enterprise unlimited); OSS self-host is Unlimited. Checked
+	// under a per-folder advisory lock inside the membership-insert tx.
+	ResourceSkillPerFolder Resource = "skills_per_folder"
 )
 
 // ExceededError is returned by an enforcing Provider when an action would cross

@@ -53,6 +53,19 @@ func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEnt
 	return err
 }
 
+const countFolderItems = `-- name: CountFolderItems :one
+SELECT count(*)::bigint AS n
+FROM app.skill_folder_items
+WHERE folder_id = $1
+`
+
+func (q *Queries) CountFolderItems(ctx context.Context, folderID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countFolderItems, folderID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
 const countSitesForOrg = `-- name: CountSitesForOrg :one
 SELECT count(*)::bigint AS n
 FROM app.sites
@@ -65,6 +78,19 @@ WHERE org_id = $1
 // org_id to be explicit.
 func (q *Queries) CountSitesForOrg(ctx context.Context, orgID string) (int64, error) {
 	row := q.db.QueryRow(ctx, countSitesForOrg, orgID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+const countSkillsForOrg = `-- name: CountSkillsForOrg :one
+SELECT count(*)::bigint AS n
+FROM app.skills
+WHERE org_id = $1
+`
+
+func (q *Queries) CountSkillsForOrg(ctx context.Context, orgID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countSkillsForOrg, orgID)
 	var n int64
 	err := row.Scan(&n)
 	return n, err
@@ -198,6 +224,114 @@ func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionPa
 	return i, err
 }
 
+const createSkill = `-- name: CreateSkill :one
+INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+`
+
+type CreateSkillParams struct {
+	OrgID       string
+	Slug        string
+	OwnerUserID string
+	Title       pgtype.Text
+	Description pgtype.Text
+}
+
+func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, createSkill,
+		arg.OrgID,
+		arg.Slug,
+		arg.OwnerUserID,
+		arg.Title,
+		arg.Description,
+	)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSkillFolder = `-- name: CreateSkillFolder :one
+
+INSERT INTO app.skill_folders (org_id, slug, title)
+VALUES ($1, $2, $3)
+RETURNING id, org_id, slug, title, created_at
+`
+
+type CreateSkillFolderParams struct {
+	OrgID string
+	Slug  string
+	Title string
+}
+
+// ===========================================================================
+// skill folders — admin-curated taxonomy + preset flags
+// ===========================================================================
+func (q *Queries) CreateSkillFolder(ctx context.Context, arg CreateSkillFolderParams) (AppSkillFolder, error) {
+	row := q.db.QueryRow(ctx, createSkillFolder, arg.OrgID, arg.Slug, arg.Title)
+	var i AppSkillFolder
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Title,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSkillVersion = `-- name: CreateSkillVersion :one
+INSERT INTO app.skill_versions (
+    org_id, skill_id, version_no, status, content_hash, size_bytes, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+`
+
+type CreateSkillVersionParams struct {
+	OrgID       string
+	SkillID     string
+	VersionNo   int32
+	Status      string
+	ContentHash string
+	SizeBytes   int64
+	CreatedBy   string
+}
+
+func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (AppSkillVersion, error) {
+	row := q.db.QueryRow(ctx, createSkillVersion,
+		arg.OrgID,
+		arg.SkillID,
+		arg.VersionNo,
+		arg.Status,
+		arg.ContentHash,
+		arg.SizeBytes,
+		arg.CreatedBy,
+	)
+	var i AppSkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SkillID,
+		&i.VersionNo,
+		&i.Status,
+		&i.ContentHash,
+		&i.SizeBytes,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const deleteAllowlistEntry = `-- name: DeleteAllowlistEntry :exec
 DELETE FROM app.allowlist_entries
 WHERE site_id = $1 AND email = $2
@@ -298,6 +432,45 @@ type DeleteSiteVoteParams struct {
 // Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
 func (q *Queries) DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error {
 	_, err := q.db.Exec(ctx, deleteSiteVote, arg.SiteID, arg.UserID)
+	return err
+}
+
+const deleteSkill = `-- name: DeleteSkill :one
+DELETE FROM app.skills
+WHERE id = $1
+RETURNING id
+`
+
+// Remove a skill (versions + folder memberships cascade). RETURNING detects an
+// RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
+func (q *Queries) DeleteSkill(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, deleteSkill, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const deleteSkillFolder = `-- name: DeleteSkillFolder :one
+DELETE FROM app.skill_folders
+WHERE id = $1
+RETURNING id
+`
+
+// Memberships cascade; the skills themselves survive.
+func (q *Queries) DeleteSkillFolder(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, deleteSkillFolder, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const deleteSkillFolderItemsForSkill = `-- name: DeleteSkillFolderItemsForSkill :exec
+DELETE FROM app.skill_folder_items
+WHERE skill_id = $1
+`
+
+// Replace-memberships helper: clear a skill's memberships before re-inserting
+// the new set (PUT /skills/{id}/folders semantics), preserving nothing.
+func (q *Queries) DeleteSkillFolderItemsForSkill(ctx context.Context, skillID string) error {
+	_, err := q.db.Exec(ctx, deleteSkillFolderItemsForSkill, skillID)
 	return err
 }
 
@@ -443,6 +616,20 @@ func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, err
 		&i.McpEnabled,
 	)
 	return i, err
+}
+
+const getOrgSkillsSeeded = `-- name: GetOrgSkillsSeeded :one
+SELECT COALESCE(
+    (SELECT skills_seeded FROM app.org_meta WHERE id = $1),
+    false
+)::boolean AS skills_seeded
+`
+
+func (q *Queries) GetOrgSkillsSeeded(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, getOrgSkillsSeeded, id)
+	var skills_seeded bool
+	err := row.Scan(&skills_seeded)
+	return skills_seeded, err
 }
 
 const getOrgStorage = `-- name: GetOrgStorage :one
@@ -635,6 +822,141 @@ func (q *Queries) GetSiteVoteScore(ctx context.Context, siteID string) (int64, e
 	var score int64
 	err := row.Scan(&score)
 	return score, err
+}
+
+const getSkill = `-- name: GetSkill :one
+SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+FROM app.skills
+WHERE id = $1
+`
+
+func (q *Queries) GetSkill(ctx context.Context, id string) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, getSkill, id)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSkillBySlug = `-- name: GetSkillBySlug :one
+SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+FROM app.skills
+WHERE slug = $1
+`
+
+func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, getSkillBySlug, slug)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSkillFolder = `-- name: GetSkillFolder :one
+SELECT id, org_id, slug, title, created_at
+FROM app.skill_folders
+WHERE id = $1
+`
+
+func (q *Queries) GetSkillFolder(ctx context.Context, id string) (AppSkillFolder, error) {
+	row := q.db.QueryRow(ctx, getSkillFolder, id)
+	var i AppSkillFolder
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Title,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSkillFolderBySlug = `-- name: GetSkillFolderBySlug :one
+SELECT id, org_id, slug, title, created_at
+FROM app.skill_folders
+WHERE slug = $1
+`
+
+func (q *Queries) GetSkillFolderBySlug(ctx context.Context, slug string) (AppSkillFolder, error) {
+	row := q.db.QueryRow(ctx, getSkillFolderBySlug, slug)
+	var i AppSkillFolder
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Title,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSkillVersion = `-- name: GetSkillVersion :one
+SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+FROM app.skill_versions
+WHERE id = $1
+`
+
+func (q *Queries) GetSkillVersion(ctx context.Context, id string) (AppSkillVersion, error) {
+	row := q.db.QueryRow(ctx, getSkillVersion, id)
+	var i AppSkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SkillID,
+		&i.VersionNo,
+		&i.Status,
+		&i.ContentHash,
+		&i.SizeBytes,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSkillVersionByContentHash = `-- name: GetSkillVersionByContentHash :one
+SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+FROM app.skill_versions
+WHERE skill_id = $1 AND content_hash = $2
+`
+
+type GetSkillVersionByContentHashParams struct {
+	SkillID     string
+	ContentHash string
+}
+
+// Idempotent re-upload of identical content (the per-skill content_hash unique
+// constraint backs this).
+func (q *Queries) GetSkillVersionByContentHash(ctx context.Context, arg GetSkillVersionByContentHashParams) (AppSkillVersion, error) {
+	row := q.db.QueryRow(ctx, getSkillVersionByContentHash, arg.SkillID, arg.ContentHash)
+	var i AppSkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SkillID,
+		&i.VersionNo,
+		&i.Status,
+		&i.ContentHash,
+		&i.SizeBytes,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const incSiteCount = `-- name: IncSiteCount :one
@@ -830,6 +1152,48 @@ func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]A
 	return items, nil
 }
 
+const listCurrentSkillVersionsForGC = `-- name: ListCurrentSkillVersionsForGC :many
+
+SELECT sk.id AS skill_id, sk.current_version_id AS version_id
+FROM app.skills sk
+WHERE sk.current_version_id IS NOT NULL
+ORDER BY sk.id
+`
+
+type ListCurrentSkillVersionsForGCRow struct {
+	SkillID   string
+	VersionID *string
+}
+
+// ===========================================================================
+// skills seeding — lazy per-org default folders + preset skills
+// ===========================================================================
+// Every skill's CURRENT version (latest-only model: that is the only version
+// whose blobs must survive GC — superseded skill versions' blobs become
+// orphans). The R2 GC unions these manifests' blob refs with the retained site
+// versions' refs before deleting unreferenced org blobs; without this, skill
+// content would look orphaned to a site-only GC and be deleted. RLS scopes the
+// rows to the active org.
+func (q *Queries) ListCurrentSkillVersionsForGC(ctx context.Context) ([]ListCurrentSkillVersionsForGCRow, error) {
+	rows, err := q.db.Query(ctx, listCurrentSkillVersionsForGC)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCurrentSkillVersionsForGCRow{}
+	for rows.Next() {
+		var i ListCurrentSkillVersionsForGCRow
+		if err := rows.Scan(&i.SkillID, &i.VersionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDomainsForSite = `-- name: ListDomainsForSite :many
 SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
 FROM app.domains
@@ -913,6 +1277,89 @@ func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedS
 			&i.Score,
 			&i.MyVote,
 			&i.CommentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFolderSkills = `-- name: ListFolderSkills :many
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+FROM app.skill_folder_items fi
+JOIN app.skills sk ON sk.id = fi.skill_id
+WHERE fi.folder_id = $1
+  AND sk.current_version_id IS NOT NULL
+ORDER BY sk.slug
+`
+
+// Every skill in a folder that has a live version (the bulk-download set).
+func (q *Queries) ListFolderSkills(ctx context.Context, folderID string) ([]AppSkill, error) {
+	rows, err := q.db.Query(ctx, listFolderSkills, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSkill{}
+	for rows.Next() {
+		var i AppSkill
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.OwnerUserID,
+			&i.Title,
+			&i.Description,
+			&i.CurrentVersionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFoldersForSkills = `-- name: ListFoldersForSkills :many
+SELECT fi.skill_id, f.id AS folder_id, f.slug, f.title, fi.is_preset
+FROM app.skill_folder_items fi
+JOIN app.skill_folders f ON f.id = fi.folder_id
+WHERE fi.skill_id = ANY($1::uuid[])
+ORDER BY f.slug
+`
+
+type ListFoldersForSkillsRow struct {
+	SkillID  string
+	FolderID string
+	Slug     string
+	Title    string
+	IsPreset bool
+}
+
+// Folder memberships for a set of skills in one round-trip (the folder chips on
+// each row of a skills listing — no N+1).
+func (q *Queries) ListFoldersForSkills(ctx context.Context, skillIds []string) ([]ListFoldersForSkillsRow, error) {
+	rows, err := q.db.Query(ctx, listFoldersForSkills, skillIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFoldersForSkillsRow{}
+	for rows.Next() {
+		var i ListFoldersForSkillsRow
+		if err := rows.Scan(
+			&i.SkillID,
+			&i.FolderID,
+			&i.Slug,
+			&i.Title,
+			&i.IsPreset,
 		); err != nil {
 			return nil, err
 		}
@@ -1219,6 +1666,122 @@ func (q *Queries) ListSites(ctx context.Context) ([]AppSite, error) {
 	return items, nil
 }
 
+const listSkillFolders = `-- name: ListSkillFolders :many
+SELECT
+    f.id, f.org_id, f.slug, f.title, f.created_at,
+    COALESCE((SELECT COUNT(*) FROM app.skill_folder_items fi WHERE fi.folder_id = f.id), 0)::bigint AS item_count
+FROM app.skill_folders f
+ORDER BY f.slug
+`
+
+type ListSkillFoldersRow struct {
+	ID        string
+	OrgID     string
+	Slug      string
+	Title     string
+	CreatedAt time.Time
+	ItemCount int64
+}
+
+// The org's folders with their member counts (the folder tabs + admin panel).
+func (q *Queries) ListSkillFolders(ctx context.Context) ([]ListSkillFoldersRow, error) {
+	rows, err := q.db.Query(ctx, listSkillFolders)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSkillFoldersRow{}
+	for rows.Next() {
+		var i ListSkillFoldersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.Title,
+			&i.CreatedAt,
+			&i.ItemCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSkills = `-- name: ListSkills :many
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+FROM app.skills sk
+WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
+  AND (
+        $2::text = ''
+        OR sk.slug ILIKE '%' || $2 || '%'
+        OR COALESCE(sk.title, '') ILIKE '%' || $2 || '%'
+        OR COALESCE(sk.description, '') ILIKE '%' || $2 || '%'
+      )
+  AND (
+        ($3::text = '' AND NOT $4::boolean)
+        OR EXISTS (
+            SELECT 1
+            FROM app.skill_folder_items fi
+            JOIN app.skill_folders f ON f.id = fi.folder_id
+            WHERE fi.skill_id = sk.id
+              AND ($3::text = '' OR f.slug = $3)
+              AND (NOT $4::boolean OR fi.is_preset)
+        )
+      )
+ORDER BY sk.created_at DESC
+`
+
+type ListSkillsParams struct {
+	CallerID    string
+	Q           string
+	FolderSlug  string
+	PresetsOnly bool
+}
+
+// Search + filter the active org's skills. q matches slug/title/description
+// (ILIKE, ” = no text filter); folder_slug restricts to members of that folder
+// (” = any); presets_only additionally requires the membership's is_preset flag.
+// Skills that have never finalized an upload (no current version) are visible
+// only to their owner (caller_id), so half-finished uploads don't clutter the
+// org listing. RLS scopes every read to the active org.
+func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]AppSkill, error) {
+	rows, err := q.db.Query(ctx, listSkills,
+		arg.CallerID,
+		arg.Q,
+		arg.FolderSlug,
+		arg.PresetsOnly,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSkill{}
+	for rows.Next() {
+		var i AppSkill
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Slug,
+			&i.OwnerUserID,
+			&i.Title,
+			&i.Description,
+			&i.CurrentVersionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVersionsForGC = `-- name: ListVersionsForGC :many
 
 SELECT
@@ -1303,6 +1866,32 @@ func (q *Queries) LockOrgSiteQuota(ctx context.Context, dollar_1 string) error {
 	return err
 }
 
+const lockOrgSkillQuota = `-- name: LockOrgSkillQuota :exec
+
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':skills'))
+`
+
+// ===========================================================================
+// skills (migration 0008) — org-wide skill sharing
+// ===========================================================================
+// Serialize concurrent skill creates for the SAME org (the same COUNT → policy →
+// INSERT critical section the site cap uses).
+func (q *Queries) LockOrgSkillQuota(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockOrgSkillQuota, dollar_1)
+	return err
+}
+
+const lockOrgSkillsSeed = `-- name: LockOrgSkillsSeed :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':skills_seed'))
+`
+
+// Serialize concurrent first-touches of the skills feature for an org, so the
+// skills_seeded check → seed → set-flag sequence runs exactly once.
+func (q *Queries) LockOrgSkillsSeed(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockOrgSkillsSeed, dollar_1)
+	return err
+}
+
 const lockOrgStorageQuota = `-- name: LockOrgStorageQuota :exec
 
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
@@ -1318,6 +1907,31 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
 func (q *Queries) LockOrgStorageQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockOrgStorageQuota, dollar_1)
 	return err
+}
+
+const lockSkillFolderQuota = `-- name: LockSkillFolderQuota :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'))
+`
+
+// Serialize concurrent membership inserts for the SAME folder, so the COUNT →
+// per-folder cap check → INSERT is a critical section (free tier caps skills per
+// folder; see quota.ResourceSkillPerFolder).
+func (q *Queries) LockSkillFolderQuota(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockSkillFolderQuota, dollar_1)
+	return err
+}
+
+const nextSkillVersionNo = `-- name: NextSkillVersionNo :one
+SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version_no
+FROM app.skill_versions
+WHERE skill_id = $1
+`
+
+func (q *Queries) NextSkillVersionNo(ctx context.Context, skillID string) (int32, error) {
+	row := q.db.QueryRow(ctx, nextSkillVersionNo, skillID)
+	var next_version_no int32
+	err := row.Scan(&next_version_no)
+	return next_version_no, err
 }
 
 const nextVersionNo = `-- name: NextVersionNo :one
@@ -1351,6 +1965,49 @@ WHERE app.org_usage.org_id = $1
 func (q *Queries) RecomputeOrgStorage(ctx context.Context, orgID string) error {
 	_, err := q.db.Exec(ctx, recomputeOrgStorage, orgID)
 	return err
+}
+
+const removeSkillFolderItem = `-- name: RemoveSkillFolderItem :one
+DELETE FROM app.skill_folder_items
+WHERE folder_id = $1 AND skill_id = $2
+RETURNING skill_id
+`
+
+type RemoveSkillFolderItemParams struct {
+	FolderID string
+	SkillID  string
+}
+
+func (q *Queries) RemoveSkillFolderItem(ctx context.Context, arg RemoveSkillFolderItemParams) (string, error) {
+	row := q.db.QueryRow(ctx, removeSkillFolderItem, arg.FolderID, arg.SkillID)
+	var skill_id string
+	err := row.Scan(&skill_id)
+	return skill_id, err
+}
+
+const renameSkillFolder = `-- name: RenameSkillFolder :one
+UPDATE app.skill_folders
+SET title = $2
+WHERE id = $1
+RETURNING id, org_id, slug, title, created_at
+`
+
+type RenameSkillFolderParams struct {
+	ID    string
+	Title string
+}
+
+func (q *Queries) RenameSkillFolder(ctx context.Context, arg RenameSkillFolderParams) (AppSkillFolder, error) {
+	row := q.db.QueryRow(ctx, renameSkillFolder, arg.ID, arg.Title)
+	var i AppSkillFolder
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Title,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const resolveSiteByHostRoute = `-- name: ResolveSiteByHostRoute :one
@@ -1455,6 +2112,22 @@ func (q *Queries) SetMcpEnabled(ctx context.Context, arg SetMcpEnabledParams) er
 	return err
 }
 
+const setOrgSkillsSeeded = `-- name: SetOrgSkillsSeeded :exec
+UPDATE app.org_meta
+SET skills_seeded = $2
+WHERE id = $1
+`
+
+type SetOrgSkillsSeededParams struct {
+	ID           string
+	SkillsSeeded bool
+}
+
+func (q *Queries) SetOrgSkillsSeeded(ctx context.Context, arg SetOrgSkillsSeededParams) error {
+	_, err := q.db.Exec(ctx, setOrgSkillsSeeded, arg.ID, arg.SkillsSeeded)
+	return err
+}
+
 const setSiteAccessMode = `-- name: SetSiteAccessMode :exec
 
 UPDATE app.sites
@@ -1542,6 +2215,81 @@ func (q *Queries) SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisible
 		&i.FeedVisible,
 		&i.Title,
 		&i.Description,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const setSkillCurrentVersion = `-- name: SetSkillCurrentVersion :exec
+UPDATE app.skills
+SET current_version_id = $2
+WHERE id = $1
+`
+
+type SetSkillCurrentVersionParams struct {
+	ID               string
+	CurrentVersionID *string
+}
+
+// Flip the live pointer (finalize = publish in the latest-only v1 model).
+func (q *Queries) SetSkillCurrentVersion(ctx context.Context, arg SetSkillCurrentVersionParams) error {
+	_, err := q.db.Exec(ctx, setSkillCurrentVersion, arg.ID, arg.CurrentVersionID)
+	return err
+}
+
+const setSkillFolderItemPreset = `-- name: SetSkillFolderItemPreset :one
+UPDATE app.skill_folder_items
+SET is_preset = $3
+WHERE folder_id = $1 AND skill_id = $2
+RETURNING folder_id, skill_id, is_preset
+`
+
+type SetSkillFolderItemPresetParams struct {
+	FolderID string
+	SkillID  string
+	IsPreset bool
+}
+
+type SetSkillFolderItemPresetRow struct {
+	FolderID string
+	SkillID  string
+	IsPreset bool
+}
+
+func (q *Queries) SetSkillFolderItemPreset(ctx context.Context, arg SetSkillFolderItemPresetParams) (SetSkillFolderItemPresetRow, error) {
+	row := q.db.QueryRow(ctx, setSkillFolderItemPreset, arg.FolderID, arg.SkillID, arg.IsPreset)
+	var i SetSkillFolderItemPresetRow
+	err := row.Scan(&i.FolderID, &i.SkillID, &i.IsPreset)
+	return i, err
+}
+
+const setSkillMeta = `-- name: SetSkillMeta :one
+UPDATE app.skills
+SET title = $2,
+    description = $3
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+`
+
+type SetSkillMetaParams struct {
+	ID          string
+	Title       pgtype.Text
+	Description pgtype.Text
+}
+
+// Fill a skill's human metadata (from SKILL.md frontmatter on finalize, or an
+// explicit edit). Empty strings are passed as NULL so "unset" round-trips.
+func (q *Queries) SetSkillMeta(ctx context.Context, arg SetSkillMetaParams) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, setSkillMeta, arg.ID, arg.Title, arg.Description)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1743,6 +2491,33 @@ func (q *Queries) UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) 
 		arg.OrgID,
 		arg.UserID,
 		arg.Value,
+	)
+	return err
+}
+
+const upsertSkillFolderItem = `-- name: UpsertSkillFolderItem :exec
+INSERT INTO app.skill_folder_items (org_id, folder_id, skill_id, is_preset, added_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (folder_id, skill_id) DO UPDATE
+SET is_preset = EXCLUDED.is_preset
+`
+
+type UpsertSkillFolderItemParams struct {
+	OrgID    string
+	FolderID string
+	SkillID  string
+	IsPreset bool
+	AddedBy  string
+}
+
+// Add a skill to a folder (or update its preset flag if already a member).
+func (q *Queries) UpsertSkillFolderItem(ctx context.Context, arg UpsertSkillFolderItemParams) error {
+	_, err := q.db.Exec(ctx, upsertSkillFolderItem,
+		arg.OrgID,
+		arg.FolderID,
+		arg.SkillID,
+		arg.IsPreset,
+		arg.AddedBy,
 	)
 	return err
 }

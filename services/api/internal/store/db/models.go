@@ -80,6 +80,7 @@ type AppOrgMetum struct {
 	CreatedAt            time.Time
 	OrgStatus            string
 	McpEnabled           bool
+	SkillsSeeded         bool
 }
 
 type AppOrgUsage struct {
@@ -143,4 +144,44 @@ type AppSiteVote struct {
 	Value     int16
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type AppSkill struct {
+	ID               string
+	OrgID            string
+	Slug             string
+	OwnerUserID      string
+	Title            pgtype.Text
+	Description      pgtype.Text
+	CurrentVersionID *string
+	CreatedAt        time.Time
+}
+
+type AppSkillFolder struct {
+	ID        string
+	OrgID     string
+	Slug      string
+	Title     string
+	CreatedAt time.Time
+}
+
+type AppSkillFolderItem struct {
+	OrgID    string
+	FolderID string
+	SkillID  string
+	IsPreset bool
+	AddedBy  string
+	AddedAt  time.Time
+}
+
+type AppSkillVersion struct {
+	ID          string
+	OrgID       string
+	SkillID     string
+	VersionNo   int32
+	Status      string
+	ContentHash string
+	SizeBytes   int64
+	CreatedBy   string
+	CreatedAt   time.Time
 }

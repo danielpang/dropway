@@ -91,15 +91,19 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 	t := Tenant{OrgID: orgID, UserID: orgID} // user id unused by these reads; reuse org for a valid GUC
 
 	// 1. Pick the versions to retain per site (current + last N) under the org's RLS
-	//    tenant context.
+	//    tenant context, plus every skill's CURRENT version — skills share the
+	//    per-org blob namespace with deploys, so a site-only reference set would
+	//    make all skill content look orphaned and delete it.
 	var retained []db.ListVersionsForGCRow
+	var skillRetained []db.ListCurrentSkillVersionsForGCRow
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		rows, err := q.ListVersionsForGC(ctx)
 		if err != nil {
 			return err
 		}
 		retained = selectRetained(rows, pol.KeepLastN)
-		return nil
+		skillRetained, err = q.ListCurrentSkillVersionsForGC(ctx)
+		return err
 	})
 	if err != nil {
 		return GCResult{OrgID: orgID}, err
@@ -108,7 +112,7 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 	// 2–4. Collect referenced blobs from the retained manifests and delete orphans.
 	//      Extracted so the blob bookkeeping is unit-testable with the in-memory fake
 	//      (no live DB) — the only DB-dependent step is the version selection above.
-	res, err := gcCollectAndDelete(ctx, obj, orgID, retained, pol, time.Now())
+	res, err := gcCollectAndDelete(ctx, obj, orgID, retained, skillRetained, pol, time.Now())
 	if err != nil {
 		return res, err
 	}
@@ -158,10 +162,22 @@ func (s *Store) releaseStorageForBlobs(ctx context.Context, orgID string, shas [
 // it is likely an in-flight deploy's just-uploaded, not-yet-referenced blob. It is
 // pure over the storage.Store + the retained version list + now, so it is exercised
 // directly by the unit test with the in-memory fake.
-func gcCollectAndDelete(ctx context.Context, obj storage.Store, orgID string, retained []db.ListVersionsForGCRow, pol GCPolicy, now time.Time) (GCResult, error) {
-	res := GCResult{OrgID: orgID, RetainedVersions: len(retained)}
+func gcCollectAndDelete(ctx context.Context, obj storage.Store, orgID string, retained []db.ListVersionsForGCRow, skillRetained []db.ListCurrentSkillVersionsForGCRow, pol GCPolicy, now time.Time) (GCResult, error) {
+	res := GCResult{OrgID: orgID, RetainedVersions: len(retained) + len(skillRetained)}
 
 	referenced := map[string]struct{}{}
+	addRefs := func(body []byte, what string) error {
+		var m gcManifest
+		if err := json.Unmarshal(body, &m); err != nil {
+			return fmt.Errorf("gc: parse manifest %s: %w", what, err)
+		}
+		for _, f := range m.Files {
+			if f.SHA256 != "" {
+				referenced[f.SHA256] = struct{}{}
+			}
+		}
+		return nil
+	}
 	for _, v := range retained {
 		body, err := obj.GetManifest(ctx, orgID, v.SiteID, v.VersionID)
 		if err != nil {
@@ -173,14 +189,26 @@ func gcCollectAndDelete(ctx context.Context, obj storage.Store, orgID string, re
 			}
 			return res, fmt.Errorf("gc: read manifest %s/%s: %w", v.SiteID, v.VersionID, err)
 		}
-		var m gcManifest
-		if err := json.Unmarshal(body, &m); err != nil {
-			return res, fmt.Errorf("gc: parse manifest %s/%s: %w", v.SiteID, v.VersionID, err)
+		if err := addRefs(body, v.SiteID+"/"+v.VersionID); err != nil {
+			return res, err
 		}
-		for _, f := range m.Files {
-			if f.SHA256 != "" {
-				referenced[f.SHA256] = struct{}{}
+	}
+	// Union in each skill's CURRENT version refs (skill manifests share the
+	// gcManifest {files:{path:{sha256}}} shape with deploy manifests). Same
+	// fail-safe on a missing manifest object.
+	for _, sv := range skillRetained {
+		if sv.VersionID == nil {
+			continue
+		}
+		body, err := obj.GetSkillManifest(ctx, orgID, sv.SkillID, *sv.VersionID)
+		if err != nil {
+			if err == storage.ErrNotFound {
+				continue
 			}
+			return res, fmt.Errorf("gc: read skill manifest %s/%s: %w", sv.SkillID, *sv.VersionID, err)
+		}
+		if err := addRefs(body, "skill "+sv.SkillID+"/"+*sv.VersionID); err != nil {
+			return res, err
 		}
 	}
 	res.ReferencedBlobs = len(referenced)

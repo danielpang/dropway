@@ -24,7 +24,10 @@ CREATE TABLE app.org_meta (
     created_at             timestamptz NOT NULL DEFAULT now(),
     org_status             text NOT NULL DEFAULT 'active'
                                CHECK (org_status IN ('active', 'suspended', 'over_limit')),
-    mcp_enabled            boolean NOT NULL DEFAULT true
+    mcp_enabled            boolean NOT NULL DEFAULT true,
+    -- Guards the lazy per-org seeding of default skill folders + preset skills
+    -- (migration 0008): set true in the same tx that seeds.
+    skills_seeded          boolean NOT NULL DEFAULT false
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -88,6 +91,67 @@ ALTER TABLE app.sites
         FOREIGN KEY (current_version_id)
         REFERENCES app.site_versions (id)
         DEFERRABLE INITIALLY DEFERRED;
+
+-- skills: a shareable Claude skill (SKILL.md + supporting files) owned by a
+-- user inside an org (migration 0008). owner_user_id
+-- 00000000-0000-0000-0000-000000000000 = seeded by Dropway.
+CREATE TABLE app.skills (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    slug               text NOT NULL,
+    owner_user_id      uuid NOT NULL,
+    title              text,
+    description        text,
+    current_version_id uuid,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT skills_org_slug_key UNIQUE (org_id, slug)
+);
+
+-- skill_versions: immutable, content-addressed skill uploads (shape of
+-- site_versions; v1 exposes only the current one).
+CREATE TABLE app.skill_versions (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    skill_id     uuid NOT NULL REFERENCES app.skills (id) ON DELETE CASCADE,
+    version_no   int NOT NULL,
+    status       text NOT NULL DEFAULT 'pending',
+    content_hash text NOT NULL,
+    size_bytes   bigint NOT NULL DEFAULT 0,
+    created_by   uuid NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT skill_versions_skill_version_no_key UNIQUE (skill_id, version_no),
+    CONSTRAINT skill_versions_skill_content_hash_key UNIQUE (skill_id, content_hash)
+);
+
+-- Deferrable FK closing the skills <-> skill_versions cycle.
+ALTER TABLE app.skills
+    ADD CONSTRAINT skills_current_version_id_fkey
+        FOREIGN KEY (current_version_id)
+        REFERENCES app.skill_versions (id)
+        DEFERRABLE INITIALLY DEFERRED;
+
+-- skill_folders: admin-curated org taxonomy for skills (defaults: engineering,
+-- product, marketing — seeded lazily per org).
+CREATE TABLE app.skill_folders (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    slug       text NOT NULL,
+    title      text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT skill_folders_org_slug_key UNIQUE (org_id, slug)
+);
+
+-- skill_folder_items: folder membership; is_preset marks the admin-curated
+-- starter set that bulk "download the presets" surfaces.
+CREATE TABLE app.skill_folder_items (
+    org_id    uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    folder_id uuid NOT NULL REFERENCES app.skill_folders (id) ON DELETE CASCADE,
+    skill_id  uuid NOT NULL REFERENCES app.skills (id) ON DELETE CASCADE,
+    is_preset boolean NOT NULL DEFAULT false,
+    added_by  uuid NOT NULL,
+    added_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (folder_id, skill_id)
+);
 
 -- domains: custom hostnames mapped to a site. hostname is GLOBALLY unique.
 -- cf_hostname_id / dcv_record track the Cloudflare-for-SaaS custom hostname and

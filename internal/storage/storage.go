@@ -65,6 +65,15 @@ type Store interface {
 	// content-type lookup). Returns ErrNotFound if absent.
 	GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error)
 
+	// PutSkillManifest writes the immutable per-skill-version manifest JSON
+	// (skill-manifests/<org>/<skill>/<version>.json — skills reuse the blob
+	// store; only the manifest namespace differs from deploys).
+	PutSkillManifest(ctx context.Context, orgID, skillID, versionID string, manifest []byte) error
+
+	// GetSkillManifest reads a skill manifest back (downloads + the GC's
+	// referenced-blob collection). Returns ErrNotFound if absent.
+	GetSkillManifest(ctx context.Context, orgID, skillID, versionID string) ([]byte, error)
+
 	// ListBlobInfos returns every blob stored under the org's prefix
 	// (blobs/<org_id>/) as a {SHA, LastModified} pair. It is the input to the R2
 	// version GC: blobs no longer referenced by any retained deploy manifest are
@@ -90,4 +99,11 @@ func BlobKey(orgID, sha256 string) string {
 // ManifestKey returns the canonical key for a deploy manifest.
 func ManifestKey(orgID, siteID, versionID string) string {
 	return fmt.Sprintf("manifests/%s/%s/%s.json", orgID, siteID, versionID)
+}
+
+// SkillManifestKey returns the canonical key for a skill-version manifest.
+// Skills share the per-org content-addressed blob namespace with deploys
+// (dedup applies across both); only the manifest namespace is separate.
+func SkillManifestKey(orgID, skillID, versionID string) string {
+	return fmt.Sprintf("skill-manifests/%s/%s/%s.json", orgID, skillID, versionID)
 }

@@ -1,0 +1,5 @@
+{
+  "title": "PR review checklist",
+  "description": "A structured checklist for reviewing pull requests: correctness, tests, security, and readability, with guidance on writing actionable review comments.",
+  "folder": "engineering"
+}

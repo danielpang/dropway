@@ -86,6 +86,27 @@ type SiteStore interface {
 	// Phase 4 — audit logging.
 	WriteAudit(ctx context.Context, t store.Tenant, rec store.AuditRecord) (store.AuditEntry, error)
 	ListAudit(ctx context.Context, t store.Tenant, p store.ListAuditParams) ([]store.AuditEntry, error)
+
+	// Org-wide skill sharing: skills (content-addressed uploads, latest-only
+	// versions) + admin-curated folders with preset flags + lazy per-org seeding.
+	CreateSkill(ctx context.Context, t store.Tenant, slug, title string, folderIDs []string) (store.Skill, error)
+	ListSkills(ctx context.Context, t store.Tenant, q, folderSlug string, presetsOnly bool) ([]store.Skill, error)
+	GetSkill(ctx context.Context, t store.Tenant, id string) (store.Skill, error)
+	DeleteSkill(ctx context.Context, t store.Tenant, id string) error
+	SetSkillMeta(ctx context.Context, t store.Tenant, id, title, description string) (store.Skill, error)
+	SetSkillFolders(ctx context.Context, t store.Tenant, skillID string, folderIDs []string) (store.Skill, error)
+	CreateSkillVersion(ctx context.Context, t store.Tenant, p store.CreateSkillVersionParams) (store.SkillVersion, error)
+	ListSkillFolders(ctx context.Context, t store.Tenant) ([]store.SkillFolder, error)
+	GetSkillFolder(ctx context.Context, t store.Tenant, id string) (store.SkillFolder, error)
+	CreateSkillFolder(ctx context.Context, t store.Tenant, slug, title string) (store.SkillFolder, error)
+	RenameSkillFolder(ctx context.Context, t store.Tenant, id, title string) (store.SkillFolder, error)
+	DeleteSkillFolder(ctx context.Context, t store.Tenant, id string) error
+	AddSkillToFolder(ctx context.Context, t store.Tenant, folderID, skillID string, isPreset bool) error
+	RemoveSkillFromFolder(ctx context.Context, t store.Tenant, folderID, skillID string) error
+	SetSkillFolderItemPreset(ctx context.Context, t store.Tenant, folderID, skillID string, isPreset bool) error
+	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
+	SkillsSeeded(ctx context.Context, t store.Tenant) (bool, error)
+	SeedOrgSkills(ctx context.Context, t store.Tenant, seeds []store.SkillSeed) ([]store.SeededSkill, bool, error)
 }
 
 // EdgeRevoker writes the hard-revocation denylist the serving Worker + /authz read

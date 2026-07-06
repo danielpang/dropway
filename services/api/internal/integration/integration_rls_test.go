@@ -208,6 +208,18 @@ func rlsTables() []rlsTable {
 		}
 		return "22222222-0000-0000-0000-0000000000b1"
 	}
+	skillID := func(org string) string {
+		if org == rlsOrgA {
+			return "33333333-0000-0000-0000-0000000000a1"
+		}
+		return "33333333-0000-0000-0000-0000000000b1"
+	}
+	skillFolderID := func(org string) string {
+		if org == rlsOrgA {
+			return "44444444-0000-0000-0000-0000000000a1"
+		}
+		return "44444444-0000-0000-0000-0000000000b1"
+	}
 
 	return []rlsTable{
 		{
@@ -337,6 +349,62 @@ func rlsTables() []rlsTable {
 				return `INSERT INTO app.audit_log (org_id, action, target)
 						VALUES ($1, 'sneaky', 'x')`,
 					[]any{other}
+			},
+		},
+		{
+			name:   "app.skills",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.skills (id, org_id, slug, owner_user_id)
+						VALUES ($1, $2, $3, $4)`,
+					[]any{skillID(org), org, "skill-" + org[:4], ownerUser(org)}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.skills (org_id, slug, owner_user_id)
+						VALUES ($1, 'sneaky-skill', $2)`,
+					[]any{other, ownerUser(other)}
+			},
+		},
+		{
+			name:   "app.skill_versions",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.skill_versions (org_id, skill_id, version_no, status, content_hash, size_bytes, created_by)
+						VALUES ($1, $2, 1, 'ready', $3, 1, $4)`,
+					[]any{org, skillID(org), "skillhash-" + org[:4], ownerUser(org)}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.skill_versions (org_id, skill_id, version_no, status, content_hash, size_bytes, created_by)
+						VALUES ($1, $2, 99, 'ready', 'sneaky-skillhash', 1, $3)`,
+					[]any{other, skillID(other), ownerUser(other)}
+			},
+		},
+		{
+			name:   "app.skill_folders",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.skill_folders (id, org_id, slug, title)
+						VALUES ($1, $2, $3, 'Folder')`,
+					[]any{skillFolderID(org), org, "folder-" + org[:4]}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.skill_folders (org_id, slug, title)
+						VALUES ($1, 'sneaky-folder', 'Sneaky')`,
+					[]any{other}
+			},
+		},
+		{
+			name:   "app.skill_folder_items",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.skill_folder_items (org_id, folder_id, skill_id, is_preset, added_by)
+						VALUES ($1, $2, $3, true, $4)`,
+					[]any{org, skillFolderID(org), skillID(org), ownerUser(org)}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.skill_folder_items (org_id, folder_id, skill_id, is_preset, added_by)
+						VALUES ($1, $2, $3, false, $4)`,
+					[]any{other, skillFolderID(other), skillID(other), ownerUser(other)}
 			},
 		},
 	}

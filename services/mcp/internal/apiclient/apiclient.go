@@ -215,6 +215,112 @@ func (c *Client) Deploy(ctx context.Context, token, siteID string, files []Deplo
 	return res, nil
 }
 
+// --- skills -------------------------------------------------------------------
+
+// SkillInfo is the subset of the API's skill response the MCP tools use.
+type SkillInfo struct {
+	ID    string `json:"id"`
+	Slug  string `json:"slug"`
+	Title string `json:"title"`
+}
+
+// FileUpload is one skill file to upload: its path + raw bytes (+ optional
+// content type, inferred from the extension when empty).
+type FileUpload struct {
+	Path        string
+	Content     []byte
+	ContentType string
+}
+
+// UploadResult summarizes a finalized skill upload.
+type UploadResult struct {
+	VersionID string
+	VersionNo int32
+	// Warnings are the API's non-fatal advisories (e.g. unparseable SKILL.md
+	// frontmatter).
+	Warnings []string
+}
+
+// CreateSkill calls POST /v1/skills. folders are folder IDs the skill joins
+// immediately (optional); a duplicate slug surfaces as the API's 400.
+func (c *Client) CreateSkill(ctx context.Context, token, slug, title string, folders []string) (SkillInfo, error) {
+	body := map[string]any{"slug": slug}
+	if title != "" {
+		body["title"] = title
+	}
+	if len(folders) > 0 {
+		body["folders"] = folders
+	}
+	var resp struct {
+		Skill SkillInfo `json:"skill"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/skills", token, body, &resp); err != nil {
+		return SkillInfo{}, err
+	}
+	return resp.Skill, nil
+}
+
+// UploadSkill runs the skill upload loop through the API under the user's
+// token — the same prepare → presigned-PUT → finalize contract as Deploy, except
+// finalize IS publish (skills are latest-only, no separate publish step).
+func (c *Client) UploadSkill(ctx context.Context, token, skillID string, files []FileUpload) (UploadResult, error) {
+	if len(files) == 0 {
+		return UploadResult{}, fmt.Errorf("upload skill: no files")
+	}
+
+	// Build the manifest + the sha→bytes map, and the digest input (path+sha only).
+	mf := make([]manifestFile, 0, len(files))
+	digestFiles := make([]manifest.File, 0, len(files))
+	bySHA := map[string][]byte{}
+	for _, f := range files {
+		sum := sha256.Sum256(f.Content)
+		sha := hex.EncodeToString(sum[:])
+		ct := f.ContentType
+		if ct == "" {
+			ct = contenttype.ForPath(f.Path)
+		}
+		mf = append(mf, manifestFile{Path: f.Path, SHA256: sha, Size: int64(len(f.Content)), ContentType: ct})
+		digestFiles = append(digestFiles, manifest.File{Path: f.Path, SHA256: sha})
+		bySHA[sha] = f.Content
+	}
+	digest := manifest.Digest(digestFiles)
+
+	// 1) prepare → validates the skill rules, then which blobs are missing + where
+	// to PUT them.
+	var prep struct {
+		Missing []string          `json:"missing"`
+		Uploads map[string]string `json:"uploads"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/skills/"+skillID+"/uploads/prepare", token,
+		map[string]any{"manifest": mf}, &prep); err != nil {
+		return UploadResult{}, err
+	}
+
+	// 2) upload each missing blob to its presigned URL (raw PUT, URL is the credential).
+	for _, sha := range prep.Missing {
+		url := prep.Uploads[sha]
+		if url == "" {
+			return UploadResult{}, fmt.Errorf("upload skill: no upload URL for blob %s", sha)
+		}
+		if err := c.uploadBlob(ctx, url, bySHA[sha]); err != nil {
+			return UploadResult{}, fmt.Errorf("upload skill: upload %s: %w", sha, err)
+		}
+	}
+
+	// 3) finalize → the API verifies bytes + digest, records the version, and flips
+	// the live pointer.
+	var fin struct {
+		VersionID string   `json:"version_id"`
+		VersionNo int32    `json:"version_no"`
+		Warnings  []string `json:"warnings"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/skills/"+skillID+"/uploads", token,
+		map[string]any{"manifest": mf, "digest": digest}, &fin); err != nil {
+		return UploadResult{}, err
+	}
+	return UploadResult{VersionID: fin.VersionID, VersionNo: fin.VersionNo, Warnings: fin.Warnings}, nil
+}
+
 // uploadBlob PUTs raw bytes to a presigned URL. No Authorization (the URL is the
 // credential) and no Content-Type (it's not part of the SigV4 signature) — matching
 // the dashboard's browser upload.
@@ -251,7 +357,6 @@ func (c *Client) uploadBlob(ctx context.Context, rawURL string, data []byte) err
 	}
 	return nil
 }
-
 
 // do issues a JSON request with the bearer token and decodes a 2xx JSON body into
 // out (nil to ignore). Non-2xx → *Error with the API's message.

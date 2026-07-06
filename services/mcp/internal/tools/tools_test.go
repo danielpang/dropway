@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
@@ -34,14 +35,65 @@ func (f *fakeStore) SiteBySlug(_ context.Context, _ store.Tenant, slug string) (
 	return s, nil
 }
 
+// fakeSkills satisfies SkillStore, recording the filter args list_skills passes.
+type fakeSkills struct {
+	skills  []store.Skill
+	listErr error
+
+	listQuery, listFolder string
+	listPresetsOnly       bool
+
+	bySlug map[string]store.Skill
+
+	folders    []store.SkillFolder
+	foldersErr error
+
+	folderSkills map[string][]store.Skill // folder id → skills
+}
+
+func (f *fakeSkills) ListSkills(_ context.Context, _ store.Tenant, query, folderSlug string, presetsOnly bool) ([]store.Skill, error) {
+	f.listQuery, f.listFolder, f.listPresetsOnly = query, folderSlug, presetsOnly
+	return f.skills, f.listErr
+}
+func (f *fakeSkills) SkillBySlug(_ context.Context, _ store.Tenant, slug string) (store.Skill, error) {
+	s, ok := f.bySlug[slug]
+	if !ok {
+		return store.Skill{}, store.ErrNotFound
+	}
+	return s, nil
+}
+func (f *fakeSkills) ListSkillFolders(_ context.Context, _ store.Tenant) ([]store.SkillFolder, error) {
+	return f.folders, f.foldersErr
+}
+func (f *fakeSkills) SkillFolderBySlug(_ context.Context, _ store.Tenant, slug string) (store.SkillFolder, error) {
+	for _, fo := range f.folders {
+		if fo.Slug == slug {
+			return fo, nil
+		}
+	}
+	return store.SkillFolder{}, store.ErrNotFound
+}
+func (f *fakeSkills) ListFolderSkills(_ context.Context, _ store.Tenant, folderID string) ([]store.Skill, error) {
+	return f.folderSkills[folderID], nil
+}
+
 type fakeBlobs struct {
 	manifest []byte
 	manErr   error
 	blobs    map[string][]byte // sha256 → content
+
+	skillManifests map[string][]byte // skillID/versionID → manifest JSON
 }
 
 func (f *fakeBlobs) GetManifest(_ context.Context, _, _, _ string) ([]byte, error) {
 	return f.manifest, f.manErr
+}
+func (f *fakeBlobs) GetSkillManifest(_ context.Context, _, skillID, versionID string) ([]byte, error) {
+	b, ok := f.skillManifests[skillID+"/"+versionID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return b, nil
 }
 func (f *fakeBlobs) GetBlob(_ context.Context, _, sha string) (io.ReadCloser, error) {
 	b, ok := f.blobs[sha]
@@ -65,6 +117,16 @@ type fakeAPI struct {
 	deployPublish             bool
 	deployResp                apiclient.DeployResult
 	deployErr                 error
+
+	createSkillToken, createSkillSlug, createSkillTitle string
+	createSkillFolders                                  []string
+	createSkillResp                                     apiclient.SkillInfo
+	createSkillErr                                      error
+
+	uploadToken, uploadSkillID string
+	uploadFiles                []apiclient.FileUpload
+	uploadResp                 apiclient.UploadResult
+	uploadErr                  error
 }
 
 func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
@@ -84,6 +146,20 @@ func (f *fakeAPI) Deploy(_ context.Context, token, siteID string, files []apicli
 		return apiclient.DeployResult{}, f.deployErr
 	}
 	return f.deployResp, nil
+}
+func (f *fakeAPI) CreateSkill(_ context.Context, token, slug, title string, folders []string) (apiclient.SkillInfo, error) {
+	f.createSkillToken, f.createSkillSlug, f.createSkillTitle, f.createSkillFolders = token, slug, title, folders
+	if f.createSkillErr != nil {
+		return apiclient.SkillInfo{}, f.createSkillErr
+	}
+	return f.createSkillResp, nil
+}
+func (f *fakeAPI) UploadSkill(_ context.Context, token, skillID string, files []apiclient.FileUpload) (apiclient.UploadResult, error) {
+	f.uploadToken, f.uploadSkillID, f.uploadFiles = token, skillID, files
+	if f.uploadErr != nil {
+		return apiclient.UploadResult{}, f.uploadErr
+	}
+	return f.uploadResp, nil
 }
 
 const manifestJSON = `{"schema_version":1,"files":{
@@ -497,5 +573,328 @@ func TestDeploySite_UnknownSite(t *testing.T) {
 	}
 	if api.deploySiteID != "" {
 		t.Error("API must not be called for an unknown site")
+	}
+}
+
+// --- list_skills --------------------------------------------------------------
+
+func TestListSkills_MapsFieldsAndOwner(t *testing.T) {
+	skills := &fakeSkills{skills: []store.Skill{
+		{
+			ID: "sk1", Slug: "writing", Title: "Writing", Description: "House style",
+			OwnerUserID: "user-9", CurrentVersionID: ptr("v1"), SizeBytes: 1234,
+			Folders: []store.SkillFolderRef{{FolderID: "f1", Slug: "product", Title: "Product", IsPreset: true}},
+		},
+		{ID: "sk2", Slug: "seeded", OwnerUserID: "00000000-0000-0000-0000-000000000000", CurrentVersionID: ptr("v2")},
+	}}
+	svc := &Service{Skills: skills}
+
+	out, err := svc.ListSkills(context.Background(), tnt, "", "", false)
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	if len(out.Skills) != 2 {
+		t.Fatalf("want 2 skills, got %d", len(out.Skills))
+	}
+	s := out.Skills[0]
+	if s.Name != "writing" || s.Title != "Writing" || s.Description != "House style" || s.SizeBytes != 1234 || s.Owner != "user-9" {
+		t.Errorf("skill[0] wrong: %+v", s)
+	}
+	if len(s.Folders) != 1 || s.Folders[0].Slug != "product" || !s.Folders[0].IsPreset {
+		t.Errorf("skill[0] folders wrong: %+v", s.Folders)
+	}
+	if out.Skills[1].Owner != "Dropway" {
+		t.Errorf("seed-owned skill should render owner 'Dropway', got %q", out.Skills[1].Owner)
+	}
+}
+
+func TestListSkills_ForwardsFilters(t *testing.T) {
+	skills := &fakeSkills{}
+	svc := &Service{Skills: skills}
+	if _, err := svc.ListSkills(context.Background(), tnt, "style", "product", true); err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	if skills.listQuery != "style" || skills.listFolder != "product" || !skills.listPresetsOnly {
+		t.Errorf("filters not forwarded to the store: query=%q folder=%q presets=%v",
+			skills.listQuery, skills.listFolder, skills.listPresetsOnly)
+	}
+}
+
+// --- download_skill -----------------------------------------------------------
+
+const skillManifestJSON = `{"schema_version":1,"files":{
+	"SKILL.md":{"sha256":"sm","content_type":"text/markdown","size":11},
+	"assets/logo.png":{"sha256":"sp","content_type":"image/png","size":4}
+}}`
+
+func skillFixture() (*fakeSkills, *fakeBlobs) {
+	skills := &fakeSkills{bySlug: map[string]store.Skill{
+		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1")},
+	}}
+	blobs := &fakeBlobs{
+		skillManifests: map[string][]byte{"sk1/v1": []byte(skillManifestJSON)},
+		blobs: map[string][]byte{
+			"sm": []byte("# a skill\n"),    // valid utf8
+			"sp": {0xff, 0xd8, 0xff, 0x00}, // binary
+		},
+	}
+	return skills, blobs
+}
+
+func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
+	skills, blobs := skillFixture()
+	svc := &Service{Skills: skills, Blobs: blobs}
+
+	out, err := svc.DownloadSkill(context.Background(), tnt, "writing")
+	if err != nil {
+		t.Fatalf("DownloadSkill: %v", err)
+	}
+	if out.Name != "writing" || out.Truncated {
+		t.Fatalf("out wrong: %+v", out)
+	}
+	if len(out.Files) != 2 {
+		t.Fatalf("want 2 files, got %d", len(out.Files))
+	}
+	// Sorted by path: SKILL.md, assets/logo.png.
+	if out.Files[0].Path != "SKILL.md" || out.Files[0].Encoding != "utf8" || out.Files[0].Content != "# a skill\n" {
+		t.Errorf("SKILL.md wrong: %+v", out.Files[0])
+	}
+	if out.Files[1].Path != "assets/logo.png" || out.Files[1].Encoding != "base64" || out.Files[1].Content == "" {
+		t.Errorf("binary file should be base64: %+v", out.Files[1])
+	}
+}
+
+func TestDownloadSkill_UnknownSkill(t *testing.T) {
+	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}}
+	if _, err := svc.DownloadSkill(context.Background(), tnt, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown skill, got %v", err)
+	}
+}
+
+func TestDownloadSkill_NoContentErrors(t *testing.T) {
+	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{
+		"empty": {ID: "sk9", Slug: "empty", CurrentVersionID: nil},
+	}}}
+	if _, err := svc.DownloadSkill(context.Background(), tnt, "empty"); err == nil {
+		t.Fatal("expected an error for a skill with no finalized upload")
+	}
+}
+
+func TestDownloadSkill_UnsafeManifestPathRejected(t *testing.T) {
+	skills, blobs := skillFixture()
+	blobs.skillManifests["sk1/v1"] = []byte(`{"schema_version":1,"files":{
+		"SKILL.md":{"sha256":"sm","size":11},
+		"../evil.md":{"sha256":"sm","size":11}
+	}}`)
+	svc := &Service{Skills: skills, Blobs: blobs}
+	if _, err := svc.DownloadSkill(context.Background(), tnt, "writing"); err == nil {
+		t.Fatal("expected an error for a manifest path containing '..'")
+	}
+}
+
+func TestDownloadSkill_OverCapTruncated(t *testing.T) {
+	orig := maxDownloadBytes
+	maxDownloadBytes = 8 // below the manifest's 15 declared bytes
+	defer func() { maxDownloadBytes = orig }()
+
+	skills, blobs := skillFixture()
+	svc := &Service{Skills: skills, Blobs: blobs}
+	out, err := svc.DownloadSkill(context.Background(), tnt, "writing")
+	if err != nil {
+		t.Fatalf("DownloadSkill: %v", err)
+	}
+	if !out.Truncated || len(out.Files) != 0 {
+		t.Errorf("an over-cap skill should be truncated with no files: %+v", out)
+	}
+}
+
+// --- download_skill_folder ------------------------------------------------------
+
+func TestDownloadSkillFolder_SharedCapTruncation(t *testing.T) {
+	orig := maxDownloadBytes
+	maxDownloadBytes = 20 // fits skill a (15 declared bytes) but not also skill b
+	defer func() { maxDownloadBytes = orig }()
+
+	skills := &fakeSkills{
+		folders: []store.SkillFolder{{ID: "f1", Slug: "product", Title: "Product", ItemCount: 2}},
+		folderSkills: map[string][]store.Skill{"f1": {
+			{ID: "sk1", Slug: "a", CurrentVersionID: ptr("v1")},
+			{ID: "sk2", Slug: "b", CurrentVersionID: ptr("v2")},
+		}},
+	}
+	blobs := &fakeBlobs{
+		skillManifests: map[string][]byte{
+			"sk1/v1": []byte(skillManifestJSON), // 15 declared bytes
+			"sk2/v2": []byte(skillManifestJSON), // another 15 → over the 20-byte budget
+		},
+		blobs: map[string][]byte{
+			"sm": []byte("# a skill\n"),
+			"sp": {0xff, 0xd8, 0xff, 0x00},
+		},
+	}
+	svc := &Service{Skills: skills, Blobs: blobs}
+
+	out, err := svc.DownloadSkillFolder(context.Background(), tnt, "product")
+	if err != nil {
+		t.Fatalf("DownloadSkillFolder: %v", err)
+	}
+	if out.Folder != "product" || len(out.Skills) != 2 {
+		t.Fatalf("out wrong: %+v", out)
+	}
+	if out.Skills[0].Name != "a" || out.Skills[0].Truncated || len(out.Skills[0].Files) != 2 {
+		t.Errorf("skill a should be fully included: %+v", out.Skills[0])
+	}
+	if out.Skills[1].Name != "b" || !out.Skills[1].Truncated || len(out.Skills[1].Files) != 0 {
+		t.Errorf("skill b should be truncated with no files: %+v", out.Skills[1])
+	}
+	if out.Note == "" {
+		t.Error("a truncated folder download should carry a note pointing at download_skill")
+	}
+}
+
+func TestDownloadSkillFolder_UnknownFolder(t *testing.T) {
+	svc := &Service{Skills: &fakeSkills{}}
+	if _, err := svc.DownloadSkillFolder(context.Background(), tnt, "ghost"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown folder, got %v", err)
+	}
+}
+
+// --- upload_skill ---------------------------------------------------------------
+
+func TestUploadSkill_CreatesWhenAbsent(t *testing.T) {
+	api := &fakeAPI{
+		createSkillResp: apiclient.SkillInfo{ID: "sk-new", Slug: "writing"},
+		uploadResp:      apiclient.UploadResult{VersionID: "v1", VersionNo: 1, Warnings: []string{"w"}},
+	}
+	skills := &fakeSkills{
+		bySlug:  map[string]store.Skill{}, // absent → create
+		folders: []store.SkillFolder{{ID: "f1", Slug: "product", Title: "Product"}},
+	}
+	svc := &Service{Skills: skills, API: api}
+
+	in := uploadSkillIn{
+		Name:    "writing",
+		Title:   "Writing",
+		Folders: []string{"product"},
+		Files: []uploadSkillFileIn{
+			{Path: "SKILL.md", Content: "# hi"},
+			{Path: "assets/logo.png", Content: "AAEC", Encoding: "base64"}, // 0x00 0x01 0x02
+		},
+	}
+	out, err := svc.UploadSkill(context.Background(), tnt, "tok-5", in)
+	if err != nil {
+		t.Fatalf("UploadSkill: %v", err)
+	}
+	// Create forwarded the token, slug, title, and the RESOLVED folder id.
+	if api.createSkillToken != "tok-5" || api.createSkillSlug != "writing" || api.createSkillTitle != "Writing" {
+		t.Errorf("create args wrong: %+v", api)
+	}
+	if len(api.createSkillFolders) != 1 || api.createSkillFolders[0] != "f1" {
+		t.Errorf("folder slug not resolved to id: %v", api.createSkillFolders)
+	}
+	// Upload ran against the created skill under the same token.
+	if api.uploadToken != "tok-5" || api.uploadSkillID != "sk-new" {
+		t.Errorf("upload args wrong: token=%q skill=%q", api.uploadToken, api.uploadSkillID)
+	}
+	// Files decoded: text → raw bytes, base64 → decoded bytes.
+	if len(api.uploadFiles) != 2 || string(api.uploadFiles[0].Content) != "# hi" {
+		t.Fatalf("upload files wrong: %+v", api.uploadFiles)
+	}
+	if want := []byte{0x00, 0x01, 0x02}; !bytes.Equal(api.uploadFiles[1].Content, want) {
+		t.Errorf("base64 file decoded wrong: %v, want %v", api.uploadFiles[1].Content, want)
+	}
+	if out.Name != "writing" || out.SkillID != "sk-new" || out.VersionNo != 1 || len(out.Warnings) != 1 {
+		t.Errorf("result wrong: %+v", out)
+	}
+}
+
+func TestUploadSkill_ReusesExistingSkill(t *testing.T) {
+	api := &fakeAPI{uploadResp: apiclient.UploadResult{VersionID: "v2", VersionNo: 2}}
+	skills := &fakeSkills{bySlug: map[string]store.Skill{
+		"writing": {ID: "sk-old", Slug: "writing", CurrentVersionID: ptr("v1")},
+	}}
+	svc := &Service{Skills: skills, API: api}
+
+	out, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+		Name:  "writing",
+		Files: []uploadSkillFileIn{{Path: "SKILL.md", Content: "# v2"}},
+	})
+	if err != nil {
+		t.Fatalf("UploadSkill: %v", err)
+	}
+	if api.createSkillSlug != "" {
+		t.Error("create must not be called when the skill already exists")
+	}
+	if api.uploadSkillID != "sk-old" {
+		t.Errorf("upload should target the existing skill: %q", api.uploadSkillID)
+	}
+	if out.SkillID != "sk-old" || out.VersionNo != 2 {
+		t.Errorf("result wrong: %+v", out)
+	}
+}
+
+func TestUploadSkill_RequiresRootSkillMD(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}, API: api}
+	_, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+		Name:  "writing",
+		Files: []uploadSkillFileIn{{Path: "notes.md", Content: "x"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error without a root SKILL.md")
+	}
+	if api.createSkillSlug != "" || api.uploadSkillID != "" {
+		t.Error("API must not be called when SKILL.md is missing")
+	}
+}
+
+func TestUploadSkill_UnknownFolderListsAvailable(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{
+		Skills: &fakeSkills{
+			bySlug:  map[string]store.Skill{},
+			folders: []store.SkillFolder{{ID: "f1", Slug: "product"}},
+		},
+		API: api,
+	}
+	_, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+		Name:    "writing",
+		Folders: []string{"ghost"},
+		Files:   []uploadSkillFileIn{{Path: "SKILL.md", Content: "x"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "product") {
+		t.Fatalf("want an unknown-folder error listing available folders, got %v", err)
+	}
+	if api.createSkillSlug != "" {
+		t.Error("API must not be called for an unknown folder")
+	}
+}
+
+func TestUploadSkill_UnsafePathRejected(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}, API: api}
+	_, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+		Name:  "writing",
+		Files: []uploadSkillFileIn{{Path: "SKILL.md", Content: "x"}, {Path: "../escape.md", Content: "x"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for a path containing '..'")
+	}
+	if api.uploadSkillID != "" {
+		t.Error("API must not be called for an unsafe path")
+	}
+}
+
+// upload_skill's input schema must publish `files`/`folders` as plain arrays
+// (see the deploy_site regression guard).
+func TestUploadSkill_SchemaHasPlainTypes(t *testing.T) {
+	s := inputSchema[uploadSkillIn]()
+	files := s.Properties["files"]
+	if files == nil || files.Type != "array" || len(files.Types) != 0 {
+		t.Fatalf("files type = %q / %v, want plain \"array\"", files.Type, files.Types)
+	}
+	folders := s.Properties["folders"]
+	if folders == nil || folders.Type != "array" || len(folders.Types) != 0 {
+		t.Fatalf("folders type = %q / %v, want plain \"array\"", folders.Type, folders.Types)
 	}
 }

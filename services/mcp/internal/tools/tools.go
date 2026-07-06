@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
 // Package tools implements the Dropway MCP tools — list_sites, list_files,
-// read_file — over a tenant's deployed documents. Every call is org-scoped: the
+// read_file, … plus the org-wide skill-sharing tools (list_skills,
+// download_skill, download_skill_folder, upload_skill) — over a tenant's
+// deployed documents and shared skills. Every call is org-scoped: the
 // tenant comes from the validated OAuth token (auth.TenantFromContext) and the
 // store enforces RLS. The exported methods take the tenant explicitly so they're
 // unit-testable; the SDK handlers are thin wrappers that pull it from context.
@@ -16,6 +18,8 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -32,34 +36,49 @@ import (
 // A var (not const) so tests can lower it without staging megabytes of fixtures.
 var maxDownloadBytes = 10 << 20 // 10 MiB
 
-// SiteStore is the data the tools read (RLS-scoped).
+// SiteStore is the site data the tools read (RLS-scoped).
 type SiteStore interface {
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	SiteBySlug(ctx context.Context, t store.Tenant, slug string) (store.Site, error)
 }
 
-// Blobs fetches deploy manifests + content-addressed blobs (satisfied by
+// SkillStore is the skill data the skill tools read (RLS-scoped).
+type SkillStore interface {
+	ListSkills(ctx context.Context, t store.Tenant, query, folderSlug string, presetsOnly bool) ([]store.Skill, error)
+	SkillBySlug(ctx context.Context, t store.Tenant, slug string) (store.Skill, error)
+	ListSkillFolders(ctx context.Context, t store.Tenant) ([]store.SkillFolder, error)
+	SkillFolderBySlug(ctx context.Context, t store.Tenant, slug string) (store.SkillFolder, error)
+	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
+}
+
+// Blobs fetches deploy/skill manifests + content-addressed blobs (satisfied by
 // internal/storage.Store).
 type Blobs interface {
 	GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error)
+	GetSkillManifest(ctx context.Context, orgID, skillID, versionID string) ([]byte, error)
 	GetBlob(ctx context.Context, orgID, sha256 string) (io.ReadCloser, error)
 }
 
-// ControlPlane performs WRITES through the Go API (create site / change access),
-// forwarding the user's OAuth token. nil when the MCP server has no API_URL
-// configured → the write tools are not registered. Satisfied by *apiclient.Client.
+// ControlPlane performs WRITES through the Go API (create site / change access /
+// upload skill), forwarding the user's OAuth token. nil when the MCP server has no
+// API_URL configured → the write tools are not registered. Satisfied by
+// *apiclient.Client.
 type ControlPlane interface {
 	CreateSite(ctx context.Context, token, slug, accessMode string) (apiclient.Site, error)
 	SetAccess(ctx context.Context, token, siteID, mode, password string) error
 	Deploy(ctx context.Context, token, siteID string, files []apiclient.DeployFile, publish bool) (apiclient.DeployResult, error)
+	CreateSkill(ctx context.Context, token, slug, title string, folders []string) (apiclient.SkillInfo, error)
+	UploadSkill(ctx context.Context, token, skillID string, files []apiclient.FileUpload) (apiclient.UploadResult, error)
 }
 
 // Service holds the tool dependencies.
 type Service struct {
-	Store SiteStore
-	Blobs Blobs
+	Store  SiteStore
+	Skills SkillStore
+	Blobs  Blobs
 	// API is the control-plane write client. Optional: when nil the read tools still
-	// work but the write tools (create_site, set_site_access) are not registered.
+	// work but the write tools (create_site, set_site_access, deploy_site,
+	// upload_skill) are not registered.
 	API ControlPlane
 }
 
@@ -157,6 +176,89 @@ type deploySiteOut struct {
 	FilesUploaded int    `json:"files_uploaded" jsonschema:"how many new blobs were uploaded (unchanged files are skipped)"`
 	Published     bool   `json:"published"`
 	LiveURL       string `json:"live_url,omitempty"`
+}
+
+// seedOwnerUserID is the sentinel owner_user_id marking a Dropway-seeded preset
+// skill (mirrors the API store's SeedOwnerUserID; rendered as owner "Dropway").
+const seedOwnerUserID = "00000000-0000-0000-0000-000000000000"
+
+type listSkillsIn struct {
+	Query       string `json:"query,omitempty" jsonschema:"optional text filter matched against slug, title, and description"`
+	Folder      string `json:"folder,omitempty" jsonschema:"optional folder slug (from the folders on list_skills entries) to restrict to"`
+	PresetsOnly bool   `json:"presets_only,omitempty" jsonschema:"true to list only admin-curated preset skills"`
+}
+
+// skillFolderInfo is one folder membership on a list_skills entry.
+type skillFolderInfo struct {
+	Slug     string `json:"slug"`
+	Title    string `json:"title"`
+	IsPreset bool   `json:"is_preset" jsonschema:"true when the skill is part of this folder's admin-curated preset set"`
+}
+
+// SkillInfo is one entry in list_skills.
+type SkillInfo struct {
+	Name        string            `json:"name" jsonschema:"the skill's slug — the argument for download_skill"`
+	Title       string            `json:"title,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Folders     []skillFolderInfo `json:"folders"`
+	SizeBytes   int64             `json:"size_bytes" jsonschema:"total content size of the current version"`
+	Owner       string            `json:"owner" jsonschema:"'Dropway' for seeded presets, otherwise the uploader's user id"`
+	CreatedAt   string            `json:"created_at"`
+}
+type listSkillsOut struct {
+	Skills []SkillInfo `json:"skills"`
+}
+
+type downloadSkillIn struct {
+	Name string `json:"name" jsonschema:"the skill's slug (from list_skills)"`
+}
+
+// skillFilePayload is one downloaded skill file: utf8 text inline or base64
+// bytes (the same shape the API's skill download returns).
+type skillFilePayload struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding" jsonschema:"'utf8' or 'base64'"`
+}
+type downloadSkillOut struct {
+	Name      string             `json:"name"`
+	Files     []skillFilePayload `json:"files"`
+	Truncated bool               `json:"truncated,omitempty" jsonschema:"true if some files were omitted to stay under the size cap"`
+}
+
+type downloadSkillFolderIn struct {
+	Folder string `json:"folder" jsonschema:"the folder slug (from list_skills entries' folders)"`
+}
+
+// folderSkillDownload is one skill inside a folder download. A truncated entry
+// carries no files — fetch it individually with download_skill.
+type folderSkillDownload struct {
+	Name      string             `json:"name"`
+	Files     []skillFilePayload `json:"files,omitempty"`
+	Truncated bool               `json:"truncated,omitempty" jsonschema:"true when this skill's files were omitted because the response size cap ran out — call download_skill for it"`
+}
+type downloadSkillFolderOut struct {
+	Folder string                `json:"folder"`
+	Skills []folderSkillDownload `json:"skills"`
+	Note   string                `json:"note,omitempty"`
+}
+
+type uploadSkillFileIn struct {
+	Path     string `json:"path" jsonschema:"the file's path inside the skill, e.g. 'SKILL.md' or 'references/api.md'"`
+	Content  string `json:"content" jsonschema:"the file contents (utf8 text, or base64 when encoding='base64')"`
+	Encoding string `json:"encoding,omitempty" jsonschema:"'utf8' (default) or 'base64' for binary files"`
+}
+type uploadSkillIn struct {
+	Name    string              `json:"name" jsonschema:"the skill's slug: a single lowercase DNS label, unique per org. Loose input is normalized (e.g. 'My Skill' becomes 'my-skill'). Re-uploading an existing name replaces its content (latest-only)."`
+	Title   string              `json:"title,omitempty" jsonschema:"optional human title (only applied when the skill is first created; SKILL.md frontmatter fills it otherwise)"`
+	Folders []string            `json:"folders,omitempty" jsonschema:"optional folder slugs to file the skill under (only applied when the skill is first created)"`
+	Files   []uploadSkillFileIn `json:"files" jsonschema:"the skill's files; MUST include a SKILL.md at the root. Max 200 files, 5 MiB total."`
+}
+type uploadSkillOut struct {
+	Name      string   `json:"name"`
+	SkillID   string   `json:"skill_id"`
+	VersionNo int32    `json:"version_no"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // --- Exported (testable) logic ----------------------------------------------
@@ -356,9 +458,242 @@ func (svc *Service) DeploySite(ctx context.Context, t store.Tenant, token, slug 
 	}, nil
 }
 
+// ListSkills returns the org's finalized shared skills matching the filters.
+func (svc *Service) ListSkills(ctx context.Context, t store.Tenant, query, folder string, presetsOnly bool) (listSkillsOut, error) {
+	skills, err := svc.Skills.ListSkills(ctx, t, query, folder, presetsOnly)
+	if err != nil {
+		return listSkillsOut{}, err
+	}
+	out := listSkillsOut{Skills: []SkillInfo{}}
+	for _, sk := range skills {
+		info := SkillInfo{
+			Name:        sk.Slug,
+			Title:       sk.Title,
+			Description: sk.Description,
+			Folders:     []skillFolderInfo{},
+			SizeBytes:   sk.SizeBytes,
+			Owner:       sk.OwnerUserID,
+			CreatedAt:   sk.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if sk.OwnerUserID == seedOwnerUserID {
+			info.Owner = "Dropway"
+		}
+		for _, f := range sk.Folders {
+			info.Folders = append(info.Folders, skillFolderInfo{Slug: f.Slug, Title: f.Title, IsPreset: f.IsPreset})
+		}
+		out.Skills = append(out.Skills, info)
+	}
+	return out, nil
+}
+
+// DownloadSkill reads EVERY file of a skill's current version, returning each
+// path's bytes inline (utf8 or base64), up to maxDownloadBytes total.
+func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, name string) (downloadSkillOut, error) {
+	sk, err := svc.Skills.SkillBySlug(ctx, t, name)
+	if err != nil {
+		return downloadSkillOut{}, err
+	}
+	if sk.CurrentVersionID == nil {
+		return downloadSkillOut{}, fmt.Errorf("mcp/tools: skill %q has no uploaded content yet", name)
+	}
+	out := downloadSkillOut{Name: sk.Slug, Files: []skillFilePayload{}}
+	files, _, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, maxDownloadBytes)
+	if err != nil {
+		return downloadSkillOut{}, err
+	}
+	if files == nil {
+		out.Truncated = true // whole skill over the cap (can't happen at the API's 5 MiB skill cap)
+		return out, nil
+	}
+	out.Files = files
+	return out, nil
+}
+
+// DownloadSkillFolder downloads every finalized skill in a folder under ONE
+// shared maxDownloadBytes budget. Skills that would blow the budget come back as
+// truncated entries (no files) with a note to fetch them via download_skill.
+func (svc *Service) DownloadSkillFolder(ctx context.Context, t store.Tenant, folderSlug string) (downloadSkillFolderOut, error) {
+	folder, err := svc.Skills.SkillFolderBySlug(ctx, t, folderSlug)
+	if err != nil {
+		return downloadSkillFolderOut{}, err
+	}
+	skills, err := svc.Skills.ListFolderSkills(ctx, t, folder.ID)
+	if err != nil {
+		return downloadSkillFolderOut{}, err
+	}
+	out := downloadSkillFolderOut{Folder: folder.Slug, Skills: []folderSkillDownload{}}
+	budget := maxDownloadBytes
+	var truncated []string
+	for _, sk := range skills {
+		if sk.CurrentVersionID == nil {
+			continue // finalized-only listing, but stay defensive
+		}
+		files, used, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, budget)
+		if err != nil {
+			return downloadSkillFolderOut{}, err
+		}
+		if files == nil { // wouldn't fit in the remaining budget
+			out.Skills = append(out.Skills, folderSkillDownload{Name: sk.Slug, Truncated: true})
+			truncated = append(truncated, sk.Slug)
+			continue
+		}
+		budget -= used
+		out.Skills = append(out.Skills, folderSkillDownload{Name: sk.Slug, Files: files})
+	}
+	if len(truncated) > 0 {
+		out.Note = "response size cap reached — call download_skill individually for: " + strings.Join(truncated, ", ")
+	}
+	return out, nil
+}
+
+// UploadSkill decodes the input files, enforces the cheap client-side rules
+// (root SKILL.md, safe paths), resolves folder slugs to ids via the RLS store,
+// creates the skill through the API when the slug doesn't exist yet (reusing the
+// existing skill otherwise — re-upload replaces content in the latest-only
+// model), and runs the API upload loop under the user's forwarded token.
+func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token string, in uploadSkillIn) (uploadSkillOut, error) {
+	name := slugpkg.Slugify(in.Name)
+	if name == "" {
+		return uploadSkillOut{}, fmt.Errorf("name %q has no usable characters (use lowercase letters, digits, and hyphens)", in.Name)
+	}
+	if len(in.Files) == 0 {
+		return uploadSkillOut{}, errors.New("mcp/tools: upload_skill requires at least one file")
+	}
+
+	files := make([]apiclient.FileUpload, 0, len(in.Files))
+	hasSkillMD := false
+	for _, f := range in.Files {
+		if unsafeSkillPath(f.Path) {
+			return uploadSkillOut{}, fmt.Errorf("mcp/tools: unsafe file path %q (paths must be relative, without '..')", f.Path)
+		}
+		var data []byte
+		switch f.Encoding {
+		case "", "utf8":
+			data = []byte(f.Content)
+		case "base64":
+			b, derr := base64.StdEncoding.DecodeString(f.Content)
+			if derr != nil {
+				return uploadSkillOut{}, fmt.Errorf("mcp/tools: file %q has invalid base64: %w", f.Path, derr)
+			}
+			data = b
+		default:
+			return uploadSkillOut{}, fmt.Errorf("mcp/tools: file %q has unknown encoding %q (use 'utf8' or 'base64')", f.Path, f.Encoding)
+		}
+		if f.Path == "SKILL.md" {
+			hasSkillMD = true
+		}
+		files = append(files, apiclient.FileUpload{Path: f.Path, Content: data})
+	}
+	if !hasSkillMD {
+		return uploadSkillOut{}, errors.New("mcp/tools: a skill needs a SKILL.md at its root")
+	}
+
+	// Resolve folder slugs → ids under RLS (the API create takes ids). An unknown
+	// slug fails fast, listing what exists so the agent can self-correct.
+	var folderIDs []string
+	if len(in.Folders) > 0 {
+		all, err := svc.Skills.ListSkillFolders(ctx, t)
+		if err != nil {
+			return uploadSkillOut{}, err
+		}
+		byslug := make(map[string]string, len(all))
+		available := make([]string, 0, len(all))
+		for _, f := range all {
+			byslug[f.Slug] = f.ID
+			available = append(available, f.Slug)
+		}
+		for _, slug := range in.Folders {
+			id, ok := byslug[slug]
+			if !ok {
+				return uploadSkillOut{}, fmt.Errorf("mcp/tools: unknown folder %q (available: %s)", slug, strings.Join(available, ", "))
+			}
+			folderIDs = append(folderIDs, id)
+		}
+	}
+
+	// Reuse an existing skill (idempotent re-upload) or create it via the API.
+	skillID := ""
+	switch existing, err := svc.Skills.SkillBySlug(ctx, t, name); {
+	case err == nil:
+		skillID = existing.ID
+	case errors.Is(err, store.ErrNotFound):
+		created, cerr := svc.API.CreateSkill(ctx, token, name, in.Title, folderIDs)
+		if cerr != nil {
+			return uploadSkillOut{}, cerr
+		}
+		skillID = created.ID
+	default:
+		return uploadSkillOut{}, err
+	}
+
+	res, err := svc.API.UploadSkill(ctx, token, skillID, files)
+	if err != nil {
+		return uploadSkillOut{}, err
+	}
+	return uploadSkillOut{Name: name, SkillID: skillID, VersionNo: res.VersionNo, Warnings: res.Warnings}, nil
+}
+
+// downloadSkillFiles reads a skill's files under a byte budget. Returns
+// (nil, 0, nil) when the skill's manifest-declared total wouldn't fit — the
+// caller renders that as a truncated entry instead of a partial skill (half a
+// skill is worse than none: the agent would install it missing files).
+func (svc *Service) downloadSkillFiles(ctx context.Context, orgID string, sk store.Skill, budget int) ([]skillFilePayload, int, error) {
+	entries, err := svc.skillManifestEntries(ctx, orgID, sk)
+	if err != nil {
+		return nil, 0, err
+	}
+	paths := make([]string, 0, len(entries))
+	var declared int64
+	for p, e := range entries {
+		if unsafeSkillPath(p) {
+			return nil, 0, fmt.Errorf("mcp/tools: skill %q manifest has unsafe path %q", sk.Slug, p)
+		}
+		paths = append(paths, p)
+		declared += e.Size
+	}
+	if declared > int64(budget) {
+		return nil, 0, nil
+	}
+	sort.Strings(paths)
+
+	files := make([]skillFilePayload, 0, len(paths))
+	total := 0
+	for _, p := range paths {
+		rc, err := svc.Blobs.GetBlob(ctx, orgID, entries[p].SHA256)
+		if err != nil {
+			return nil, 0, err
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return nil, 0, err
+		}
+		if total+len(b) > budget {
+			return nil, 0, nil // stored bytes exceeded the declared sizes — treat as over-budget
+		}
+		total += len(b)
+		f := skillFilePayload{Path: p}
+		if utf8.Valid(b) {
+			f.Content, f.Encoding = string(b), "utf8"
+		} else {
+			f.Content, f.Encoding = base64.StdEncoding.EncodeToString(b), "base64"
+		}
+		files = append(files, f)
+	}
+	return files, total, nil
+}
+
+// unsafeSkillPath re-checks a skill file path locally. The API validates paths
+// server-side, but the MCP layer refuses traversal-shaped paths anyway before an
+// agent writes the files into .claude/skills/<name>/.
+func unsafeSkillPath(p string) bool {
+	return p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, "\\") || strings.Contains(p, "..")
+}
+
 type manifestEntry struct {
 	SHA256      string `json:"sha256"`
 	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"` // used by the skill download budget; 0 when absent
 }
 
 // manifestEntries loads + parses a site's current-version manifest into a
@@ -368,6 +703,20 @@ func (svc *Service) manifestEntries(ctx context.Context, orgID string, site stor
 	if err != nil {
 		return nil, err
 	}
+	return parseManifest(raw)
+}
+
+// skillManifestEntries loads + parses a skill's current-version manifest into a
+// path→entry map.
+func (svc *Service) skillManifestEntries(ctx context.Context, orgID string, sk store.Skill) (map[string]manifestEntry, error) {
+	raw, err := svc.Blobs.GetSkillManifest(ctx, orgID, sk.ID, *sk.CurrentVersionID)
+	if err != nil {
+		return nil, err
+	}
+	return parseManifest(raw)
+}
+
+func parseManifest(raw []byte) (map[string]manifestEntry, error) {
 	var parsed struct {
 		Files map[string]manifestEntry `json:"files"`
 	}
@@ -456,6 +805,18 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		Name:        "download_site",
 		Description: "Download every file of a site's current version at once (path + contents). Args: site (slug). Large sites are truncated to a size cap.",
 	}, svc.downloadSiteHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "list_skills",
+		Description: "List the shared Claude skills in your Dropway organization. Args (all optional): query (text filter), folder (folder slug), presets_only. Note: Dropway's preset skills appear only after the org's first skills use through the API, dashboard, or CLI — MCP reads cannot trigger that seeding, but upload_skill (a write) does.",
+	}, svc.listSkillsHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "download_skill",
+		Description: "Download every file of a shared skill (path + contents, utf8 or base64). Args: name (slug from list_skills). Write the files into .claude/skills/<name>/ preserving each file's relative path; refuse any path containing '..'.",
+	}, svc.downloadSkillHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "download_skill_folder",
+		Description: "Download every skill in a skill folder at once. Args: folder (folder slug). Write each skill's files into .claude/skills/<name>/; refuse any path containing '..'. The response is capped in size — skills marked truncated carry no files, fetch each of those with download_skill.",
+	}, svc.downloadSkillFolderHandler)
 
 	if svc.API == nil {
 		return // no control-plane client → read-only deployment, no write tools
@@ -475,6 +836,12 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		// (not "[null, …]" unions that some clients coerce to strings).
 		InputSchema: inputSchema[deploySiteIn](),
 	}, svc.deploySiteHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "upload_skill",
+		Description: "Share a Claude skill with your Dropway organization (create or replace — uploads are latest-only). Args: name (slug), files ([{path, content, encoding? 'utf8'|'base64'}], must include a root SKILL.md), title (optional), folders (optional folder slugs, applied on first create). Max 200 files / 5 MiB total.",
+		// Explicit schema so `files`/`folders` are plain arrays (see deploy_site).
+		InputSchema: inputSchema[uploadSkillIn](),
+	}, svc.uploadSkillHandler)
 }
 
 // logTool emits a structured record of a tool invocation — the authenticated
@@ -547,6 +914,50 @@ func (svc *Service) setAccessHandler(ctx context.Context, _ *mcpsdk.CallToolRequ
 		return nil, setAccessOut{}, ErrNoToken
 	}
 	out, err := svc.SetAccess(ctx, t, token, in.Site, in.Mode, in.Password)
+	return nil, out, err
+}
+
+func (svc *Service) listSkillsHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in listSkillsIn) (*mcpsdk.CallToolResult, listSkillsOut, error) {
+	logTool(ctx, "list_skills", "query", in.Query, "folder", in.Folder, "presets_only", in.PresetsOnly)
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, listSkillsOut{}, ErrNoTenant
+	}
+	out, err := svc.ListSkills(ctx, t, in.Query, in.Folder, in.PresetsOnly)
+	return nil, out, err
+}
+
+func (svc *Service) downloadSkillHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in downloadSkillIn) (*mcpsdk.CallToolResult, downloadSkillOut, error) {
+	logTool(ctx, "download_skill", "name", in.Name)
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, downloadSkillOut{}, ErrNoTenant
+	}
+	out, err := svc.DownloadSkill(ctx, t, in.Name)
+	return nil, out, err
+}
+
+func (svc *Service) downloadSkillFolderHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in downloadSkillFolderIn) (*mcpsdk.CallToolResult, downloadSkillFolderOut, error) {
+	logTool(ctx, "download_skill_folder", "folder", in.Folder)
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, downloadSkillFolderOut{}, ErrNoTenant
+	}
+	out, err := svc.DownloadSkillFolder(ctx, t, in.Folder)
+	return nil, out, err
+}
+
+func (svc *Service) uploadSkillHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in uploadSkillIn) (*mcpsdk.CallToolResult, uploadSkillOut, error) {
+	logTool(ctx, "upload_skill", "name", in.Name, "files", len(in.Files))
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, uploadSkillOut{}, ErrNoTenant
+	}
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, uploadSkillOut{}, ErrNoToken
+	}
+	out, err := svc.UploadSkill(ctx, t, token, in)
 	return nil, out, err
 }
 

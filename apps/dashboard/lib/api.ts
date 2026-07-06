@@ -44,6 +44,25 @@ export type SiteComment = components["schemas"]["SiteComment"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
 
+// ---- Org-wide skill sharing shapes -----------------------------------------
+
+/** An org-shared Claude skill (SKILL.md + supporting files, latest-only versions). */
+export type Skill = components["schemas"]["Skill"];
+/** One folder membership as seen from a skill (with its preset flag). */
+export type SkillFolderRef = components["schemas"]["SkillFolderRef"];
+/** An admin-curated skill folder (engineering/product/marketing by default). */
+export type SkillFolder = components["schemas"]["SkillFolder"];
+/** One skill's files inline (utf8 / base64), or a truncated stub in bulk downloads. */
+export type SkillDownload = components["schemas"]["SkillDownload"];
+/** Successful body of `POST /v1/skills/{id}/uploads` (finalize = publish). */
+export type SkillUploadResult =
+  operations["finalizeSkillUpload"]["responses"]["201"]["content"]["application/json"];
+/** Successful body of `GET /v1/skill-folders/{id}/download`. */
+export type SkillFolderDownload =
+  operations["downloadSkillFolder"]["responses"]["200"]["content"]["application/json"];
+/** The uploader id that marks a Dropway-seeded preset skill. */
+export const SKILL_SEED_OWNER = "00000000-0000-0000-0000-000000000000";
+
 // ---- Phase 4: audit log + hard revocation --------------------------------
 //
 // NOTE: as of this writing the Go API's /v1/audit and /v1/orgs/revoke-access
@@ -749,6 +768,131 @@ export const api = {
     return apiFetch<{ recorded: boolean }>("/v1/members/joined", {
       method: "POST",
       body: JSON.stringify({}),
+    });
+  },
+
+  // ---- Org-wide skill sharing ----------------------------------------------
+
+  /** List/search the org's shared skills (q, folder slug, presets-only). */
+  async listSkills(opts: { q?: string; folder?: string; presets?: boolean } = {}): Promise<Skill[]> {
+    const params = new URLSearchParams();
+    if (opts.q) params.set("q", opts.q);
+    if (opts.folder) params.set("folder", opts.folder);
+    if (opts.presets) params.set("presets", "true");
+    const qs = params.toString();
+    const body = (await apiGet(`/v1/skills${qs ? `?${qs}` : ""}`)) as { skills?: Skill[] };
+    return body.skills ?? [];
+  },
+
+  /** Register a skill (metadata; content arrives via the upload flow). */
+  async createSkill(input: { slug: string; title?: string; folders?: string[] }): Promise<Skill> {
+    const body = await apiFetch<{ skill?: Skill }>("/v1/skills", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return body.skill ?? {};
+  },
+
+  /** Delete a skill (owner or org admin). */
+  deleteSkill(id: string): Promise<{ deleted?: boolean }> {
+    return apiFetch<{ deleted?: boolean }>(`/v1/skills/${id}`, { method: "DELETE" });
+  },
+
+  /** Replace a skill's folder memberships (owner or admin). */
+  async setSkillFolders(id: string, folders: string[]): Promise<Skill> {
+    const body = await apiFetch<{ skill?: Skill }>(`/v1/skills/${id}/folders`, {
+      method: "PUT",
+      body: JSON.stringify({ folders }),
+    });
+    return body.skill ?? {};
+  },
+
+  /** Skill upload step 1: validate + missing blobs + presigned PUT URLs. */
+  prepareSkillUpload(id: string, manifest: ManifestFile[]): Promise<PrepareDeploymentResult> {
+    return apiFetch<PrepareDeploymentResult>(`/v1/skills/${id}/uploads/prepare`, {
+      method: "POST",
+      body: JSON.stringify({ manifest }),
+    });
+  },
+
+  /** Skill upload step 3: finalize (server-verifies; finalize publishes). */
+  finalizeSkillUpload(
+    id: string,
+    manifest: ManifestFile[],
+    digest: string,
+  ): Promise<SkillUploadResult> {
+    return apiFetch<SkillUploadResult>(`/v1/skills/${id}/uploads`, {
+      method: "POST",
+      body: JSON.stringify({ manifest, digest }),
+    });
+  },
+
+  /** Download one skill's files inline (utf8 / base64). */
+  downloadSkill(id: string): Promise<SkillDownload> {
+    return apiFetch<SkillDownload>(`/v1/skills/${id}/download`);
+  },
+
+  /** Bulk-download every skill in a folder (truncated stubs past the budget). */
+  downloadSkillFolder(id: string): Promise<SkillFolderDownload> {
+    return apiFetch<SkillFolderDownload>(`/v1/skill-folders/${id}/download`);
+  },
+
+  /** The org's skill folders (with item counts). */
+  async listSkillFolders(): Promise<SkillFolder[]> {
+    const body = (await apiGet("/v1/skill-folders")) as { folders?: SkillFolder[] };
+    return body.folders ?? [];
+  },
+
+  /** Create a skill folder (admin/owner). */
+  async createSkillFolder(input: { slug: string; title?: string }): Promise<SkillFolder> {
+    const body = await apiFetch<{ folder?: SkillFolder }>("/v1/skill-folders", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return body.folder ?? {};
+  },
+
+  /** Retitle a folder (admin/owner; the slug is stable). */
+  async renameSkillFolder(id: string, title: string): Promise<SkillFolder> {
+    const body = await apiFetch<{ folder?: SkillFolder }>(`/v1/skill-folders/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+    return body.folder ?? {};
+  },
+
+  /** Delete a folder (admin/owner). Its skills survive. */
+  deleteSkillFolder(id: string): Promise<{ deleted?: boolean }> {
+    return apiFetch<{ deleted?: boolean }>(`/v1/skill-folders/${id}`, { method: "DELETE" });
+  },
+
+  /** Add a skill to a folder (admin any + preset flag; owners their own skill). */
+  addSkillFolderItem(
+    folderId: string,
+    input: { skill_id: string; is_preset?: boolean },
+  ): Promise<{ added?: boolean }> {
+    return apiFetch<{ added?: boolean }>(`/v1/skill-folders/${folderId}/items`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Remove a skill from a folder (admin or the skill's owner). */
+  removeSkillFolderItem(folderId: string, skillId: string): Promise<{ removed?: boolean }> {
+    return apiFetch<{ removed?: boolean }>(`/v1/skill-folders/${folderId}/items/${skillId}`, {
+      method: "DELETE",
+    });
+  },
+
+  /** Flip a folder membership's preset flag (admin/owner). */
+  setSkillFolderItemPreset(
+    folderId: string,
+    skillId: string,
+    isPreset: boolean,
+  ): Promise<{ is_preset?: boolean }> {
+    return apiFetch<{ is_preset?: boolean }>(`/v1/skill-folders/${folderId}/items/${skillId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_preset: isPreset }),
     });
   },
 };

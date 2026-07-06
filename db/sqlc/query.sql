@@ -601,3 +601,231 @@ SELECT id, org_id, actor_user, actor_token, action, target, metadata, ip, reques
 FROM app.audit_log
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2;
+
+-- ===========================================================================
+-- skills (migration 0008) — org-wide skill sharing
+-- ===========================================================================
+
+-- name: LockOrgSkillQuota :exec
+-- Serialize concurrent skill creates for the SAME org (the same COUNT → policy →
+-- INSERT critical section the site cap uses).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':skills'));
+
+-- name: CountSkillsForOrg :one
+SELECT count(*)::bigint AS n
+FROM app.skills
+WHERE org_id = $1;
+
+-- name: CreateSkill :one
+INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
+
+-- name: GetSkill :one
+SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+FROM app.skills
+WHERE id = $1;
+
+-- name: GetSkillBySlug :one
+SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+FROM app.skills
+WHERE slug = $1;
+
+-- name: ListSkills :many
+-- Search + filter the active org's skills. q matches slug/title/description
+-- (ILIKE, '' = no text filter); folder_slug restricts to members of that folder
+-- ('' = any); presets_only additionally requires the membership's is_preset flag.
+-- Skills that have never finalized an upload (no current version) are visible
+-- only to their owner (caller_id), so half-finished uploads don't clutter the
+-- org listing. RLS scopes every read to the active org.
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+FROM app.skills sk
+WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_id)::uuid)
+  AND (
+        sqlc.arg(q)::text = ''
+        OR sk.slug ILIKE '%' || sqlc.arg(q) || '%'
+        OR COALESCE(sk.title, '') ILIKE '%' || sqlc.arg(q) || '%'
+        OR COALESCE(sk.description, '') ILIKE '%' || sqlc.arg(q) || '%'
+      )
+  AND (
+        (sqlc.arg(folder_slug)::text = '' AND NOT sqlc.arg(presets_only)::boolean)
+        OR EXISTS (
+            SELECT 1
+            FROM app.skill_folder_items fi
+            JOIN app.skill_folders f ON f.id = fi.folder_id
+            WHERE fi.skill_id = sk.id
+              AND (sqlc.arg(folder_slug)::text = '' OR f.slug = sqlc.arg(folder_slug))
+              AND (NOT sqlc.arg(presets_only)::boolean OR fi.is_preset)
+        )
+      )
+ORDER BY sk.created_at DESC;
+
+-- name: DeleteSkill :one
+-- Remove a skill (versions + folder memberships cascade). RETURNING detects an
+-- RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
+DELETE FROM app.skills
+WHERE id = $1
+RETURNING id;
+
+-- name: SetSkillMeta :one
+-- Fill a skill's human metadata (from SKILL.md frontmatter on finalize, or an
+-- explicit edit). Empty strings are passed as NULL so "unset" round-trips.
+UPDATE app.skills
+SET title = $2,
+    description = $3
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
+
+-- name: SetSkillCurrentVersion :exec
+-- Flip the live pointer (finalize = publish in the latest-only v1 model).
+UPDATE app.skills
+SET current_version_id = $2
+WHERE id = $1;
+
+-- name: NextSkillVersionNo :one
+SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version_no
+FROM app.skill_versions
+WHERE skill_id = $1;
+
+-- name: CreateSkillVersion :one
+INSERT INTO app.skill_versions (
+    org_id, skill_id, version_no, status, content_hash, size_bytes, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at;
+
+-- name: GetSkillVersion :one
+SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+FROM app.skill_versions
+WHERE id = $1;
+
+-- name: GetSkillVersionByContentHash :one
+-- Idempotent re-upload of identical content (the per-skill content_hash unique
+-- constraint backs this).
+SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+FROM app.skill_versions
+WHERE skill_id = $1 AND content_hash = $2;
+
+-- ===========================================================================
+-- skill folders — admin-curated taxonomy + preset flags
+-- ===========================================================================
+
+-- name: CreateSkillFolder :one
+INSERT INTO app.skill_folders (org_id, slug, title)
+VALUES ($1, $2, $3)
+RETURNING id, org_id, slug, title, created_at;
+
+-- name: GetSkillFolder :one
+SELECT id, org_id, slug, title, created_at
+FROM app.skill_folders
+WHERE id = $1;
+
+-- name: GetSkillFolderBySlug :one
+SELECT id, org_id, slug, title, created_at
+FROM app.skill_folders
+WHERE slug = $1;
+
+-- name: ListSkillFolders :many
+-- The org's folders with their member counts (the folder tabs + admin panel).
+SELECT
+    f.id, f.org_id, f.slug, f.title, f.created_at,
+    COALESCE((SELECT COUNT(*) FROM app.skill_folder_items fi WHERE fi.folder_id = f.id), 0)::bigint AS item_count
+FROM app.skill_folders f
+ORDER BY f.slug;
+
+-- name: RenameSkillFolder :one
+UPDATE app.skill_folders
+SET title = $2
+WHERE id = $1
+RETURNING id, org_id, slug, title, created_at;
+
+-- name: DeleteSkillFolder :one
+-- Memberships cascade; the skills themselves survive.
+DELETE FROM app.skill_folders
+WHERE id = $1
+RETURNING id;
+
+-- name: LockSkillFolderQuota :exec
+-- Serialize concurrent membership inserts for the SAME folder, so the COUNT →
+-- per-folder cap check → INSERT is a critical section (free tier caps skills per
+-- folder; see quota.ResourceSkillPerFolder).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'));
+
+-- name: CountFolderItems :one
+SELECT count(*)::bigint AS n
+FROM app.skill_folder_items
+WHERE folder_id = $1;
+
+-- name: UpsertSkillFolderItem :exec
+-- Add a skill to a folder (or update its preset flag if already a member).
+INSERT INTO app.skill_folder_items (org_id, folder_id, skill_id, is_preset, added_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (folder_id, skill_id) DO UPDATE
+SET is_preset = EXCLUDED.is_preset;
+
+-- name: RemoveSkillFolderItem :one
+DELETE FROM app.skill_folder_items
+WHERE folder_id = $1 AND skill_id = $2
+RETURNING skill_id;
+
+-- name: SetSkillFolderItemPreset :one
+UPDATE app.skill_folder_items
+SET is_preset = $3
+WHERE folder_id = $1 AND skill_id = $2
+RETURNING folder_id, skill_id, is_preset;
+
+-- name: ListFoldersForSkills :many
+-- Folder memberships for a set of skills in one round-trip (the folder chips on
+-- each row of a skills listing — no N+1).
+SELECT fi.skill_id, f.id AS folder_id, f.slug, f.title, fi.is_preset
+FROM app.skill_folder_items fi
+JOIN app.skill_folders f ON f.id = fi.folder_id
+WHERE fi.skill_id = ANY(sqlc.arg(skill_ids)::uuid[])
+ORDER BY f.slug;
+
+-- name: ListFolderSkills :many
+-- Every skill in a folder that has a live version (the bulk-download set).
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+FROM app.skill_folder_items fi
+JOIN app.skills sk ON sk.id = fi.skill_id
+WHERE fi.folder_id = $1
+  AND sk.current_version_id IS NOT NULL
+ORDER BY sk.slug;
+
+-- name: DeleteSkillFolderItemsForSkill :exec
+-- Replace-memberships helper: clear a skill's memberships before re-inserting
+-- the new set (PUT /skills/{id}/folders semantics), preserving nothing.
+DELETE FROM app.skill_folder_items
+WHERE skill_id = $1;
+
+-- ===========================================================================
+-- skills seeding — lazy per-org default folders + preset skills
+-- ===========================================================================
+
+-- name: ListCurrentSkillVersionsForGC :many
+-- Every skill's CURRENT version (latest-only model: that is the only version
+-- whose blobs must survive GC — superseded skill versions' blobs become
+-- orphans). The R2 GC unions these manifests' blob refs with the retained site
+-- versions' refs before deleting unreferenced org blobs; without this, skill
+-- content would look orphaned to a site-only GC and be deleted. RLS scopes the
+-- rows to the active org.
+SELECT sk.id AS skill_id, sk.current_version_id AS version_id
+FROM app.skills sk
+WHERE sk.current_version_id IS NOT NULL
+ORDER BY sk.id;
+
+-- name: LockOrgSkillsSeed :exec
+-- Serialize concurrent first-touches of the skills feature for an org, so the
+-- skills_seeded check → seed → set-flag sequence runs exactly once.
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':skills_seed'));
+
+-- name: GetOrgSkillsSeeded :one
+SELECT COALESCE(
+    (SELECT skills_seeded FROM app.org_meta WHERE id = $1),
+    false
+)::boolean AS skills_seeded;
+
+-- name: SetOrgSkillsSeeded :exec
+UPDATE app.org_meta
+SET skills_seeded = $2
+WHERE id = $1;

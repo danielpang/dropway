@@ -117,6 +117,18 @@ export default function CliReferencePage() {
               <Code key="c">read &lt;url-or-slug&gt;</Code>,
               "Fetch a site's served content over HTTP and print it to stdout.",
             ],
+            [
+              <Code key="c">skills push &lt;dir&gt;</Code>,
+              "Share a skill (a folder with a SKILL.md) with your org, optionally into folders with --folder.",
+            ],
+            [
+              <Code key="c">skills list</Code>,
+              "List the org's shared skills; filter with --search, --folder, or --presets.",
+            ],
+            [
+              <Code key="c">skills pull &lt;name&gt;</Code>,
+              "Download a shared skill into .claude/skills/ (or a whole folder with --folder).",
+            ],
             [<Code key="c">version</Code>, "Print the CLI version."],
             [
               <Code key="c">gc</Code>,

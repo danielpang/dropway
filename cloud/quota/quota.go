@@ -51,6 +51,11 @@ const (
 	proSitesCap  = 100
 )
 
+// Per-FOLDER skill cap: the free tier may hold at most 10 skills in any one
+// skill folder; pro/business/enterprise are uncapped. Skills per ORG are
+// unlimited on every tier (only the folder curation is banded).
+const freeSkillsPerFolderCap = 10
+
 // Per-org storage caps in BYTES. gib is binary (1<<30) to
 // match how the byte counter + infra tooling measure; the values are tunable.
 const (
@@ -127,6 +132,17 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 			return nil
 		}
 		capMax, next = storageCap(tier)
+	case corequota.ResourceSkillPerOrg:
+		// Skills per org are unlimited on every tier (the folder cap below is the
+		// only skills lever today).
+		return nil
+	case corequota.ResourceSkillPerFolder:
+		// Free tier: at most 10 skills in any one skill folder; every paid tier is
+		// uncapped.
+		if tier != TierFree {
+			return nil
+		}
+		capMax, next = freeSkillsPerFolderCap, TierPro
 	default:
 		// Unknown resources are not capped by the cloud policy (the store only
 		// calls Allow for the resources it enforces).

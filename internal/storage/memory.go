@@ -122,6 +122,25 @@ func (f *Fake) GetManifest(_ context.Context, orgID, siteID, versionID string) (
 	return append([]byte(nil), b...), nil
 }
 
+// PutSkillManifest stages a skill-version manifest.
+func (f *Fake) PutSkillManifest(_ context.Context, orgID, skillID, versionID string, manifest []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.manifests[SkillManifestKey(orgID, skillID, versionID)] = append([]byte(nil), manifest...)
+	return nil
+}
+
+// GetSkillManifest reads a staged skill manifest.
+func (f *Fake) GetSkillManifest(_ context.Context, orgID, skillID, versionID string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.manifests[SkillManifestKey(orgID, skillID, versionID)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return append([]byte(nil), b...), nil
+}
+
 // ListBlobInfos returns every blob under the org's prefix as a {SHA, LastModified}
 // pair (the GC age-guard input).
 func (f *Fake) ListBlobInfos(_ context.Context, orgID string) ([]BlobInfo, error) {

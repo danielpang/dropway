@@ -67,6 +67,25 @@ const (
 	// ActionSiteFeedMeta records a change to a site's feed title/description
 	// (PUT /v1/sites/{id}/feed-meta).
 	ActionSiteFeedMeta Action = "site.feed_meta"
+	// ActionSkillCreate records a new shared skill (POST /v1/skills).
+	ActionSkillCreate Action = "skill.create"
+	// ActionSkillUpload records a finalized skill version
+	// (POST /v1/skills/{id}/uploads) — in the latest-only model this is also
+	// the publish.
+	ActionSkillUpload Action = "skill.upload"
+	// ActionSkillDelete records a skill removed (DELETE /v1/skills/{id}).
+	ActionSkillDelete Action = "skill.delete"
+	// ActionSkillDownload records a skill (or a whole folder) downloaded.
+	ActionSkillDownload Action = "skill.download"
+	// ActionSkillFolderChange records a skill's folder memberships changing
+	// (PUT /v1/skills/{id}/folders, or add/remove on /v1/skill-folders items).
+	ActionSkillFolderChange Action = "skill.folder_change"
+	// ActionSkillFolderCreate / Rename / Delete record admin folder curation.
+	ActionSkillFolderCreate Action = "skill_folder.create"
+	ActionSkillFolderRename Action = "skill_folder.rename"
+	ActionSkillFolderDelete Action = "skill_folder.delete"
+	// ActionSkillFolderPresetChange records a preset flag flip on a folder item.
+	ActionSkillFolderPresetChange Action = "skill_folder.preset_change"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,
