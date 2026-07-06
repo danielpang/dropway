@@ -9,6 +9,16 @@
 /** The uploader id that marks a Dropway-seeded preset skill (render as "Dropway"). */
 export const SKILL_SEED_OWNER = "00000000-0000-0000-0000-000000000000";
 
+/** Lowercase DNS-label slug (matches the server's slug grammar). */
+export function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
+}
+
 /**
  * Mirror of the server's internal/skillspec.CleanPath: a safe skill-relative
  * POSIX path is non-empty, relative, forward-slash only, with no empty / "." /

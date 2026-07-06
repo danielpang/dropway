@@ -173,6 +173,11 @@ export function SkillsView(props: {
               <FolderPlus className="mr-1.5 h-4 w-4" /> Manage folders
             </Button>
           ) : null}
+          <Button variant="outline" asChild>
+            <Link href="/skills/new">
+              <Pencil className="mr-1.5 h-4 w-4" /> Write a skill
+            </Link>
+          </Button>
           <Button onClick={() => setUploadOpen(true)}>Upload skill</Button>
         </div>
       </div>
@@ -249,8 +254,18 @@ export function SkillsView(props: {
 
       {/* The list. */}
       {skills.length === 0 && !loadError ? (
-        <Card className="p-10 text-center text-sm text-muted-foreground">
-          No skills match. Upload one — a skill is just a folder with a SKILL.md inside.
+        <Card className="space-y-3 p-10 text-center text-sm text-muted-foreground">
+          <p>No skills match. Write one in the browser, or upload a folder with a SKILL.md inside.</p>
+          <div className="flex items-center justify-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/skills/new">
+                <Pencil className="mr-1.5 h-4 w-4" /> Write a skill
+              </Link>
+            </Button>
+            <Button size="sm" onClick={() => setUploadOpen(true)}>
+              Upload skill
+            </Button>
+          </div>
         </Card>
       ) : (
         <div className="space-y-3">
