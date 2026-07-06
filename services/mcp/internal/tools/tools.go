@@ -25,6 +25,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/danielpang/dropway/internal/skillspec"
 	slugpkg "github.com/danielpang/dropway/internal/slug"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	"github.com/danielpang/dropway/services/mcp/internal/auth"
@@ -69,6 +70,7 @@ type ControlPlane interface {
 	Deploy(ctx context.Context, token, siteID string, files []apiclient.DeployFile, publish bool) (apiclient.DeployResult, error)
 	CreateSkill(ctx context.Context, token, slug, title string, folders []string) (apiclient.SkillInfo, error)
 	UploadSkill(ctx context.Context, token, skillID string, files []apiclient.FileUpload) (apiclient.UploadResult, error)
+	SetSkillFolders(ctx context.Context, token, skillID string, folderIDs []string) error
 }
 
 // Service holds the tool dependencies.
@@ -547,10 +549,17 @@ func (svc *Service) DownloadSkillFolder(ctx context.Context, t store.Tenant, fol
 }
 
 // UploadSkill decodes the input files, enforces the cheap client-side rules
-// (root SKILL.md, safe paths), resolves folder slugs to ids via the RLS store,
-// creates the skill through the API when the slug doesn't exist yet (reusing the
-// existing skill otherwise — re-upload replaces content in the latest-only
-// model), and runs the API upload loop under the user's forwarded token.
+// (root SKILL.md, safe paths), creates the skill through the API when the slug
+// doesn't exist yet (reusing the existing skill otherwise — re-upload replaces
+// content in the latest-only model), runs the API upload loop, and finally files
+// a newly-created skill into any requested folders — all under the user's
+// forwarded token.
+//
+// Order matters: the API create is what triggers the server's default-folder
+// seeding, so folder slugs are resolved to ids only AFTER the create. This is why
+// an org whose first-ever skills activity is an MCP upload can still target a
+// default folder (resolving before the create would dead-end against an
+// empty folder set).
 func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token string, in uploadSkillIn) (uploadSkillOut, error) {
 	name := slugpkg.Slugify(in.Name)
 	if name == "" {
@@ -563,8 +572,8 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 	files := make([]apiclient.FileUpload, 0, len(in.Files))
 	hasSkillMD := false
 	for _, f := range in.Files {
-		if unsafeSkillPath(f.Path) {
-			return uploadSkillOut{}, fmt.Errorf("mcp/tools: unsafe file path %q (paths must be relative, without '..')", f.Path)
+		if !skillspec.CleanPath(f.Path) {
+			return uploadSkillOut{}, fmt.Errorf("mcp/tools: unsafe file path %q (paths must be clean and relative, with no '..' segments)", f.Path)
 		}
 		var data []byte
 		switch f.Encoding {
@@ -588,40 +597,23 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 		return uploadSkillOut{}, errors.New("mcp/tools: a skill needs a SKILL.md at its root")
 	}
 
-	// Resolve folder slugs → ids under RLS (the API create takes ids). An unknown
-	// slug fails fast, listing what exists so the agent can self-correct.
-	var folderIDs []string
-	if len(in.Folders) > 0 {
-		all, err := svc.Skills.ListSkillFolders(ctx, t)
-		if err != nil {
-			return uploadSkillOut{}, err
-		}
-		byslug := make(map[string]string, len(all))
-		available := make([]string, 0, len(all))
-		for _, f := range all {
-			byslug[f.Slug] = f.ID
-			available = append(available, f.Slug)
-		}
-		for _, slug := range in.Folders {
-			id, ok := byslug[slug]
-			if !ok {
-				return uploadSkillOut{}, fmt.Errorf("mcp/tools: unknown folder %q (available: %s)", slug, strings.Join(available, ", "))
-			}
-			folderIDs = append(folderIDs, id)
-		}
-	}
-
-	// Reuse an existing skill (idempotent re-upload) or create it via the API.
+	// Reuse an existing skill (idempotent re-upload) or create it via the API. The
+	// create is called with NO folders on purpose: it is what triggers the server's
+	// default-folder seeding, so folders are resolved and applied only afterwards
+	// (see below). Reuse when the slug already exists (re-upload replaces content in
+	// the latest-only model).
 	skillID := ""
+	created := false
 	switch existing, err := svc.Skills.SkillBySlug(ctx, t, name); {
 	case err == nil:
 		skillID = existing.ID
 	case errors.Is(err, store.ErrNotFound):
-		created, cerr := svc.API.CreateSkill(ctx, token, name, in.Title, folderIDs)
+		c, cerr := svc.API.CreateSkill(ctx, token, name, in.Title, nil)
 		if cerr != nil {
 			return uploadSkillOut{}, cerr
 		}
-		skillID = created.ID
+		skillID = c.ID
+		created = true
 	default:
 		return uploadSkillOut{}, err
 	}
@@ -630,6 +622,37 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 	if err != nil {
 		return uploadSkillOut{}, err
 	}
+
+	// File a newly-created skill into the requested folders. Resolving slugs → ids
+	// HERE (post-create, post-seed) is the fix: the create above triggered seeding,
+	// so the org's default folders now exist even on an org whose first-ever skills
+	// activity is this upload. An unknown slug lists what's available (now non-empty)
+	// so the agent can self-correct. Folders are applied only on first create,
+	// matching CreateSkill's old folders argument — a re-upload never re-files.
+	if created && len(in.Folders) > 0 {
+		all, lerr := svc.Skills.ListSkillFolders(ctx, t)
+		if lerr != nil {
+			return uploadSkillOut{}, lerr
+		}
+		byslug := make(map[string]string, len(all))
+		available := make([]string, 0, len(all))
+		for _, f := range all {
+			byslug[f.Slug] = f.ID
+			available = append(available, f.Slug)
+		}
+		folderIDs := make([]string, 0, len(in.Folders))
+		for _, slug := range in.Folders {
+			id, ok := byslug[slug]
+			if !ok {
+				return uploadSkillOut{}, fmt.Errorf("mcp/tools: unknown folder %q (available: %s)", slug, strings.Join(available, ", "))
+			}
+			folderIDs = append(folderIDs, id)
+		}
+		if err := svc.API.SetSkillFolders(ctx, token, skillID, folderIDs); err != nil {
+			return uploadSkillOut{}, err
+		}
+	}
+
 	return uploadSkillOut{Name: name, SkillID: skillID, VersionNo: res.VersionNo, Warnings: res.Warnings}, nil
 }
 
@@ -645,7 +668,7 @@ func (svc *Service) downloadSkillFiles(ctx context.Context, orgID string, sk sto
 	paths := make([]string, 0, len(entries))
 	var declared int64
 	for p, e := range entries {
-		if unsafeSkillPath(p) {
+		if !skillspec.CleanPath(p) {
 			return nil, 0, fmt.Errorf("mcp/tools: skill %q manifest has unsafe path %q", sk.Slug, p)
 		}
 		paths = append(paths, p)
@@ -681,13 +704,6 @@ func (svc *Service) downloadSkillFiles(ctx context.Context, orgID string, sk sto
 		files = append(files, f)
 	}
 	return files, total, nil
-}
-
-// unsafeSkillPath re-checks a skill file path locally. The API validates paths
-// server-side, but the MCP layer refuses traversal-shaped paths anyway before an
-// agent writes the files into .claude/skills/<name>/.
-func unsafeSkillPath(p string) bool {
-	return p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, "\\") || strings.Contains(p, "..")
 }
 
 type manifestEntry struct {

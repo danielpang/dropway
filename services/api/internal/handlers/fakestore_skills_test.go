@@ -211,12 +211,12 @@ func (f *fakeStore) CreateSkillVersion(_ context.Context, t store.Tenant, p stor
 	if !ok {
 		return store.SkillVersion{}, store.ErrNotFound
 	}
-	// Idempotent on content hash.
+	_ = s
+	// Idempotent on content hash. Mirrors the real store: does NOT flip the live
+	// pointer — the handler publishes via PublishSkillVersion after the manifest
+	// is written.
 	for _, v := range sk.versions {
 		if v.SkillID == p.SkillID && v.ContentHash == p.ContentHash {
-			vid := v.ID
-			s.CurrentVersionID = &vid
-			sk.skills[p.SkillID] = s
 			return v, nil
 		}
 	}
@@ -231,10 +231,23 @@ func (f *fakeStore) CreateSkillVersion(_ context.Context, t store.Tenant, p stor
 		Status: "ready", ContentHash: p.ContentHash, SizeBytes: p.SizeBytes, CreatedBy: t.UserID,
 	}
 	sk.versions[v.ID] = v
-	vid := v.ID
-	s.CurrentVersionID = &vid
-	sk.skills[p.SkillID] = s
 	return v, nil
+}
+
+func (f *fakeStore) PublishSkillVersion(_ context.Context, t store.Tenant, skillID, versionID string) error {
+	sk := f.sk()
+	s, ok := sk.skills[skillID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	v, ok := sk.versions[versionID]
+	if !ok || v.SkillID != skillID {
+		return store.ErrNotFound
+	}
+	vid := versionID
+	s.CurrentVersionID = &vid
+	sk.skills[skillID] = s
+	return nil
 }
 
 func (f *fakeStore) ListSkillFolders(_ context.Context, t store.Tenant) ([]store.SkillFolder, error) {
@@ -347,12 +360,14 @@ func (f *fakeStore) SkillsSeeded(_ context.Context, t store.Tenant) (bool, error
 	return f.sk().seeded, nil
 }
 
-func (f *fakeStore) SeedOrgSkills(ctx context.Context, t store.Tenant, seeds []store.SkillSeed) ([]store.SeededSkill, bool, error) {
+// SeedOrgSkillsStage mirrors the real store: idempotently materializes folders +
+// seed skills + versions (NOT current) + preset memberships, without setting the
+// seeded flag. Re-running is safe (get-or-create semantics).
+func (f *fakeStore) SeedOrgSkillsStage(ctx context.Context, t store.Tenant, seeds []store.SkillSeed) ([]store.SeededSkill, bool, error) {
 	sk := f.sk()
 	if sk.seeded {
 		return nil, false, nil
 	}
-	var created []store.SeededSkill
 	for _, def := range store.DefaultSkillFolders {
 		if _, err := f.CreateSkillFolder(ctx, t, def.Slug, def.Title); err != nil && err != store.ErrSlugTaken {
 			return nil, false, err
@@ -363,27 +378,58 @@ func (f *fakeStore) SeedOrgSkills(ctx context.Context, t store.Tenant, seeds []s
 		folderBySlug[fol.Slug] = id
 	}
 	seedTenant := store.Tenant{OrgID: t.OrgID, UserID: store.SeedOwnerUserID}
+	var created []store.SeededSkill
 	for _, seed := range seeds {
-		s, err := f.CreateSkill(ctx, seedTenant, seed.Slug, seed.Title, nil)
-		if err != nil {
-			if err == store.ErrSlugTaken {
+		// Get-or-create the seed skill by slug (reuse only our own seed).
+		var skillID string
+		if existing, ok := f.skillBySlug(seed.Slug); ok {
+			if existing.OwnerUserID != store.SeedOwnerUserID {
 				continue
 			}
-			return nil, false, err
+			skillID = existing.ID
+		} else {
+			s, err := f.CreateSkill(ctx, seedTenant, seed.Slug, seed.Title, nil)
+			if err != nil {
+				return nil, false, err
+			}
+			skillID = s.ID
 		}
 		v, err := f.CreateSkillVersion(ctx, seedTenant, store.CreateSkillVersionParams{
-			SkillID: s.ID, ContentHash: seed.ContentHash, SizeBytes: seed.SizeBytes,
+			SkillID: skillID, ContentHash: seed.ContentHash, SizeBytes: seed.SizeBytes,
 		})
 		if err != nil {
 			return nil, false, err
 		}
 		if folderID, ok := folderBySlug[seed.FolderSlug]; ok {
-			if err := f.addItem(t, folderID, s.ID, true); err != nil {
+			if err := f.addItem(t, folderID, skillID, true); err != nil {
 				return nil, false, err
 			}
 		}
-		created = append(created, store.SeededSkill{Slug: seed.Slug, SkillID: s.ID, VersionID: v.ID})
+		created = append(created, store.SeededSkill{Slug: seed.Slug, SkillID: skillID, VersionID: v.ID})
+	}
+	return created, true, nil
+}
+
+// SeedOrgSkillsPublish flips each staged seed skill to its version + marks seeded.
+func (f *fakeStore) SeedOrgSkillsPublish(ctx context.Context, t store.Tenant, created []store.SeededSkill) error {
+	sk := f.sk()
+	if sk.seeded {
+		return nil
+	}
+	for _, c := range created {
+		if err := f.PublishSkillVersion(ctx, t, c.SkillID, c.VersionID); err != nil {
+			return err
+		}
 	}
 	sk.seeded = true
-	return created, true, nil
+	return nil
+}
+
+func (f *fakeStore) skillBySlug(slug string) (store.Skill, bool) {
+	for _, s := range f.sk().skills {
+		if s.Slug == slug {
+			return s, true
+		}
+	}
+	return store.Skill{}, false
 }

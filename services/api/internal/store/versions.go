@@ -161,6 +161,41 @@ func (s *Store) accountStorage(ctx context.Context, q *db.Queries, orgID string,
 	return q.AddOrgStorage(ctx, db.AddOrgStorageParams{Delta: delta, OrgID: orgID})
 }
 
+// meterStorageNoCap records new blob bytes in the org ledger + counter like
+// accountStorage, but WITHOUT the plan-tier cap check. Used for lazily seeded
+// preset skills: their (tiny, Dropway-provided) content must not be rejected
+// for an org that happens to be at its storage cap, which would otherwise leave
+// the org permanently unable to seed (skills_seeded never flips) and re-staging
+// blobs on every skills request.
+func (s *Store) meterStorageNoCap(ctx context.Context, q *db.Queries, orgID string, blobs []BlobSize) error {
+	if len(blobs) == 0 {
+		return nil
+	}
+	if err := q.LockOrgStorageQuota(ctx, orgID); err != nil {
+		return err
+	}
+	var delta int64
+	for _, b := range blobs {
+		if b.SHA == "" {
+			continue
+		}
+		n, err := q.InsertOrgBlob(ctx, db.InsertOrgBlobParams{
+			OrgID: orgID, ContentHash: b.SHA, SizeBytes: b.Size,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				continue
+			}
+			return err
+		}
+		delta += n
+	}
+	if delta == 0 {
+		return nil
+	}
+	return q.AddOrgStorage(ctx, db.AddOrgStorageParams{Delta: delta, OrgID: orgID})
+}
+
 // OrgStorageBytes returns the org's current stored bytes (the running counter the
 // storage cap reads; also the source for a usage view). RLS-scoped to the tenant.
 func (s *Store) OrgStorageBytes(ctx context.Context, t Tenant) (int64, error) {

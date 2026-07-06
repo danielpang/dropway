@@ -7,6 +7,7 @@ import {
   precheckSkillFolder,
 } from "@/lib/skill-upload";
 import { buildZip, crc32 } from "@/lib/zip";
+import { isSafeSkillPath } from "@/lib/skills-shared";
 
 function dropped(path: string, size = 10): DroppedFile {
   // Only .path/.file.size are read by the prechecks; a stub File suffices.
@@ -34,6 +35,26 @@ describe("precheckSkillFolder", () => {
   it("caps total size at 5 MiB", () => {
     const files = [dropped("SKILL.md"), dropped("big.bin", 6 * 1024 * 1024)];
     expect(precheckSkillFolder(files)).toMatch(/5 MiB/);
+  });
+});
+
+describe("isSafeSkillPath", () => {
+  it("accepts clean relative paths, including filenames containing dots", () => {
+    expect(isSafeSkillPath("SKILL.md")).toBe(true);
+    expect(isSafeSkillPath("assets/logo.png")).toBe(true);
+    // A filename that merely contains ".." is valid (only whole ".." segments aren't) —
+    // the old substring check wrongly dropped these.
+    expect(isSafeSkillPath("api..reference.md")).toBe(true);
+    expect(isSafeSkillPath("notes...txt")).toBe(true);
+  });
+
+  it("rejects traversal, absolute, backslash, and empty segments", () => {
+    expect(isSafeSkillPath("../secret")).toBe(false);
+    expect(isSafeSkillPath("a/../b")).toBe(false);
+    expect(isSafeSkillPath("/etc/passwd")).toBe(false);
+    expect(isSafeSkillPath("a//b")).toBe(false);
+    expect(isSafeSkillPath("a\\b")).toBe(false);
+    expect(isSafeSkillPath("")).toBe(false);
   });
 });
 

@@ -1006,9 +1006,11 @@ export interface components {
             slug?: string;
             /**
              * Format: uuid
-             * @description The uploader. The all-zero uuid marks a Dropway-seeded preset (render as "Dropway"; managed by org admins).
+             * @description The uploader (the all-zero uuid for Dropway-seeded presets).
              */
             owner_id?: string;
+            /** @description True when the skill is a Dropway-provided preset. Clients render the owner as "Dropway" from this flag rather than matching the sentinel owner_id themselves. */
+            is_seeded?: boolean;
             /** @description From the create request or SKILL.md frontmatter (empty when unset). */
             title?: string;
             description?: string;

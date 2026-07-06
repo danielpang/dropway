@@ -260,6 +260,17 @@ func (c *Client) CreateSkill(ctx context.Context, token, slug, title string, fol
 	return resp.Skill, nil
 }
 
+// SetSkillFolders calls PUT /v1/skills/{id}/folders, replacing the skill's folder
+// memberships with the given folder IDs (owner/admin — the API re-checks the role).
+// An empty/nil slice clears the skill's folders.
+func (c *Client) SetSkillFolders(ctx context.Context, token, skillID string, folderIDs []string) error {
+	folders := folderIDs
+	if folders == nil {
+		folders = []string{}
+	}
+	return c.do(ctx, http.MethodPut, "/v1/skills/"+skillID+"/folders", token, map[string]any{"folders": folders}, nil)
+}
+
 // UploadSkill runs the skill upload loop through the API under the user's
 // token — the same prepare → presigned-PUT → finalize contract as Deploy, except
 // finalize IS publish (skills are latest-only, no separate publish step).

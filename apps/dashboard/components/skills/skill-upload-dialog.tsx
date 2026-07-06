@@ -18,6 +18,8 @@ import type { SkillFolder } from "@/lib/api";
 import {
   collectDataTransferItems,
   collectInputFiles,
+  dropRootName,
+  inputRootName,
   type DroppedFile,
 } from "@/lib/deploy-manifest";
 import {
@@ -85,31 +87,42 @@ export function SkillUploadDialog(props: {
   const { open, onOpenChange, folders, onDone } = props;
   const [files, setFiles] = React.useState<DroppedFile[]>([]);
   const [folderName, setFolderName] = React.useState("");
-  const [slug, setSlug] = React.useState("");
+  // nameInput is the raw text the user types; the slug is derived from it only
+  // at submit (slugify-on-every-keystroke made trailing separators impossible to
+  // type, so "pr review" collapsed to "prreview").
+  const [nameInput, setNameInput] = React.useState("");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = React.useState(false);
   const [progress, setProgress] = React.useState<SkillUploadProgress | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [warnings, setWarnings] = React.useState<string[]>([]);
   const [uploading, setUploading] = React.useState(false);
+  // Preserves the created skill id across retries so a failure after the create
+  // step reuses the same skill instead of dead-ending on "slug already in use".
+  const [createdSkillId, setCreatedSkillId] = React.useState<string | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+
+  const slug = slugify(nameInput);
 
   const reset = () => {
     setFiles([]);
     setFolderName("");
-    setSlug("");
+    setNameInput("");
     setSelected(new Set());
     setProgress(null);
     setError(null);
     setWarnings([]);
     setUploading(false);
+    setCreatedSkillId(null);
   };
 
   const accept = (dropped: DroppedFile[], name: string) => {
     setError(precheckSkillFolder(dropped));
     setFiles(dropped);
     setFolderName(name);
-    if (!slug) setSlug(slugify(name));
+    // A fresh folder means a fresh skill; drop any id from a prior attempt.
+    setCreatedSkillId(null);
+    if (!nameInput.trim()) setNameInput(name);
   };
 
   const start = async () => {
@@ -117,12 +130,14 @@ export function SkillUploadDialog(props: {
     setError(null);
     setWarnings([]);
     const res = await uploadSkillFolder({
-      skillId: null,
+      skillId: createdSkillId,
       create: { slug, folders: Array.from(selected) },
       files,
       onProgress: setProgress,
     });
     setUploading(false);
+    // Remember the id whenever we have one, so "Try again" reuses the skill.
+    if (res.skillId) setCreatedSkillId(res.skillId);
     if (!res.ok) {
       setError(res.message);
       setProgress(null);
@@ -166,9 +181,11 @@ export function SkillUploadDialog(props: {
           onDrop={(e) => {
             e.preventDefault();
             setDragOver(false);
+            // Read the dropped folder's own name synchronously (entries are only
+            // valid during the event) — the collector strips it from paths.
+            const root = dropRootName(e.dataTransfer.items) || "skill";
             void collectDataTransferItems(e.dataTransfer.items).then((dropped) => {
-              const root = dropped[0]?.path.split("/")[0] ?? "";
-              accept(dropped, root || "skill");
+              accept(dropped, root);
             });
           }}
           className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-center text-sm transition-colors ${
@@ -196,9 +213,9 @@ export function SkillUploadDialog(props: {
             multiple
             onChange={(e) => {
               if (!e.target.files?.length) return;
+              const root = inputRootName(e.target.files) || "skill";
               const dropped = collectInputFiles(e.target.files);
-              const root = dropped[0]?.path.split("/")[0] ?? "";
-              accept(dropped, root || "skill");
+              accept(dropped, root);
             }}
           />
         </div>
@@ -207,10 +224,15 @@ export function SkillUploadDialog(props: {
           <Label htmlFor="skill-slug">Skill name</Label>
           <Input
             id="skill-slug"
-            value={slug}
-            onChange={(e) => setSlug(slugify(e.target.value))}
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
             placeholder="pr-review-checklist"
           />
+          {slug && slug !== nameInput.trim() ? (
+            <p className="text-xs text-muted-foreground">
+              Saved as <code>{slug}</code>
+            </p>
+          ) : null}
         </div>
 
         {folders.length > 0 ? (

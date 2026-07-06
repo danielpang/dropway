@@ -96,6 +96,48 @@ func (q *Queries) CountSkillsForOrg(ctx context.Context, orgID string) (int64, e
 	return n, err
 }
 
+const createSeedSkill = `-- name: CreateSeedSkill :one
+INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (org_id, slug) DO NOTHING
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+`
+
+type CreateSeedSkillParams struct {
+	OrgID       string
+	Slug        string
+	OwnerUserID string
+	Title       pgtype.Text
+	Description pgtype.Text
+}
+
+// Insert a preset seed skill, or DO NOTHING if the org already has that slug
+// (a real user's skill, or this seed from a prior attempt). ON CONFLICT means a
+// collision never raises 23505 and aborts the seeding transaction; a no-rows
+// result tells the caller to inspect the existing row and skip it unless it is
+// our own seed.
+func (q *Queries) CreateSeedSkill(ctx context.Context, arg CreateSeedSkillParams) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, createSeedSkill,
+		arg.OrgID,
+		arg.Slug,
+		arg.OwnerUserID,
+		arg.Title,
+		arg.Description,
+	)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createSite = `-- name: CreateSite :one
 
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
@@ -589,6 +631,37 @@ func (q *Queries) GetHostRoute(ctx context.Context, host string) (AppHostRoute, 
 	return i, err
 }
 
+const getOrCreateSkillFolder = `-- name: GetOrCreateSkillFolder :one
+INSERT INTO app.skill_folders (org_id, slug, title)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, slug) DO UPDATE
+SET title = app.skill_folders.title
+RETURNING id, org_id, slug, title, created_at
+`
+
+type GetOrCreateSkillFolderParams struct {
+	OrgID string
+	Slug  string
+	Title string
+}
+
+// Get-or-create a folder by (org_id, slug): a no-op DO UPDATE so RETURNING
+// always yields the row. Used by idempotent seeding so re-running against an
+// org that already has a default folder (e.g. an admin created it first) never
+// raises 23505 and aborts the seed transaction.
+func (q *Queries) GetOrCreateSkillFolder(ctx context.Context, arg GetOrCreateSkillFolderParams) (AppSkillFolder, error) {
+	row := q.db.QueryRow(ctx, getOrCreateSkillFolder, arg.OrgID, arg.Slug, arg.Title)
+	var i AppSkillFolder
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Title,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getOrgMeta = `-- name: GetOrgMeta :one
 SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled
 FROM app.org_meta
@@ -825,45 +898,63 @@ func (q *Queries) GetSiteVoteScore(ctx context.Context, siteID string) (int64, e
 }
 
 const getSkill = `-- name: GetSkill :one
-SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
-FROM app.skills
-WHERE id = $1
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE sk.id = $1
 `
 
-func (q *Queries) GetSkill(ctx context.Context, id string) (AppSkill, error) {
+type GetSkillRow struct {
+	AppSkill  AppSkill
+	SizeBytes int64
+}
+
+// Embeds the full skill row plus its current version's size (0 when unset), so
+// reads never N+1 a per-skill version lookup.
+func (q *Queries) GetSkill(ctx context.Context, id string) (GetSkillRow, error) {
 	row := q.db.QueryRow(ctx, getSkill, id)
-	var i AppSkill
+	var i GetSkillRow
 	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.Slug,
-		&i.OwnerUserID,
-		&i.Title,
-		&i.Description,
-		&i.CurrentVersionID,
-		&i.CreatedAt,
+		&i.AppSkill.ID,
+		&i.AppSkill.OrgID,
+		&i.AppSkill.Slug,
+		&i.AppSkill.OwnerUserID,
+		&i.AppSkill.Title,
+		&i.AppSkill.Description,
+		&i.AppSkill.CurrentVersionID,
+		&i.AppSkill.CreatedAt,
+		&i.SizeBytes,
 	)
 	return i, err
 }
 
 const getSkillBySlug = `-- name: GetSkillBySlug :one
-SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
-FROM app.skills
-WHERE slug = $1
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE sk.slug = $1
 `
 
-func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (AppSkill, error) {
+type GetSkillBySlugRow struct {
+	AppSkill  AppSkill
+	SizeBytes int64
+}
+
+func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySlugRow, error) {
 	row := q.db.QueryRow(ctx, getSkillBySlug, slug)
-	var i AppSkill
+	var i GetSkillBySlugRow
 	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.Slug,
-		&i.OwnerUserID,
-		&i.Title,
-		&i.Description,
-		&i.CurrentVersionID,
-		&i.CreatedAt,
+		&i.AppSkill.ID,
+		&i.AppSkill.OrgID,
+		&i.AppSkill.Slug,
+		&i.AppSkill.OwnerUserID,
+		&i.AppSkill.Title,
+		&i.AppSkill.Description,
+		&i.AppSkill.CurrentVersionID,
+		&i.AppSkill.CreatedAt,
+		&i.SizeBytes,
 	)
 	return i, err
 }
@@ -1289,33 +1380,41 @@ func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedS
 }
 
 const listFolderSkills = `-- name: ListFolderSkills :many
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skill_folder_items fi
 JOIN app.skills sk ON sk.id = fi.skill_id
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE fi.folder_id = $1
   AND sk.current_version_id IS NOT NULL
 ORDER BY sk.slug
 `
 
+type ListFolderSkillsRow struct {
+	AppSkill  AppSkill
+	SizeBytes int64
+}
+
 // Every skill in a folder that has a live version (the bulk-download set).
-func (q *Queries) ListFolderSkills(ctx context.Context, folderID string) ([]AppSkill, error) {
+func (q *Queries) ListFolderSkills(ctx context.Context, folderID string) ([]ListFolderSkillsRow, error) {
 	rows, err := q.db.Query(ctx, listFolderSkills, folderID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppSkill{}
+	items := []ListFolderSkillsRow{}
 	for rows.Next() {
-		var i AppSkill
+		var i ListFolderSkillsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.Slug,
-			&i.OwnerUserID,
-			&i.Title,
-			&i.Description,
-			&i.CurrentVersionID,
-			&i.CreatedAt,
+			&i.AppSkill.ID,
+			&i.AppSkill.OrgID,
+			&i.AppSkill.Slug,
+			&i.AppSkill.OwnerUserID,
+			&i.AppSkill.Title,
+			&i.AppSkill.Description,
+			&i.AppSkill.CurrentVersionID,
+			&i.AppSkill.CreatedAt,
+			&i.SizeBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -1712,8 +1811,10 @@ func (q *Queries) ListSkillFolders(ctx context.Context) ([]ListSkillFoldersRow, 
 }
 
 const listSkills = `-- name: ListSkills :many
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
   AND (
         $2::text = ''
@@ -1742,13 +1843,18 @@ type ListSkillsParams struct {
 	PresetsOnly bool
 }
 
+type ListSkillsRow struct {
+	AppSkill  AppSkill
+	SizeBytes int64
+}
+
 // Search + filter the active org's skills. q matches slug/title/description
 // (ILIKE, ” = no text filter); folder_slug restricts to members of that folder
 // (” = any); presets_only additionally requires the membership's is_preset flag.
 // Skills that have never finalized an upload (no current version) are visible
 // only to their owner (caller_id), so half-finished uploads don't clutter the
 // org listing. RLS scopes every read to the active org.
-func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]AppSkill, error) {
+func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListSkillsRow, error) {
 	rows, err := q.db.Query(ctx, listSkills,
 		arg.CallerID,
 		arg.Q,
@@ -1759,18 +1865,19 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]AppSk
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppSkill{}
+	items := []ListSkillsRow{}
 	for rows.Next() {
-		var i AppSkill
+		var i ListSkillsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.Slug,
-			&i.OwnerUserID,
-			&i.Title,
-			&i.Description,
-			&i.CurrentVersionID,
-			&i.CreatedAt,
+			&i.AppSkill.ID,
+			&i.AppSkill.OrgID,
+			&i.AppSkill.Slug,
+			&i.AppSkill.OwnerUserID,
+			&i.AppSkill.Title,
+			&i.AppSkill.Description,
+			&i.AppSkill.CurrentVersionID,
+			&i.AppSkill.CreatedAt,
+			&i.SizeBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -2520,6 +2627,55 @@ func (q *Queries) UpsertSkillFolderItem(ctx context.Context, arg UpsertSkillFold
 		arg.AddedBy,
 	)
 	return err
+}
+
+const upsertSkillVersion = `-- name: UpsertSkillVersion :one
+INSERT INTO app.skill_versions (
+    org_id, skill_id, version_no, status, content_hash, size_bytes, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (skill_id, content_hash) DO UPDATE
+SET status = app.skill_versions.status
+RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+`
+
+type UpsertSkillVersionParams struct {
+	OrgID       string
+	SkillID     string
+	VersionNo   int32
+	Status      string
+	ContentHash string
+	SizeBytes   int64
+	CreatedBy   string
+}
+
+// Get-or-create a version by its (skill_id, content_hash): a no-op DO UPDATE so
+// RETURNING always yields the row whether it was just inserted or already
+// existed. Used by idempotent seeding so a retried seed can't raise 23505 and
+// abort the transaction. The no-op update sets status to itself.
+func (q *Queries) UpsertSkillVersion(ctx context.Context, arg UpsertSkillVersionParams) (AppSkillVersion, error) {
+	row := q.db.QueryRow(ctx, upsertSkillVersion,
+		arg.OrgID,
+		arg.SkillID,
+		arg.VersionNo,
+		arg.Status,
+		arg.ContentHash,
+		arg.SizeBytes,
+		arg.CreatedBy,
+	)
+	var i AppSkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SkillID,
+		&i.VersionNo,
+		&i.Status,
+		&i.ContentHash,
+		&i.SizeBytes,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const writeAuditLog = `-- name: WriteAuditLog :one

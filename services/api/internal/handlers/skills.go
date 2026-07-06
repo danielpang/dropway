@@ -34,7 +34,11 @@ type skillResponse struct {
 	Slug  string `json:"slug"`
 	// OwnerID is the uploader; store.SeedOwnerUserID marks a Dropway-seeded
 	// preset (render as "Dropway").
-	OwnerID          string                   `json:"owner_id"`
+	OwnerID string `json:"owner_id"`
+	// IsSeeded is true when the skill is a Dropway-provided preset (owner is the
+	// seed sentinel). Clients render the owner as "Dropway" from this flag rather
+	// than string-matching the sentinel UUID themselves.
+	IsSeeded         bool                     `json:"is_seeded"`
 	Title            string                   `json:"title"`
 	Description      string                   `json:"description"`
 	CurrentVersionID *string                  `json:"current_version_id,omitempty"`
@@ -53,6 +57,7 @@ func toSkillResponse(s store.Skill) skillResponse {
 		OrgID:            s.OrgID,
 		Slug:             s.Slug,
 		OwnerID:          s.OwnerUserID,
+		IsSeeded:         s.OwnerUserID == store.SeedOwnerUserID,
 		Title:            s.Title,
 		Description:      s.Description,
 		CurrentVersionID: s.CurrentVersionID,
@@ -72,38 +77,46 @@ func (a *API) requireSkillOwnerOrAdmin(w http.ResponseWriter, r *http.Request, t
 }
 
 // ensureSkillsSeeded lazily materializes the default folders + preset skills
-// for the org on its first skills touch. Best-effort: a seeding failure is
-// logged and the request proceeds (the skills_seeded flag stays false, so the
-// next touch retries). Blob staging is content-addressed + idempotent, and the
-// DB side runs exactly once under the org's seed advisory lock.
+// for the org on its first skills touch. Best-effort: a failure is logged and
+// the request proceeds (skills_seeded stays false, so the next touch retries).
+//
+// Ordering is GC-safe: it STAGES the rows (folders/skills/versions/memberships,
+// no live pointers), writes every version's manifest to object storage, and
+// only THEN publishes (flips current_version_id + skills_seeded). A crash at any
+// point leaves skills_seeded false so a later touch re-runs — and because a
+// skill only becomes current after its manifest is durably written, the GC can
+// never see a live preset version whose blobs look unreferenced.
+//
+// A process-local seededOrgs set short-circuits the per-request DB round-trip
+// once this process has observed the org seeded (the flag is monotonic).
 func (a *API) ensureSkillsSeeded(r *http.Request, t store.Tenant) {
 	if a.Store == nil || a.Objects == nil || len(a.SkillSeeds) == 0 {
 		return
 	}
+	if _, ok := a.seededOrgs.Load(t.OrgID); ok {
+		return
+	}
 	ctx := r.Context()
 	done, err := a.Store.SkillsSeeded(ctx, t)
-	if err != nil || done {
-		if err != nil {
-			logger(r).Error("skills seed check failed", "org_id", t.OrgID, "err", err)
-		}
+	if err != nil {
+		logger(r).Error("skills seed check failed", "org_id", t.OrgID, "err", err)
+		return
+	}
+	if done {
+		a.seededOrgs.Store(t.OrgID, struct{}{})
 		return
 	}
 
-	// Stage every seed blob (skip ones the org already has — content-addressed).
+	// Stage seed blobs. Always PutBlob (content is tiny) so a retry refreshes
+	// each blob's last-modified time, keeping the GC age guard on our side while
+	// the version is staged-but-not-yet-current.
 	seeds := make([]store.SkillSeed, 0, len(a.SkillSeeds))
 	for _, seed := range a.SkillSeeds {
 		blobs := make([]store.BlobSize, 0, len(seed.Files))
 		for _, f := range seed.Files {
-			exists, _, err := a.Objects.HeadBlob(ctx, t.OrgID, f.SHA256)
-			if err != nil {
-				logger(r).Error("skills seed blob head failed", "org_id", t.OrgID, "sha", f.SHA256, "err", err)
+			if err := a.Objects.PutBlob(ctx, t.OrgID, f.SHA256, bytes.NewReader(f.Content), f.Size, f.ContentType); err != nil {
+				logger(r).Error("skills seed blob stage failed", "org_id", t.OrgID, "sha", f.SHA256, "err", err)
 				return
-			}
-			if !exists {
-				if err := a.Objects.PutBlob(ctx, t.OrgID, f.SHA256, bytes.NewReader(f.Content), f.Size, f.ContentType); err != nil {
-					logger(r).Error("skills seed blob stage failed", "org_id", t.OrgID, "sha", f.SHA256, "err", err)
-					return
-				}
 			}
 			blobs = append(blobs, store.BlobSize{SHA: f.SHA256, Size: f.Size})
 		}
@@ -118,18 +131,19 @@ func (a *API) ensureSkillsSeeded(r *http.Request, t store.Tenant) {
 		})
 	}
 
-	created, seeded, err := a.Store.SeedOrgSkills(ctx, t, seeds)
+	created, staged, err := a.Store.SeedOrgSkillsStage(ctx, t, seeds)
 	if err != nil {
-		logger(r).Error("skills seed failed", "org_id", t.OrgID, "err", err)
+		logger(r).Error("skills seed stage failed", "org_id", t.OrgID, "err", err)
 		return
 	}
-	if !seeded {
-		return // another request seeded concurrently
+	if !staged {
+		a.seededOrgs.Store(t.OrgID, struct{}{})
+		return
 	}
 
-	// Write each seeded skill's manifest object (version ids are DB-generated,
-	// so this necessarily follows the tx). A crash here leaves a preset whose
-	// download 404s until re-seeded manually — tiny window, loudly logged.
+	// Write every staged version's manifest BEFORE publishing. If any write
+	// fails we bail without publishing, so the next touch re-stages and retries
+	// rather than leaving a live version with no manifest.
 	bySlug := make(map[string]skillseeds.Seed, len(a.SkillSeeds))
 	for _, seed := range a.SkillSeeds {
 		bySlug[seed.Slug] = seed
@@ -146,12 +160,19 @@ func (a *API) ensureSkillsSeeded(r *http.Request, t store.Tenant) {
 		body, err := json.Marshal(storedManifest{SchemaVersion: manifest.SchemaVersion, Files: files})
 		if err != nil {
 			logger(r).Error("skills seed manifest marshal failed", "slug", c.Slug, "err", err)
-			continue
+			return
 		}
 		if err := a.Objects.PutSkillManifest(ctx, t.OrgID, c.SkillID, c.VersionID, body); err != nil {
 			logger(r).Error("skills seed manifest write failed", "slug", c.Slug, "err", err)
+			return
 		}
 	}
+
+	if err := a.Store.SeedOrgSkillsPublish(ctx, t, created); err != nil {
+		logger(r).Error("skills seed publish failed", "org_id", t.OrgID, "err", err)
+		return
+	}
+	a.seededOrgs.Store(t.OrgID, struct{}{})
 	logger(r).Info("seeded default skills", "org_id", t.OrgID, "skills", len(created))
 }
 

@@ -46,6 +46,45 @@ func ver(id, siteID string, no int32, current bool) db.ListVersionsForGCRow {
 	}
 }
 
+// TestGC_SkillManifestBlobsRetained guards the skill-protection branch: a blob
+// referenced ONLY by a current skill version (no site references it) must be
+// kept, while a blob no skill or site references is still deleted. Without the
+// skillRetained union in gcCollectAndDelete, all skill content would be treated
+// as orphaned and deleted.
+func TestGC_SkillManifestBlobsRetained(t *testing.T) {
+	ctx := context.Background()
+	obj := storage.NewFake()
+	const org = "org-1"
+
+	const blobSkill = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const blobOrphan = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	must(t, obj.PutBlobBytesAt(ctx, org, blobSkill, []byte("skill"), oldEnough))
+	must(t, obj.PutBlobBytesAt(ctx, org, blobOrphan, []byte("orphan"), oldEnough))
+
+	// The skill's current version manifest references blobSkill; no site exists.
+	must(t, obj.PutSkillManifest(ctx, org, "skill-1", "sv1", manifestJSON(blobSkill)))
+
+	skillRetained := []db.ListCurrentSkillVersionsForGCRow{
+		{SkillID: "skill-1", VersionID: strPtr("sv1")},
+	}
+
+	res, err := gcCollectAndDelete(ctx, obj, org, nil, skillRetained, GCPolicy{}, gcNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Orphans) != 1 || res.Orphans[0] != blobOrphan {
+		t.Fatalf("expected only the orphan deleted, got %v", res.Orphans)
+	}
+	if exists, _, _ := obj.HeadBlob(ctx, org, blobSkill); !exists {
+		t.Error("skill current-version blob was wrongly deleted")
+	}
+	if exists, _, _ := obj.HeadBlob(ctx, org, blobOrphan); exists {
+		t.Error("orphan blob was not deleted")
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 // TestGC_OrphanDeletedReferencedKeptCurrentUntouched is the core GC unit test:
 // with the in-memory fake, an orphan blob is deleted, a
 // referenced blob is kept, and the CURRENT version's blob is never touched.

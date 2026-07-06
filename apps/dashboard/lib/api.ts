@@ -782,6 +782,12 @@ export const api = {
     return body.skills ?? [];
   },
 
+  /** Get one skill by id (404 → ApiError with status 404). */
+  async getSkill(id: string): Promise<Skill> {
+    const body = (await apiGet(`/v1/skills/${id}`)) as { skill?: Skill };
+    return body.skill ?? {};
+  },
+
   /** Register a skill (metadata; content arrives via the upload flow). */
   async createSkill(input: { slug: string; title?: string; folders?: string[] }): Promise<Skill> {
     const body = await apiFetch<{ skill?: Skill }>("/v1/skills", {

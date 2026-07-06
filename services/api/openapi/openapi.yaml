@@ -1704,9 +1704,13 @@ components:
         owner_id:
           type: string
           format: uuid
+          description: The uploader (the all-zero uuid for Dropway-seeded presets).
+        is_seeded:
+          type: boolean
           description: >
-            The uploader. The all-zero uuid marks a Dropway-seeded preset
-            (render as "Dropway"; managed by org admins).
+            True when the skill is a Dropway-provided preset. Clients render the
+            owner as "Dropway" from this flag rather than matching the sentinel
+            owner_id themselves.
         title: { type: string, description: From the create request or SKILL.md frontmatter (empty when unset). }
         description: { type: string }
         current_version_id: { type: string, format: uuid, nullable: true }

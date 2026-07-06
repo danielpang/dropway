@@ -19,13 +19,16 @@ type SkillFolderRef struct {
 
 // Skill is the API's skill representation (subset the CLI needs).
 type Skill struct {
-	ID          string           `json:"id"`
-	Slug        string           `json:"slug"`
-	Title       string           `json:"title"`
-	Description string           `json:"description"`
-	OwnerID     string           `json:"owner_id"`
-	SizeBytes   int64            `json:"size_bytes"`
-	Folders     []SkillFolderRef `json:"folders"`
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	OwnerID     string `json:"owner_id"`
+	// IsSeeded marks a Dropway-provided preset (owner is the seed sentinel); the
+	// list view renders the owner as "dropway" from this flag.
+	IsSeeded  bool             `json:"is_seeded"`
+	SizeBytes int64            `json:"size_bytes"`
+	Folders   []SkillFolderRef `json:"folders"`
 }
 
 // SkillsResponse is the GET /v1/skills body.

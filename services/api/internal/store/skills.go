@@ -187,13 +187,10 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, q, folderSlug string, 
 		out = make([]Skill, len(rows))
 		ids := make([]string, len(rows))
 		for i, r := range rows {
-			out[i] = skillFromDB(r)
-			ids[i] = r.ID
+			out[i] = skillFromRow(r.AppSkill, r.SizeBytes)
+			ids[i] = r.AppSkill.ID
 		}
-		if err := s.decorateSkills(ctx, qq, out, ids); err != nil {
-			return err
-		}
-		return nil
+		return attachFolders(ctx, qq, out, ids)
 	})
 	return out, err
 }
@@ -216,17 +213,18 @@ func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string)
 		out = make([]Skill, len(rows))
 		ids := make([]string, len(rows))
 		for i, r := range rows {
-			out[i] = skillFromDB(r)
-			ids[i] = r.ID
+			out[i] = skillFromRow(r.AppSkill, r.SizeBytes)
+			ids[i] = r.AppSkill.ID
 		}
-		return s.decorateSkills(ctx, q, out, ids)
+		return attachFolders(ctx, q, out, ids)
 	})
 	return out, err
 }
 
-// decorateSkills fills folder memberships + current-version sizes for a slice
-// of skills in two round-trips (no N+1).
-func (s *Store) decorateSkills(ctx context.Context, q *db.Queries, skills []Skill, ids []string) error {
+// attachFolders fills the folder memberships for a slice of skills in one
+// round-trip (no N+1). Current-version size is already carried on each row by
+// the read queries' LEFT JOIN, so it is not fetched here.
+func attachFolders(ctx context.Context, q *db.Queries, skills []Skill, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -236,16 +234,6 @@ func (s *Store) decorateSkills(ctx context.Context, q *db.Queries, skills []Skil
 	}
 	for i := range skills {
 		skills[i].Folders = refs[skills[i].ID]
-		if skills[i].CurrentVersionID != nil {
-			v, err := q.GetSkillVersion(ctx, *skills[i].CurrentVersionID)
-			if err != nil {
-				if isNoRows(err) {
-					continue
-				}
-				return err
-			}
-			skills[i].SizeBytes = v.SizeBytes
-		}
 	}
 	return nil
 }
@@ -279,9 +267,9 @@ func (s *Store) GetSkill(ctx context.Context, t Tenant, id string) (Skill, error
 			}
 			return err
 		}
-		out = skillFromDB(row)
+		out = skillFromRow(row.AppSkill, row.SizeBytes)
 		skills := []Skill{out}
-		if err := s.decorateSkills(ctx, q, skills, []string{row.ID}); err != nil {
+		if err := attachFolders(ctx, q, skills, []string{row.AppSkill.ID}); err != nil {
 			return err
 		}
 		out = skills[0]
@@ -301,9 +289,9 @@ func (s *Store) GetSkillBySlug(ctx context.Context, t Tenant, slug string) (Skil
 			}
 			return err
 		}
-		out = skillFromDB(row)
+		out = skillFromRow(row.AppSkill, row.SizeBytes)
 		skills := []Skill{out}
-		if err := s.decorateSkills(ctx, q, skills, []string{row.ID}); err != nil {
+		if err := attachFolders(ctx, q, skills, []string{row.AppSkill.ID}); err != nil {
 			return err
 		}
 		out = skills[0]
@@ -383,9 +371,9 @@ func (s *Store) SetSkillFolders(ctx context.Context, t Tenant, skillID string, f
 				return err
 			}
 		}
-		out = skillFromDB(row)
+		out = skillFromRow(row.AppSkill, row.SizeBytes)
 		skills := []Skill{out}
-		if err := s.decorateSkills(ctx, q, skills, []string{skillID}); err != nil {
+		if err := attachFolders(ctx, q, skills, []string{skillID}); err != nil {
 			return err
 		}
 		out = skills[0]
@@ -405,11 +393,18 @@ type CreateSkillVersionParams struct {
 	Blobs []BlobSize
 }
 
-// CreateSkillVersion inserts the next immutable version for a skill AND flips
-// the skill's current_version_id in the same tx — in the latest-only v1 model,
-// finalize IS publish. Idempotent on the per-skill content_hash (a re-upload of
-// identical content returns the existing version and still ensures the pointer
-// is set). Storage is metered under the same per-org advisory lock deploys use.
+// CreateSkillVersion inserts the next immutable version for a skill but does
+// NOT make it the live version — the caller writes the version's manifest to
+// object storage and THEN calls PublishSkillVersion, so a skill's
+// current_version_id is only ever set once its manifest durably exists (the GC
+// keys blob retention on current versions, so publishing before the manifest
+// is written would let the GC treat the just-uploaded blobs as unreferenced).
+//
+// Storage is ALWAYS metered (dedup-aware) — including on the idempotent branch
+// where the content_hash already exists — so re-uploading content whose blobs
+// were released by a prior GC re-adds their ledger rows instead of leaving them
+// stored-but-uncounted. Idempotent on the per-skill content_hash: re-uploading
+// identical content returns the existing version.
 func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillVersionParams) (SkillVersion, error) {
 	status := p.Status
 	if status == "" {
@@ -425,29 +420,28 @@ func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillV
 			}
 			return err
 		}
-		if skill.OrgID != t.OrgID {
+		if skill.AppSkill.OrgID != t.OrgID {
 			return ErrNotFound // confused-deputy guard (RLS already scopes this)
 		}
 
-		// Idempotency: identical content for this skill → reuse the version, but
-		// still make sure it is the live one (a crash between insert and flip
-		// must be recoverable by re-finalizing).
+		// Meter storage on every path. InsertOrgBlob is ON CONFLICT DO NOTHING, so
+		// blobs already in the ledger add zero delta (no cap check, no double
+		// count); genuinely-new bytes — including a re-upload of content the GC
+		// released — are counted and capped.
+		if err := s.accountStorage(ctx, q, t.OrgID, p.Blobs); err != nil {
+			return err // *quota.ExceededError → 402; rolls back the whole tx
+		}
+
+		// Idempotency: identical content for this skill → reuse the existing
+		// version (the caller re-writes the manifest and re-publishes).
 		if existing, err := q.GetSkillVersionByContentHash(ctx, db.GetSkillVersionByContentHashParams{
 			SkillID:     p.SkillID,
 			ContentHash: p.ContentHash,
 		}); err == nil {
 			out = skillVersionFromDB(existing)
-			vid := existing.ID
-			return q.SetSkillCurrentVersion(ctx, db.SetSkillCurrentVersionParams{
-				ID:               p.SkillID,
-				CurrentVersionID: &vid,
-			})
+			return nil
 		} else if !isNoRows(err) {
 			return err
-		}
-
-		if err := s.accountStorage(ctx, q, t.OrgID, p.Blobs); err != nil {
-			return err // *quota.ExceededError → 402; rolls back the whole tx
 		}
 
 		nextNo, err := q.NextSkillVersionNo(ctx, p.SkillID)
@@ -466,17 +460,44 @@ func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillV
 		if err != nil {
 			return err
 		}
-		vid := row.ID
-		if err := q.SetSkillCurrentVersion(ctx, db.SetSkillCurrentVersionParams{
-			ID:               p.SkillID,
-			CurrentVersionID: &vid,
-		}); err != nil {
-			return err
-		}
 		out = skillVersionFromDB(row)
 		return nil
 	})
 	return out, err
+}
+
+// PublishSkillVersion flips a skill's current_version_id to versionID — the
+// "make it live" step the caller runs AFTER the version's manifest is written
+// to object storage. It re-derives the skill's org (confused-deputy guard) and
+// asserts the version belongs to the skill.
+func (s *Store) PublishSkillVersion(ctx context.Context, t Tenant, skillID, versionID string) error {
+	return s.withTx(ctx, t, func(q *db.Queries) error {
+		skill, err := q.GetSkill(ctx, skillID)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if skill.AppSkill.OrgID != t.OrgID {
+			return ErrNotFound
+		}
+		ver, err := q.GetSkillVersion(ctx, versionID)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if ver.SkillID != skillID || ver.OrgID != t.OrgID {
+			return ErrNotFound
+		}
+		vid := versionID
+		return q.SetSkillCurrentVersion(ctx, db.SetSkillCurrentVersionParams{
+			ID:               skillID,
+			CurrentVersionID: &vid,
+		})
+	})
 }
 
 // GetSkillVersion returns one skill version by id (RLS-scoped; miss → ErrNotFound).
@@ -511,6 +532,14 @@ func skillFromDB(r db.AppSkill) Skill {
 	if r.Description.Valid {
 		s.Description = r.Description.String
 	}
+	return s
+}
+
+// skillFromRow is skillFromDB plus the current-version size the read queries
+// carry via their LEFT JOIN.
+func skillFromRow(r db.AppSkill, sizeBytes int64) Skill {
+	s := skillFromDB(r)
+	s.SizeBytes = sizeBytes
 	return s
 }
 

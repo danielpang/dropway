@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Download,
@@ -30,24 +31,34 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { Skill, SkillDownload, SkillFolder } from "@/lib/api";
-import { SKILL_SEED_OWNER } from "@/lib/skills-shared";
+import { isSafeSkillPath } from "@/lib/skills-shared";
 import { buildZip, type ZipEntry } from "@/lib/zip";
 
 // ---- Download helpers -------------------------------------------------------
 
-function decodeSkillFiles(download: SkillDownload, prefix: string): ZipEntry[] {
+// decodeSkillFiles returns the zip entries plus the paths it had to skip (only
+// genuinely-unsafe paths, per isSafeSkillPath — a filename containing ".." is
+// fine), so the caller can warn rather than silently omit files.
+function decodeSkillFiles(
+  download: SkillDownload,
+  prefix: string,
+): { entries: ZipEntry[]; skipped: string[] } {
   const entries: ZipEntry[] = [];
+  const skipped: string[] = [];
   for (const f of download.files ?? []) {
     if (!f.path) continue;
     // Defense in depth: never let a path escape the target folder.
-    if (f.path.startsWith("/") || f.path.includes("..") || f.path.includes("\\")) continue;
+    if (!isSafeSkillPath(f.path)) {
+      skipped.push(f.path);
+      continue;
+    }
     const data =
       f.encoding === "base64"
         ? Uint8Array.from(atob(f.content ?? ""), (c) => c.charCodeAt(0))
         : new TextEncoder().encode(f.content ?? "");
     entries.push({ path: `${prefix}${f.path}`, data });
   }
-  return entries;
+  return { entries, skipped };
 }
 
 function saveZip(name: string, entries: ZipEntry[]) {
@@ -101,8 +112,8 @@ export function SkillsView(props: {
   };
 
   const ownerLabel = (skill: Skill): string => {
+    if (skill.is_seeded) return "Dropway";
     const id = skill.owner_id ?? "";
-    if (id === SKILL_SEED_OWNER) return "Dropway";
     if (id === myUserId) return "You";
     return ownerLabels[id] ?? "A teammate";
   };
@@ -111,8 +122,11 @@ export function SkillsView(props: {
     await run(`dl:${skill.id}`, async () => {
       const res = await downloadSkillAction(skill.id ?? "");
       if (!res.ok) return res;
-      saveZip(`${skill.slug}.zip`, decodeSkillFiles(res.download, `${skill.slug}/`));
-      return { ok: true };
+      const { entries, skipped } = decodeSkillFiles(res.download, `${skill.slug}/`);
+      saveZip(`${skill.slug}.zip`, entries);
+      return skipped.length > 0
+        ? { ok: false, message: `Downloaded, but skipped unsafe path(s): ${skipped.join(", ")}.` }
+        : { ok: true };
     });
   };
 
@@ -127,14 +141,16 @@ export function SkillsView(props: {
           if (s.slug) skipped.push(s.slug);
           continue;
         }
-        entries.push(...decodeSkillFiles(s, `${s.slug}/`));
+        const decoded = decodeSkillFiles(s, `${s.slug}/`);
+        entries.push(...decoded.entries);
+        skipped.push(...decoded.skipped);
       }
       if (entries.length === 0) {
         return { ok: false, message: "That folder has no downloadable skills yet." };
       }
       saveZip(`${folder.slug}-skills.zip`, entries);
       return skipped.length > 0
-        ? { ok: false, message: `Downloaded, but some skills could not be included: ${skipped.join(", ")}.` }
+        ? { ok: false, message: `Downloaded, but some items were skipped: ${skipped.join(", ")}.` }
         : { ok: true };
     });
   };
@@ -245,7 +261,12 @@ export function SkillsView(props: {
               <Card key={skill.id} className="flex flex-wrap items-center gap-3 p-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{skill.title || skill.slug}</span>
+                    <Link
+                      href={`/skills/${skill.id}`}
+                      className="font-medium hover:underline focus-visible:underline"
+                    >
+                      {skill.title || skill.slug}
+                    </Link>
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                       {skill.slug}
                     </code>

@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/danielpang/dropway/cli/internal/api"
 	"github.com/danielpang/dropway/cli/internal/auth"
 	"github.com/danielpang/dropway/cli/internal/manifest"
+	"github.com/danielpang/dropway/internal/skillspec"
 	"github.com/danielpang/dropway/internal/slug"
 )
 
@@ -245,7 +245,7 @@ func printSkills(out io.Writer, skills []api.Skill) {
 	fmt.Fprintln(tw, "NAME\tTITLE\tFOLDERS\tSIZE\tOWNER")
 	for _, s := range skills {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			s.Slug, s.Title, folderLabels(s.Folders), humanSize(s.SizeBytes), skillOwnerLabel(s.OwnerID))
+			s.Slug, s.Title, folderLabels(s.Folders), manifest.HumanBytes(s.SizeBytes), skillOwnerLabel(s))
 	}
 	_ = tw.Flush()
 }
@@ -263,28 +263,14 @@ func folderLabels(folders []api.SkillFolderRef) string {
 	return strings.Join(labels, ",")
 }
 
-// skillOwnerLabel shows "dropway" for the zero-UUID owner the API stamps on
-// seeded preset skills, else the raw owner id (the CLI doesn't resolve ids).
-func skillOwnerLabel(ownerID string) string {
-	if ownerID == presetOwnerID {
+// skillOwnerLabel shows "dropway" for Dropway-seeded preset skills — preferring
+// the API's is_seeded flag, but still honoring the zero-UUID owner sentinel as a
+// fallback — else the raw owner id (the CLI doesn't resolve ids).
+func skillOwnerLabel(s api.Skill) string {
+	if s.IsSeeded || s.OwnerID == presetOwnerID {
 		return "dropway"
 	}
-	return ownerID
-}
-
-// humanSize formats a byte count for the SIZE column (same scale/format the
-// manifest summary uses).
-func humanSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for x := n / unit; x >= unit; x /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+	return s.OwnerID
 }
 
 // ---------------------------------------------------------------------------
@@ -461,26 +447,14 @@ func findSkillBySlug(ctx context.Context, client api.SkillsClient, want string) 
 }
 
 // safeSkillPath rejects any downloaded path that could escape the destination
-// directory: absolute paths, "."/".." segments, backslashes, and empty
-// segments. Defense in depth — the server validates paths too, but the CLI
-// must not trust the wire when it's about to write to the local filesystem.
+// directory. It delegates to the canonical skillspec.CleanPath (absolute paths,
+// empty/"."/".." segments, backslashes, NUL, >512 chars) so the CLI and the
+// server share one path-safety rule. Defense in depth — the server validates
+// paths too, but the CLI must not trust the wire when it's about to write to
+// the local filesystem.
 func safeSkillPath(p string) error {
-	if p == "" {
-		return errors.New("empty path")
-	}
-	if strings.Contains(p, `\`) {
-		return errors.New("backslash in path")
-	}
-	if strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
-		return errors.New("absolute path")
-	}
-	for _, seg := range strings.Split(p, "/") {
-		switch seg {
-		case "":
-			return errors.New("empty path segment")
-		case ".", "..":
-			return fmt.Errorf("path traversal segment %q", seg)
-		}
+	if !skillspec.CleanPath(p) {
+		return fmt.Errorf("unsafe skill path %q", p)
 	}
 	return nil
 }

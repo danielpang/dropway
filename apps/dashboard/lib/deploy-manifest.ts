@@ -145,6 +145,34 @@ export async function collectDataTransferItems(
   return out;
 }
 
+/**
+ * The name of the single dropped top-level folder (the segment
+ * collectDataTransferItems strips), or "" when the drop isn't a single folder.
+ * Read this synchronously in the drop handler — FileSystemEntry access is only
+ * valid during the event. Used to seed a default skill name from the folder.
+ */
+export function dropRootName(items: DataTransferItemList): string {
+  const entries: FileSystemEntry[] = [];
+  for (const item of Array.from(items)) {
+    if (item.kind !== "file") continue;
+    const entry = item.webkitGetAsEntry?.();
+    if (entry) entries.push(entry);
+  }
+  const only = entries.length === 1 ? entries[0] : undefined;
+  return only?.isDirectory ? only.name : "";
+}
+
+/**
+ * The name of the top-level folder in a `<input webkitdirectory>` selection (the
+ * segment collectInputFiles strips), or "" when unavailable.
+ */
+export function inputRootName(fileList: FileList): string {
+  const first = fileList[0];
+  const rel = first?.webkitRelativePath ?? "";
+  const parts = rel.split("/");
+  return parts.length > 1 ? parts[0]! : "";
+}
+
 async function walkEntry(
   entry: FileSystemEntry,
   prefix: string,

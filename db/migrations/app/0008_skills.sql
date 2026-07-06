@@ -86,6 +86,14 @@ CREATE INDEX skill_folder_items_skill_idx ON app.skill_folder_items USING btree 
 -- +goose StatementEnd
 
 -- +goose StatementBegin
+-- Backs the skills.current_version_id FK: without it, every cascaded
+-- skill_versions delete (DeleteSkill, org deletion) runs the referential-
+-- integrity check as a full sequential scan of app.skills (as table owner,
+-- bypassing RLS → across all orgs).
+CREATE INDEX skills_current_version_idx ON app.skills USING btree (current_version_id);
+-- +goose StatementEnd
+
+-- +goose StatementBegin
 -- Guards the lazy per-org seeding of default folders + preset skills: set true
 -- in the same tx that seeds, so Dropway never re-seeds over an admin's curation.
 ALTER TABLE app.org_meta ADD COLUMN skills_seeded boolean NOT NULL DEFAULT false;

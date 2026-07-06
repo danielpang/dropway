@@ -621,15 +621,32 @@ INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
 
+-- name: CreateSeedSkill :one
+-- Insert a preset seed skill, or DO NOTHING if the org already has that slug
+-- (a real user's skill, or this seed from a prior attempt). ON CONFLICT means a
+-- collision never raises 23505 and aborts the seeding transaction; a no-rows
+-- result tells the caller to inspect the existing row and skip it unless it is
+-- our own seed.
+INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (org_id, slug) DO NOTHING
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
+
 -- name: GetSkill :one
-SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
-FROM app.skills
-WHERE id = $1;
+-- Embeds the full skill row plus its current version's size (0 when unset), so
+-- reads never N+1 a per-skill version lookup.
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE sk.id = $1;
 
 -- name: GetSkillBySlug :one
-SELECT id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
-FROM app.skills
-WHERE slug = $1;
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE sk.slug = $1;
 
 -- name: ListSkills :many
 -- Search + filter the active org's skills. q matches slug/title/description
@@ -638,8 +655,10 @@ WHERE slug = $1;
 -- Skills that have never finalized an upload (no current version) are visible
 -- only to their owner (caller_id), so half-finished uploads don't clutter the
 -- org listing. RLS scopes every read to the active org.
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_id)::uuid)
   AND (
         sqlc.arg(q)::text = ''
@@ -694,6 +713,19 @@ INSERT INTO app.skill_versions (
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at;
 
+-- name: UpsertSkillVersion :one
+-- Get-or-create a version by its (skill_id, content_hash): a no-op DO UPDATE so
+-- RETURNING always yields the row whether it was just inserted or already
+-- existed. Used by idempotent seeding so a retried seed can't raise 23505 and
+-- abort the transaction. The no-op update sets status to itself.
+INSERT INTO app.skill_versions (
+    org_id, skill_id, version_no, status, content_hash, size_bytes, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (skill_id, content_hash) DO UPDATE
+SET status = app.skill_versions.status
+RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at;
+
 -- name: GetSkillVersion :one
 SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
 FROM app.skill_versions
@@ -713,6 +745,17 @@ WHERE skill_id = $1 AND content_hash = $2;
 -- name: CreateSkillFolder :one
 INSERT INTO app.skill_folders (org_id, slug, title)
 VALUES ($1, $2, $3)
+RETURNING id, org_id, slug, title, created_at;
+
+-- name: GetOrCreateSkillFolder :one
+-- Get-or-create a folder by (org_id, slug): a no-op DO UPDATE so RETURNING
+-- always yields the row. Used by idempotent seeding so re-running against an
+-- org that already has a default folder (e.g. an admin created it first) never
+-- raises 23505 and aborts the seed transaction.
+INSERT INTO app.skill_folders (org_id, slug, title)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, slug) DO UPDATE
+SET title = app.skill_folders.title
 RETURNING id, org_id, slug, title, created_at;
 
 -- name: GetSkillFolder :one
@@ -785,9 +828,11 @@ ORDER BY f.slug;
 
 -- name: ListFolderSkills :many
 -- Every skill in a folder that has a live version (the bulk-download set).
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skill_folder_items fi
 JOIN app.skills sk ON sk.id = fi.skill_id
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE fi.folder_id = $1
   AND sk.current_version_id IS NOT NULL
 ORDER BY sk.slug;

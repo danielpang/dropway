@@ -15,9 +15,11 @@ import {
   createSkillAction,
   finalizeSkillUploadAction,
   prepareSkillUploadAction,
+  resolveSkillIdBySlugAction,
 } from "@/app/(app)/skills/actions";
 import type { QuotaExceeded } from "@/lib/api";
 import { buildManifest, type DroppedFile } from "@/lib/deploy-manifest";
+import { runPool } from "@/lib/deploy";
 
 export type SkillUploadProgress =
   | { phase: "hashing"; done: number; total: number }
@@ -28,7 +30,9 @@ export type SkillUploadProgress =
 
 export type SkillUploadOutcome =
   | { ok: true; skillId: string; versionNo: number; warnings: string[]; fileCount: number }
-  | { ok: false; message: string; quota?: QuotaExceeded };
+  // skillId is included whenever the skill row was created/resolved, so a retry
+  // after a later-stage failure can reuse it instead of re-creating the slug.
+  | { ok: false; message: string; quota?: QuotaExceeded; skillId?: string };
 
 /** True when the dropped folder has a SKILL.md at its top level. */
 export function hasRootSkillMD(files: DroppedFile[]): boolean {
@@ -57,20 +61,6 @@ export function precheckSkillFolder(files: DroppedFile[]): string | null {
   return null;
 }
 
-// Same bounded-concurrency pool as lib/deploy.ts (duplicated rather than
-// exported from there to keep deploy's public surface unchanged).
-async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  const queue = [...items];
-  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
-    for (;;) {
-      const item = queue.shift();
-      if (item === undefined) return;
-      await fn(item);
-    }
-  });
-  await Promise.all(workers);
-}
-
 /**
  * Run a full skill upload: (optionally create the skill) → hash → prepare →
  * upload missing blobs → finalize. Never throws; a failure resolves to
@@ -88,13 +78,26 @@ export async function uploadSkillFolder(opts: {
   const precheck = precheckSkillFolder(files);
   if (precheck) return { ok: false, message: precheck };
 
+  // Resolve the target skill id. When creating, recover from a "slug already in
+  // use" 400 by reusing the existing skill (the same slug was likely created by a
+  // prior attempt that failed after create) — so a retry completes rather than
+  // dead-ending. mirrors the CLI/MCP reuse-on-conflict behavior.
   let skillId = opts.skillId;
   if (!skillId) {
     if (!opts.create?.slug) return { ok: false, message: "The skill needs a name." };
     onProgress?.({ phase: "creating" });
     const created = await createSkillAction(opts.create);
-    if (!created.ok) return { ok: false, message: created.message, quota: created.quota };
-    skillId = created.skill.id ?? null;
+    if (created.ok) {
+      skillId = created.skill.id ?? null;
+    } else if (created.slugTaken) {
+      const resolved = await resolveSkillIdBySlugAction(opts.create.slug);
+      skillId = resolved.ok ? resolved.skillId : null;
+      if (!skillId) {
+        return { ok: false, message: resolved.ok ? created.message : resolved.message };
+      }
+    } else {
+      return { ok: false, message: created.message, quota: created.quota };
+    }
     if (!skillId) return { ok: false, message: "The API did not return the new skill's id." };
   }
 
@@ -104,7 +107,7 @@ export async function uploadSkillFolder(opts: {
 
   onProgress?.({ phase: "preparing" });
   const prep = await prepareSkillUploadAction({ skillId, manifest });
-  if (!prep.ok) return { ok: false, message: prep.message };
+  if (!prep.ok) return { ok: false, message: prep.message, skillId };
 
   // Raw ArrayBuffer PUTs, no Content-Type / Authorization — the presigned URL
   // signs only {Bucket,Key} (see lib/deploy.ts for the SigV4 rationale).
@@ -123,6 +126,7 @@ export async function uploadSkillFolder(opts: {
   } catch {
     return {
       ok: false,
+      skillId,
       message:
         "A file failed to upload to storage. Check your connection (and that the object store is reachable) and try again.",
     };
@@ -130,7 +134,7 @@ export async function uploadSkillFolder(opts: {
 
   onProgress?.({ phase: "finalizing" });
   const fin = await finalizeSkillUploadAction({ skillId, manifest, digest });
-  if (!fin.ok) return { ok: false, message: fin.message, quota: fin.quota };
+  if (!fin.ok) return { ok: false, message: fin.message, quota: fin.quota, skillId };
 
   return {
     ok: true,

@@ -47,7 +47,11 @@ export type DeployOutcome =
 
 // ---- Upload concurrency ---------------------------------------------------
 
-async function runPool<T>(
+/**
+ * Run fn over items with at most `limit` in flight. Exported so the skill-upload
+ * flow (lib/skill-upload.ts) shares one implementation instead of duplicating it.
+ */
+export async function runPool<T>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<void>,

@@ -152,6 +152,8 @@ CREATE TABLE app.skill_folder_items (
     added_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (folder_id, skill_id)
 );
+CREATE INDEX skill_folder_items_skill_idx ON app.skill_folder_items (skill_id);
+CREATE INDEX skills_current_version_idx ON app.skills (current_version_id);
 
 -- domains: custom hostnames mapped to a site. hostname is GLOBALLY unique.
 -- cf_hostname_id / dcv_record track the Cloudflare-for-SaaS custom hostname and

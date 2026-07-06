@@ -96,6 +96,9 @@ type SiteStore interface {
 	SetSkillMeta(ctx context.Context, t store.Tenant, id, title, description string) (store.Skill, error)
 	SetSkillFolders(ctx context.Context, t store.Tenant, skillID string, folderIDs []string) (store.Skill, error)
 	CreateSkillVersion(ctx context.Context, t store.Tenant, p store.CreateSkillVersionParams) (store.SkillVersion, error)
+	// PublishSkillVersion flips a skill's current version AFTER its manifest is
+	// written (the GC-safe ordering).
+	PublishSkillVersion(ctx context.Context, t store.Tenant, skillID, versionID string) error
 	ListSkillFolders(ctx context.Context, t store.Tenant) ([]store.SkillFolder, error)
 	GetSkillFolder(ctx context.Context, t store.Tenant, id string) (store.SkillFolder, error)
 	CreateSkillFolder(ctx context.Context, t store.Tenant, slug, title string) (store.SkillFolder, error)
@@ -106,7 +109,11 @@ type SiteStore interface {
 	SetSkillFolderItemPreset(ctx context.Context, t store.Tenant, folderID, skillID string, isPreset bool) error
 	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
 	SkillsSeeded(ctx context.Context, t store.Tenant) (bool, error)
-	SeedOrgSkills(ctx context.Context, t store.Tenant, seeds []store.SkillSeed) ([]store.SeededSkill, bool, error)
+	// Lazy preset seeding, split so manifests are written between staging and
+	// publishing (GC-safe): stage materializes rows without flipping live
+	// pointers, publish flips them + marks the org seeded.
+	SeedOrgSkillsStage(ctx context.Context, t store.Tenant, seeds []store.SkillSeed) ([]store.SeededSkill, bool, error)
+	SeedOrgSkillsPublish(ctx context.Context, t store.Tenant, created []store.SeededSkill) error
 }
 
 // EdgeRevoker writes the hard-revocation denylist the serving Worker + /authz read

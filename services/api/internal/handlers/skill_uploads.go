@@ -65,39 +65,16 @@ func (a *API) PrepareSkillUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	missing := make([]string, 0)
-	uploads := make(map[string]string)
-	seen := make(map[string]struct{})
-	for _, f := range req.Manifest {
-		if !validSHA256(f.SHA256) {
-			httpx.WriteError(w, fmt.Errorf("%w: bad sha256 %q", httpx.ErrBadRequest, f.SHA256))
-			return
-		}
-		if _, dup := seen[f.SHA256]; dup {
-			continue
-		}
-		seen[f.SHA256] = struct{}{}
-		exists, _, err := a.Objects.HeadBlob(r.Context(), t.OrgID, f.SHA256)
-		if err != nil {
-			httpx.WriteError(w, err)
-			return
-		}
-		if exists {
-			continue
-		}
-		url, err := a.Objects.PresignPut(r.Context(), t.OrgID, f.SHA256, presignTTL)
-		if err != nil {
-			httpx.WriteError(w, err)
-			return
-		}
-		missing = append(missing, f.SHA256)
-		uploads[f.SHA256] = url
+	resp, err := a.prepareMissingBlobs(r, t.OrgID, req.Manifest)
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
 	}
 
 	logger(r).Info("skill upload prepared",
 		"skill_id", skillID, "org_id", t.OrgID,
-		"files", len(req.Manifest), "missing", len(missing))
-	httpx.WriteJSON(w, http.StatusOK, prepareResponse{Missing: missing, Uploads: uploads})
+		"files", len(req.Manifest), "missing", len(resp.Missing))
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // validateSkillManifest maps the wire manifest onto the shared skillspec rules,
@@ -169,50 +146,17 @@ func (a *API) FinalizeSkillUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server-recomputed digest is the only identity we persist (never trust the
-	// client's — it is the idempotency key).
-	manifestFiles := make([]manifest.File, len(req.Manifest))
-	for i, f := range req.Manifest {
-		manifestFiles[i] = manifest.File{Path: f.Path, SHA256: f.SHA256}
-	}
-	serverDigest := manifest.Digest(manifestFiles)
-	if serverDigest != req.Digest {
-		httpx.WriteError(w, fmt.Errorf("%w: digest mismatch: client sent %s, server computed %s",
-			httpx.ErrBadRequest, req.Digest, serverDigest))
+	// Server-verify the manifest (shared with deploys): recomputed digest + per-blob
+	// re-hash with server-observed sizes. The client digest/sizes are never trusted.
+	vm, err := a.verifyManifest(r, t.OrgID, req.Manifest, req.Digest)
+	if err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
+	files, totalSize := vm.Files, vm.TotalSize
 
-	// Verify each blob once per unique sha; sizes come from the stored objects.
-	sizeBySHA := make(map[string]int64, len(req.Manifest))
-	files := make(map[string]manifestTarget, len(req.Manifest))
-	var totalSize int64
-	for _, f := range req.Manifest {
-		if !validSHA256(f.SHA256) {
-			httpx.WriteError(w, fmt.Errorf("%w: bad sha256 %q", httpx.ErrBadRequest, f.SHA256))
-			return
-		}
-		observed, ok := sizeBySHA[f.SHA256]
-		if !ok {
-			n, err := a.verifyBlob(r, t.OrgID, f.SHA256)
-			if err != nil {
-				httpx.WriteError(w, err)
-				return
-			}
-			observed = n
-			sizeBySHA[f.SHA256] = n
-		}
-		if f.Size != observed {
-			httpx.WriteError(w, fmt.Errorf("%w: file %q claims size %d but stored blob %s is %d bytes",
-				httpx.ErrBadRequest, f.Path, f.Size, f.SHA256, observed))
-			return
-		}
-		files[f.Path] = manifestTarget{SHA256: f.SHA256, ContentType: f.ContentType, Size: observed}
-	}
-	for _, n := range sizeBySHA {
-		totalSize += n
-	}
-	// Re-assert the size cap against SERVER-OBSERVED per-file sizes (the
-	// prepare-time check trusted the client's claims).
+	// Re-assert the skill size/count caps against SERVER-OBSERVED per-file sizes
+	// (the prepare-time check trusted the client's claims).
 	verified := make([]skillspec.FileInfo, 0, len(files))
 	for p, tgt := range files {
 		verified = append(verified, skillspec.FileInfo{Path: p, Size: tgt.Size})
@@ -234,17 +178,12 @@ func (a *API) FinalizeSkillUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	blobs := make([]store.BlobSize, 0, len(sizeBySHA))
-	for sha, n := range sizeBySHA {
-		blobs = append(blobs, store.BlobSize{SHA: sha, Size: n})
-	}
-
 	ver, err := a.Store.CreateSkillVersion(r.Context(), t, store.CreateSkillVersionParams{
 		SkillID:     skillID,
-		ContentHash: serverDigest,
+		ContentHash: vm.Digest,
 		SizeBytes:   totalSize,
 		Status:      "ready",
-		Blobs:       blobs,
+		Blobs:       vm.Blobs,
 	})
 	if err != nil {
 		writeStoreError(w, err)
@@ -272,6 +211,14 @@ func (a *API) FinalizeSkillUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.Objects.PutSkillManifest(r.Context(), t.OrgID, skillID, ver.ID, body); err != nil {
 		httpx.WriteError(w, err)
+		return
+	}
+
+	// Publish (flip the live pointer) ONLY after the manifest is durably written,
+	// so the GC never sees a current version whose blobs look unreferenced. This
+	// also makes a re-upload of GC'd identical content republish it.
+	if err := a.Store.PublishSkillVersion(r.Context(), t, skillID, ver.ID); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 

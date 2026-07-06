@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/danielpang/dropway/internal/analytics"
@@ -92,6 +93,12 @@ type API struct {
 	// org on the first skills touch (internal/skillseeds.Load, wired in main.go).
 	// Empty → orgs start with no folders/presets (they can still create both).
 	SkillSeeds []skillseeds.Seed
+
+	// seededOrgs is a process-local set of org ids already observed as
+	// skills-seeded, so ensureSkillsSeeded can skip its per-request DB round-trip
+	// on the hot path (skills_seeded is monotonic, so a cached "seeded" never goes
+	// stale; the DB advisory lock remains the source of truth for correctness).
+	seededOrgs sync.Map
 }
 
 // ContentURL renders a content host as a client-facing display URL using the

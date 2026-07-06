@@ -217,19 +217,124 @@ type SeededSkill struct {
 	VersionID string
 }
 
-// SeedOrgSkills lazily materializes the default folders + preset skills for
-// the active org, exactly once (guarded by org_meta.skills_seeded under an
-// advisory lock, so concurrent first-touches serialize). The caller stages the
-// seeds' blobs in object storage BEFORE calling and writes each returned
-// skill's manifest object AFTER (all idempotent). seeded=false means another
-// call already seeded (or is seeding) this org.
+// SeedOrgSkillsStage idempotently materializes the default folders + preset
+// skills for the active org — folders, skills, immutable versions, and preset
+// folder memberships — but deliberately does NOT set current_version_id or
+// org_meta.skills_seeded. The caller writes each returned skill's manifest to
+// object storage and THEN calls SeedOrgSkillsPublish, so a preset skill only
+// becomes live (and only trips skills_seeded) once its manifest durably exists;
+// this closes the window where the GC could delete a current version's
+// just-staged, not-yet-manifested blobs.
 //
-// Seeded skills carry the SeedOwnerUserID sentinel and land in their folder
-// with is_preset=true. Admin curation afterwards is ordinary row edits; the
-// seeded flag guarantees Dropway never re-seeds over them. A slug an org
-// somehow already uses is skipped rather than clobbered.
-func (s *Store) SeedOrgSkills(ctx context.Context, t Tenant, seeds []SkillSeed) (created []SeededSkill, seeded bool, err error) {
+// Every step is conflict-safe (get-or-create folder, insert-or-skip seed skill,
+// upsert version, upsert membership), so it can be re-run after a partial
+// failure without ever raising 23505 and aborting the transaction. staged=false
+// means the org is already fully seeded (nothing to do). Seed content is
+// metered but not capped, so an at-cap org can still receive its presets.
+//
+// Seeded skills carry the SeedOwnerUserID sentinel; a slug already used by a
+// real user is skipped rather than clobbered.
+func (s *Store) SeedOrgSkillsStage(ctx context.Context, t Tenant, seeds []SkillSeed) (created []SeededSkill, staged bool, err error) {
 	err = s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := q.LockOrgSkillsSeed(ctx, t.OrgID); err != nil {
+			return err
+		}
+		done, err := q.GetOrgSkillsSeeded(ctx, t.OrgID)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil // already seeded → staged stays false
+		}
+		staged = true
+
+		folders := map[string]string{} // slug → id
+		for _, def := range DefaultSkillFolders {
+			r, err := q.GetOrCreateSkillFolder(ctx, db.GetOrCreateSkillFolderParams{
+				OrgID: t.OrgID, Slug: def.Slug, Title: def.Title,
+			})
+			if err != nil {
+				return err
+			}
+			folders[def.Slug] = r.ID
+		}
+
+		for _, seed := range seeds {
+			folderID, ok := folders[seed.FolderSlug]
+			if !ok {
+				f, err := q.GetOrCreateSkillFolder(ctx, db.GetOrCreateSkillFolderParams{
+					OrgID: t.OrgID, Slug: seed.FolderSlug, Title: seed.FolderSlug,
+				})
+				if err != nil {
+					return err
+				}
+				folderID = f.ID
+				folders[seed.FolderSlug] = folderID
+			}
+
+			// Insert the seed skill, or reuse it only if the existing slug is our
+			// own seed (never clobber a real user's skill).
+			var skillID string
+			row, err := q.CreateSeedSkill(ctx, db.CreateSeedSkillParams{
+				OrgID:       t.OrgID,
+				Slug:        seed.Slug,
+				OwnerUserID: SeedOwnerUserID,
+				Title:       textOrNull(seed.Title),
+				Description: textOrNull(seed.Description),
+			})
+			switch {
+			case err == nil:
+				skillID = row.ID
+			case isNoRows(err):
+				existing, gerr := q.GetSkillBySlug(ctx, seed.Slug)
+				if gerr != nil {
+					return gerr
+				}
+				if existing.AppSkill.OwnerUserID != SeedOwnerUserID {
+					continue // a real user owns this slug → skip
+				}
+				skillID = existing.AppSkill.ID
+			default:
+				return err
+			}
+
+			if err := s.meterStorageNoCap(ctx, q, t.OrgID, seed.Blobs); err != nil {
+				return err
+			}
+			ver, err := q.UpsertSkillVersion(ctx, db.UpsertSkillVersionParams{
+				OrgID:       t.OrgID,
+				SkillID:     skillID,
+				VersionNo:   1,
+				Status:      "ready",
+				ContentHash: seed.ContentHash,
+				SizeBytes:   seed.SizeBytes,
+				CreatedBy:   SeedOwnerUserID,
+			})
+			if err != nil {
+				return err
+			}
+			if err := q.UpsertSkillFolderItem(ctx, db.UpsertSkillFolderItemParams{
+				OrgID: t.OrgID, FolderID: folderID, SkillID: skillID,
+				IsPreset: true, AddedBy: SeedOwnerUserID,
+			}); err != nil {
+				return err
+			}
+			created = append(created, SeededSkill{Slug: seed.Slug, SkillID: skillID, VersionID: ver.ID})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return created, staged, nil
+}
+
+// SeedOrgSkillsPublish flips every staged preset skill to its version and marks
+// the org seeded, in one tx under the seed advisory lock (idempotent: a no-op
+// if another request already published). The caller runs this ONLY after the
+// staged versions' manifests are durably written to object storage.
+func (s *Store) SeedOrgSkillsPublish(ctx context.Context, t Tenant, created []SeededSkill) error {
+	return s.withTx(ctx, t, func(q *db.Queries) error {
 		if err := q.LockOrgSkillsSeed(ctx, t.OrgID); err != nil {
 			return err
 		}
@@ -240,93 +345,16 @@ func (s *Store) SeedOrgSkills(ctx context.Context, t Tenant, seeds []SkillSeed) 
 		if done {
 			return nil
 		}
-
-		folders := map[string]string{} // slug → id
-		for _, def := range DefaultSkillFolders {
-			r, err := q.CreateSkillFolder(ctx, db.CreateSkillFolderParams{
-				OrgID: t.OrgID, Slug: def.Slug, Title: def.Title,
-			})
-			if err != nil {
-				if uniqueViolation(err, "skill_folders_org_slug_key") {
-					existing, gerr := q.GetSkillFolderBySlug(ctx, def.Slug)
-					if gerr != nil {
-						return gerr
-					}
-					folders[def.Slug] = existing.ID
-					continue
-				}
-				return err
-			}
-			folders[def.Slug] = r.ID
-		}
-
-		for _, seed := range seeds {
-			folderID, ok := folders[seed.FolderSlug]
-			if !ok {
-				f, err := q.GetSkillFolderBySlug(ctx, seed.FolderSlug)
-				if err != nil {
-					if isNoRows(err) {
-						continue // unknown folder in seed metadata → skip the seed
-					}
-					return err
-				}
-				folderID = f.ID
-			}
-
-			row, err := q.CreateSkill(ctx, db.CreateSkillParams{
-				OrgID:       t.OrgID,
-				Slug:        seed.Slug,
-				OwnerUserID: SeedOwnerUserID,
-				Title:       textOrNull(seed.Title),
-				Description: textOrNull(seed.Description),
-			})
-			if err != nil {
-				if uniqueViolation(err, "skills_org_slug_key") {
-					continue // the org already uses this slug → never clobber
-				}
-				return err
-			}
-
-			if err := s.accountStorage(ctx, q, t.OrgID, seed.Blobs); err != nil {
-				return err // seeding must not dodge the storage meter
-			}
-			ver, err := q.CreateSkillVersion(ctx, db.CreateSkillVersionParams{
-				OrgID:       t.OrgID,
-				SkillID:     row.ID,
-				VersionNo:   1,
-				Status:      "ready",
-				ContentHash: seed.ContentHash,
-				SizeBytes:   seed.SizeBytes,
-				CreatedBy:   SeedOwnerUserID,
-			})
-			if err != nil {
-				return err
-			}
-			vid := ver.ID
+		for _, c := range created {
+			vid := c.VersionID
 			if err := q.SetSkillCurrentVersion(ctx, db.SetSkillCurrentVersionParams{
-				ID: row.ID, CurrentVersionID: &vid,
+				ID: c.SkillID, CurrentVersionID: &vid,
 			}); err != nil {
 				return err
 			}
-			if err := q.UpsertSkillFolderItem(ctx, db.UpsertSkillFolderItemParams{
-				OrgID: t.OrgID, FolderID: folderID, SkillID: row.ID,
-				IsPreset: true, AddedBy: SeedOwnerUserID,
-			}); err != nil {
-				return err
-			}
-			created = append(created, SeededSkill{Slug: seed.Slug, SkillID: row.ID, VersionID: ver.ID})
 		}
-
-		if err := q.SetOrgSkillsSeeded(ctx, db.SetOrgSkillsSeededParams{ID: t.OrgID, SkillsSeeded: true}); err != nil {
-			return err
-		}
-		seeded = true
-		return nil
+		return q.SetOrgSkillsSeeded(ctx, db.SetOrgSkillsSeededParams{ID: t.OrgID, SkillsSeeded: true})
 	})
-	if err != nil {
-		return nil, false, err
-	}
-	return created, seeded, nil
 }
 
 // SkillsSeeded reports whether the org's lazy preset seeding already ran (the

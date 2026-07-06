@@ -25,7 +25,9 @@ function quotaOf(err: unknown): QuotaExceeded | undefined {
 
 export type CreateSkillActionResult =
   | { ok: true; skill: Skill }
-  | { ok: false; message: string; quota?: QuotaExceeded };
+  // slugTaken lets the caller recover by reusing the existing skill instead of
+  // dead-ending (the API returns 400 when the org already has that slug).
+  | { ok: false; message: string; quota?: QuotaExceeded; slugTaken?: boolean };
 
 /** Register a skill (POST /v1/skills). 402 carries the folder-cap quota body. */
 export async function createSkillAction(input: {
@@ -44,7 +46,31 @@ export async function createSkillAction(input: {
       ok: false,
       message: apiErrorMessage(err, "Could not create the skill. Try again."),
       quota: quotaOf(err),
+      slugTaken: isSlugTaken(err),
     };
+  }
+}
+
+/** True when the API rejected a create because the org already has that slug. */
+function isSlugTaken(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 400) return false;
+  const message = (err.body as { message?: unknown } | null)?.message;
+  return typeof message === "string" && message.toLowerCase().includes("already in use");
+}
+
+export type ResolveSkillActionResult =
+  | { ok: true; skillId: string }
+  | { ok: false; message: string };
+
+/** Resolve a skill id from its slug (exact match), for upload retry recovery. */
+export async function resolveSkillIdBySlugAction(slug: string): Promise<ResolveSkillActionResult> {
+  try {
+    const skills = await api.listSkills({ q: slug });
+    const match = skills.find((s) => s.slug === slug);
+    if (!match?.id) return { ok: false, message: `Could not find the existing skill "${slug}".` };
+    return { ok: true, skillId: match.id };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err, "Could not look up the existing skill.") };
   }
 }
 

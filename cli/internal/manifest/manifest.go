@@ -145,7 +145,7 @@ func (m *Manifest) PathHashMap() map[string]string {
 func (m *Manifest) Summary() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d file(s), %s, digest %s",
-		len(m.Files), humanBytes(m.TotalSize), short(m.Digest))
+		len(m.Files), HumanBytes(m.TotalSize), short(m.Digest))
 	return b.String()
 }
 
@@ -156,7 +156,10 @@ func short(hexStr string) string {
 	return hexStr[:12]
 }
 
-func humanBytes(n int64) string {
+// HumanBytes formats a byte count as a short human-readable size (e.g.
+// "2.0 KB"). Exported so CLI commands can reuse the same scale/format the
+// manifest summary uses.
+func HumanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)

@@ -127,6 +127,11 @@ type fakeAPI struct {
 	uploadFiles                []apiclient.FileUpload
 	uploadResp                 apiclient.UploadResult
 	uploadErr                  error
+
+	setFoldersToken, setFoldersSkillID string
+	setFoldersIDs                      []string
+	setFoldersCalls                    int
+	setFoldersErr                      error
 }
 
 func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
@@ -160,6 +165,11 @@ func (f *fakeAPI) UploadSkill(_ context.Context, token, skillID string, files []
 		return apiclient.UploadResult{}, f.uploadErr
 	}
 	return f.uploadResp, nil
+}
+func (f *fakeAPI) SetSkillFolders(_ context.Context, token, skillID string, folderIDs []string) error {
+	f.setFoldersToken, f.setFoldersSkillID, f.setFoldersIDs = token, skillID, folderIDs
+	f.setFoldersCalls++
+	return f.setFoldersErr
 }
 
 const manifestJSON = `{"schema_version":1,"files":{
@@ -692,6 +702,38 @@ func TestDownloadSkill_UnsafeManifestPathRejected(t *testing.T) {
 	}
 }
 
+// A filename that merely CONTAINS ".." (but has no ".." path SEGMENT), e.g.
+// "changelog..md", is a valid server-side path and must download fine. The old
+// strings.Contains(p, "..") check wrongly rejected these, hard-failing the whole
+// skill; the CleanPath rule (segment-based) accepts them. Regression guard for BUG 1.
+func TestDownloadSkill_DottedFilenameAllowed(t *testing.T) {
+	skills := &fakeSkills{bySlug: map[string]store.Skill{
+		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1")},
+	}}
+	blobs := &fakeBlobs{
+		skillManifests: map[string][]byte{"sk1/v1": []byte(`{"schema_version":1,"files":{
+			"SKILL.md":{"sha256":"sm","content_type":"text/markdown","size":11},
+			"changelog..md":{"sha256":"cl","content_type":"text/markdown","size":3}
+		}}`)},
+		blobs: map[string][]byte{
+			"sm": []byte("# a skill\n"),
+			"cl": []byte("log"),
+		},
+	}
+	svc := &Service{Skills: skills, Blobs: blobs}
+	out, err := svc.DownloadSkill(context.Background(), tnt, "writing")
+	if err != nil {
+		t.Fatalf("DownloadSkill: %v", err)
+	}
+	if len(out.Files) != 2 {
+		t.Fatalf("want 2 files (incl. changelog..md), got %d: %+v", len(out.Files), out.Files)
+	}
+	// Sorted: SKILL.md, changelog..md.
+	if out.Files[1].Path != "changelog..md" || out.Files[1].Content != "log" {
+		t.Errorf("dotted filename not downloaded: %+v", out.Files[1])
+	}
+}
+
 func TestDownloadSkill_OverCapTruncated(t *testing.T) {
 	orig := maxDownloadBytes
 	maxDownloadBytes = 8 // below the manifest's 15 declared bytes
@@ -785,16 +827,24 @@ func TestUploadSkill_CreatesWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UploadSkill: %v", err)
 	}
-	// Create forwarded the token, slug, title, and the RESOLVED folder id.
+	// Create forwarded the token, slug, and title — but NO folders (the create is
+	// what triggers seeding; folders are applied afterwards via SetSkillFolders).
 	if api.createSkillToken != "tok-5" || api.createSkillSlug != "writing" || api.createSkillTitle != "Writing" {
 		t.Errorf("create args wrong: %+v", api)
 	}
-	if len(api.createSkillFolders) != 1 || api.createSkillFolders[0] != "f1" {
-		t.Errorf("folder slug not resolved to id: %v", api.createSkillFolders)
+	if len(api.createSkillFolders) != 0 {
+		t.Errorf("create should be called with no folders, got: %v", api.createSkillFolders)
 	}
 	// Upload ran against the created skill under the same token.
 	if api.uploadToken != "tok-5" || api.uploadSkillID != "sk-new" {
 		t.Errorf("upload args wrong: token=%q skill=%q", api.uploadToken, api.uploadSkillID)
+	}
+	// Folders were resolved (post-seed) and applied to the created skill.
+	if api.setFoldersToken != "tok-5" || api.setFoldersSkillID != "sk-new" {
+		t.Errorf("SetSkillFolders args wrong: token=%q skill=%q", api.setFoldersToken, api.setFoldersSkillID)
+	}
+	if len(api.setFoldersIDs) != 1 || api.setFoldersIDs[0] != "f1" {
+		t.Errorf("folder slug not resolved to id: %v", api.setFoldersIDs)
 	}
 	// Files decoded: text → raw bytes, base64 → decoded bytes.
 	if len(api.uploadFiles) != 2 || string(api.uploadFiles[0].Content) != "# hi" {
@@ -828,6 +878,9 @@ func TestUploadSkill_ReusesExistingSkill(t *testing.T) {
 	if api.uploadSkillID != "sk-old" {
 		t.Errorf("upload should target the existing skill: %q", api.uploadSkillID)
 	}
+	if api.setFoldersCalls != 0 {
+		t.Error("a re-upload (reuse) must not re-file the skill's folders")
+	}
 	if out.SkillID != "sk-old" || out.VersionNo != 2 {
 		t.Errorf("result wrong: %+v", out)
 	}
@@ -848,8 +901,12 @@ func TestUploadSkill_RequiresRootSkillMD(t *testing.T) {
 	}
 }
 
+// An unknown folder slug is now caught AFTER the create+upload (the create is what
+// seeds the org's folders, so resolution must run post-seed). The error still lists
+// the available slugs — which are non-empty precisely because seeding has run — and
+// SetSkillFolders is never called for the bad slug.
 func TestUploadSkill_UnknownFolderListsAvailable(t *testing.T) {
-	api := &fakeAPI{}
+	api := &fakeAPI{createSkillResp: apiclient.SkillInfo{ID: "sk-new", Slug: "writing"}}
 	svc := &Service{
 		Skills: &fakeSkills{
 			bySlug:  map[string]store.Skill{},
@@ -865,8 +922,8 @@ func TestUploadSkill_UnknownFolderListsAvailable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "product") {
 		t.Fatalf("want an unknown-folder error listing available folders, got %v", err)
 	}
-	if api.createSkillSlug != "" {
-		t.Error("API must not be called for an unknown folder")
+	if api.setFoldersCalls != 0 {
+		t.Error("SetSkillFolders must not be called for an unknown folder slug")
 	}
 }
 

@@ -318,6 +318,9 @@ func TestSkillsList_Table(t *testing.T) {
 			Folders: []api.SkillFolderRef{{Slug: "coding"}, {Slug: "starter", IsPreset: true}},
 		},
 		{ID: "s2", Slug: "writing", OwnerID: presetOwnerID, SizeBytes: 100},
+		// is_seeded drives the "dropway" label even when the owner id isn't the
+		// zero-UUID sentinel.
+		{ID: "s3", Slug: "seeded", OwnerID: "user_seed", IsSeeded: true, SizeBytes: 50},
 	}
 	out, err := runSkills(t, fc, "list")
 	if err != nil {
@@ -337,6 +340,10 @@ func TestSkillsList_Table(t *testing.T) {
 	}
 	if !strings.Contains(out, "user_abc") {
 		t.Errorf("non-preset owner should print its id:\n%s", out)
+	}
+	// An is_seeded skill reads "dropway", not its raw owner id.
+	if strings.Contains(out, "user_seed") {
+		t.Errorf("is_seeded skill should render owner as dropway, not its id:\n%s", out)
 	}
 	if !strings.Contains(out, "2.0 KB") {
 		t.Errorf("size should be humanized:\n%s", out)

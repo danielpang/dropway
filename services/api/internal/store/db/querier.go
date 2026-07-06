@@ -24,6 +24,12 @@ type Querier interface {
 	// org_id to be explicit.
 	CountSitesForOrg(ctx context.Context, orgID string) (int64, error)
 	CountSkillsForOrg(ctx context.Context, orgID string) (int64, error)
+	// Insert a preset seed skill, or DO NOTHING if the org already has that slug
+	// (a real user's skill, or this seed from a prior attempt). ON CONFLICT means a
+	// collision never raises 23505 and aborts the seeding transaction; a no-rows
+	// result tells the caller to inspect the existing row and skip it unless it is
+	// our own seed.
+	CreateSeedSkill(ctx context.Context, arg CreateSeedSkillParams) (AppSkill, error)
 	// ===========================================================================
 	// sites
 	// ===========================================================================
@@ -93,6 +99,11 @@ type Querier interface {
 	// absent host) is a no-rows miss. Used by Publish / the projection writers to
 	// assert the publishing site OWNS the host before writing route:<host>.
 	GetHostRoute(ctx context.Context, host string) (AppHostRoute, error)
+	// Get-or-create a folder by (org_id, slug): a no-op DO UPDATE so RETURNING
+	// always yields the row. Used by idempotent seeding so re-running against an
+	// org that already has a default folder (e.g. an admin created it first) never
+	// raises 23505 and aborts the seed transaction.
+	GetOrCreateSkillFolder(ctx context.Context, arg GetOrCreateSkillFolderParams) (AppSkillFolder, error)
 	GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, error)
 	GetOrgSkillsSeeded(ctx context.Context, id string) (bool, error)
 	// The org's current stored bytes (the storage cap-check input). 0 when the
@@ -118,8 +129,10 @@ type Querier interface {
 	GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVersionByContentHashParams) (AppSiteVersion, error)
 	// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
 	GetSiteVoteScore(ctx context.Context, siteID string) (int64, error)
-	GetSkill(ctx context.Context, id string) (AppSkill, error)
-	GetSkillBySlug(ctx context.Context, slug string) (AppSkill, error)
+	// Embeds the full skill row plus its current version's size (0 when unset), so
+	// reads never N+1 a per-skill version lookup.
+	GetSkill(ctx context.Context, id string) (GetSkillRow, error)
+	GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySlugRow, error)
 	GetSkillFolder(ctx context.Context, id string) (AppSkillFolder, error)
 	GetSkillFolderBySlug(ctx context.Context, slug string) (AppSkillFolder, error)
 	GetSkillVersion(ctx context.Context, id string) (AppSkillVersion, error)
@@ -173,7 +186,7 @@ type Querier interface {
 	// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
 	ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error)
 	// Every skill in a folder that has a live version (the bulk-download set).
-	ListFolderSkills(ctx context.Context, folderID string) ([]AppSkill, error)
+	ListFolderSkills(ctx context.Context, folderID string) ([]ListFolderSkillsRow, error)
 	// Folder memberships for a set of skills in one round-trip (the folder chips on
 	// each row of a skills listing — no N+1).
 	ListFoldersForSkills(ctx context.Context, skillIds []string) ([]ListFoldersForSkillsRow, error)
@@ -214,7 +227,7 @@ type Querier interface {
 	// Skills that have never finalized an upload (no current version) are visible
 	// only to their owner (caller_id), so half-finished uploads don't clutter the
 	// org listing. RLS scopes every read to the active org.
-	ListSkills(ctx context.Context, arg ListSkillsParams) ([]AppSkill, error)
+	ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListSkillsRow, error)
 	// ===========================================================================
 	// R2 version GC (Phase 4) — versions to retain per org
 	// ===========================================================================
@@ -346,6 +359,11 @@ type Querier interface {
 	UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error
 	// Add a skill to a folder (or update its preset flag if already a member).
 	UpsertSkillFolderItem(ctx context.Context, arg UpsertSkillFolderItemParams) error
+	// Get-or-create a version by its (skill_id, content_hash): a no-op DO UPDATE so
+	// RETURNING always yields the row whether it was just inserted or already
+	// existed. Used by idempotent seeding so a retried seed can't raise 23505 and
+	// abort the transaction. The no-op update sets status to itself.
+	UpsertSkillVersion(ctx context.Context, arg UpsertSkillVersionParams) (AppSkillVersion, error)
 	// NOTE: resolving a content host → owning site via the RLS-bypassing
 	// app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
 	// pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types
