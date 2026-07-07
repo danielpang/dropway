@@ -28,7 +28,7 @@ are the source of truth.
 The control-plane UI and the **identity authority**.
 
 **Main use cases**
-- Web UI to manage organizations, sites, deploys, members, domains, and the org's shared **skills** (upload, search by folder/preset, download as zip, admin folder curation).
+- Web UI to manage organizations, sites, deploys, members, domains, and the org's shared **skills** (author in a Markdown editor or drag-and-drop upload, edit a skill into a new version, search by folder/preset, download as zip, admin folder curation). Sites and skills also surface in the cross-user **feed** (vote, comment, share/unshare).
 - **Authentication** via Better Auth: email/password, magic link, and (optional) Google SSO.
 - The **OAuth 2.1 authorization server** for the CLI (`dropway login`) and MCP clients — DCR, authorize, consent (`/oauth/consent`), token.
 - The **`/authz` edge-token exchange**: a gated-content viewer with a dashboard session is redirected here, and the dashboard asks the API to mint a host-scoped edge token.
@@ -51,7 +51,8 @@ The **system of record and the authorization boundary**. Every mutation goes thr
 - Owns + migrates the **`app` schema** (sites, versions, domains, allowlist, skills, skill_versions, skill_folders, skill_folder_items, org_meta, org_usage, audit_log) — accessed as the non-superuser, non-BYPASSRLS **`dropway_app`** role with per-request RLS tenant context.
 - **Verifies every JWT** against the dashboard JWKS (pins EdDSA + iss + aud).
 - The **deploy pipeline**: `prepare` (manifest → missing blobs + presigned PUT URLs) → client uploads → `finalize` (write manifest, insert version) → `publish` (flip `current_version_id`, write the route projection).
-- **Org-wide skill sharing** (`/v1/skills`, `/v1/skill-folders`): the same prepare → presign → finalize upload contract (finalize publishes — skills are latest-only), admin-curated folders with preset flags, bulk folder download, and lazy per-org seeding of the default folders + starter presets (guarded by `org_meta.skills_seeded`).
+- **Org-wide skill sharing** (`/v1/skills`, `/v1/skill-folders`): the same prepare → presign → finalize upload contract (finalize publishes — skills are latest-only, each version carrying a monotonic number surfaced as the skill's `version` for update detection), admin-curated folders with preset flags, bulk folder download, and lazy per-org seeding of the default folders + starter presets (guarded by `org_meta.skills_seeded`).
+- **Org feed** (`/v1/feed`): a unified newest-first list of shared sites **and** skills, each tagged by `kind`, with polymorphic votes + comments (`app.post_votes`/`app.post_comments` over a `subject_type` of `'site'`/`'skill'`) and per-post feed-visibility.
 - **Mints host-scoped edge tokens** (`/v1/authz/mint`) for gated viewers, after checking membership/allowlist + revocation. Signs them with `EDGE_SIGNING_KEY` (stable Ed25519 seed) and publishes the edge JWKS at `/.well-known/edge-jwks`.
 - Writes the **route projection** (`route:<host>`) and **revocation denylist** to the edge store.
 - **ensure-org-provisioned**: lazily creates `app.org_meta` + `org_usage` for a tenant on first authenticated call.
@@ -71,7 +72,7 @@ The **OAuth-protected MCP server** that lets an LLM agent work with a tenant's d
 
 **Main use cases**
 - Speaks **Streamable-HTTP MCP**; unauthenticated requests get a 401 + RFC 9728 pointer that starts the OAuth flow against the dashboard.
-- **Read tools** (`list_sites`, `list_files`, `read_file`, `download_site`, `list_skills`, `download_skill`, `download_skill_folder`) — served directly from Postgres + the object store under RLS (no API hop).
+- **Read tools** (`list_sites`, `list_files`, `read_file`, `download_site`, `list_skills`, `download_skill`, `download_skill_folder`, `check_skill_updates`) — served directly from Postgres + the object store under RLS (no API hop).
 - **Write tools** (`create_site`, `set_site_access`, `deploy_site`, `upload_skill`) — performed by **forwarding the user's OAuth token to the api** (which accepts the MCP audience), so writes reuse the API's authz, quota, projection, and audit. Requires `API_URL`; without it the server is read-only.
 - Per-request **`org_meta.mcp_enabled`** kill-switch.
 
