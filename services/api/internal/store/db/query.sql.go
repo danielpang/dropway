@@ -944,7 +944,8 @@ func (q *Queries) GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVe
 
 const getSkill = `-- name: GetSkill :one
 SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE sk.id = $1
@@ -953,6 +954,7 @@ WHERE sk.id = $1
 type GetSkillRow struct {
 	AppSkill  AppSkill
 	SizeBytes int64
+	Version   int32
 }
 
 // Embeds the full skill row plus its current version's size (0 when unset), so
@@ -971,13 +973,15 @@ func (q *Queries) GetSkill(ctx context.Context, id string) (GetSkillRow, error) 
 		&i.AppSkill.FeedVisible,
 		&i.AppSkill.CreatedAt,
 		&i.SizeBytes,
+		&i.Version,
 	)
 	return i, err
 }
 
 const getSkillBySlug = `-- name: GetSkillBySlug :one
 SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE sk.slug = $1
@@ -986,6 +990,7 @@ WHERE sk.slug = $1
 type GetSkillBySlugRow struct {
 	AppSkill  AppSkill
 	SizeBytes int64
+	Version   int32
 }
 
 func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySlugRow, error) {
@@ -1002,6 +1007,7 @@ func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySl
 		&i.AppSkill.FeedVisible,
 		&i.AppSkill.CreatedAt,
 		&i.SizeBytes,
+		&i.Version,
 	)
 	return i, err
 }
@@ -1431,6 +1437,7 @@ const listFeedSkills = `-- name: ListFeedSkills :many
 SELECT
     sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
     COALESCE(ver.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(ver.version_no, 0)::int AS version,
     COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'skill' AND v.subject_id = sk.id), 0)::bigint AS score,
     COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'skill' AND mv.subject_id = sk.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'skill' AND c.subject_id = sk.id), 0)::bigint AS comment_count
@@ -1444,6 +1451,7 @@ ORDER BY sk.created_at DESC
 type ListFeedSkillsRow struct {
 	AppSkill     AppSkill
 	SizeBytes    int64
+	Version      int32
 	Score        int64
 	MyVote       int32
 	CommentCount int64
@@ -1474,6 +1482,7 @@ func (q *Queries) ListFeedSkills(ctx context.Context, userID string) ([]ListFeed
 			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
 			&i.SizeBytes,
+			&i.Version,
 			&i.Score,
 			&i.MyVote,
 			&i.CommentCount,
@@ -1490,7 +1499,8 @@ func (q *Queries) ListFeedSkills(ctx context.Context, userID string) ([]ListFeed
 
 const listFolderSkills = `-- name: ListFolderSkills :many
 SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skill_folder_items fi
 JOIN app.skills sk ON sk.id = fi.skill_id
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
@@ -1502,6 +1512,7 @@ ORDER BY sk.slug
 type ListFolderSkillsRow struct {
 	AppSkill  AppSkill
 	SizeBytes int64
+	Version   int32
 }
 
 // Every skill in a folder that has a live version (the bulk-download set).
@@ -1525,6 +1536,7 @@ func (q *Queries) ListFolderSkills(ctx context.Context, folderID string) ([]List
 			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
 			&i.SizeBytes,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -1924,7 +1936,8 @@ func (q *Queries) ListSkillFolders(ctx context.Context) ([]ListSkillFoldersRow, 
 
 const listSkills = `-- name: ListSkills :many
 SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
@@ -1958,6 +1971,7 @@ type ListSkillsParams struct {
 type ListSkillsRow struct {
 	AppSkill  AppSkill
 	SizeBytes int64
+	Version   int32
 }
 
 // Search + filter the active org's skills. q matches slug/title/description
@@ -1991,6 +2005,7 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListS
 			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
 			&i.SizeBytes,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}

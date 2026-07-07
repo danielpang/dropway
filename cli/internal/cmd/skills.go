@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,43 @@ import (
 	"github.com/danielpang/dropway/internal/skillspec"
 	"github.com/danielpang/dropway/internal/slug"
 )
+
+// skillRecordFile is the per-skill sidecar `dropway skills pull` writes into each
+// downloaded skill folder, recording the version pulled so `skills check` can
+// later compare it against the org's current version. It's a dotfile so agent
+// harnesses that load SKILL.md ignore it.
+const skillRecordFile = ".dropway.json"
+
+// skillRecord is the sidecar's contents: which skill this folder is + the exact
+// version that was pulled.
+type skillRecord struct {
+	Slug    string `json:"slug"`
+	SkillID string `json:"skill_id"`
+	Version int32  `json:"version"`
+}
+
+// writeSkillRecord writes the version sidecar into a pulled skill's folder
+// (root = <dest>/<slug>). Best-effort provenance for `skills check`.
+func writeSkillRecord(root string, rec skillRecord) error {
+	body, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, skillRecordFile), append(body, '\n'), 0o644)
+}
+
+// readSkillRecord reads the version sidecar from a pulled skill's folder, if any.
+func readSkillRecord(root string) (skillRecord, bool) {
+	body, err := os.ReadFile(filepath.Join(root, skillRecordFile))
+	if err != nil {
+		return skillRecord{}, false
+	}
+	var rec skillRecord
+	if err := json.Unmarshal(body, &rec); err != nil || rec.Slug == "" {
+		return skillRecord{}, false
+	}
+	return rec, true
+}
 
 // presetOwnerID is the zero-UUID owner the API stamps on Dropway-seeded preset
 // skills; the list view labels it "dropway" instead of printing the raw zeros.
@@ -44,6 +82,7 @@ func newSkillsCmd(skillsFactory func(baseURL, token string) api.SkillsClient) *c
 	cmd.AddCommand(newSkillsPushCmd(skillsFactory))
 	cmd.AddCommand(newSkillsListCmd(skillsFactory))
 	cmd.AddCommand(newSkillsPullCmd(skillsFactory))
+	cmd.AddCommand(newSkillsCheckCmd(skillsFactory))
 	return cmd
 }
 
@@ -338,7 +377,11 @@ func pullSkill(ctx context.Context, out io.Writer, client api.SkillsClient, name
 	if err != nil {
 		return fmt.Errorf("skills pull: %w", err)
 	}
-	fmt.Fprintf(out, "✓ Pulled skill %s → %s (%d file(s))\n", dl.Slug, filepath.Join(dest, dl.Slug), n)
+	// Record the pulled version so `skills check` can detect later updates.
+	if err := writeSkillRecord(filepath.Join(dest, dl.Slug), skillRecord{Slug: dl.Slug, SkillID: dl.SkillID, Version: dl.Version}); err != nil {
+		return fmt.Errorf("skills pull: %w", err)
+	}
+	fmt.Fprintf(out, "✓ Pulled skill %s (v%d) → %s (%d file(s))\n", dl.Slug, dl.Version, filepath.Join(dest, dl.Slug), n)
 	return nil
 }
 
@@ -373,7 +416,10 @@ func pullFolder(ctx context.Context, out io.Writer, client api.SkillsClient, fol
 		if err != nil {
 			return fmt.Errorf("skills pull: %w", err)
 		}
-		fmt.Fprintf(out, "  %s → %s (%d file(s))\n", sd.Slug, filepath.Join(dest, sd.Slug), n)
+		if err := writeSkillRecord(filepath.Join(dest, sd.Slug), skillRecord{Slug: sd.Slug, SkillID: sd.SkillID, Version: sd.Version}); err != nil {
+			return fmt.Errorf("skills pull: %w", err)
+		}
+		fmt.Fprintf(out, "  %s (v%d) → %s (%d file(s))\n", sd.Slug, sd.Version, filepath.Join(dest, sd.Slug), n)
 		total += n
 	}
 	for _, w := range fd.Warnings {
@@ -381,6 +427,136 @@ func pullFolder(ctx context.Context, out io.Writer, client api.SkillsClient, fol
 	}
 	fmt.Fprintf(out, "✓ Pulled %d skill(s) from folder %s (%d file(s)) into %s\n", len(fd.Skills), folderSlug, total, dest)
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// dropway skills check
+// ---------------------------------------------------------------------------
+
+// newSkillsCheckCmd builds `dropway skills check`: scan the pulled skills under
+// <dest> (each carries a .dropway.json recording the version it was pulled at),
+// compare against the org's current version, and report which are outdated.
+// With --update, re-pull every outdated skill.
+func newSkillsCheckCmd(skillsFactory func(baseURL, token string) api.SkillsClient) *cobra.Command {
+	var (
+		dest    string
+		update  bool
+		baseURL string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "Check pulled skills for updates (and optionally update them)",
+		Long: "Scan the skills already pulled into <dest> (default " + defaultPullDest + "/) and\n" +
+			"compare each one's recorded version against your org's current version.\n" +
+			"Reports which skills are out of date; pass --update to re-pull them.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := context.Background()
+			out := cmd.OutOrStdout()
+
+			records, err := readSkillRecords(dest)
+			if err != nil {
+				return fmt.Errorf("skills check: %w", err)
+			}
+			if len(records) == 0 {
+				fmt.Fprintf(out, "No pulled skills found under %s (pull one with `dropway skills pull <name>`).\n", dest)
+				return nil
+			}
+
+			token, err := auth.Token(ctx, baseURL)
+			if err != nil {
+				return fmt.Errorf("skills check: %w", err)
+			}
+			client := skillsFactory(baseURL, token)
+
+			// One list call → current version per slug (avoids an N-call fan-out).
+			resp, err := client.ListSkills(ctx, "", "", false)
+			if err != nil {
+				return fmt.Errorf("skills check: %w", err)
+			}
+			current := make(map[string]api.Skill, len(resp.Skills))
+			for _, s := range resp.Skills {
+				current[s.Slug] = s
+			}
+
+			outdated := planSkillUpdates(records, current)
+			if len(outdated) == 0 {
+				fmt.Fprintf(out, "✓ All %d pulled skill(s) are up to date.\n", len(records))
+				return nil
+			}
+
+			for _, u := range outdated {
+				fmt.Fprintf(out, "• %s: v%d installed → v%d available\n", u.Slug, u.Have, u.Want)
+			}
+			if !update {
+				fmt.Fprintf(out, "\n%d skill(s) out of date. Re-run with --update to pull the latest.\n", len(outdated))
+				return nil
+			}
+
+			fmt.Fprintln(out, "\nUpdating…")
+			for _, u := range outdated {
+				if err := pullSkill(ctx, out, client, u.Slug, dest); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dest, "dest", defaultPullDest, "directory the skills were pulled into")
+	cmd.Flags().BoolVar(&update, "update", false, "re-pull every outdated skill")
+	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Dropway API base URL")
+	return cmd
+}
+
+// skillUpdate is one outdated pulled skill: the recorded (have) vs current (want)
+// version.
+type skillUpdate struct {
+	Slug string
+	Have int32
+	Want int32
+}
+
+// readSkillRecords loads the .dropway.json sidecar from every immediate
+// subdirectory of dest. A directory without a (valid) sidecar is skipped — it
+// wasn't pulled by us, so we can't reason about its version.
+func readSkillRecords(dest string) ([]skillRecord, error) {
+	entries, err := os.ReadDir(dest)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var records []skillRecord
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if rec, ok := readSkillRecord(filepath.Join(dest, e.Name())); ok {
+			records = append(records, rec)
+		}
+	}
+	return records, nil
+}
+
+// planSkillUpdates returns the records whose recorded version is behind the org's
+// current version. A skill no longer in the org (or with no current version) is
+// skipped — there's nothing to update to.
+func planSkillUpdates(records []skillRecord, current map[string]api.Skill) []skillUpdate {
+	var out []skillUpdate
+	for _, rec := range records {
+		s, ok := current[rec.Slug]
+		if !ok || s.Version == 0 {
+			continue
+		}
+		if s.Version > rec.Version {
+			out = append(out, skillUpdate{Slug: rec.Slug, Have: rec.Version, Want: s.Version})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out
 }
 
 // ---------------------------------------------------------------------------

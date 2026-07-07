@@ -291,6 +291,9 @@ type skillDownloadPayload struct {
 	// budget ran out — fetch it via GET /v1/skills/{id}/download.
 	Truncated bool   `json:"truncated,omitempty"`
 	SkillID   string `json:"skill_id"`
+	// Version is the downloaded content's version number, so a client can record
+	// it and later detect when the org's copy has moved ahead (an update).
+	Version int32 `json:"version"`
 }
 
 // ListSkillFiles returns the current version's manifest entries.
@@ -376,7 +379,7 @@ func (a *API) downloadSkillPayload(r *http.Request, t store.Tenant, skill store.
 	}
 	sort.Strings(paths)
 
-	payload := skillDownloadPayload{Slug: skill.Slug, SkillID: skill.ID}
+	payload := skillDownloadPayload{Slug: skill.Slug, SkillID: skill.ID, Version: skill.Version}
 	var total int64
 	for _, p := range paths {
 		tgt := files[p]

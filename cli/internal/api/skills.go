@@ -26,9 +26,12 @@ type Skill struct {
 	OwnerID     string `json:"owner_id"`
 	// IsSeeded marks a Dropway-provided preset (owner is the seed sentinel); the
 	// list view renders the owner as "dropway" from this flag.
-	IsSeeded  bool             `json:"is_seeded"`
-	SizeBytes int64            `json:"size_bytes"`
-	Folders   []SkillFolderRef `json:"folders"`
+	IsSeeded  bool  `json:"is_seeded"`
+	SizeBytes int64 `json:"size_bytes"`
+	// Version is the current version's monotonic number (0 before the first
+	// upload). `skills check` compares a pulled skill's recorded version to this.
+	Version int32            `json:"version"`
+	Folders []SkillFolderRef `json:"folders"`
 }
 
 // SkillsResponse is the GET /v1/skills body.
@@ -70,6 +73,7 @@ type SkillFile struct {
 type SkillDownload struct {
 	Slug      string      `json:"slug"`
 	SkillID   string      `json:"skill_id"`
+	Version   int32       `json:"version"`
 	Truncated bool        `json:"truncated,omitempty"`
 	Files     []SkillFile `json:"files,omitempty"`
 }

@@ -30,6 +30,10 @@ type Skill struct {
 	CurrentVersionID *string
 	// SizeBytes is the current version's total size (0 until first upload).
 	SizeBytes int64
+	// Version is the current version's monotonic number (0 until first upload).
+	// It bumps on every content change, so clients (CLI/MCP) compare a downloaded
+	// skill's recorded version against this to detect updates.
+	Version int32
 	// FeedVisible shares the skill to the org feed (default true); the owner/admin
 	// can make it private to pull it off the feed (mirrors Site.FeedVisible).
 	FeedVisible bool
@@ -190,7 +194,7 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, q, folderSlug string, 
 		out = make([]Skill, len(rows))
 		ids := make([]string, len(rows))
 		for i, r := range rows {
-			out[i] = skillFromRow(r.AppSkill, r.SizeBytes)
+			out[i] = skillFromRow(r.AppSkill, r.SizeBytes, r.Version)
 			ids[i] = r.AppSkill.ID
 		}
 		return attachFolders(ctx, qq, out, ids)
@@ -216,7 +220,7 @@ func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string)
 		out = make([]Skill, len(rows))
 		ids := make([]string, len(rows))
 		for i, r := range rows {
-			out[i] = skillFromRow(r.AppSkill, r.SizeBytes)
+			out[i] = skillFromRow(r.AppSkill, r.SizeBytes, r.Version)
 			ids[i] = r.AppSkill.ID
 		}
 		return attachFolders(ctx, q, out, ids)
@@ -270,7 +274,7 @@ func (s *Store) GetSkill(ctx context.Context, t Tenant, id string) (Skill, error
 			}
 			return err
 		}
-		out = skillFromRow(row.AppSkill, row.SizeBytes)
+		out = skillFromRow(row.AppSkill, row.SizeBytes, row.Version)
 		skills := []Skill{out}
 		if err := attachFolders(ctx, q, skills, []string{row.AppSkill.ID}); err != nil {
 			return err
@@ -292,7 +296,7 @@ func (s *Store) GetSkillBySlug(ctx context.Context, t Tenant, slug string) (Skil
 			}
 			return err
 		}
-		out = skillFromRow(row.AppSkill, row.SizeBytes)
+		out = skillFromRow(row.AppSkill, row.SizeBytes, row.Version)
 		skills := []Skill{out}
 		if err := attachFolders(ctx, q, skills, []string{row.AppSkill.ID}); err != nil {
 			return err
@@ -344,7 +348,7 @@ func (s *Store) ListFeedSkills(ctx context.Context, t Tenant) ([]FeedSkill, erro
 		ids := make([]string, len(rows))
 		skills := make([]Skill, len(rows))
 		for i, r := range rows {
-			skills[i] = skillFromRow(r.AppSkill, r.SizeBytes)
+			skills[i] = skillFromRow(r.AppSkill, r.SizeBytes, r.Version)
 			ids[i] = r.AppSkill.ID
 		}
 		if err := attachFolders(ctx, q, skills, ids); err != nil {
@@ -440,7 +444,7 @@ func (s *Store) SetSkillFolders(ctx context.Context, t Tenant, skillID string, f
 				return err
 			}
 		}
-		out = skillFromRow(row.AppSkill, row.SizeBytes)
+		out = skillFromRow(row.AppSkill, row.SizeBytes, row.Version)
 		skills := []Skill{out}
 		if err := attachFolders(ctx, q, skills, []string{skillID}); err != nil {
 			return err
@@ -605,11 +609,12 @@ func skillFromDB(r db.AppSkill) Skill {
 	return s
 }
 
-// skillFromRow is skillFromDB plus the current-version size the read queries
-// carry via their LEFT JOIN.
-func skillFromRow(r db.AppSkill, sizeBytes int64) Skill {
+// skillFromRow is skillFromDB plus the current-version size + version number the
+// read queries carry via their LEFT JOIN.
+func skillFromRow(r db.AppSkill, sizeBytes int64, version int32) Skill {
 	s := skillFromDB(r)
 	s.SizeBytes = sizeBytes
+	s.Version = version
 	return s
 }
 

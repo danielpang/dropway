@@ -43,6 +43,10 @@ type skillResponse struct {
 	Description      string  `json:"description"`
 	CurrentVersionID *string `json:"current_version_id,omitempty"`
 	SizeBytes        int64   `json:"size_bytes"`
+	// Version is the current version's monotonic number (0 before the first
+	// upload). It bumps on every content change; CLI/MCP compare it against a
+	// downloaded skill's recorded version to detect updates.
+	Version int32 `json:"version"`
 	// FeedVisible shares the skill to the org feed (default true); the owner/admin
 	// can make it private to pull it off the feed.
 	FeedVisible bool                     `json:"feed_visible"`
@@ -65,6 +69,7 @@ func toSkillResponse(s store.Skill) skillResponse {
 		Description:      s.Description,
 		CurrentVersionID: s.CurrentVersionID,
 		SizeBytes:        s.SizeBytes,
+		Version:          s.Version,
 		FeedVisible:      s.FeedVisible,
 		Folders:          folders,
 		CreatedAt:        s.CreatedAt,

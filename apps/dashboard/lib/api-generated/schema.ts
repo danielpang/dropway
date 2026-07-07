@@ -1150,6 +1150,8 @@ export interface components {
              * @description Current version's total content size (0 before the first upload).
              */
             size_bytes?: number;
+            /** @description Current version's monotonic number (0 before the first upload). Bumps on every content change; CLI/MCP compare it against a downloaded skill's recorded version to detect updates. */
+            version?: number;
             /** @description Whether the skill is shared to the org feed (default true on publish). The owner/admin can make it private to pull it off the feed. */
             feed_visible?: boolean;
             folders?: components["schemas"]["SkillFolderRef"][];
@@ -1189,6 +1191,8 @@ export interface components {
             slug?: string;
             /** Format: uuid */
             skill_id?: string;
+            /** @description The downloaded content's version number (record it to detect later updates). */
+            version?: number;
             truncated?: boolean;
             files?: {
                 path?: string;

@@ -140,6 +140,9 @@ type Skill struct {
 	CurrentVersionID *string
 	// SizeBytes is the current version's total size (0 until first upload).
 	SizeBytes int64
+	// Version is the current version's monotonic number (0 until first upload);
+	// check_skill_updates compares a held copy's version against it.
+	Version   int32
 	Folders   []SkillFolderRef
 	CreatedAt time.Time
 }
@@ -164,7 +167,7 @@ type SkillFolder struct {
 // Requires the `LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id`
 // alias in the FROM clause.
 const skillCols = `sk.id, sk.slug, COALESCE(sk.title, ''), COALESCE(sk.description, ''),
-	sk.owner_user_id, sk.current_version_id, COALESCE(v.size_bytes, 0), sk.created_at`
+	sk.owner_user_id, sk.current_version_id, COALESCE(v.size_bytes, 0), COALESCE(v.version_no, 0), sk.created_at`
 
 // skillFrom is the FROM clause skillCols expects.
 const skillFrom = ` FROM app.skills sk
@@ -173,7 +176,7 @@ const skillFrom = ` FROM app.skills sk
 func scanSkill(row pgx.Row) (Skill, error) {
 	var sk Skill
 	err := row.Scan(&sk.ID, &sk.Slug, &sk.Title, &sk.Description,
-		&sk.OwnerUserID, &sk.CurrentVersionID, &sk.SizeBytes, &sk.CreatedAt)
+		&sk.OwnerUserID, &sk.CurrentVersionID, &sk.SizeBytes, &sk.Version, &sk.CreatedAt)
 	return sk, err
 }
 

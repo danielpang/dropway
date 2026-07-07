@@ -1908,6 +1908,12 @@ components:
         description: { type: string }
         current_version_id: { type: string, format: uuid, nullable: true }
         size_bytes: { type: integer, format: int64, description: Current version's total content size (0 before the first upload). }
+        version:
+          type: integer
+          description: >
+            Current version's monotonic number (0 before the first upload). Bumps
+            on every content change; CLI/MCP compare it against a downloaded
+            skill's recorded version to detect updates.
         feed_visible:
           type: boolean
           description: >
@@ -1955,6 +1961,7 @@ components:
       properties:
         slug: { type: string }
         skill_id: { type: string, format: uuid }
+        version: { type: integer, description: The downloaded content's version number (record it to detect later updates). }
         truncated: { type: boolean }
         files:
           type: array

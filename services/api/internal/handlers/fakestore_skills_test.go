@@ -112,6 +112,7 @@ func (f *fakeStore) decorated(s store.Skill) store.Skill {
 	if s.CurrentVersionID != nil {
 		if v, ok := f.sk().versions[*s.CurrentVersionID]; ok {
 			s.SizeBytes = v.SizeBytes
+			s.Version = v.VersionNo
 		}
 	}
 	return s

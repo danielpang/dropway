@@ -212,6 +212,7 @@ ORDER BY s.created_at DESC;
 SELECT
     sqlc.embed(sk),
     COALESCE(ver.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(ver.version_no, 0)::int AS version,
     COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'skill' AND v.subject_id = sk.id), 0)::bigint AS score,
     COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'skill' AND mv.subject_id = sk.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'skill' AND c.subject_id = sk.id), 0)::bigint AS comment_count
@@ -668,14 +669,16 @@ RETURNING id, org_id, slug, owner_user_id, title, description, current_version_i
 -- Embeds the full skill row plus its current version's size (0 when unset), so
 -- reads never N+1 a per-skill version lookup.
 SELECT sqlc.embed(sk),
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE sk.id = $1;
 
 -- name: GetSkillBySlug :one
 SELECT sqlc.embed(sk),
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE sk.slug = $1;
@@ -688,7 +691,8 @@ WHERE sk.slug = $1;
 -- only to their owner (caller_id), so half-finished uploads don't clutter the
 -- org listing. RLS scopes every read to the active org.
 SELECT sqlc.embed(sk),
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_id)::uuid)
@@ -870,7 +874,8 @@ ORDER BY f.slug;
 -- name: ListFolderSkills :many
 -- Every skill in a folder that has a live version (the bulk-download set).
 SELECT sqlc.embed(sk),
-       COALESCE(v.size_bytes, 0)::bigint AS size_bytes
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
 FROM app.skill_folder_items fi
 JOIN app.skills sk ON sk.id = fi.skill_id
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id

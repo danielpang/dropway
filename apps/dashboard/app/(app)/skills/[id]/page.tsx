@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, FileText, Sparkles } from "lucide-react";
+import { ArrowLeft, FileText, Pencil, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api, ApiError, type Skill, type SkillDownload } from "@/lib/api";
 import { canManage, loadActiveOrg } from "@/lib/org";
@@ -106,26 +107,25 @@ export default async function SkillDetailPage(props: {
             {skill.size_bytes ? <> · {formatBytes(skill.size_bytes)}</> : null}
           </p>
         </div>
-        <SkillDetailActions
-          skillId={skill.id ?? ""}
-          slug={skill.slug ?? "skill"}
-          canDownload={!!skill.current_version_id}
-          canDelete={manage || mine}
-        />
+        <div className="flex items-center gap-1.5">
+          {(manage || mine) && skill.current_version_id ? (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/skills/${skill.id}/edit`}>
+                <Pencil className="mr-1.5 h-4 w-4" /> Edit
+              </Link>
+            </Button>
+          ) : null}
+          <SkillDetailActions
+            skillId={skill.id ?? ""}
+            slug={skill.slug ?? "skill"}
+            canDownload={!!skill.current_version_id}
+            canDelete={manage || mine}
+          />
+        </div>
       </div>
 
       {skill.description ? (
         <Card className="p-4 text-sm">{skill.description}</Card>
-      ) : null}
-
-      {manage || mine ? (
-        <Card className="p-4">
-          <SkillFeedToggle
-            skillId={skill.id ?? ""}
-            initialVisible={skill.feed_visible ?? true}
-            disabled={false}
-          />
-        </Card>
       ) : null}
 
       {!skill.current_version_id ? (
@@ -157,6 +157,18 @@ export default async function SkillDetailPage(props: {
           ))}
         </div>
       )}
+
+      {/* Feed sharing lives below the content — a skill auto-joins the feed on
+          publish; the owner/admin can pull it off here. */}
+      {manage || mine ? (
+        <Card className="p-4">
+          <SkillFeedToggle
+            skillId={skill.id ?? ""}
+            initialVisible={skill.feed_visible ?? true}
+            disabled={false}
+          />
+        </Card>
+      ) : null}
     </div>
   );
 }

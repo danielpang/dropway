@@ -630,6 +630,49 @@ func TestListSkills_ForwardsFilters(t *testing.T) {
 	}
 }
 
+func TestListSkills_ExposesVersion(t *testing.T) {
+	skills := &fakeSkills{skills: []store.Skill{
+		{ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v3"), Version: 3},
+	}}
+	svc := &Service{Skills: skills}
+	out, err := svc.ListSkills(context.Background(), tnt, "", "", false)
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	if out.Skills[0].Version != 3 {
+		t.Errorf("want version 3, got %d", out.Skills[0].Version)
+	}
+}
+
+func TestCheckSkillUpdates(t *testing.T) {
+	skills := &fakeSkills{skills: []store.Skill{
+		{Slug: "writing", Version: 3},
+		{Slug: "review", Version: 1},
+	}}
+	svc := &Service{Skills: skills}
+	out, err := svc.CheckSkillUpdates(context.Background(), tnt, checkSkillUpdatesIn{Installed: []installedSkill{
+		{Name: "writing", Version: 1}, // behind (3 > 1) → outdated
+		{Name: "review", Version: 1},  // up to date
+		{Name: "gone", Version: 2},    // no longer in the org → latest 0, not outdated
+	}})
+	if err != nil {
+		t.Fatalf("CheckSkillUpdates: %v", err)
+	}
+	byName := map[string]skillUpdateInfo{}
+	for _, u := range out.Updates {
+		byName[u.Name] = u
+	}
+	if u := byName["writing"]; !u.Outdated || u.LatestVersion != 3 || u.InstalledVersion != 1 {
+		t.Errorf("writing update wrong: %+v", u)
+	}
+	if u := byName["review"]; u.Outdated || u.LatestVersion != 1 {
+		t.Errorf("review should be up to date: %+v", u)
+	}
+	if u := byName["gone"]; u.Outdated || u.LatestVersion != 0 {
+		t.Errorf("removed skill should not be outdated: %+v", u)
+	}
+}
+
 // --- download_skill -----------------------------------------------------------
 
 const skillManifestJSON = `{"schema_version":1,"files":{

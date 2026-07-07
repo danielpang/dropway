@@ -2,7 +2,7 @@
 
 // Package tools implements the Dropway MCP tools — list_sites, list_files,
 // read_file, … plus the org-wide skill-sharing tools (list_skills,
-// download_skill, download_skill_folder, upload_skill) — over a tenant's
+// download_skill, download_skill_folder, check_skill_updates, upload_skill) — over a tenant's
 // deployed documents and shared skills. Every call is org-scoped: the
 // tenant comes from the validated OAuth token (auth.TenantFromContext) and the
 // store enforces RLS. The exported methods take the tenant explicitly so they're
@@ -204,6 +204,7 @@ type SkillInfo struct {
 	Description string            `json:"description,omitempty"`
 	Folders     []skillFolderInfo `json:"folders"`
 	SizeBytes   int64             `json:"size_bytes" jsonschema:"total content size of the current version"`
+	Version     int32             `json:"version" jsonschema:"the current version number; compare it against a downloaded skill's recorded version (or pass it to check_skill_updates) to detect updates"`
 	Owner       string            `json:"owner" jsonschema:"'Dropway' for seeded presets, otherwise the uploader's user id"`
 	CreatedAt   string            `json:"created_at"`
 }
@@ -224,8 +225,29 @@ type skillFilePayload struct {
 }
 type downloadSkillOut struct {
 	Name      string             `json:"name"`
+	Version   int32              `json:"version" jsonschema:"the downloaded content's version number — record it (e.g. in .claude/skills/<name>/.dropway.json) and later pass it to check_skill_updates to detect updates"`
 	Files     []skillFilePayload `json:"files"`
 	Truncated bool               `json:"truncated,omitempty" jsonschema:"true if some files were omitted to stay under the size cap"`
+}
+
+// checkSkillUpdatesIn asks whether any locally-held skills are behind the org's
+// current version. The client passes what it has (from a prior download_skill's
+// `version`, e.g. recorded in each skill's .dropway.json).
+type installedSkill struct {
+	Name    string `json:"name" jsonschema:"the skill's slug"`
+	Version int32  `json:"version" jsonschema:"the version currently held locally (from download_skill's version field)"`
+}
+type checkSkillUpdatesIn struct {
+	Installed []installedSkill `json:"installed" jsonschema:"the skills held locally and their versions"`
+}
+type skillUpdateInfo struct {
+	Name             string `json:"name"`
+	InstalledVersion int32  `json:"installed_version"`
+	LatestVersion    int32  `json:"latest_version"`
+	Outdated         bool   `json:"outdated" jsonschema:"true when latest_version is greater than installed_version — call download_skill to update"`
+}
+type checkSkillUpdatesOut struct {
+	Updates []skillUpdateInfo `json:"updates"`
 }
 
 type downloadSkillFolderIn struct {
@@ -474,6 +496,7 @@ func (svc *Service) ListSkills(ctx context.Context, t store.Tenant, query, folde
 			Description: sk.Description,
 			Folders:     []skillFolderInfo{},
 			SizeBytes:   sk.SizeBytes,
+			Version:     sk.Version,
 			Owner:       sk.OwnerUserID,
 			CreatedAt:   sk.CreatedAt.UTC().Format(time.RFC3339),
 		}
@@ -488,6 +511,33 @@ func (svc *Service) ListSkills(ctx context.Context, t store.Tenant, query, folde
 	return out, nil
 }
 
+// CheckSkillUpdates compares the versions the client holds locally against the
+// org's current versions and reports which are outdated. Read-only: the client
+// updates an outdated skill by calling download_skill. A skill that no longer
+// exists in the org (or has no current version) is reported with latest_version
+// 0 and outdated=false (nothing to update to).
+func (svc *Service) CheckSkillUpdates(ctx context.Context, t store.Tenant, in checkSkillUpdatesIn) (checkSkillUpdatesOut, error) {
+	skills, err := svc.Skills.ListSkills(ctx, t, "", "", false)
+	if err != nil {
+		return checkSkillUpdatesOut{}, err
+	}
+	latest := make(map[string]int32, len(skills))
+	for _, sk := range skills {
+		latest[sk.Slug] = sk.Version
+	}
+	out := checkSkillUpdatesOut{Updates: []skillUpdateInfo{}}
+	for _, held := range in.Installed {
+		want := latest[held.Name]
+		out.Updates = append(out.Updates, skillUpdateInfo{
+			Name:             held.Name,
+			InstalledVersion: held.Version,
+			LatestVersion:    want,
+			Outdated:         want > held.Version,
+		})
+	}
+	return out, nil
+}
+
 // DownloadSkill reads EVERY file of a skill's current version, returning each
 // path's bytes inline (utf8 or base64), up to maxDownloadBytes total.
 func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, name string) (downloadSkillOut, error) {
@@ -498,7 +548,7 @@ func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, name stri
 	if sk.CurrentVersionID == nil {
 		return downloadSkillOut{}, fmt.Errorf("mcp/tools: skill %q has no uploaded content yet", name)
 	}
-	out := downloadSkillOut{Name: sk.Slug, Files: []skillFilePayload{}}
+	out := downloadSkillOut{Name: sk.Slug, Version: sk.Version, Files: []skillFilePayload{}}
 	files, _, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, maxDownloadBytes)
 	if err != nil {
 		return downloadSkillOut{}, err
@@ -833,6 +883,11 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		Name:        "download_skill_folder",
 		Description: "Download every skill in a skill folder at once. Args: folder (folder slug). Write each skill's files into .claude/skills/<name>/; refuse any path containing '..'. The response is capped in size — skills marked truncated carry no files, fetch each of those with download_skill.",
 	}, svc.downloadSkillFolderHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "check_skill_updates",
+		Description: "Check whether locally-held skills are out of date. Args: installed ([{name, version}] — the skills you have and the version each was downloaded at, e.g. from each .claude/skills/<name>/.dropway.json). Returns, per skill, installed_version, latest_version, and outdated. Update an outdated skill by calling download_skill for it.",
+		InputSchema: inputSchema[checkSkillUpdatesIn](),
+	}, svc.checkSkillUpdatesHandler)
 
 	if svc.API == nil {
 		return // no control-plane client → read-only deployment, no write tools
@@ -960,6 +1015,16 @@ func (svc *Service) downloadSkillFolderHandler(ctx context.Context, _ *mcpsdk.Ca
 		return nil, downloadSkillFolderOut{}, ErrNoTenant
 	}
 	out, err := svc.DownloadSkillFolder(ctx, t, in.Folder)
+	return nil, out, err
+}
+
+func (svc *Service) checkSkillUpdatesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in checkSkillUpdatesIn) (*mcpsdk.CallToolResult, checkSkillUpdatesOut, error) {
+	logTool(ctx, "check_skill_updates", "installed", len(in.Installed))
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, checkSkillUpdatesOut{}, ErrNoTenant
+	}
+	out, err := svc.CheckSkillUpdates(ctx, t, in)
 	return nil, out, err
 }
 

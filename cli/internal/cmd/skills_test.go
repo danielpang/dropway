@@ -459,3 +459,81 @@ func TestSkillsPull_RequiresExactlyOneTarget(t *testing.T) {
 		t.Error("pull with both a name and --folder should error")
 	}
 }
+
+// TestSkillsPull_WritesVersionRecord proves pull writes the .dropway.json sidecar
+// recording the pulled version, which `check` then reads.
+func TestSkillsPull_WritesVersionRecord(t *testing.T) {
+	fc := newFakeSkillsClient()
+	fc.skills = []api.Skill{{ID: "s1", Slug: "writing", Version: 2}}
+	fc.downloads["s1"] = &api.SkillDownload{
+		Slug: "writing", SkillID: "s1", Version: 2,
+		Files: []api.SkillFile{{Path: "SKILL.md", Content: "# writing", Encoding: "utf8"}},
+	}
+	dest := t.TempDir()
+	if _, err := runSkills(t, fc, "pull", "writing", "--dest", dest); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	rec, ok := readSkillRecord(filepath.Join(dest, "writing"))
+	if !ok || rec.Slug != "writing" || rec.SkillID != "s1" || rec.Version != 2 {
+		t.Fatalf("version record wrong: %+v ok=%v", rec, ok)
+	}
+}
+
+// TestSkillsCheck_ReportsAndUpdates proves `check` flags an outdated pulled skill
+// and `check --update` re-pulls it (bumping the recorded version).
+func TestSkillsCheck_ReportsAndUpdates(t *testing.T) {
+	dest := t.TempDir()
+	// Simulate a previously-pulled skill at v1.
+	if err := os.MkdirAll(filepath.Join(dest, "writing"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSkillRecord(filepath.Join(dest, "writing"), skillRecord{Slug: "writing", SkillID: "s1", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	fc := newFakeSkillsClient()
+	fc.skills = []api.Skill{{ID: "s1", Slug: "writing", Version: 3}} // org moved ahead
+	fc.downloads["s1"] = &api.SkillDownload{
+		Slug: "writing", SkillID: "s1", Version: 3,
+		Files: []api.SkillFile{{Path: "SKILL.md", Content: "# writing v3", Encoding: "utf8"}},
+	}
+
+	// Report-only: names the outdated skill, doesn't re-pull.
+	out, err := runSkills(t, fc, "check", "--dest", dest)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if !strings.Contains(out, "writing") || !strings.Contains(out, "v1") || !strings.Contains(out, "v3") {
+		t.Errorf("report should name the outdated skill + versions:\n%s", out)
+	}
+	if len(fc.downloadCalls) != 0 {
+		t.Errorf("report-only check must not download, got %v", fc.downloadCalls)
+	}
+
+	// --update re-pulls and rewrites the record to v3.
+	if _, err := runSkills(t, fc, "check", "--dest", dest, "--update"); err != nil {
+		t.Fatalf("check --update: %v", err)
+	}
+	rec, _ := readSkillRecord(filepath.Join(dest, "writing"))
+	if rec.Version != 3 {
+		t.Errorf("record should be bumped to v3, got %d", rec.Version)
+	}
+}
+
+// TestPlanSkillUpdates unit-tests the pure comparison.
+func TestPlanSkillUpdates(t *testing.T) {
+	records := []skillRecord{
+		{Slug: "behind", Version: 1},
+		{Slug: "current", Version: 5},
+		{Slug: "gone", Version: 2},
+	}
+	current := map[string]api.Skill{
+		"behind":  {Slug: "behind", Version: 4},
+		"current": {Slug: "current", Version: 5},
+		// "gone" absent → skipped.
+	}
+	got := planSkillUpdates(records, current)
+	if len(got) != 1 || got[0].Slug != "behind" || got[0].Have != 1 || got[0].Want != 4 {
+		t.Fatalf("planSkillUpdates = %+v, want only behind 1→4", got)
+	}
+}

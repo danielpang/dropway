@@ -4,12 +4,14 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Eye, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
+import { setSkillFoldersAction } from "@/app/(app)/skills/actions";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import type { SkillFolder } from "@/lib/api";
+import type { DroppedFile } from "@/lib/deploy-manifest";
 import { renderMarkdownToHtml } from "@/lib/markdown";
 import {
   composeSkillFiles,
@@ -18,6 +20,20 @@ import {
 } from "@/lib/skill-authoring";
 import { slugify } from "@/lib/skills-shared";
 import { uploadSkillFolder, type SkillUploadProgress } from "@/lib/skill-upload";
+
+/** An existing skill loaded for editing (from the /skills/[id]/edit page). */
+export interface SkillEditState {
+  skillId: string;
+  slug: string;
+  /** Folder ids the skill currently belongs to. */
+  selectedFolderIds: string[];
+  /** The current SKILL.md contents. */
+  skillMd: string;
+  /** Editable non-SKILL.md text files (path + contents). */
+  extras: AuthoredFile[];
+  /** Binary files carried through unchanged on save (base64). */
+  binary: { path: string; base64: string }[];
+}
 
 function progressLabel(p: SkillUploadProgress | null): string {
   switch (p?.phase) {
@@ -53,35 +69,46 @@ function progressValue(p: SkillUploadProgress | null): number {
   }
 }
 
+/** Build a browser File from a base64 payload (to carry binary files through a save). */
+function fileFromBase64(path: string, base64: string): File {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const name = path.split("/").pop() || path;
+  return new File([bytes], name, { type: "application/octet-stream" });
+}
+
 /**
- * Author a skill in the browser: a name + folders, a Markdown editor for SKILL.md
- * (with a live preview), and optional extra files. On save it composes the files
- * and runs them through the same upload pipeline as drag-and-drop, then opens the
- * new skill's page.
+ * Author or edit a skill in the browser. In CREATE mode it takes a name + folders,
+ * a Markdown editor for SKILL.md, and optional extra files, then runs them through
+ * the upload pipeline and opens the new skill. In EDIT mode (`edit` provided) the
+ * slug is fixed, the current content is preloaded (binary files carried through
+ * untouched), and Save uploads a NEW version of the existing skill.
  */
-export function SkillEditor(props: { folders: SkillFolder[] }) {
-  const { folders } = props;
+export function SkillEditor(props: { folders: SkillFolder[]; edit?: SkillEditState }) {
+  const { folders, edit } = props;
   const router = useRouter();
+  const isEdit = !!edit;
 
   const [name, setName] = React.useState("");
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [skillMd, setSkillMd] = React.useState(() => skillTemplate(""));
-  const [extras, setExtras] = React.useState<AuthoredFile[]>([]);
+  const [selected, setSelected] = React.useState<Set<string>>(
+    () => new Set(edit?.selectedFolderIds ?? []),
+  );
+  const [skillMd, setSkillMd] = React.useState(() => edit?.skillMd ?? skillTemplate(""));
+  const [extras, setExtras] = React.useState<AuthoredFile[]>(() => edit?.extras ?? []);
   const [mode, setMode] = React.useState<"edit" | "preview">("edit");
   const [uploading, setUploading] = React.useState(false);
   const [progress, setProgress] = React.useState<SkillUploadProgress | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [warnings, setWarnings] = React.useState<string[]>([]);
   const [createdSkillId, setCreatedSkillId] = React.useState<string | null>(null);
-  // Whether the body still equals the auto-scaffold (so we can refresh the
-  // template's title as the user types a name, without clobbering their edits).
+  // Whether the body still equals the auto-scaffold (create mode only), so we can
+  // refresh the template's title as the user types a name without clobbering edits.
   const templateRef = React.useRef(skillTemplate(""));
 
-  const slug = slugify(name);
+  const slug = isEdit ? edit.slug : slugify(name);
 
   const onNameChange = (value: string) => {
     setName(value);
-    if (skillMd === templateRef.current) {
+    if (!isEdit && skillMd === templateRef.current) {
       const next = skillTemplate(value);
       templateRef.current = next;
       setSkillMd(next);
@@ -103,23 +130,43 @@ export function SkillEditor(props: { folders: SkillFolder[] }) {
       setError(composed.error);
       return;
     }
+    // Carry any binary files (edit mode) through unchanged.
+    const binary: DroppedFile[] = (edit?.binary ?? []).map((b) => ({
+      path: b.path,
+      file: fileFromBase64(b.path, b.base64),
+    }));
+    const files = [...composed.files, ...binary];
+
     setUploading(true);
     const res = await uploadSkillFolder({
-      skillId: createdSkillId,
-      create: { slug, title: name.trim() || undefined, folders: Array.from(selected) },
-      files: composed.files,
+      skillId: isEdit ? edit.skillId : createdSkillId,
+      create: isEdit
+        ? undefined
+        : { slug, title: name.trim() || undefined, folders: Array.from(selected) },
+      files,
       onProgress: setProgress,
     });
-    setUploading(false);
     if (res.skillId) setCreatedSkillId(res.skillId);
     if (!res.ok) {
+      setUploading(false);
       setError(res.message);
       setProgress(null);
       return;
     }
-    if (res.warnings.length > 0) {
-      setWarnings(res.warnings);
+    // In edit mode the folder set may have changed — persist it.
+    if (isEdit) {
+      const folderRes = await setSkillFoldersAction({
+        skillId: edit.skillId,
+        folders: Array.from(selected),
+      });
+      if (!folderRes.ok) {
+        setUploading(false);
+        setError(folderRes.message ?? "Saved the content, but updating folders failed.");
+        return;
+      }
     }
+    setUploading(false);
+    if (res.warnings.length > 0) setWarnings(res.warnings);
     router.push(`/skills/${res.skillId}`);
     router.refresh();
   };
@@ -127,20 +174,32 @@ export function SkillEditor(props: { folders: SkillFolder[] }) {
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="skill-name">Name</Label>
-          <Input
-            id="skill-name"
-            value={name}
-            onChange={(e) => onNameChange(e.target.value)}
-            placeholder="PR review checklist"
-          />
-          {slug ? (
-            <p className="text-xs text-muted-foreground">
-              Saved as <code>{slug}</code>
+        {isEdit ? (
+          <div className="space-y-1.5">
+            <Label>Name</Label>
+            <p className="text-sm">
+              <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{edit.slug}</code>
             </p>
-          ) : null}
-        </div>
+            <p className="text-xs text-muted-foreground">
+              The name is fixed. Edit the title in the SKILL.md frontmatter below.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Label htmlFor="skill-name">Name</Label>
+            <Input
+              id="skill-name"
+              value={name}
+              onChange={(e) => onNameChange(e.target.value)}
+              placeholder="PR review checklist"
+            />
+            {slug ? (
+              <p className="text-xs text-muted-foreground">
+                Saved as <code>{slug}</code>
+              </p>
+            ) : null}
+          </div>
+        )}
         {folders.length > 0 ? (
           <div className="space-y-1.5">
             <Label>Folders</Label>
@@ -264,6 +323,12 @@ export function SkillEditor(props: { folders: SkillFolder[] }) {
             </Card>
           ))
         )}
+        {isEdit && edit.binary.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {edit.binary.length} binary file(s) ({edit.binary.map((b) => b.path).join(", ")}) are
+            preserved unchanged on save.
+          </p>
+        ) : null}
       </div>
 
       {uploading || progress ? (
@@ -284,12 +349,16 @@ export function SkillEditor(props: { folders: SkillFolder[] }) {
       ))}
 
       <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" disabled={uploading} onClick={() => router.push("/skills")}>
+        <Button
+          variant="outline"
+          disabled={uploading}
+          onClick={() => router.push(isEdit ? `/skills/${edit.skillId}` : "/skills")}
+        >
           Cancel
         </Button>
         <Button disabled={uploading || !slug} onClick={() => void save()}>
           {uploading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
-          Create skill
+          {isEdit ? "Save changes" : "Create skill"}
         </Button>
       </div>
     </div>
