@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 export const metadata: Metadata = {
   title: "CLI reference",
   description:
-    "The Dropway CLI: deploy a folder of static files to a live, access-controlled URL from your terminal. Install, authenticate, create a site, upload a folder, and list or read your sites.",
+    "The Dropway CLI: deploy a folder of static files to a live, access-controlled URL from your terminal. Install, authenticate, create a site, upload a folder, list or read your sites, and share, pull, or update your org's skills.",
 };
 
 /** The Go module path users `go install` to build the CLI from source. */
@@ -128,6 +128,10 @@ export default function CliReferencePage() {
             [
               <Code key="c">skills pull &lt;name&gt;</Code>,
               "Download a shared skill into .claude/skills/ (or a whole folder with --folder).",
+            ],
+            [
+              <Code key="c">skills check</Code>,
+              "Report which pulled skills are out of date; re-pull them with --update.",
             ],
             [<Code key="c">version</Code>, "Print the CLI version."],
             [
@@ -257,6 +261,57 @@ dropway read https://my-org--my-docs.dropwaycontent.com`}
           Public sites need no sign-in. A gated site returns its sign-in page
           instead of the content, since the fetch is a plain HTTP request.
         </p>
+      </Section>
+
+      <Section
+        id="skills"
+        title="List and download skills"
+        lead="dropway skills list shows what your org has shared; dropway skills pull installs a skill (or a whole folder) into .claude/skills/; dropway skills check tells you when a pulled skill has a newer version."
+      >
+        <p>
+          A <Code>skill</Code> is a folder with a <Code>SKILL.md</Code> at its
+          root (plus any supporting files) that agents load from{" "}
+          <Code>.claude/skills/</Code>. Share one with{" "}
+          <Code>dropway skills push &lt;dir&gt;</Code>; the commands below list,
+          install, and update the ones your org has shared.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`dropway skills list                       # every shared skill
+dropway skills list --search review       # text filter
+dropway skills list --folder engineering  # one folder
+dropway skills list --presets             # Dropway presets only`}
+        />
+        <p className="pt-2 text-foreground">Download a skill (or a folder of them)</p>
+        <p>
+          <Code>dropway skills pull</Code> writes each skill under{" "}
+          <Code>.claude/skills/&lt;name&gt;/</Code>. Pull one by name, or every
+          skill in a folder with <Code>--folder</Code>; use <Code>--dest</Code>{" "}
+          to write somewhere else.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`dropway skills pull pr-review-checklist   # one skill by name
+dropway skills pull --folder engineering  # every skill in a folder`}
+        />
+        <p className="pt-2 text-foreground">Check for updates</p>
+        <p>
+          Each pull records the version it fetched (a small{" "}
+          <Code>.dropway.json</Code> beside the skill). <Code>dropway skills
+          check</Code> compares your pulled skills against the org&rsquo;s
+          current versions and reports which are behind; add{" "}
+          <Code>--update</Code> to re-pull the outdated ones in place.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`dropway skills check            # report out-of-date skills
+dropway skills check --update   # re-pull the outdated ones`}
+        />
+        <Callout title="Author and edit in the dashboard">
+          You can also write a skill in a Markdown editor, or edit an existing
+          one into a new version, from the Skills page in the dashboard, no local
+          folder needed.
+        </Callout>
       </Section>
 
       <Section
