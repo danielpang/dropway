@@ -48,7 +48,7 @@ The control-plane UI and the **identity authority**.
 The **system of record and the authorization boundary**. Every mutation goes through here.
 
 **Main use cases**
-- Owns + migrates the **`app` schema** (sites, versions, domains, allowlist, skills, skill_versions, skill_folders, skill_folder_items, org_meta, org_usage, audit_log) — accessed as the non-superuser, non-BYPASSRLS **`dropway_app`** role with per-request RLS tenant context.
+- Owns + migrates the **`app` schema** (sites, versions, domains, allowlist, skills, skill_versions, skill_folders, skill_folder_items, post_votes, post_comments, org_meta, org_usage, audit_log) — accessed as the non-superuser, non-BYPASSRLS **`dropway_app`** role with per-request RLS tenant context.
 - **Verifies every JWT** against the dashboard JWKS (pins EdDSA + iss + aud).
 - The **deploy pipeline**: `prepare` (manifest → missing blobs + presigned PUT URLs) → client uploads → `finalize` (write manifest, insert version) → `publish` (flip `current_version_id`, write the route projection).
 - **Org-wide skill sharing** (`/v1/skills`, `/v1/skill-folders`): the same prepare → presign → finalize upload contract (finalize publishes — skills are latest-only, each version carrying a monotonic number surfaced as the skill's `version` for update detection), admin-curated folders with preset flags, bulk folder download, and lazy per-org seeding of the default folders + starter presets (guarded by `org_meta.skills_seeded`).
