@@ -188,38 +188,69 @@ FROM app.sites
 ORDER BY created_at DESC;
 
 -- name: ListFeedSites :many
--- The org feed: every site in the active org that is feed-visible (not private),
--- newest first (older sites sink to the bottom). Each row carries its net vote
--- score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
--- and its comment count, so the feed renders the up/down controls + counts in one
--- query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+-- The org feed's SITE posts: every site in the active org that is feed-visible
+-- (not private), newest first (older sites sink to the bottom). Each row carries
+-- its net vote score, the CALLER's own vote ($1 = caller user id; 0 when they
+-- haven't voted), and its comment count, so the feed renders the up/down controls
+-- + counts in one query (no N+1). Votes/comments are polymorphic (subject_type =
+-- 'site'). RLS scopes every read to the active org.
 SELECT
     sqlc.embed(s),
-    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
-    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
-    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+    COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'site' AND v.subject_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'site' AND mv.subject_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'site' AND c.subject_id = s.id), 0)::bigint AS comment_count
 FROM app.sites s
 WHERE s.feed_visible
 ORDER BY s.created_at DESC;
 
--- name: UpsertSiteVote :exec
--- Cast (or change) the caller's vote on a site. One row per (site, user); a flip
--- from up to down just overwrites value. RLS scopes the write to the active org.
-INSERT INTO app.site_votes (site_id, org_id, user_id, value)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (site_id, user_id) DO UPDATE
+-- name: ListFeedSkills :many
+-- The org feed's SKILL posts: every skill in the active org that is feed-visible,
+-- newest first, each carrying its current-version size, net vote score, the
+-- caller's own vote ($1), and its comment count (subject_type = 'skill'). Skills
+-- that never finalized an upload (no current version) are shown only to their
+-- owner, so half-finished uploads don't clutter the feed. RLS scopes every read.
+SELECT
+    sqlc.embed(sk),
+    COALESCE(ver.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'skill' AND v.subject_id = sk.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'skill' AND mv.subject_id = sk.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'skill' AND c.subject_id = sk.id), 0)::bigint AS comment_count
+FROM app.skills sk
+LEFT JOIN app.skill_versions ver ON ver.id = sk.current_version_id
+WHERE sk.feed_visible
+  AND (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
+ORDER BY sk.created_at DESC;
+
+-- name: UpsertPostVote :exec
+-- Cast (or change) the caller's vote on a feed post (site or skill). One row per
+-- (subject_type, subject_id, user); a flip from up to down overwrites value. RLS
+-- scopes the write to the active org.
+INSERT INTO app.post_votes (subject_type, subject_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (subject_type, subject_id, user_id) DO UPDATE
 SET value = EXCLUDED.value, updated_at = now();
 
--- name: DeleteSiteVote :exec
--- Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
-DELETE FROM app.site_votes
-WHERE site_id = $1 AND user_id = $2;
+-- name: DeletePostVote :exec
+-- Remove the caller's vote on a feed post (un-vote). RLS scopes the delete to the org.
+DELETE FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2 AND user_id = $3;
 
--- name: GetSiteVoteScore :one
--- A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+-- name: GetPostVoteScore :one
+-- A feed post's net vote score (sum of +1/-1). RLS scopes the read to the org.
 SELECT COALESCE(SUM(value), 0)::bigint AS score
-FROM app.site_votes
-WHERE site_id = $1;
+FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2;
+
+-- name: DeletePostVotesForSubject :exec
+-- Drop every vote on a subject (called when the site/skill itself is deleted,
+-- since the polymorphic table can't FK-cascade to two parents).
+DELETE FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2;
+
+-- name: DeletePostCommentsForSubject :exec
+-- Drop every comment on a subject (called on the subject's delete; see above).
+DELETE FROM app.post_comments
+WHERE subject_type = $1 AND subject_id = $2;
 
 -- name: SetSiteFeedVisible :one
 -- Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
@@ -252,26 +283,27 @@ WHERE id = $1;
 -- site_comments — org-internal discussion on a shared site, with @mentions
 -- ===========================================================================
 
--- name: CreateSiteComment :one
--- Add a comment to a site. mentioned_user_ids is the set of tagged org users
--- (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
--- on the tenant policy rejects a row whose org_id isn't the active tenant).
-INSERT INTO app.site_comments (org_id, site_id, author_user_id, body, mentioned_user_ids)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at;
+-- name: CreatePostComment :one
+-- Add a comment to a feed post (site or skill). mentioned_user_ids is the set of
+-- tagged org users (identity ids). RLS scopes the INSERT to the active org (the
+-- WITH CHECK clause on the tenant policy rejects a row whose org_id isn't the
+-- active tenant).
+INSERT INTO app.post_comments (org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at;
 
--- name: ListSiteComments :many
--- A site's comment thread, displayed oldest-first (top-to-bottom like a
--- conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+-- name: ListPostComments :many
+-- A feed post's comment thread, displayed oldest-first (top-to-bottom like a
+-- conversation) but BOUNDED to the most recent $3 comments so a long thread can't
 -- load an unbounded result. RLS scopes the read to the active org; the
--- (site_id, created_at) index backs both the inner ordering and the outer.
-SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+-- (subject_type, subject_id, created_at) index backs both orderings.
+SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
 FROM (
-    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-    FROM app.site_comments
-    WHERE site_id = $1
+    SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.post_comments
+    WHERE subject_type = $1 AND subject_id = $2
     ORDER BY created_at DESC, id DESC
-    LIMIT $2
+    LIMIT $3
 ) recent
 ORDER BY created_at ASC, id ASC;
 
@@ -619,7 +651,7 @@ WHERE org_id = $1;
 -- name: CreateSkill :one
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
 
 -- name: CreateSeedSkill :one
 -- Insert a preset seed skill, or DO NOTHING if the org already has that slug
@@ -630,7 +662,7 @@ RETURNING id, org_id, slug, owner_user_id, title, description, current_version_i
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (org_id, slug) DO NOTHING
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
 
 -- name: GetSkill :one
 -- Embeds the full skill row plus its current version's size (0 when unset), so
@@ -693,7 +725,16 @@ UPDATE app.skills
 SET title = $2,
     description = $3
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+
+-- name: SetSkillFeedVisible :one
+-- Share a skill to the org feed (true) or make it private/off-feed (false). RLS
+-- scopes the UPDATE to the active org; the handler restricts it to the skill's
+-- owner or an org admin/owner. A miss surfaces as a no-rows error (→ ErrNotFound).
+UPDATE app.skills
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
 
 -- name: SetSkillCurrentVersion :exec
 -- Flip the live pointer (finalize = publish in the latest-only v1 model).

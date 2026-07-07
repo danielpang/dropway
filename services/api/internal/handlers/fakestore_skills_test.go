@@ -94,6 +94,7 @@ func (f *fakeStore) CreateSkill(_ context.Context, t store.Tenant, slug, title s
 	}
 	s := store.Skill{
 		ID: sk.id("skill"), OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, Title: title,
+		FeedVisible: true, // mirror the DB default (auto-shared to the org feed)
 	}
 	sk.skills[s.ID] = s
 	for _, folderID := range folderIDs {
@@ -169,6 +170,45 @@ func (f *fakeStore) DeleteSkill(_ context.Context, t store.Tenant, id string) er
 		delete(members, id)
 	}
 	return nil
+}
+
+func (f *fakeStore) ListFeedSkills(_ context.Context, t store.Tenant) ([]store.FeedSkill, error) {
+	f.lastTenant = t
+	sk := f.sk()
+	var out []store.FeedSkill
+	for _, s := range sk.skills {
+		if !s.FeedVisible { // mirror the SQL WHERE feed_visible
+			continue
+		}
+		if s.CurrentVersionID == nil && s.OwnerUserID != t.UserID {
+			continue // half-finished uploads stay off others' feed
+		}
+		key := postKey(store.SubjectSkill, s.ID)
+		var score int64
+		for _, v := range f.votes[key] {
+			score += int64(v)
+		}
+		out = append(out, store.FeedSkill{
+			Skill:        f.decorated(s),
+			Score:        score,
+			MyVote:       f.votes[key][t.UserID],
+			CommentCount: int64(len(f.comments[key])),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	return out, nil
+}
+
+func (f *fakeStore) SetSkillFeedVisible(_ context.Context, t store.Tenant, id string, visible bool) (store.Skill, error) {
+	f.lastTenant = t
+	sk := f.sk()
+	s, ok := sk.skills[id]
+	if !ok {
+		return store.Skill{}, store.ErrNotFound
+	}
+	s.FeedVisible = visible
+	sk.skills[id] = s
+	return f.decorated(s), nil
 }
 
 func (f *fakeStore) SetSkillMeta(_ context.Context, t store.Tenant, id, title, description string) (store.Skill, error) {

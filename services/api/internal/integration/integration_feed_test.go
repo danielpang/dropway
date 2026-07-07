@@ -145,8 +145,9 @@ func TestIntegration_Feed(t *testing.T) {
 	}
 
 	// --- Comments: post with a mention, list the thread, assert RLS isolation. ---
-	c1, err := st.CreateSiteComment(ctx, tAMember, store.CreateSiteCommentParams{
-		SiteID:           s1.ID,
+	c1, err := st.CreatePostComment(ctx, tAMember, store.CreatePostCommentParams{
+		SubjectType:      store.SubjectSite,
+		SubjectID:        s1.ID,
 		Body:             "nice work",
 		MentionedUserIDs: []string{userOwnerA},
 	})
@@ -154,13 +155,13 @@ func TestIntegration_Feed(t *testing.T) {
 	if c1.AuthorUserID != userMemberA || len(c1.MentionedUserIDs) != 1 || c1.MentionedUserIDs[0] != userOwnerA {
 		t.Fatalf("comment = %+v, want author=member, mention=owner", c1)
 	}
-	thread, err := st.ListSiteComments(ctx, tA, s1.ID)
+	thread, err := st.ListPostComments(ctx, tA, store.SubjectSite, s1.ID)
 	must2(t, err)
 	if len(thread) != 1 || thread[0].Body != "nice work" {
 		t.Fatalf("thread = %+v, want one comment 'nice work'", thread)
 	}
 	// RLS: org B sees none of org A's comments.
-	threadB, err := st.ListSiteComments(ctx, tB, s1.ID)
+	threadB, err := st.ListPostComments(ctx, tB, store.SubjectSite, s1.ID)
 	must2(t, err)
 	if len(threadB) != 0 {
 		t.Fatalf("org B should see no comments on org A's site, got %d", len(threadB))
@@ -168,16 +169,16 @@ func TestIntegration_Feed(t *testing.T) {
 
 	// --- Votes: two members upvote, one downvotes; score nets out, and the feed
 	// reflects each caller's own vote. ---
-	if _, _, err := st.SetSiteVote(ctx, tA, s1.ID, 1); err != nil { // owner +1
+	if _, _, err := st.SetPostVote(ctx, tA, store.SubjectSite, s1.ID, 1); err != nil { // owner +1
 		t.Fatalf("owner upvote: %v", err)
 	}
-	score, myVote, err := st.SetSiteVote(ctx, tAMember, s1.ID, 1) // member +1
+	score, myVote, err := st.SetPostVote(ctx, tAMember, store.SubjectSite, s1.ID, 1) // member +1
 	must2(t, err)
 	if score != 2 || myVote != 1 {
 		t.Fatalf("after two upvotes score=%d my_vote=%d, want 2/1", score, myVote)
 	}
 	// The owner changes their mind and downvotes: 2 → 0 (member +1, owner -1).
-	score, _, err = st.SetSiteVote(ctx, tA, s1.ID, -1)
+	score, _, err = st.SetPostVote(ctx, tA, store.SubjectSite, s1.ID, -1)
 	must2(t, err)
 	if score != 0 {
 		t.Fatalf("after owner flips to downvote, score=%d, want 0", score)
@@ -194,7 +195,7 @@ func TestIntegration_Feed(t *testing.T) {
 		t.Fatalf("feed score for member = (%d,%d) ok=%v, want (0,1)", sc, mv, ok)
 	}
 	// Un-voting removes the member's vote: score 0 → -1.
-	score, myVote, err = st.SetSiteVote(ctx, tAMember, s1.ID, 0)
+	score, myVote, err = st.SetPostVote(ctx, tAMember, store.SubjectSite, s1.ID, 0)
 	must2(t, err)
 	if score != -1 || myVote != 0 {
 		t.Fatalf("after member un-votes score=%d my_vote=%d, want -1/0", score, myVote)

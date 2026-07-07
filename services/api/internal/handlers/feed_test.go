@@ -30,21 +30,22 @@ func mountFeed(a *API, c *auth.Claims) http.Handler {
 	return r
 }
 
-// feedSlugs decodes a {"sites":[...]} feed body into the slugs it lists, in order.
+// feedSlugs decodes a {"posts":[...]} feed body into the slugs it lists, in order.
 func feedSlugs(t *testing.T, body []byte) []string {
 	t.Helper()
 	var out struct {
-		Sites []struct {
+		Posts []struct {
+			Kind        string `json:"kind"`
 			Slug        string `json:"slug"`
 			OwnerID     string `json:"owner_id"`
 			FeedVisible bool   `json:"feed_visible"`
-		} `json:"sites"`
+		} `json:"posts"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("decode feed body: %v (%s)", err, body)
 	}
-	slugs := make([]string, len(out.Sites))
-	for i, s := range out.Sites {
+	slugs := make([]string, len(out.Posts))
+	for i, s := range out.Posts {
 		slugs[i] = s.Slug
 	}
 	return slugs
@@ -160,16 +161,16 @@ func TestSetVote_UpThenClear(t *testing.T) {
 
 	// The feed shows the caller's vote + score.
 	var feed struct {
-		Sites []struct {
+		Posts []struct {
 			Score  int64 `json:"score"`
 			MyVote int   `json:"my_vote"`
-		} `json:"sites"`
+		} `json:"posts"`
 	}
 	if err := json.Unmarshal(getReq(h, "/v1/feed").Body.Bytes(), &feed); err != nil {
 		t.Fatalf("decode feed: %v", err)
 	}
-	if len(feed.Sites) != 1 || feed.Sites[0].Score != 1 || feed.Sites[0].MyVote != 1 {
-		t.Fatalf("feed = %+v, want score/my_vote 1", feed.Sites)
+	if len(feed.Posts) != 1 || feed.Posts[0].Score != 1 || feed.Posts[0].MyVote != 1 {
+		t.Fatalf("feed = %+v, want score/my_vote 1", feed.Posts)
 	}
 
 	// Clearing the vote drops the score back to 0.

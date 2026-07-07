@@ -91,6 +91,27 @@ type AppOrgUsage struct {
 	UpdatedAt    time.Time
 }
 
+type AppPostComment struct {
+	ID               string
+	OrgID            string
+	SubjectType      string
+	SubjectID        string
+	AuthorUserID     string
+	Body             string
+	MentionedUserIds []string
+	CreatedAt        time.Time
+}
+
+type AppPostVote struct {
+	SubjectType string
+	SubjectID   string
+	OrgID       string
+	UserID      string
+	Value       int16
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type AppSite struct {
 	ID               string
 	OrgID            string
@@ -114,16 +135,6 @@ type AppSiteAccessPolicy struct {
 	UpdatedAt    time.Time
 }
 
-type AppSiteComment struct {
-	ID               string
-	OrgID            string
-	SiteID           string
-	AuthorUserID     string
-	Body             string
-	MentionedUserIds []string
-	CreatedAt        time.Time
-}
-
 type AppSiteVersion struct {
 	ID          string
 	OrgID       string
@@ -137,15 +148,6 @@ type AppSiteVersion struct {
 	CreatedAt   time.Time
 }
 
-type AppSiteVote struct {
-	SiteID    string
-	OrgID     string
-	UserID    string
-	Value     int16
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
 type AppSkill struct {
 	ID               string
 	OrgID            string
@@ -154,6 +156,7 @@ type AppSkill struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	CurrentVersionID *string
+	FeedVisible      bool
 	CreatedAt        time.Time
 }
 

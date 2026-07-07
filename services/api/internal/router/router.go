@@ -167,6 +167,14 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Put("/{id}/folders", api.SetSkillFolders)
 			r.Get("/{id}/files", api.ListSkillFiles)
 			r.Get("/{id}/download", api.DownloadSkill)
+			// Feed surface for skills (mirrors the site feed endpoints): share/
+			// unshare, owner-set title/description, up/down vote, and the comment
+			// thread. A skill auto-joins the feed on publish (feed_visible default).
+			r.Put("/{id}/feed", api.SetSkillFeedVisibility)
+			r.Put("/{id}/feed-meta", api.SetSkillFeedMeta)
+			r.Put("/{id}/vote", api.SetSkillVote)
+			r.Get("/{id}/comments", api.ListSkillComments)
+			r.Post("/{id}/comments", api.AddSkillComment)
 		})
 
 		// Skill folders: reads for every member; curation (create/rename/delete,

@@ -103,6 +103,9 @@ CREATE TABLE app.skills (
     title              text,
     description        text,
     current_version_id uuid,
+    -- feed_visible (migration 0009): a skill auto-joins the org feed on publish
+    -- unless the owner/admin makes it private (mirrors sites.feed_visible).
+    feed_visible       boolean NOT NULL DEFAULT true,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT skills_org_slug_key UNIQUE (org_id, slug)
 );
@@ -182,27 +185,32 @@ CREATE TABLE app.site_access_policy (
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- site_comments: org-internal discussion on a shared site, with @mentions.
-CREATE TABLE app.site_comments (
+-- post_comments: polymorphic org-internal discussion on a feed post (a site or a
+-- skill), with @mentions (migration 0009). subject_type is 'site' | 'skill'.
+CREATE TABLE app.post_comments (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    subject_type       text NOT NULL,
+    subject_id         uuid NOT NULL,
     author_user_id     uuid NOT NULL,
     body               text NOT NULL,
     mentioned_user_ids uuid[] NOT NULL DEFAULT '{}',
-    created_at         timestamptz NOT NULL DEFAULT now()
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT post_comments_subject_type_check CHECK (subject_type IN ('site', 'skill'))
 );
 
--- site_votes: up/down votes on feed posts (one per site per user).
-CREATE TABLE app.site_votes (
-    site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
-    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    user_id    uuid NOT NULL,
-    value      smallint NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (site_id, user_id),
-    CONSTRAINT site_votes_value_check CHECK (value IN (-1, 1))
+-- post_votes: polymorphic up/down votes on a feed post (one per subject per user).
+CREATE TABLE app.post_votes (
+    subject_type text NOT NULL,
+    subject_id   uuid NOT NULL,
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    user_id      uuid NOT NULL,
+    value        smallint NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (subject_type, subject_id, user_id),
+    CONSTRAINT post_votes_subject_type_check CHECK (subject_type IN ('site', 'skill')),
+    CONSTRAINT post_votes_value_check CHECK (value IN (-1, 1))
 );
 
 -- allowlist_entries: pre-registration email grants for allowlist sites.

@@ -319,24 +319,26 @@ paths:
 
   /v1/feed:
     get:
-      summary: The org feed — sites shared across the org, newest first
+      summary: The org feed — sites and skills shared across the org, newest first
       description: >
-        Returns every site in the caller's org that is feed-visible (not marked
-        private), newest first so freshly created/published sites are at the top and
-        older sites sink to the bottom. The cross-user discovery surface that
-        complements the per-user site list. Any org member may read it (RLS-scoped to
-        their org). Each item is a full Site (owner_id, access_mode, live_url,
-        created_at, …) so the dashboard can render and attribute it like a site card.
+        Returns every site AND skill in the caller's org that is feed-visible (not
+        marked private), newest first so freshly created/published posts are at the
+        top and older ones sink to the bottom. The cross-user discovery surface that
+        complements the per-user site/skill lists. Any org member may read it
+        (RLS-scoped to their org). Each item carries a `kind` ("site" | "skill") so
+        the dashboard renders the right card, link, and badges; the site-only fields
+        (access_mode, live_url, storage_bytes) and skill-only fields (is_seeded,
+        size_bytes) are omitted for the other kind.
       operationId: listFeed
       responses:
         "200":
-          description: The org's shared sites, newest first
+          description: The org's shared posts (sites + skills), newest first
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  sites:
+                  posts:
                     type: array
                     items: { $ref: "#/components/schemas/FeedItem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -1274,6 +1276,175 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/skills/{id}/feed:
+    put:
+      summary: Share a skill to the org feed, or make it private (owner or admin)
+      description: >
+        Toggles whether the skill appears in the org feed. The skill's OWNER may
+        toggle their own skill; an org admin/owner may toggle any. Mirror of the
+        site feed-visibility toggle. A skill auto-joins the feed on publish.
+      operationId: setSkillFeedVisibility
+      tags: [skills]
+      parameters:
+        - { $ref: "#/components/parameters/SkillID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visible]
+              properties:
+                visible:
+                  type: boolean
+                  description: true shares the skill to the org feed; false makes it private.
+      responses:
+        "200":
+          description: Feed visibility updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kind: { type: string, enum: [skill] }
+                  id: { type: string, format: uuid }
+                  feed_visible: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/skills/{id}/feed-meta:
+    put:
+      summary: Set a skill's feed title + description (owner or admin)
+      description: >
+        Sets the skill's Title and Description (which double as its feed post's
+        title/description). Owner-or-admin. Empty strings clear the field.
+      operationId: setSkillFeedMeta
+      tags: [skills]
+      parameters:
+        - { $ref: "#/components/parameters/SkillID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, description: Human title (empty clears it; max 120 chars). }
+                description: { type: string, description: Description (empty clears it; max 500 chars). }
+      responses:
+        "200":
+          description: Feed metadata updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kind: { type: string, enum: [skill] }
+                  id: { type: string, format: uuid }
+                  title: { type: string }
+                  description: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/skills/{id}/vote:
+    put:
+      summary: Up/down vote a skill feed post (any org member)
+      description: >
+        Records the caller's vote on a skill: value 1 (up), -1 (down), or 0 to clear
+        it. One vote per member per skill. Returns the new net score + the caller's
+        resulting vote. A skill made private accepts no votes.
+      operationId: setSkillVote
+      tags: [skills]
+      parameters:
+        - { $ref: "#/components/parameters/SkillID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: integer
+                  enum: [-1, 0, 1]
+                  description: 1 upvote, -1 downvote, 0 clears the caller's vote.
+      responses:
+        "200":
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kind: { type: string, enum: [skill] }
+                  id: { type: string, format: uuid }
+                  score: { type: integer, format: int64 }
+                  my_vote: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/skills/{id}/comments:
+    get:
+      summary: List a skill's comment thread (oldest first)
+      description: >
+        The skill's org-internal comment thread, oldest first. Any org member may
+        read it (RLS-scoped to their org).
+      operationId: listSkillComments
+      tags: [skills]
+      parameters:
+        - { $ref: "#/components/parameters/SkillID" }
+      responses:
+        "200":
+          description: The skill's comments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteComment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Post a comment to a skill, optionally tagging teammates
+      description: >
+        Any org member may comment; the author is the authenticated caller. Tagged
+        ids that aren't current org members are dropped so a mention always resolves
+        to a real teammate.
+      operationId: addSkillComment
+      tags: [skills]
+      parameters:
+        - { $ref: "#/components/parameters/SkillID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, description: The comment text (max 4000 chars). }
+                mentioned_user_ids:
+                  type: array
+                  description: Org users to tag. Non-members are dropped server-side.
+                  items: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteComment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/skill-folders:
     get:
       summary: List the org's skill folders
@@ -1609,31 +1780,53 @@ components:
         created_at: { type: string, format: date-time }
 
     FeedItem:
+      type: object
       description: >
-        One post in the org feed: a Site plus its social metadata (net vote score,
-        the caller's own vote, and its comment count).
-      allOf:
-        - $ref: "#/components/schemas/Site"
-        - type: object
-          properties:
-            score:
-              type: integer
-              format: int64
-              description: Net up/down vote total (sum of +1/-1).
-            my_vote:
-              type: integer
-              description: The caller's own vote on this post (1, -1, or 0).
-            comment_count:
-              type: integer
-              format: int64
-              description: Number of comments on this post.
+        One post in the unified org feed: a site OR a skill, tagged by `kind`, plus
+        its social metadata (net vote score, the caller's own vote, comment count).
+        Site-only fields (access_mode, live_url, storage_bytes) and skill-only fields
+        (is_seeded, size_bytes) are present only for the matching kind.
+      required: [kind, id, slug, owner_id, created_at]
+      properties:
+        kind:
+          type: string
+          enum: [site, skill]
+          description: What this post is — a shared site or a shared skill.
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        slug: { type: string }
+        owner_id: { type: string, format: uuid, description: The post's owner (the all-zero uuid for Dropway-seeded skills). }
+        title: { type: string, description: Owner-set feed title (empty → clients fall back to the slug). }
+        description: { type: string }
+        current_version_id: { type: string, format: uuid, nullable: true }
+        feed_visible: { type: boolean, description: Whether the post is shared to the feed (always true for items the feed returns). }
+        created_at: { type: string, format: date-time }
+        access_mode: { type: string, enum: [public, password, allowlist, org_only], description: Site-only — the edge access mode. }
+        live_url: { type: string, description: Site-only — the canonical served URL. }
+        storage_bytes: { type: integer, format: int64, description: Site-only — logical current-version size. }
+        is_seeded: { type: boolean, description: Skill-only — a Dropway-provided preset. }
+        size_bytes: { type: integer, format: int64, description: Skill-only — current-version content size. }
+        score:
+          type: integer
+          format: int64
+          description: Net up/down vote total (sum of +1/-1).
+        my_vote:
+          type: integer
+          description: The caller's own vote on this post (1, -1, or 0).
+        comment_count:
+          type: integer
+          format: int64
+          description: Number of comments on this post.
 
     SiteComment:
       type: object
-      description: One org-internal comment on a site, optionally tagging teammates.
+      description: >
+        One org-internal comment on a feed post (a site or a skill), optionally
+        tagging teammates. subject_type + subject_id identify the post it's on.
       properties:
         id: { type: string, format: uuid }
-        site_id: { type: string, format: uuid }
+        subject_type: { type: string, enum: [site, skill] }
+        subject_id: { type: string, format: uuid }
         author_id: { type: string, format: uuid }
         body: { type: string }
         mentioned_user_ids:
@@ -1715,6 +1908,11 @@ components:
         description: { type: string }
         current_version_id: { type: string, format: uuid, nullable: true }
         size_bytes: { type: integer, format: int64, description: Current version's total content size (0 before the first upload). }
+        feed_visible:
+          type: boolean
+          description: >
+            Whether the skill is shared to the org feed (default true on publish).
+            The owner/admin can make it private to pull it off the feed.
         folders:
           type: array
           items: { $ref: "#/components/schemas/SkillFolderRef" }

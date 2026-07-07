@@ -246,8 +246,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The org feed — sites shared across the org, newest first
-         * @description Returns every site in the caller's org that is feed-visible (not marked private), newest first so freshly created/published sites are at the top and older sites sink to the bottom. The cross-user discovery surface that complements the per-user site list. Any org member may read it (RLS-scoped to their org). Each item is a full Site (owner_id, access_mode, live_url, created_at, …) so the dashboard can render and attribute it like a site card.
+         * The org feed — sites and skills shared across the org, newest first
+         * @description Returns every site AND skill in the caller's org that is feed-visible (not marked private), newest first so freshly created/published posts are at the top and older ones sink to the bottom. The cross-user discovery surface that complements the per-user site/skill lists. Any org member may read it (RLS-scoped to their org). Each item carries a `kind` ("site" | "skill") so the dashboard renders the right card, link, and badges; the site-only fields (access_mode, live_url, storage_bytes) and skill-only fields (is_seeded, size_bytes) are omitted for the other kind.
          */
         get: operations["listFeed"];
         put?: never;
@@ -742,6 +742,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills/{id}/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Share a skill to the org feed, or make it private (owner or admin)
+         * @description Toggles whether the skill appears in the org feed. The skill's OWNER may toggle their own skill; an org admin/owner may toggle any. Mirror of the site feed-visibility toggle. A skill auto-joins the feed on publish.
+         */
+        put: operations["setSkillFeedVisibility"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/feed-meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a skill's feed title + description (owner or admin)
+         * @description Sets the skill's Title and Description (which double as its feed post's title/description). Owner-or-admin. Empty strings clear the field.
+         */
+        put: operations["setSkillFeedMeta"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/vote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Up/down vote a skill feed post (any org member)
+         * @description Records the caller's vote on a skill: value 1 (up), -1 (down), or 0 to clear it. One vote per member per skill. Returns the new net score + the caller's resulting vote. A skill made private accepts no votes.
+         */
+        put: operations["setSkillVote"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a skill's comment thread (oldest first)
+         * @description The skill's org-internal comment thread, oldest first. Any org member may read it (RLS-scoped to their org).
+         */
+        get: operations["listSkillComments"];
+        put?: never;
+        /**
+         * Post a comment to a skill, optionally tagging teammates
+         * @description Any org member may comment; the author is the authenticated caller. Tagged ids that aren't current org members are dropped so a mention always resolves to a real teammate.
+         */
+        post: operations["addSkillComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skill-folders": {
         parameters: {
             query?: never;
@@ -928,8 +1012,51 @@ export interface components {
             /** Format: date-time */
             created_at?: string;
         };
-        /** @description One post in the org feed: a Site plus its social metadata (net vote score, the caller's own vote, and its comment count). */
-        FeedItem: components["schemas"]["Site"] & {
+        /** @description One post in the unified org feed: a site OR a skill, tagged by `kind`, plus its social metadata (net vote score, the caller's own vote, comment count). Site-only fields (access_mode, live_url, storage_bytes) and skill-only fields (is_seeded, size_bytes) are present only for the matching kind. */
+        FeedItem: {
+            /**
+             * @description What this post is — a shared site or a shared skill.
+             * @enum {string}
+             */
+            kind: "site" | "skill";
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id?: string;
+            slug: string;
+            /**
+             * Format: uuid
+             * @description The post's owner (the all-zero uuid for Dropway-seeded skills).
+             */
+            owner_id: string;
+            /** @description Owner-set feed title (empty → clients fall back to the slug). */
+            title?: string;
+            description?: string;
+            /** Format: uuid */
+            current_version_id?: string | null;
+            /** @description Whether the post is shared to the feed (always true for items the feed returns). */
+            feed_visible?: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description Site-only — the edge access mode.
+             * @enum {string}
+             */
+            access_mode?: "public" | "password" | "allowlist" | "org_only";
+            /** @description Site-only — the canonical served URL. */
+            live_url?: string;
+            /**
+             * Format: int64
+             * @description Site-only — logical current-version size.
+             */
+            storage_bytes?: number;
+            /** @description Skill-only — a Dropway-provided preset. */
+            is_seeded?: boolean;
+            /**
+             * Format: int64
+             * @description Skill-only — current-version content size.
+             */
+            size_bytes?: number;
             /**
              * Format: int64
              * @description Net up/down vote total (sum of +1/-1).
@@ -943,12 +1070,14 @@ export interface components {
              */
             comment_count?: number;
         };
-        /** @description One org-internal comment on a site, optionally tagging teammates. */
+        /** @description One org-internal comment on a feed post (a site or a skill), optionally tagging teammates. subject_type + subject_id identify the post it's on. */
         SiteComment: {
             /** Format: uuid */
             id?: string;
+            /** @enum {string} */
+            subject_type?: "site" | "skill";
             /** Format: uuid */
-            site_id?: string;
+            subject_id?: string;
             /** Format: uuid */
             author_id?: string;
             body?: string;
@@ -1021,6 +1150,8 @@ export interface components {
              * @description Current version's total content size (0 before the first upload).
              */
             size_bytes?: number;
+            /** @description Whether the skill is shared to the org feed (default true on publish). The owner/admin can make it private to pull it off the feed. */
+            feed_visible?: boolean;
             folders?: components["schemas"]["SkillFolderRef"][];
             /** Format: date-time */
             created_at?: string;
@@ -1520,14 +1651,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The org's shared sites, newest first */
+            /** @description The org's shared posts (sites + skills), newest first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        sites?: components["schemas"]["FeedItem"][];
+                        posts?: components["schemas"]["FeedItem"][];
                     };
                 };
             };
@@ -2560,6 +2691,195 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillDownload"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillFeedVisibility: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description true shares the skill to the org feed; false makes it private. */
+                    visible: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed visibility updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind?: "skill";
+                        /** Format: uuid */
+                        id?: string;
+                        feed_visible?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillFeedMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human title (empty clears it; max 120 chars). */
+                    title?: string;
+                    /** @description Description (empty clears it; max 500 chars). */
+                    description?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed metadata updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind?: "skill";
+                        /** Format: uuid */
+                        id?: string;
+                        title?: string;
+                        description?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillVote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description 1 upvote, -1 downvote, 0 clears the caller's vote.
+                     * @enum {integer}
+                     */
+                    value: -1 | 0 | 1;
+                };
+            };
+        };
+        responses: {
+            /** @description Vote recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind?: "skill";
+                        /** Format: uuid */
+                        id?: string;
+                        /** Format: int64 */
+                        score?: number;
+                        my_vote?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listSkillComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skill's comments */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        comments?: components["schemas"]["SiteComment"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addSkillComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The comment text (max 4000 chars). */
+                    body: string;
+                    /** @description Org users to tag. Non-members are dropped server-side. */
+                    mentioned_user_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Comment created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteComment"];
                 };
             };
             400: components["responses"]["BadRequest"];

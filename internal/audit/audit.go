@@ -86,6 +86,12 @@ const (
 	ActionSkillFolderDelete Action = "skill_folder.delete"
 	// ActionSkillFolderPresetChange records a preset flag flip on a folder item.
 	ActionSkillFolderPresetChange Action = "skill_folder.preset_change"
+	// ActionSkillFeedVisibility records a change to a skill's org-feed visibility
+	// (PUT /v1/skills/{id}/feed).
+	ActionSkillFeedVisibility Action = "skill.feed_visibility"
+	// ActionSkillFeedMeta records a change to a skill's feed title/description
+	// (PUT /v1/skills/{id}/feed-meta).
+	ActionSkillFeedMeta Action = "skill.feed_meta"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

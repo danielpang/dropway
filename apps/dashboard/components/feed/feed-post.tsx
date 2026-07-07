@@ -6,10 +6,12 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronUp,
+  FileText,
   Globe,
   Loader2,
   MessageSquare,
   Pencil,
+  Sparkles,
 } from "lucide-react";
 
 import {
@@ -17,6 +19,7 @@ import {
   listFeedCommentsAction,
   setPostMetaAction,
   voteAction,
+  type PostKind,
 } from "@/app/(app)/feed/actions";
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import {
@@ -30,11 +33,17 @@ import { Label } from "@/components/ui/label";
 import type { FeedItem, SiteComment } from "@/lib/api";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
+/** A feed item's kind, defaulting to "site" for older payloads. */
+function postKind(item: FeedItem): PostKind {
+  return item.kind === "skill" ? "skill" : "site";
+}
+
 /**
- * One post in the org feed (Facebook-newsfeed style): owner-set title +
- * description (editable inline by the owner/admin), an up/down vote control, and
- * an expandable inline comment thread with @mentions. All writes go through feed
- * server actions (the JWT stays server-side).
+ * One post in the org feed (Facebook-newsfeed style): a shared site OR skill,
+ * tagged by kind. Owner-set title + description (editable inline by the
+ * owner/admin), an up/down vote control, and an expandable inline comment thread
+ * with @mentions. All writes go through feed server actions (the JWT stays
+ * server-side) and are keyed by kind so votes/comments land on the right subject.
  */
 export function FeedPost({
   item,
@@ -49,21 +58,24 @@ export function FeedPost({
   members: CommentMember[];
   currentUserId: string | null;
 }) {
-  const siteId = item.id ?? "";
+  const kind = postKind(item);
+  const postId = item.id ?? "";
 
   return (
     <article className="rounded-lg border border-border bg-card shadow-sm">
       <div className="flex gap-3 p-5">
         <VoteControl
-          siteId={siteId}
+          kind={kind}
+          postId={postId}
           initialScore={item.score ?? 0}
           initialVote={(item.my_vote ?? 0) as -1 | 0 | 1}
         />
 
         <div className="min-w-0 flex-1">
-          <PostHeader item={item} owner={owner} canEdit={canEdit} />
+          <PostHeader item={item} kind={kind} owner={owner} canEdit={canEdit} />
           <CommentSection
-            siteId={siteId}
+            kind={kind}
+            postId={postId}
             initialCount={item.comment_count ?? 0}
             members={members}
             currentUserId={currentUserId}
@@ -76,11 +88,13 @@ export function FeedPost({
 
 /** The up/down vote column with the live net score in the middle. */
 function VoteControl({
-  siteId,
+  kind,
+  postId,
   initialScore,
   initialVote,
 }: {
-  siteId: string;
+  kind: PostKind;
+  postId: string;
   initialScore: number;
   initialVote: -1 | 0 | 1;
 }) {
@@ -98,7 +112,7 @@ function VoteControl({
     setScore(score + (value - vote));
     setVote(value);
     setPending(true);
-    const result = await voteAction({ siteId, value });
+    const result = await voteAction({ kind, id: postId, value });
     setPending(false);
     if (result.ok) {
       setScore(result.score);
@@ -145,15 +159,18 @@ function VoteControl({
 /** Title + description (editable inline by owner/admin), owner, time, badges. */
 function PostHeader({
   item,
+  kind,
   owner,
   canEdit,
 }: {
   item: FeedItem;
+  kind: PostKind;
   owner: string;
   canEdit: boolean;
 }) {
-  const siteId = item.id ?? "";
+  const postId = item.id ?? "";
   const slug = item.slug ?? "";
+  const isSkill = kind === "skill";
 
   const [editing, setEditing] = React.useState(false);
   // savedTitle/savedDescription drive the DISPLAY; title/description are the edit
@@ -176,7 +193,7 @@ function PostHeader({
     e.preventDefault();
     setError(null);
     setPending(true);
-    const result = await setPostMetaAction({ siteId, title, description });
+    const result = await setPostMetaAction({ kind, id: postId, title, description });
     setPending(false);
     if (result.ok) {
       setSavedTitle(result.title);
@@ -191,9 +208,9 @@ function PostHeader({
     return (
       <form onSubmit={onSave} className="space-y-3">
         <div className="space-y-1.5">
-          <Label htmlFor={`title-${siteId}`}>Post title</Label>
+          <Label htmlFor={`title-${postId}`}>Post title</Label>
           <Input
-            id={`title-${siteId}`}
+            id={`title-${postId}`}
             value={title}
             maxLength={120}
             placeholder={slug}
@@ -201,13 +218,13 @@ function PostHeader({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor={`desc-${siteId}`}>Description</Label>
+          <Label htmlFor={`desc-${postId}`}>Description</Label>
           <textarea
-            id={`desc-${siteId}`}
+            id={`desc-${postId}`}
             value={description}
             maxLength={500}
             rows={2}
-            placeholder="Say something about this site…"
+            placeholder={isSkill ? "Say what this skill does…" : "Say something about this site…"}
             onChange={(e) => setDescription(e.target.value)}
             className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
@@ -246,7 +263,11 @@ function PostHeader({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="grid size-8 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
-            <Globe className="size-4" aria-hidden />
+            {isSkill ? (
+              <FileText className="size-4" aria-hidden />
+            ) : (
+              <Globe className="size-4" aria-hidden />
+            )}
           </span>
           <span className="min-w-0 truncate text-base font-semibold text-foreground">
             {displayTitle}
@@ -282,22 +303,48 @@ function PostHeader({
       </p>
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        {isLive ? (
-          <Badge variant="success">
-            <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
-            Live
-          </Badge>
+        {isSkill ? (
+          <>
+            <Badge variant="muted">
+              <Sparkles className="size-3" aria-hidden />
+              Skill
+            </Badge>
+            {isLive ? (
+              <Badge variant="success">
+                <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                Uploaded
+              </Badge>
+            ) : (
+              <Badge variant="muted">Draft</Badge>
+            )}
+            <Link
+              href={`/skills/${postId}`}
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Open skill
+              <ArrowRight className="size-3.5" aria-hidden />
+            </Link>
+          </>
         ) : (
-          <Badge variant="muted">Not deployed</Badge>
+          <>
+            {isLive ? (
+              <Badge variant="success">
+                <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                Live
+              </Badge>
+            ) : (
+              <Badge variant="muted">Not deployed</Badge>
+            )}
+            <AccessModeBadge mode={item.access_mode} />
+            <Link
+              href={`/sites/${postId}`}
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Open site
+              <ArrowRight className="size-3.5" aria-hidden />
+            </Link>
+          </>
         )}
-        <AccessModeBadge mode={item.access_mode} />
-        <Link
-          href={`/sites/${siteId}`}
-          className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Open site
-          <ArrowRight className="size-3.5" aria-hidden />
-        </Link>
       </div>
     </div>
   );
@@ -305,12 +352,14 @@ function PostHeader({
 
 /** Expandable inline comment thread (lazy-loaded on first open). */
 function CommentSection({
-  siteId,
+  kind,
+  postId,
   initialCount,
   members,
   currentUserId,
 }: {
-  siteId: string;
+  kind: PostKind;
+  postId: string;
   initialCount: number;
   members: CommentMember[];
   currentUserId: string | null;
@@ -327,7 +376,7 @@ function CommentSection({
     if (next && !loaded && !loading) {
       setLoading(true);
       setError(null);
-      const result = await listFeedCommentsAction(siteId);
+      const result = await listFeedCommentsAction(kind, postId);
       setLoading(false);
       if (result.ok) {
         setComments(result.comments);
@@ -367,11 +416,18 @@ function CommentSection({
             </p>
           ) : (
             <SiteComments
-              siteId={siteId}
+              siteId={postId}
               initialComments={comments}
               members={members}
               currentUserId={currentUserId}
-              addAction={addFeedCommentAction}
+              addAction={(input) =>
+                addFeedCommentAction({
+                  kind,
+                  id: input.siteId,
+                  body: input.body,
+                  mentionedUserIds: input.mentionedUserIds,
+                })
+              }
               onCommentPosted={(c) => setComments((prev) => [...prev, c])}
             />
           )}

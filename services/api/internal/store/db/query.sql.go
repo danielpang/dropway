@@ -96,11 +96,57 @@ func (q *Queries) CountSkillsForOrg(ctx context.Context, orgID string) (int64, e
 	return n, err
 }
 
+const createPostComment = `-- name: CreatePostComment :one
+
+INSERT INTO app.post_comments (org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
+`
+
+type CreatePostCommentParams struct {
+	OrgID            string
+	SubjectType      string
+	SubjectID        string
+	AuthorUserID     string
+	Body             string
+	MentionedUserIds []string
+}
+
+// ===========================================================================
+// site_comments — org-internal discussion on a shared site, with @mentions
+// ===========================================================================
+// Add a comment to a feed post (site or skill). mentioned_user_ids is the set of
+// tagged org users (identity ids). RLS scopes the INSERT to the active org (the
+// WITH CHECK clause on the tenant policy rejects a row whose org_id isn't the
+// active tenant).
+func (q *Queries) CreatePostComment(ctx context.Context, arg CreatePostCommentParams) (AppPostComment, error) {
+	row := q.db.QueryRow(ctx, createPostComment,
+		arg.OrgID,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.AuthorUserID,
+		arg.Body,
+		arg.MentionedUserIds,
+	)
+	var i AppPostComment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SubjectType,
+		&i.SubjectID,
+		&i.AuthorUserID,
+		&i.Body,
+		&i.MentionedUserIds,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createSeedSkill = `-- name: CreateSeedSkill :one
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (org_id, slug) DO NOTHING
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
 `
 
 type CreateSeedSkillParams struct {
@@ -133,6 +179,7 @@ func (q *Queries) CreateSeedSkill(ctx context.Context, arg CreateSeedSkillParams
 		&i.Title,
 		&i.Description,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -173,48 +220,6 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 		&i.FeedVisible,
 		&i.Title,
 		&i.Description,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createSiteComment = `-- name: CreateSiteComment :one
-
-INSERT INTO app.site_comments (org_id, site_id, author_user_id, body, mentioned_user_ids)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-`
-
-type CreateSiteCommentParams struct {
-	OrgID            string
-	SiteID           string
-	AuthorUserID     string
-	Body             string
-	MentionedUserIds []string
-}
-
-// ===========================================================================
-// site_comments — org-internal discussion on a shared site, with @mentions
-// ===========================================================================
-// Add a comment to a site. mentioned_user_ids is the set of tagged org users
-// (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
-// on the tenant policy rejects a row whose org_id isn't the active tenant).
-func (q *Queries) CreateSiteComment(ctx context.Context, arg CreateSiteCommentParams) (AppSiteComment, error) {
-	row := q.db.QueryRow(ctx, createSiteComment,
-		arg.OrgID,
-		arg.SiteID,
-		arg.AuthorUserID,
-		arg.Body,
-		arg.MentionedUserIds,
-	)
-	var i AppSiteComment
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.SiteID,
-		&i.AuthorUserID,
-		&i.Body,
-		&i.MentionedUserIds,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -269,7 +274,7 @@ func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionPa
 const createSkill = `-- name: CreateSkill :one
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
 `
 
 type CreateSkillParams struct {
@@ -297,6 +302,7 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (AppSk
 		&i.Title,
 		&i.Description,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -461,19 +467,53 @@ func (q *Queries) DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (i
 	return size_bytes, err
 }
 
-const deleteSiteVote = `-- name: DeleteSiteVote :exec
-DELETE FROM app.site_votes
-WHERE site_id = $1 AND user_id = $2
+const deletePostCommentsForSubject = `-- name: DeletePostCommentsForSubject :exec
+DELETE FROM app.post_comments
+WHERE subject_type = $1 AND subject_id = $2
 `
 
-type DeleteSiteVoteParams struct {
-	SiteID string
-	UserID string
+type DeletePostCommentsForSubjectParams struct {
+	SubjectType string
+	SubjectID   string
 }
 
-// Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
-func (q *Queries) DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error {
-	_, err := q.db.Exec(ctx, deleteSiteVote, arg.SiteID, arg.UserID)
+// Drop every comment on a subject (called on the subject's delete; see above).
+func (q *Queries) DeletePostCommentsForSubject(ctx context.Context, arg DeletePostCommentsForSubjectParams) error {
+	_, err := q.db.Exec(ctx, deletePostCommentsForSubject, arg.SubjectType, arg.SubjectID)
+	return err
+}
+
+const deletePostVote = `-- name: DeletePostVote :exec
+DELETE FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2 AND user_id = $3
+`
+
+type DeletePostVoteParams struct {
+	SubjectType string
+	SubjectID   string
+	UserID      string
+}
+
+// Remove the caller's vote on a feed post (un-vote). RLS scopes the delete to the org.
+func (q *Queries) DeletePostVote(ctx context.Context, arg DeletePostVoteParams) error {
+	_, err := q.db.Exec(ctx, deletePostVote, arg.SubjectType, arg.SubjectID, arg.UserID)
+	return err
+}
+
+const deletePostVotesForSubject = `-- name: DeletePostVotesForSubject :exec
+DELETE FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2
+`
+
+type DeletePostVotesForSubjectParams struct {
+	SubjectType string
+	SubjectID   string
+}
+
+// Drop every vote on a subject (called when the site/skill itself is deleted,
+// since the polymorphic table can't FK-cascade to two parents).
+func (q *Queries) DeletePostVotesForSubject(ctx context.Context, arg DeletePostVotesForSubjectParams) error {
+	_, err := q.db.Exec(ctx, deletePostVotesForSubject, arg.SubjectType, arg.SubjectID)
 	return err
 }
 
@@ -764,6 +804,25 @@ func (q *Queries) GetPlanTier(ctx context.Context, id string) (string, error) {
 	return plan_tier, err
 }
 
+const getPostVoteScore = `-- name: GetPostVoteScore :one
+SELECT COALESCE(SUM(value), 0)::bigint AS score
+FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2
+`
+
+type GetPostVoteScoreParams struct {
+	SubjectType string
+	SubjectID   string
+}
+
+// A feed post's net vote score (sum of +1/-1). RLS scopes the read to the org.
+func (q *Queries) GetPostVoteScore(ctx context.Context, arg GetPostVoteScoreParams) (int64, error) {
+	row := q.db.QueryRow(ctx, getPostVoteScore, arg.SubjectType, arg.SubjectID)
+	var score int64
+	err := row.Scan(&score)
+	return score, err
+}
+
 const getSite = `-- name: GetSite :one
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
@@ -883,22 +942,8 @@ func (q *Queries) GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVe
 	return i, err
 }
 
-const getSiteVoteScore = `-- name: GetSiteVoteScore :one
-SELECT COALESCE(SUM(value), 0)::bigint AS score
-FROM app.site_votes
-WHERE site_id = $1
-`
-
-// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
-func (q *Queries) GetSiteVoteScore(ctx context.Context, siteID string) (int64, error) {
-	row := q.db.QueryRow(ctx, getSiteVoteScore, siteID)
-	var score int64
-	err := row.Scan(&score)
-	return score, err
-}
-
 const getSkill = `-- name: GetSkill :one
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
@@ -923,6 +968,7 @@ func (q *Queries) GetSkill(ctx context.Context, id string) (GetSkillRow, error) 
 		&i.AppSkill.Title,
 		&i.AppSkill.Description,
 		&i.AppSkill.CurrentVersionID,
+		&i.AppSkill.FeedVisible,
 		&i.AppSkill.CreatedAt,
 		&i.SizeBytes,
 	)
@@ -930,7 +976,7 @@ func (q *Queries) GetSkill(ctx context.Context, id string) (GetSkillRow, error) 
 }
 
 const getSkillBySlug = `-- name: GetSkillBySlug :one
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
@@ -953,6 +999,7 @@ func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySl
 		&i.AppSkill.Title,
 		&i.AppSkill.Description,
 		&i.AppSkill.CurrentVersionID,
+		&i.AppSkill.FeedVisible,
 		&i.AppSkill.CreatedAt,
 		&i.SizeBytes,
 	)
@@ -1325,9 +1372,9 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppD
 const listFeedSites = `-- name: ListFeedSites :many
 SELECT
     s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at,
-    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
-    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
-    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+    COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'site' AND v.subject_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'site' AND mv.subject_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'site' AND c.subject_id = s.id), 0)::bigint AS comment_count
 FROM app.sites s
 WHERE s.feed_visible
 ORDER BY s.created_at DESC
@@ -1340,11 +1387,12 @@ type ListFeedSitesRow struct {
 	CommentCount int64
 }
 
-// The org feed: every site in the active org that is feed-visible (not private),
-// newest first (older sites sink to the bottom). Each row carries its net vote
-// score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
-// and its comment count, so the feed renders the up/down controls + counts in one
-// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+// The org feed's SITE posts: every site in the active org that is feed-visible
+// (not private), newest first (older sites sink to the bottom). Each row carries
+// its net vote score, the CALLER's own vote ($1 = caller user id; 0 when they
+// haven't voted), and its comment count, so the feed renders the up/down controls
+// + counts in one query (no N+1). Votes/comments are polymorphic (subject_type =
+// 'site'). RLS scopes every read to the active org.
 func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error) {
 	rows, err := q.db.Query(ctx, listFeedSites, userID)
 	if err != nil {
@@ -1379,8 +1427,69 @@ func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedS
 	return items, nil
 }
 
+const listFeedSkills = `-- name: ListFeedSkills :many
+SELECT
+    sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
+    COALESCE(ver.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'skill' AND v.subject_id = sk.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'skill' AND mv.subject_id = sk.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'skill' AND c.subject_id = sk.id), 0)::bigint AS comment_count
+FROM app.skills sk
+LEFT JOIN app.skill_versions ver ON ver.id = sk.current_version_id
+WHERE sk.feed_visible
+  AND (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
+ORDER BY sk.created_at DESC
+`
+
+type ListFeedSkillsRow struct {
+	AppSkill     AppSkill
+	SizeBytes    int64
+	Score        int64
+	MyVote       int32
+	CommentCount int64
+}
+
+// The org feed's SKILL posts: every skill in the active org that is feed-visible,
+// newest first, each carrying its current-version size, net vote score, the
+// caller's own vote ($1), and its comment count (subject_type = 'skill'). Skills
+// that never finalized an upload (no current version) are shown only to their
+// owner, so half-finished uploads don't clutter the feed. RLS scopes every read.
+func (q *Queries) ListFeedSkills(ctx context.Context, userID string) ([]ListFeedSkillsRow, error) {
+	rows, err := q.db.Query(ctx, listFeedSkills, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeedSkillsRow{}
+	for rows.Next() {
+		var i ListFeedSkillsRow
+		if err := rows.Scan(
+			&i.AppSkill.ID,
+			&i.AppSkill.OrgID,
+			&i.AppSkill.Slug,
+			&i.AppSkill.OwnerUserID,
+			&i.AppSkill.Title,
+			&i.AppSkill.Description,
+			&i.AppSkill.CurrentVersionID,
+			&i.AppSkill.FeedVisible,
+			&i.AppSkill.CreatedAt,
+			&i.SizeBytes,
+			&i.Score,
+			&i.MyVote,
+			&i.CommentCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFolderSkills = `-- name: ListFolderSkills :many
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skill_folder_items fi
 JOIN app.skills sk ON sk.id = fi.skill_id
@@ -1413,6 +1522,7 @@ func (q *Queries) ListFolderSkills(ctx context.Context, folderID string) ([]List
 			&i.AppSkill.Title,
 			&i.AppSkill.Description,
 			&i.AppSkill.CurrentVersionID,
+			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
 			&i.SizeBytes,
 		); err != nil {
@@ -1508,6 +1618,57 @@ func (q *Queries) ListHostRoutesForSite(ctx context.Context, siteID string) ([]A
 	return items, nil
 }
 
+const listPostComments = `-- name: ListPostComments :many
+SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
+FROM (
+    SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.post_comments
+    WHERE subject_type = $1 AND subject_id = $2
+    ORDER BY created_at DESC, id DESC
+    LIMIT $3
+) recent
+ORDER BY created_at ASC, id ASC
+`
+
+type ListPostCommentsParams struct {
+	SubjectType string
+	SubjectID   string
+	Limit       int32
+}
+
+// A feed post's comment thread, displayed oldest-first (top-to-bottom like a
+// conversation) but BOUNDED to the most recent $3 comments so a long thread can't
+// load an unbounded result. RLS scopes the read to the active org; the
+// (subject_type, subject_id, created_at) index backs both orderings.
+func (q *Queries) ListPostComments(ctx context.Context, arg ListPostCommentsParams) ([]AppPostComment, error) {
+	rows, err := q.db.Query(ctx, listPostComments, arg.SubjectType, arg.SubjectID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppPostComment{}
+	for rows.Next() {
+		var i AppPostComment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SubjectType,
+			&i.SubjectID,
+			&i.AuthorUserID,
+			&i.Body,
+			&i.MentionedUserIds,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
 FROM app.sites
@@ -1590,55 +1751,6 @@ func (q *Queries) ListPublishedSitesForRebuild(ctx context.Context) ([]ListPubli
 			&i.Slug,
 			&i.AccessMode,
 			&i.VersionID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSiteComments = `-- name: ListSiteComments :many
-SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-FROM (
-    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-    FROM app.site_comments
-    WHERE site_id = $1
-    ORDER BY created_at DESC, id DESC
-    LIMIT $2
-) recent
-ORDER BY created_at ASC, id ASC
-`
-
-type ListSiteCommentsParams struct {
-	SiteID string
-	Limit  int32
-}
-
-// A site's comment thread, displayed oldest-first (top-to-bottom like a
-// conversation) but BOUNDED to the most recent $2 comments so a long thread can't
-// load an unbounded result. RLS scopes the read to the active org; the
-// (site_id, created_at) index backs both the inner ordering and the outer.
-func (q *Queries) ListSiteComments(ctx context.Context, arg ListSiteCommentsParams) ([]AppSiteComment, error) {
-	rows, err := q.db.Query(ctx, listSiteComments, arg.SiteID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AppSiteComment{}
-	for rows.Next() {
-		var i AppSiteComment
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.SiteID,
-			&i.AuthorUserID,
-			&i.Body,
-			&i.MentionedUserIds,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1811,7 +1923,7 @@ func (q *Queries) ListSkillFolders(ctx context.Context) ([]ListSkillFoldersRow, 
 }
 
 const listSkills = `-- name: ListSkills :many
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
@@ -1876,6 +1988,7 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListS
 			&i.AppSkill.Title,
 			&i.AppSkill.Description,
 			&i.AppSkill.CurrentVersionID,
+			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
 			&i.SizeBytes,
 		); err != nil {
@@ -2344,6 +2457,38 @@ func (q *Queries) SetSkillCurrentVersion(ctx context.Context, arg SetSkillCurren
 	return err
 }
 
+const setSkillFeedVisible = `-- name: SetSkillFeedVisible :one
+UPDATE app.skills
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
+`
+
+type SetSkillFeedVisibleParams struct {
+	ID          string
+	FeedVisible bool
+}
+
+// Share a skill to the org feed (true) or make it private/off-feed (false). RLS
+// scopes the UPDATE to the active org; the handler restricts it to the skill's
+// owner or an org admin/owner. A miss surfaces as a no-rows error (→ ErrNotFound).
+func (q *Queries) SetSkillFeedVisible(ctx context.Context, arg SetSkillFeedVisibleParams) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, setSkillFeedVisible, arg.ID, arg.FeedVisible)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const setSkillFolderItemPreset = `-- name: SetSkillFolderItemPreset :one
 UPDATE app.skill_folder_items
 SET is_preset = $3
@@ -2375,7 +2520,7 @@ UPDATE app.skills
 SET title = $2,
     description = $3
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
 `
 
 type SetSkillMetaParams struct {
@@ -2397,6 +2542,7 @@ func (q *Queries) SetSkillMeta(ctx context.Context, arg SetSkillMetaParams) (App
 		&i.Title,
 		&i.Description,
 		&i.CurrentVersionID,
+		&i.FeedVisible,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -2529,6 +2675,35 @@ func (q *Queries) UpsertHostRoute(ctx context.Context, arg UpsertHostRouteParams
 	return err
 }
 
+const upsertPostVote = `-- name: UpsertPostVote :exec
+INSERT INTO app.post_votes (subject_type, subject_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (subject_type, subject_id, user_id) DO UPDATE
+SET value = EXCLUDED.value, updated_at = now()
+`
+
+type UpsertPostVoteParams struct {
+	SubjectType string
+	SubjectID   string
+	OrgID       string
+	UserID      string
+	Value       int16
+}
+
+// Cast (or change) the caller's vote on a feed post (site or skill). One row per
+// (subject_type, subject_id, user); a flip from up to down overwrites value. RLS
+// scopes the write to the active org.
+func (q *Queries) UpsertPostVote(ctx context.Context, arg UpsertPostVoteParams) error {
+	_, err := q.db.Exec(ctx, upsertPostVote,
+		arg.SubjectType,
+		arg.SubjectID,
+		arg.OrgID,
+		arg.UserID,
+		arg.Value,
+	)
+	return err
+}
+
 const upsertSiteAccessPolicy = `-- name: UpsertSiteAccessPolicy :one
 INSERT INTO app.site_access_policy (site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -2574,32 +2749,6 @@ func (q *Queries) UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAcce
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const upsertSiteVote = `-- name: UpsertSiteVote :exec
-INSERT INTO app.site_votes (site_id, org_id, user_id, value)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (site_id, user_id) DO UPDATE
-SET value = EXCLUDED.value, updated_at = now()
-`
-
-type UpsertSiteVoteParams struct {
-	SiteID string
-	OrgID  string
-	UserID string
-	Value  int16
-}
-
-// Cast (or change) the caller's vote on a site. One row per (site, user); a flip
-// from up to down just overwrites value. RLS scopes the write to the active org.
-func (q *Queries) UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error {
-	_, err := q.db.Exec(ctx, upsertSiteVote,
-		arg.SiteID,
-		arg.OrgID,
-		arg.UserID,
-		arg.Value,
-	)
-	return err
 }
 
 const upsertSkillFolderItem = `-- name: UpsertSkillFolderItem :exec

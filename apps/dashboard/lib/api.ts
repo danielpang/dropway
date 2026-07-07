@@ -371,20 +371,23 @@ export const api = {
    * that complements the per-user site list. Private sites are filtered server-side.
    */
   async listFeed(): Promise<FeedItem[]> {
-    const body = (await apiGet("/v1/feed")) as { sites?: FeedItem[] };
-    return body.sites ?? [];
+    const body = (await apiGet("/v1/feed")) as { posts?: FeedItem[] };
+    return body.posts ?? [];
   },
 
   /**
-   * Cast the caller's vote on a feed post: value 1 (up), -1 (down), or 0 to clear.
-   * Returns the post's new net score and the caller's resulting vote.
+   * Cast the caller's vote on a feed post (site or skill): value 1 (up), -1 (down),
+   * or 0 to clear. Returns the post's new net score and the caller's resulting vote.
+   * The endpoint is keyed by kind — sites and skills each have their own route.
    */
-  setSiteVote(
-    siteId: string,
+  setPostVote(
+    kind: "site" | "skill",
+    id: string,
     value: -1 | 0 | 1,
-  ): Promise<{ site_id?: string; score?: number; my_vote?: number }> {
-    return apiFetch<{ site_id?: string; score?: number; my_vote?: number }>(
-      `/v1/sites/${siteId}/vote`,
+  ): Promise<{ id?: string; score?: number; my_vote?: number }> {
+    const base = kind === "skill" ? "skills" : "sites";
+    return apiFetch<{ id?: string; score?: number; my_vote?: number }>(
+      `/v1/${base}/${id}/vote`,
       { method: "PUT", body: JSON.stringify({ value }) },
     );
   },
@@ -421,10 +424,7 @@ export const api = {
 
   /** A site's comment thread, oldest first (any org member). */
   async listComments(siteId: string): Promise<SiteComment[]> {
-    const body = (await apiGet(`/v1/sites/${siteId}/comments`)) as {
-      comments?: SiteComment[];
-    };
-    return body.comments ?? [];
+    return this.listPostComments("site", siteId);
   },
 
   /**
@@ -435,10 +435,63 @@ export const api = {
     siteId: string,
     input: { body: string; mentioned_user_ids?: string[] },
   ): Promise<SiteComment> {
-    return apiFetch<SiteComment>(`/v1/sites/${siteId}/comments`, {
+    return this.addPostComment("site", siteId, input);
+  },
+
+  /**
+   * A feed post's comment thread (site or skill), oldest first. Keyed by kind —
+   * sites and skills each have their own comments route.
+   */
+  async listPostComments(kind: "site" | "skill", id: string): Promise<SiteComment[]> {
+    const base = kind === "skill" ? "skills" : "sites";
+    const body = (await apiGet(`/v1/${base}/${id}/comments`)) as {
+      comments?: SiteComment[];
+    };
+    return body.comments ?? [];
+  },
+
+  /** Post a comment to a feed post (site or skill), optionally tagging teammates. */
+  addPostComment(
+    kind: "site" | "skill",
+    id: string,
+    input: { body: string; mentioned_user_ids?: string[] },
+  ): Promise<SiteComment> {
+    const base = kind === "skill" ? "skills" : "sites";
+    return apiFetch<SiteComment>(`/v1/${base}/${id}/comments`, {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+
+  /**
+   * Set a feed post's title + description (site or skill; owner or admin → 403
+   * otherwise). Empty strings clear the corresponding field. For a skill this edits
+   * the skill's own title/description.
+   */
+  setPostFeedMeta(
+    kind: "site" | "skill",
+    id: string,
+    input: { title: string; description: string },
+  ): Promise<{ id?: string; title?: string; description?: string }> {
+    const base = kind === "skill" ? "skills" : "sites";
+    return apiFetch<{ id?: string; title?: string; description?: string }>(
+      `/v1/${base}/${id}/feed-meta`,
+      { method: "PUT", body: JSON.stringify(input) },
+    );
+  },
+
+  /**
+   * Share a skill to the org feed (visible=true) or make it private (false). The
+   * skill's owner may toggle their own; org admins/owners may toggle any. 403 else.
+   */
+  setSkillFeedVisibility(
+    skillId: string,
+    visible: boolean,
+  ): Promise<{ id?: string; feed_visible?: boolean }> {
+    return apiFetch<{ id?: string; feed_visible?: boolean }>(
+      `/v1/skills/${skillId}/feed`,
+      { method: "PUT", body: JSON.stringify({ visible }) },
+    );
   },
 
   /** A site's deploy history, newest first (each flagged is_current). */

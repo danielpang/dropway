@@ -440,37 +440,6 @@ func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]FeedSite, error)
 	return out, err
 }
 
-// SetSiteVote records the caller's vote on a site: value +1 (up) or -1 (down)
-// upserts the single (site, user) row; value 0 removes it (un-vote). It returns
-// the site's new net score and the caller's resulting vote. RLS scopes the writes
-// to the active org.
-func (s *Store) SetSiteVote(ctx context.Context, t Tenant, siteID string, value int) (score int64, myVote int, err error) {
-	err = s.withTx(ctx, t, func(q *db.Queries) error {
-		if value == 0 {
-			if derr := q.DeleteSiteVote(ctx, db.DeleteSiteVoteParams{SiteID: siteID, UserID: t.UserID}); derr != nil {
-				return derr
-			}
-		} else {
-			if uerr := q.UpsertSiteVote(ctx, db.UpsertSiteVoteParams{
-				SiteID: siteID,
-				OrgID:  t.OrgID,
-				UserID: t.UserID,
-				Value:  int16(value),
-			}); uerr != nil {
-				return uerr
-			}
-		}
-		sc, serr := q.GetSiteVoteScore(ctx, siteID)
-		if serr != nil {
-			return serr
-		}
-		score = sc
-		myVote = value
-		return nil
-	})
-	return score, myVote, err
-}
-
 // SetSiteFeedVisible flips a site's feed visibility (share to the org feed vs.
 // keep private). RLS scopes the UPDATE to the active org; the caller (handler)
 // additionally restricts it to the site owner or an org admin. A miss (absent or

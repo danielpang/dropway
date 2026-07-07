@@ -27,19 +27,22 @@ type SiteStore interface {
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
 
-	// Org feed: ListFeedSites lists the active org's non-private sites (newest
-	// first, each with vote score / the caller's vote / comment count);
-	// SetSiteFeedVisible flips one site's share-to-feed flag (owner/admin);
-	// SetSiteFeedMeta sets the owner-facing title/description shown in the feed;
-	// SetSiteVote records the caller's up/down vote (or un-vote).
+	// Org feed: ListFeedSites / ListFeedSkills list the active org's non-private
+	// sites / skills (newest first, each with vote score / the caller's vote /
+	// comment count) — the two halves of the unified feed; SetSiteFeedVisible /
+	// SetSkillFeedVisible flip one post's share-to-feed flag (owner/admin);
+	// SetSiteFeedMeta sets the owner-facing site title/description shown in the feed.
 	ListFeedSites(ctx context.Context, t store.Tenant) ([]store.FeedSite, error)
+	ListFeedSkills(ctx context.Context, t store.Tenant) ([]store.FeedSkill, error)
 	SetSiteFeedVisible(ctx context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error)
+	SetSkillFeedVisible(ctx context.Context, t store.Tenant, skillID string, visible bool) (store.Skill, error)
 	SetSiteFeedMeta(ctx context.Context, t store.Tenant, siteID, title, description string) (store.Site, error)
-	SetSiteVote(ctx context.Context, t store.Tenant, siteID string, value int) (score int64, myVote int, err error)
 
-	// Site comments: an org-internal discussion thread per site, with @mentions.
-	CreateSiteComment(ctx context.Context, t store.Tenant, p store.CreateSiteCommentParams) (store.SiteComment, error)
-	ListSiteComments(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteComment, error)
+	// Feed post social: a single up/down vote and a single @mention comment thread,
+	// polymorphic over the subject (a site or a skill).
+	SetPostVote(ctx context.Context, t store.Tenant, subjectType, subjectID string, value int) (score int64, myVote int, err error)
+	CreatePostComment(ctx context.Context, t store.Tenant, p store.CreatePostCommentParams) (store.PostComment, error)
+	ListPostComments(ctx context.Context, t store.Tenant, subjectType, subjectID string) ([]store.PostComment, error)
 	CreateSiteVersion(ctx context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error)
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)

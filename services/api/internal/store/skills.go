@@ -30,6 +30,9 @@ type Skill struct {
 	CurrentVersionID *string
 	// SizeBytes is the current version's total size (0 until first upload).
 	SizeBytes int64
+	// FeedVisible shares the skill to the org feed (default true); the owner/admin
+	// can make it private to pull it off the feed (mirrors Site.FeedVisible).
+	FeedVisible bool
 	// Folders are the skill's folder memberships (with preset flags), populated
 	// by the read paths so listings render chips without an N+1.
 	Folders   []SkillFolderRef
@@ -300,8 +303,10 @@ func (s *Store) GetSkillBySlug(ctx context.Context, t Tenant, slug string) (Skil
 	return out, err
 }
 
-// DeleteSkill removes a skill (versions + memberships cascade). Ownership
-// (owner-or-admin) is enforced by the handler; RLS scopes the delete to the org.
+// DeleteSkill removes a skill (versions + memberships cascade). Its feed votes +
+// comments are polymorphic (no FK to skills), so they're cleaned up explicitly in
+// the same tx. Ownership (owner-or-admin) is enforced by the handler; RLS scopes
+// the delete to the org.
 func (s *Store) DeleteSkill(ctx context.Context, t Tenant, id string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
 		if _, err := q.DeleteSkill(ctx, id); err != nil {
@@ -310,8 +315,72 @@ func (s *Store) DeleteSkill(ctx context.Context, t Tenant, id string) error {
 			}
 			return err
 		}
+		return deletePostSubjectTx(ctx, q, SubjectSkill, id)
+	})
+}
+
+// FeedSkill is a skill feed post: a skill plus its social metadata (net vote
+// score, the caller's own vote, comment count) for the unified org feed.
+type FeedSkill struct {
+	Skill
+	Score        int64
+	MyVote       int
+	CommentCount int64
+}
+
+// ListFeedSkills returns the active org's feed-visible skills, newest first, each
+// enriched with current-version size, vote score, the caller's own vote, and its
+// comment count — the skill half of the unified org feed. Skills with no current
+// version are shown only to their owner (half-finished uploads stay off the feed
+// for everyone else). RLS scopes the query to the org.
+func (s *Store) ListFeedSkills(ctx context.Context, t Tenant) ([]FeedSkill, error) {
+	var out []FeedSkill
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		rows, err := q.ListFeedSkills(ctx, t.UserID)
+		if err != nil {
+			return err
+		}
+		out = make([]FeedSkill, len(rows))
+		ids := make([]string, len(rows))
+		skills := make([]Skill, len(rows))
+		for i, r := range rows {
+			skills[i] = skillFromRow(r.AppSkill, r.SizeBytes)
+			ids[i] = r.AppSkill.ID
+		}
+		if err := attachFolders(ctx, q, skills, ids); err != nil {
+			return err
+		}
+		for i, r := range rows {
+			out[i] = FeedSkill{
+				Skill:        skills[i],
+				Score:        r.Score,
+				MyVote:       int(r.MyVote),
+				CommentCount: r.CommentCount,
+			}
+		}
 		return nil
 	})
+	return out, err
+}
+
+// SetSkillFeedVisible shares a skill to the org feed or makes it private. RLS
+// scopes the UPDATE to the active org; the handler restricts it to the skill's
+// owner or an org admin/owner. A miss surfaces as ErrNotFound. Returns the
+// updated skill.
+func (s *Store) SetSkillFeedVisible(ctx context.Context, t Tenant, id string, visible bool) (Skill, error) {
+	var out Skill
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		row, err := q.SetSkillFeedVisible(ctx, db.SetSkillFeedVisibleParams{ID: id, FeedVisible: visible})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = skillFromDB(row)
+		return nil
+	})
+	return out, err
 }
 
 // SetSkillMeta sets a skill's human metadata (finalize fills these from
@@ -526,6 +595,7 @@ func skillFromDB(r db.AppSkill) Skill {
 		CurrentVersionID: r.CurrentVersionID,
 		CreatedAt:        r.CreatedAt,
 	}
+	s.FeedVisible = r.FeedVisible
 	if r.Title.Valid {
 		s.Title = r.Title.String
 	}

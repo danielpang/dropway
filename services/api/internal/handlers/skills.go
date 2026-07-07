@@ -38,13 +38,16 @@ type skillResponse struct {
 	// IsSeeded is true when the skill is a Dropway-provided preset (owner is the
 	// seed sentinel). Clients render the owner as "Dropway" from this flag rather
 	// than string-matching the sentinel UUID themselves.
-	IsSeeded         bool                     `json:"is_seeded"`
-	Title            string                   `json:"title"`
-	Description      string                   `json:"description"`
-	CurrentVersionID *string                  `json:"current_version_id,omitempty"`
-	SizeBytes        int64                    `json:"size_bytes"`
-	Folders          []skillFolderRefResponse `json:"folders"`
-	CreatedAt        time.Time                `json:"created_at"`
+	IsSeeded         bool    `json:"is_seeded"`
+	Title            string  `json:"title"`
+	Description      string  `json:"description"`
+	CurrentVersionID *string `json:"current_version_id,omitempty"`
+	SizeBytes        int64   `json:"size_bytes"`
+	// FeedVisible shares the skill to the org feed (default true); the owner/admin
+	// can make it private to pull it off the feed.
+	FeedVisible bool                     `json:"feed_visible"`
+	Folders     []skillFolderRefResponse `json:"folders"`
+	CreatedAt   time.Time                `json:"created_at"`
 }
 
 func toSkillResponse(s store.Skill) skillResponse {
@@ -62,6 +65,7 @@ func toSkillResponse(s store.Skill) skillResponse {
 		Description:      s.Description,
 		CurrentVersionID: s.CurrentVersionID,
 		SizeBytes:        s.SizeBytes,
+		FeedVisible:      s.FeedVisible,
 		Folders:          folders,
 		CreatedAt:        s.CreatedAt,
 	}

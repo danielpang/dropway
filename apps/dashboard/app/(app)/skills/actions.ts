@@ -129,6 +129,28 @@ export async function deleteSkillAction(skillId: string): Promise<SimpleActionRe
   }
 }
 
+export type SkillFeedVisibilityActionResult =
+  | { ok: true; feedVisible: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Share a skill to the org feed or make it private (owner or admin). Mirrors the
+ * site feed toggle; a skill auto-joins the feed on publish, so this is the opt-out.
+ */
+export async function setSkillFeedVisibilityAction(input: {
+  skillId: string;
+  visible: boolean;
+}): Promise<SkillFeedVisibilityActionResult> {
+  try {
+    const res = await api.setSkillFeedVisibility(input.skillId, input.visible);
+    revalidatePath("/skills");
+    revalidatePath("/feed");
+    return { ok: true, feedVisible: res.feed_visible ?? input.visible };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err, "Could not update feed sharing.") };
+  }
+}
+
 /** Replace a skill's folder memberships (owner or admin). */
 export async function setSkillFoldersAction(input: {
   skillId: string;

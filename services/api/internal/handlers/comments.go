@@ -21,24 +21,27 @@ const (
 	maxCommentMentions = 50
 )
 
-// commentResponse is one row of a site's comment thread.
+// commentResponse is one row of a feed post's comment thread. subject_type
+// ("site" | "skill") + subject_id identify the post it belongs to.
 type commentResponse struct {
 	ID               string    `json:"id"`
-	SiteID           string    `json:"site_id"`
+	SubjectType      string    `json:"subject_type"`
+	SubjectID        string    `json:"subject_id"`
 	AuthorID         string    `json:"author_id"`
 	Body             string    `json:"body"`
 	MentionedUserIDs []string  `json:"mentioned_user_ids"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-func toCommentResponse(c store.SiteComment) commentResponse {
+func toCommentResponse(c store.PostComment) commentResponse {
 	mentions := c.MentionedUserIDs
 	if mentions == nil {
 		mentions = []string{}
 	}
 	return commentResponse{
 		ID:               c.ID,
-		SiteID:           c.SiteID,
+		SubjectType:      c.SubjectType,
+		SubjectID:        c.SubjectID,
 		AuthorID:         c.AuthorUserID,
 		Body:             c.Body,
 		MentionedUserIDs: mentions,
@@ -53,9 +56,35 @@ type createCommentRequest struct {
 	MentionedUserIDs []string `json:"mentioned_user_ids,omitempty"`
 }
 
-// ListComments returns a site's comment thread, oldest first. Any org member may
-// read it (org-scoped by RLS). 404 for an absent/other-tenant site.
+// resolveSubject checks that the (kind, id) feed post exists under the active
+// tenant, so an absent/other-tenant subject is a clean 404 rather than an empty
+// thread. It writes the error and returns ok=false on a miss.
+func (a *API) resolveSubject(w http.ResponseWriter, r *http.Request, t store.Tenant, subjectType, subjectID string) bool {
+	var err error
+	switch subjectType {
+	case store.SubjectSkill:
+		_, err = a.Store.GetSkill(r.Context(), t, subjectID)
+	default:
+		_, err = a.Store.GetSite(r.Context(), t, subjectID)
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return false
+	}
+	return true
+}
+
+// ListComments returns a site's comment thread, oldest first (any org member).
 func (a *API) ListComments(w http.ResponseWriter, r *http.Request) {
+	a.listComments(w, r, store.SubjectSite, chi.URLParam(r, "id"))
+}
+
+// ListSkillComments returns a skill's comment thread, oldest first (any member).
+func (a *API) ListSkillComments(w http.ResponseWriter, r *http.Request) {
+	a.listComments(w, r, store.SubjectSkill, chi.URLParam(r, "id"))
+}
+
+func (a *API) listComments(w http.ResponseWriter, r *http.Request, subjectType, subjectID string) {
 	t, ok := tenant(r.Context())
 	if !ok {
 		httpx.WriteError(w, wrapUnauthorized())
@@ -64,16 +93,11 @@ func (a *API) ListComments(w http.ResponseWriter, r *http.Request) {
 	if !a.requireStore(w) {
 		return
 	}
-	siteID := chi.URLParam(r, "id")
-
-	// Resolve the site first so an absent/other-tenant site is a clean 404 (rather
-	// than an empty thread that hides the difference).
-	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
-		writeStoreError(w, err)
+	if !a.resolveSubject(w, r, t, subjectType, subjectID) {
 		return
 	}
 
-	comments, err := a.Store.ListSiteComments(r.Context(), t, siteID)
+	comments, err := a.Store.ListPostComments(r.Context(), t, subjectType, subjectID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -85,11 +109,21 @@ func (a *API) ListComments(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"comments": out})
 }
 
-// AddComment posts a comment to a site, optionally tagging teammates. Any org
-// member may comment (the discussion is org-internal; RLS keeps it scoped). The
-// author is the authenticated caller. Mentioned ids that aren't current org
-// members are dropped so a tag always points at a real teammate.
+// AddComment posts a comment to a site feed post, optionally tagging teammates.
 func (a *API) AddComment(w http.ResponseWriter, r *http.Request) {
+	a.addComment(w, r, store.SubjectSite, chi.URLParam(r, "id"))
+}
+
+// AddSkillComment posts a comment to a skill feed post (mirror of AddComment).
+func (a *API) AddSkillComment(w http.ResponseWriter, r *http.Request) {
+	a.addComment(w, r, store.SubjectSkill, chi.URLParam(r, "id"))
+}
+
+// addComment is the shared comment-create body: any org member may comment (the
+// discussion is org-internal; RLS keeps it scoped). The author is the caller.
+// Mentioned ids that aren't current org members are dropped so a tag always
+// points at a real teammate.
+func (a *API) addComment(w http.ResponseWriter, r *http.Request, subjectType, subjectID string) {
 	t, ok := tenant(r.Context())
 	if !ok {
 		httpx.WriteError(w, wrapUnauthorized())
@@ -98,10 +132,7 @@ func (a *API) AddComment(w http.ResponseWriter, r *http.Request) {
 	if !a.requireStore(w) {
 		return
 	}
-	siteID := chi.URLParam(r, "id")
-
-	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
-		writeStoreError(w, err)
+	if !a.resolveSubject(w, r, t, subjectType, subjectID) {
 		return
 	}
 
@@ -126,8 +157,9 @@ func (a *API) AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := a.Store.CreateSiteComment(r.Context(), t, store.CreateSiteCommentParams{
-		SiteID:           siteID,
+	comment, err := a.Store.CreatePostComment(r.Context(), t, store.CreatePostCommentParams{
+		SubjectType:      subjectType,
+		SubjectID:        subjectID,
 		Body:             body,
 		MentionedUserIDs: mentions,
 	})
@@ -136,8 +168,8 @@ func (a *API) AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger(r).Info("site comment added",
-		"site_id", siteID, "org_id", t.OrgID, "mentions", len(mentions))
+	logger(r).Info("feed comment added",
+		"subject_type", subjectType, "subject_id", subjectID, "org_id", t.OrgID, "mentions", len(mentions))
 	httpx.WriteJSON(w, http.StatusCreated, toCommentResponse(comment))
 }
 

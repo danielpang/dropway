@@ -9,6 +9,7 @@ import { api, ApiError, type Skill, type SkillDownload } from "@/lib/api";
 import { canManage, loadActiveOrg } from "@/lib/org";
 import { isSafeSkillPath } from "@/lib/skills-shared";
 import { SkillDetailActions } from "@/components/skills/skill-detail-actions";
+import { SkillFeedToggle } from "@/components/skills/skill-feed-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +116,16 @@ export default async function SkillDetailPage(props: {
 
       {skill.description ? (
         <Card className="p-4 text-sm">{skill.description}</Card>
+      ) : null}
+
+      {manage || mine ? (
+        <Card className="p-4">
+          <SkillFeedToggle
+            skillId={skill.id ?? ""}
+            initialVisible={skill.feed_visible ?? true}
+            disabled={false}
+          />
+        </Card>
       ) : null}
 
       {!skill.current_version_id ? (
