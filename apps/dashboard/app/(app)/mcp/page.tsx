@@ -80,6 +80,22 @@ export default function McpReferencePage() {
               <Code key="t">set_site_access</Code>,
               "Change a site's sharing (public, org-only, password, or allowlist). Owner/admin only.",
             ],
+            [
+              <Code key="t">list_skills</Code>,
+              "List/search the org's shared skills, filterable by folder or presets.",
+            ],
+            [
+              <Code key="t">download_skill</Code>,
+              "Download a shared skill's files (for .claude/skills/).",
+            ],
+            [
+              <Code key="t">download_skill_folder</Code>,
+              "Download every skill in a folder at once (e.g. the preset starters).",
+            ],
+            [
+              <Code key="t">upload_skill</Code>,
+              "Share a skill (SKILL.md + files) with your org, optionally into folders.",
+            ],
           ]}
         />
       </Section>

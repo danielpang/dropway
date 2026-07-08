@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/danielpang/dropway/internal/analytics"
@@ -19,6 +20,7 @@ import (
 	"github.com/danielpang/dropway/internal/logx"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/skillseeds"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -86,6 +88,17 @@ type API struct {
 	// Optional: nil disables throttling (the bare unit-test constructor leaves it
 	// unset); main.go wires a limiter for the real server.
 	PasswordRateLimiter *rateLimiter
+
+	// SkillSeeds are the embedded default preset skills materialized lazily per
+	// org on the first skills touch (internal/skillseeds.Load, wired in main.go).
+	// Empty → orgs start with no folders/presets (they can still create both).
+	SkillSeeds []skillseeds.Seed
+
+	// seededOrgs is a process-local set of org ids already observed as
+	// skills-seeded, so ensureSkillsSeeded can skip its per-request DB round-trip
+	// on the hot path (skills_seeded is monotonic, so a cached "seeded" never goes
+	// stale; the DB advisory lock remains the source of truth for correctness).
+	seededOrgs sync.Map
 }
 
 // ContentURL renders a content host as a client-facing display URL using the

@@ -80,6 +80,7 @@ type AppOrgMetum struct {
 	CreatedAt            time.Time
 	OrgStatus            string
 	McpEnabled           bool
+	SkillsSeeded         bool
 }
 
 type AppOrgUsage struct {
@@ -88,6 +89,27 @@ type AppOrgUsage struct {
 	SitesCount   int32
 	StorageBytes int64
 	UpdatedAt    time.Time
+}
+
+type AppPostComment struct {
+	ID               string
+	OrgID            string
+	SubjectType      string
+	SubjectID        string
+	AuthorUserID     string
+	Body             string
+	MentionedUserIds []string
+	CreatedAt        time.Time
+}
+
+type AppPostVote struct {
+	SubjectType string
+	SubjectID   string
+	OrgID       string
+	UserID      string
+	Value       int16
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type AppSite struct {
@@ -113,16 +135,6 @@ type AppSiteAccessPolicy struct {
 	UpdatedAt    time.Time
 }
 
-type AppSiteComment struct {
-	ID               string
-	OrgID            string
-	SiteID           string
-	AuthorUserID     string
-	Body             string
-	MentionedUserIds []string
-	CreatedAt        time.Time
-}
-
 type AppSiteVersion struct {
 	ID          string
 	OrgID       string
@@ -136,11 +148,43 @@ type AppSiteVersion struct {
 	CreatedAt   time.Time
 }
 
-type AppSiteVote struct {
-	SiteID    string
+type AppSkill struct {
+	ID               string
+	OrgID            string
+	Slug             string
+	OwnerUserID      string
+	Title            pgtype.Text
+	Description      pgtype.Text
+	CurrentVersionID *string
+	FeedVisible      bool
+	CreatedAt        time.Time
+}
+
+type AppSkillFolder struct {
+	ID        string
 	OrgID     string
-	UserID    string
-	Value     int16
+	Slug      string
+	Title     string
 	CreatedAt time.Time
-	UpdatedAt time.Time
+}
+
+type AppSkillFolderItem struct {
+	OrgID    string
+	FolderID string
+	SkillID  string
+	IsPreset bool
+	AddedBy  string
+	AddedAt  time.Time
+}
+
+type AppSkillVersion struct {
+	ID          string
+	OrgID       string
+	SkillID     string
+	VersionNo   int32
+	Status      string
+	ContentHash string
+	SizeBytes   int64
+	CreatedBy   string
+	CreatedAt   time.Time
 }

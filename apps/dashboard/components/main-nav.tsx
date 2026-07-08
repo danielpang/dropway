@@ -12,6 +12,7 @@ export type NavLink = { href: string; label: string; match: string; admin?: bool
 export const NAV_LINKS: NavLink[] = [
   { href: "/dashboard", label: "My Sites", match: "/dashboard" },
   { href: "/feed", label: "Feed", match: "/feed" },
+  { href: "/skills", label: "Skills", match: "/skills" },
   { href: "/members", label: "Members", match: "/members" },
   // Audit is owner/admin only (the page also re-gates server-side).
   { href: "/audit", label: "Audit", match: "/audit", admin: true },

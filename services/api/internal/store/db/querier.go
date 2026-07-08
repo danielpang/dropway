@@ -17,23 +17,38 @@ type Querier interface {
 	// no-op; we only set claim fields when still unclaimed so the original claimant
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
+	CountFolderItems(ctx context.Context, folderID string) (int64, error)
 	// The number of sites in the active org (the per-ORG cap input, POOLED across all
 	// members — seats are free, so the lever is org site count). Read under the
 	// advisory lock above; RLS already scopes it to the active org and we filter by
 	// org_id to be explicit.
 	CountSitesForOrg(ctx context.Context, orgID string) (int64, error)
+	CountSkillsForOrg(ctx context.Context, orgID string) (int64, error)
+	// ===========================================================================
+	// site_comments — org-internal discussion on a shared site, with @mentions
+	// ===========================================================================
+	// Add a comment to a feed post (site or skill). mentioned_user_ids is the set of
+	// tagged org users (identity ids). RLS scopes the INSERT to the active org (the
+	// WITH CHECK clause on the tenant policy rejects a row whose org_id isn't the
+	// active tenant).
+	CreatePostComment(ctx context.Context, arg CreatePostCommentParams) (AppPostComment, error)
+	// Insert a preset seed skill, or DO NOTHING if the org already has that slug
+	// (a real user's skill, or this seed from a prior attempt). ON CONFLICT means a
+	// collision never raises 23505 and aborts the seeding transaction; a no-rows
+	// result tells the caller to inspect the existing row and skip it unless it is
+	// our own seed.
+	CreateSeedSkill(ctx context.Context, arg CreateSeedSkillParams) (AppSkill, error)
 	// ===========================================================================
 	// sites
 	// ===========================================================================
 	CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite, error)
-	// ===========================================================================
-	// site_comments — org-internal discussion on a shared site, with @mentions
-	// ===========================================================================
-	// Add a comment to a site. mentioned_user_ids is the set of tagged org users
-	// (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
-	// on the tenant policy rejects a row whose org_id isn't the active tenant).
-	CreateSiteComment(ctx context.Context, arg CreateSiteCommentParams) (AppSiteComment, error)
 	CreateSiteVersion(ctx context.Context, arg CreateSiteVersionParams) (AppSiteVersion, error)
+	CreateSkill(ctx context.Context, arg CreateSkillParams) (AppSkill, error)
+	// ===========================================================================
+	// skill folders — admin-curated taxonomy + preset flags
+	// ===========================================================================
+	CreateSkillFolder(ctx context.Context, arg CreateSkillFolderParams) (AppSkillFolder, error)
+	CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (AppSkillVersion, error)
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
 	// Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
 	// also drop the global host route (so serve/edge stop resolving the host) and delete
@@ -47,8 +62,21 @@ type Querier interface {
 	// size lets the caller decrement the running total. No row = it wasn't in the
 	// ledger (e.g. uploaded before metering existed) → nothing to decrement.
 	DeleteOrgBlob(ctx context.Context, arg DeleteOrgBlobParams) (int64, error)
-	// Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
-	DeleteSiteVote(ctx context.Context, arg DeleteSiteVoteParams) error
+	// Drop every comment on a subject (called on the subject's delete; see above).
+	DeletePostCommentsForSubject(ctx context.Context, arg DeletePostCommentsForSubjectParams) error
+	// Remove the caller's vote on a feed post (un-vote). RLS scopes the delete to the org.
+	DeletePostVote(ctx context.Context, arg DeletePostVoteParams) error
+	// Drop every vote on a subject (called when the site/skill itself is deleted,
+	// since the polymorphic table can't FK-cascade to two parents).
+	DeletePostVotesForSubject(ctx context.Context, arg DeletePostVotesForSubjectParams) error
+	// Remove a skill (versions + folder memberships cascade). RETURNING detects an
+	// RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
+	DeleteSkill(ctx context.Context, id string) (string, error)
+	// Memberships cascade; the skills themselves survive.
+	DeleteSkillFolder(ctx context.Context, id string) (string, error)
+	// Replace-memberships helper: clear a skill's memberships before re-inserting
+	// the new set (PUT /skills/{id}/folders semantics), preserving nothing.
+	DeleteSkillFolderItemsForSkill(ctx context.Context, skillID string) error
 	// SPDX-License-Identifier: FSL-1.1-Apache-2.0
 	//
 	// db/sqlc/query.sql
@@ -77,7 +105,13 @@ type Querier interface {
 	// absent host) is a no-rows miss. Used by Publish / the projection writers to
 	// assert the publishing site OWNS the host before writing route:<host>.
 	GetHostRoute(ctx context.Context, host string) (AppHostRoute, error)
+	// Get-or-create a folder by (org_id, slug): a no-op DO UPDATE so RETURNING
+	// always yields the row. Used by idempotent seeding so re-running against an
+	// org that already has a default folder (e.g. an admin created it first) never
+	// raises 23505 and aborts the seed transaction.
+	GetOrCreateSkillFolder(ctx context.Context, arg GetOrCreateSkillFolderParams) (AppSkillFolder, error)
 	GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, error)
+	GetOrgSkillsSeeded(ctx context.Context, id string) (bool, error)
 	// The org's current stored bytes (the storage cap-check input). 0 when the
 	// org_usage row is somehow absent (fail-soft, like GetPlanTier).
 	GetOrgStorage(ctx context.Context, orgID string) (int64, error)
@@ -87,6 +121,8 @@ type Querier interface {
 	// Stripe webhook; in self-host it stays 'free' but the Unlimited provider ignores
 	// it. Returns 'free' when the org row is somehow absent (fail-soft default).
 	GetPlanTier(ctx context.Context, id string) (string, error)
+	// A feed post's net vote score (sum of +1/-1). RLS scopes the read to the org.
+	GetPostVoteScore(ctx context.Context, arg GetPostVoteScoreParams) (int64, error)
 	GetSite(ctx context.Context, id string) (AppSite, error)
 	GetSiteAccessPolicy(ctx context.Context, siteID string) (AppSiteAccessPolicy, error)
 	// LOGICAL storage of a single site = the byte size of its CURRENT (live) version
@@ -99,8 +135,16 @@ type Querier interface {
 	// Used to make a re-deploy of identical content idempotent (the per-site
 	// content_hash unique constraint backs this).
 	GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVersionByContentHashParams) (AppSiteVersion, error)
-	// A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
-	GetSiteVoteScore(ctx context.Context, siteID string) (int64, error)
+	// Embeds the full skill row plus its current version's size (0 when unset), so
+	// reads never N+1 a per-skill version lookup.
+	GetSkill(ctx context.Context, id string) (GetSkillRow, error)
+	GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySlugRow, error)
+	GetSkillFolder(ctx context.Context, id string) (AppSkillFolder, error)
+	GetSkillFolderBySlug(ctx context.Context, slug string) (AppSkillFolder, error)
+	GetSkillVersion(ctx context.Context, id string) (AppSkillVersion, error)
+	// Idempotent re-upload of identical content (the per-skill content_hash unique
+	// constraint backs this).
+	GetSkillVersionByContentHash(ctx context.Context, arg GetSkillVersionByContentHashParams) (AppSkillVersion, error)
 	// Bump the org's sites_count counter, returning the new value. Run inside the
 	// create-site tx after the row is inserted.
 	IncSiteCount(ctx context.Context, orgID string) (int32, error)
@@ -130,13 +174,35 @@ type Querier interface {
 	// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
 	// adequate for an admin audit viewer (small N per page).
 	ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error)
+	// ===========================================================================
+	// skills seeding — lazy per-org default folders + preset skills
+	// ===========================================================================
+	// Every skill's CURRENT version (latest-only model: that is the only version
+	// whose blobs must survive GC — superseded skill versions' blobs become
+	// orphans). The R2 GC unions these manifests' blob refs with the retained site
+	// versions' refs before deleting unreferenced org blobs; without this, skill
+	// content would look orphaned to a site-only GC and be deleted. RLS scopes the
+	// rows to the active org.
+	ListCurrentSkillVersionsForGC(ctx context.Context) ([]ListCurrentSkillVersionsForGCRow, error)
 	ListDomainsForSite(ctx context.Context, siteID string) ([]AppDomain, error)
-	// The org feed: every site in the active org that is feed-visible (not private),
-	// newest first (older sites sink to the bottom). Each row carries its net vote
-	// score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
-	// and its comment count, so the feed renders the up/down controls + counts in one
-	// query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+	// The org feed's SITE posts: every site in the active org that is feed-visible
+	// (not private), newest first (older sites sink to the bottom). Each row carries
+	// its net vote score, the CALLER's own vote ($1 = caller user id; 0 when they
+	// haven't voted), and its comment count, so the feed renders the up/down controls
+	// + counts in one query (no N+1). Votes/comments are polymorphic (subject_type =
+	// 'site'). RLS scopes every read to the active org.
 	ListFeedSites(ctx context.Context, userID string) ([]ListFeedSitesRow, error)
+	// The org feed's SKILL posts: every skill in the active org that is feed-visible,
+	// newest first, each carrying its current-version size, net vote score, the
+	// caller's own vote ($1), and its comment count (subject_type = 'skill'). Skills
+	// that never finalized an upload (no current version) are shown only to their
+	// owner, so half-finished uploads don't clutter the feed. RLS scopes every read.
+	ListFeedSkills(ctx context.Context, userID string) ([]ListFeedSkillsRow, error)
+	// Every skill in a folder that has a live version (the bulk-download set).
+	ListFolderSkills(ctx context.Context, folderID string) ([]ListFolderSkillsRow, error)
+	// Folder memberships for a set of skills in one round-trip (the folder chips on
+	// each row of a skills listing — no N+1).
+	ListFoldersForSkills(ctx context.Context, skillIds []string) ([]ListFoldersForSkillsRow, error)
 	// Every host registered for a site in the GLOBAL registry — the canonical
 	// <slug>.dropwaycontent.com host AND every verified custom-domain host. RLS
 	// scopes the rows to the active org, so a caller only ever sees its own site's
@@ -144,6 +210,11 @@ type Querier interface {
 	// (not just the canonical one), or a verified custom host keeps serving at the
 	// OLD access_mode after the policy tightened (revocation).
 	ListHostRoutesForSite(ctx context.Context, siteID string) ([]AppHostRoute, error)
+	// A feed post's comment thread, displayed oldest-first (top-to-bottom like a
+	// conversation) but BOUNDED to the most recent $3 comments so a long thread can't
+	// load an unbounded result. RLS scopes the read to the active org; the
+	// (subject_type, subject_id, created_at) index backs both orderings.
+	ListPostComments(ctx context.Context, arg ListPostCommentsParams) ([]AppPostComment, error)
 	// Every site in the active org whose access_mode = 'public' (used by the reconcile
 	// on disabling external sharing: these are downgraded to org_only).
 	ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error)
@@ -154,11 +225,6 @@ type Querier interface {
 	// access_mode source (the site row). Drives projection.RebuildFromDB: Postgres
 	// is authoritative, the KV/D1 projection is a rebuildable cache.
 	ListPublishedSitesForRebuild(ctx context.Context) ([]ListPublishedSitesForRebuildRow, error)
-	// A site's comment thread, displayed oldest-first (top-to-bottom like a
-	// conversation) but BOUNDED to the most recent $2 comments so a long thread can't
-	// load an unbounded result. RLS scopes the read to the active org; the
-	// (site_id, created_at) index backs both the inner ordering and the outer.
-	ListSiteComments(ctx context.Context, arg ListSiteCommentsParams) ([]AppSiteComment, error)
 	// LOGICAL storage per site for the active org (the current-version size of each
 	// site, 0 when it has no live version) paired with the owning user, so the caller
 	// can show per-site usage AND aggregate it per user. Same non-deduplicated model as
@@ -166,6 +232,15 @@ type Querier interface {
 	ListSiteStorageForOrg(ctx context.Context) ([]ListSiteStorageForOrgRow, error)
 	ListSiteVersions(ctx context.Context, siteID string) ([]AppSiteVersion, error)
 	ListSites(ctx context.Context) ([]AppSite, error)
+	// The org's folders with their member counts (the folder tabs + admin panel).
+	ListSkillFolders(ctx context.Context) ([]ListSkillFoldersRow, error)
+	// Search + filter the active org's skills. q matches slug/title/description
+	// (ILIKE, '' = no text filter); folder_slug restricts to members of that folder
+	// ('' = any); presets_only additionally requires the membership's is_preset flag.
+	// Skills that have never finalized an upload (no current version) are visible
+	// only to their owner (caller_id), so half-finished uploads don't clutter the
+	// org listing. RLS scopes every read to the active org.
+	ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListSkillsRow, error)
 	// ===========================================================================
 	// R2 version GC (Phase 4) — versions to retain per org
 	// ===========================================================================
@@ -189,6 +264,15 @@ type Querier interface {
 	// independent of RLS and of row locks, so this needs no rows to exist yet.
 	LockOrgSiteQuota(ctx context.Context, dollar_1 string) error
 	// ===========================================================================
+	// skills (migration 0008) — org-wide skill sharing
+	// ===========================================================================
+	// Serialize concurrent skill creates for the SAME org (the same COUNT → policy →
+	// INSERT critical section the site cap uses).
+	LockOrgSkillQuota(ctx context.Context, dollar_1 string) error
+	// Serialize concurrent first-touches of the skills feature for an org, so the
+	// skills_seeded check → seed → set-flag sequence runs exactly once.
+	LockOrgSkillsSeed(ctx context.Context, dollar_1 string) error
+	// ===========================================================================
 	// storage metering: org_blobs ledger + org_usage counter
 	// ===========================================================================
 	// Serialize concurrent deploys' storage accounting for an org: a transaction-scoped
@@ -196,6 +280,11 @@ type Querier interface {
 	// → ledger INSERT → counter UPDATE is a critical section (the same TOCTOU guard the
 	// site cap uses). Held until the deploy tx commits/rolls back.
 	LockOrgStorageQuota(ctx context.Context, dollar_1 string) error
+	// Serialize concurrent membership inserts for the SAME folder, so the COUNT →
+	// per-folder cap check → INSERT is a critical section (free tier caps skills per
+	// folder; see quota.ResourceSkillPerFolder).
+	LockSkillFolderQuota(ctx context.Context, dollar_1 string) error
+	NextSkillVersionNo(ctx context.Context, skillID string) (int32, error)
 	// ===========================================================================
 	// site_versions
 	// ===========================================================================
@@ -204,6 +293,8 @@ type Querier interface {
 	// Reconcile the running total to the authoritative ledger sum (the cheap drift
 	// fix; a deeper audit lists R2 to prune ledger rows orphaned by a crashed GC).
 	RecomputeOrgStorage(ctx context.Context, orgID string) error
+	RemoveSkillFolderItem(ctx context.Context, arg RemoveSkillFolderItemParams) (string, error)
+	RenameSkillFolder(ctx context.Context, arg RenameSkillFolderParams) (AppSkillFolder, error)
 	// ===========================================================================
 	// host resolution (Phase 2) — resolve a content host → owning site (for /authz)
 	// ===========================================================================
@@ -224,6 +315,7 @@ type Querier interface {
 	// enforced in Go). The MCP resource server ALSO re-checks org_meta.mcp_enabled per
 	// request, so disabling takes effect immediately even for already-issued tokens.
 	SetMcpEnabled(ctx context.Context, arg SetMcpEnabledParams) error
+	SetOrgSkillsSeeded(ctx context.Context, arg SetOrgSkillsSeededParams) error
 	// ===========================================================================
 	// access policy (Phase 2) — per-site gating config
 	// ===========================================================================
@@ -240,6 +332,16 @@ type Querier interface {
 	// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
 	// is unaffected (feed visibility is the discovery axis, not the access axis).
 	SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisibleParams) (AppSite, error)
+	// Flip the live pointer (finalize = publish in the latest-only v1 model).
+	SetSkillCurrentVersion(ctx context.Context, arg SetSkillCurrentVersionParams) error
+	// Share a skill to the org feed (true) or make it private/off-feed (false). RLS
+	// scopes the UPDATE to the active org; the handler restricts it to the skill's
+	// owner or an org admin/owner. A miss surfaces as a no-rows error (→ ErrNotFound).
+	SetSkillFeedVisible(ctx context.Context, arg SetSkillFeedVisibleParams) (AppSkill, error)
+	SetSkillFolderItemPreset(ctx context.Context, arg SetSkillFolderItemPresetParams) (SetSkillFolderItemPresetRow, error)
+	// Fill a skill's human metadata (from SKILL.md frontmatter on finalize, or an
+	// explicit edit). Empty strings are passed as NULL so "unset" round-trips.
+	SetSkillMeta(ctx context.Context, arg SetSkillMetaParams) (AppSkill, error)
 	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
 	// floors at zero so a reconciliation skew can never make the counter negative.
 	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error
@@ -264,14 +366,22 @@ type Querier interface {
 	// owner can never be overwritten because RLS makes its row invisible to UPDATE, so
 	// the ON CONFLICT target row isn't visible and the upsert raises instead.
 	UpsertHostRoute(ctx context.Context, arg UpsertHostRouteParams) error
+	// Cast (or change) the caller's vote on a feed post (site or skill). One row per
+	// (subject_type, subject_id, user); a flip from up to down overwrites value. RLS
+	// scopes the write to the active org.
+	UpsertPostVote(ctx context.Context, arg UpsertPostVoteParams) error
 	// Insert or replace the per-site access policy (one row per site, PK = site_id).
 	// password_hash is non-null only for mode='password'; expires_at / unlisted are
 	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
 	// under a false org policy.
 	UpsertSiteAccessPolicy(ctx context.Context, arg UpsertSiteAccessPolicyParams) (AppSiteAccessPolicy, error)
-	// Cast (or change) the caller's vote on a site. One row per (site, user); a flip
-	// from up to down just overwrites value. RLS scopes the write to the active org.
-	UpsertSiteVote(ctx context.Context, arg UpsertSiteVoteParams) error
+	// Add a skill to a folder (or update its preset flag if already a member).
+	UpsertSkillFolderItem(ctx context.Context, arg UpsertSkillFolderItemParams) error
+	// Get-or-create a version by its (skill_id, content_hash): a no-op DO UPDATE so
+	// RETURNING always yields the row whether it was just inserted or already
+	// existed. Used by idempotent seeding so a retried seed can't raise 23505 and
+	// abort the transaction. The no-op update sets status to itself.
+	UpsertSkillVersion(ctx context.Context, arg UpsertSkillVersionParams) (AppSkillVersion, error)
 	// NOTE: resolving a content host → owning site via the RLS-bypassing
 	// app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
 	// pgx in the store (store.resolveHost), NOT sqlc: sqlc cannot infer column types

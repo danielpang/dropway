@@ -348,6 +348,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrForbidden, err.Error()))
 	case errors.Is(err, store.ErrNotGated):
 		httpx.WriteError(w, fmt.Errorf("%w: this site is not gated", httpx.ErrBadRequest))
+	case errors.Is(err, store.ErrFolderNotFound):
+		httpx.WriteError(w, fmt.Errorf("%w: skill folder not found", httpx.ErrNotFound))
 	default:
 		httpx.WriteError(w, err) // unknown → opaque 500 (logged by httpx)
 	}

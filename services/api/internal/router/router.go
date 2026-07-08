@@ -153,6 +153,44 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Get("/{id}/domains", api.ListDomains)
 		})
 
+		// Org-wide skill sharing: content-addressed skill uploads (latest-only
+		// versions; finalize = publish) organized into admin-curated folders.
+		// Uploads reuse the deploy prepare→presigned-PUT→finalize contract.
+		r.Route("/skills", func(r chi.Router) {
+			r.Post("/", api.CreateSkill)
+			r.Get("/", api.ListSkills) // ?q= &folder= &presets=true
+			r.Get("/{id}", api.GetSkill)
+			// Owner-or-admin (re-checked in the handlers).
+			r.Delete("/{id}", api.DeleteSkill)
+			r.Post("/{id}/uploads/prepare", api.PrepareSkillUpload)
+			r.Post("/{id}/uploads", api.FinalizeSkillUpload)
+			r.Put("/{id}/folders", api.SetSkillFolders)
+			r.Get("/{id}/files", api.ListSkillFiles)
+			r.Get("/{id}/download", api.DownloadSkill)
+			// Feed surface for skills (mirrors the site feed endpoints): share/
+			// unshare, owner-set title/description, up/down vote, and the comment
+			// thread. A skill auto-joins the feed on publish (feed_visible default).
+			r.Put("/{id}/feed", api.SetSkillFeedVisibility)
+			r.Put("/{id}/feed-meta", api.SetSkillFeedMeta)
+			r.Put("/{id}/vote", api.SetSkillVote)
+			r.Get("/{id}/comments", api.ListSkillComments)
+			r.Post("/{id}/comments", api.AddSkillComment)
+		})
+
+		// Skill folders: reads for every member; curation (create/rename/delete,
+		// preset flags) is admin/owner-only, re-checked in the handlers. The
+		// bulk download is the "install the whole preset folder" affordance.
+		r.Route("/skill-folders", func(r chi.Router) {
+			r.Get("/", api.ListSkillFolders)
+			r.Post("/", api.CreateSkillFolder)
+			r.Patch("/{id}", api.RenameSkillFolder)
+			r.Delete("/{id}", api.DeleteSkillFolder)
+			r.Post("/{id}/items", api.AddSkillFolderItem)
+			r.Delete("/{id}/items/{skillID}", api.RemoveSkillFolderItem)
+			r.Patch("/{id}/items/{skillID}", api.SetSkillFolderItemPreset)
+			r.Get("/{id}/download", api.DownloadSkillFolder)
+		})
+
 		// Poll a custom domain's verification status (drives the state machine).
 		r.Get("/domains/{domainID}/status", api.GetDomainStatus)
 		// Remove a custom domain (admin/owner): drops the route + Cloudflare hostname.

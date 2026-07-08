@@ -11,6 +11,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -122,4 +123,234 @@ func (s *Store) SiteBySlug(ctx context.Context, t Tenant, slug string) (Site, er
 		return Site{}, ErrNotFound
 	}
 	return st, err
+}
+
+// --- skills -------------------------------------------------------------------
+
+// Skill is one of the org's shared Claude skills.
+type Skill struct {
+	ID          string
+	Slug        string
+	Title       string // '' when unset (clients fall back to the slug)
+	Description string
+	OwnerUserID string
+	// CurrentVersionID is nil until an upload has been finalized (the list paths
+	// only surface finalized skills; SkillBySlug also resolves unfinalized ones so
+	// upload_skill can reuse an existing row instead of hitting a slug conflict).
+	CurrentVersionID *string
+	// SizeBytes is the current version's total size (0 until first upload).
+	SizeBytes int64
+	// Version is the current version's monotonic number (0 until first upload);
+	// check_skill_updates compares a held copy's version against it.
+	Version   int32
+	Folders   []SkillFolderRef
+	CreatedAt time.Time
+}
+
+// SkillFolderRef is one folder membership as seen from a skill.
+type SkillFolderRef struct {
+	FolderID string
+	Slug     string
+	Title    string
+	IsPreset bool
+}
+
+// SkillFolder is one of the org's admin-curated skill folders.
+type SkillFolder struct {
+	ID        string
+	Slug      string
+	Title     string
+	ItemCount int64
+}
+
+// skillCols is the shared SELECT list: skill fields + the current version's size.
+// Requires the `LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id`
+// alias in the FROM clause.
+const skillCols = `sk.id, sk.slug, COALESCE(sk.title, ''), COALESCE(sk.description, ''),
+	sk.owner_user_id, sk.current_version_id, COALESCE(v.size_bytes, 0), COALESCE(v.version_no, 0), sk.created_at`
+
+// skillFrom is the FROM clause skillCols expects.
+const skillFrom = ` FROM app.skills sk
+	LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id`
+
+func scanSkill(row pgx.Row) (Skill, error) {
+	var sk Skill
+	err := row.Scan(&sk.ID, &sk.Slug, &sk.Title, &sk.Description,
+		&sk.OwnerUserID, &sk.CurrentVersionID, &sk.SizeBytes, &sk.Version, &sk.CreatedAt)
+	return sk, err
+}
+
+// attachSkillFolders fills Folders for every skill in one query (no N+1).
+func attachSkillFolders(ctx context.Context, tx pgx.Tx, skills []Skill) error {
+	if len(skills) == 0 {
+		return nil
+	}
+	ids := make([]string, len(skills))
+	byID := make(map[string]int, len(skills))
+	for i, sk := range skills {
+		ids[i] = sk.ID
+		byID[sk.ID] = i
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT fi.skill_id, f.id, f.slug, f.title, fi.is_preset
+		 FROM app.skill_folder_items fi
+		 JOIN app.skill_folders f ON f.id = fi.folder_id
+		 WHERE fi.skill_id = ANY($1)
+		 ORDER BY f.slug`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var skillID string
+		var ref SkillFolderRef
+		if err := rows.Scan(&skillID, &ref.FolderID, &ref.Slug, &ref.Title, &ref.IsPreset); err != nil {
+			return err
+		}
+		if i, ok := byID[skillID]; ok {
+			skills[i].Folders = append(skills[i].Folders, ref)
+		}
+	}
+	return rows.Err()
+}
+
+// ListSkills returns the org's FINALIZED skills matching the filters, each with
+// its folder memberships. query (” = all) ILIKE-matches slug/title/description;
+// folderSlug (” = any) restricts to that folder's members; presetsOnly
+// additionally requires the membership's is_preset flag.
+func (s *Store) ListSkills(ctx context.Context, t Tenant, query, folderSlug string, presetsOnly bool) ([]Skill, error) {
+	var skills []Skill
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT `+skillCols+skillFrom+`
+			 WHERE sk.current_version_id IS NOT NULL
+			   AND ($1::text = ''
+			        OR sk.slug ILIKE '%' || $1 || '%'
+			        OR COALESCE(sk.title, '') ILIKE '%' || $1 || '%'
+			        OR COALESCE(sk.description, '') ILIKE '%' || $1 || '%')
+			   AND (($2::text = '' AND NOT $3::boolean)
+			        OR EXISTS (
+			             SELECT 1 FROM app.skill_folder_items fi
+			             JOIN app.skill_folders f ON f.id = fi.folder_id
+			             WHERE fi.skill_id = sk.id
+			               AND ($2::text = '' OR f.slug = $2)
+			               AND (NOT $3::boolean OR fi.is_preset)))
+			 ORDER BY sk.slug`, query, folderSlug, presetsOnly)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			sk, err := scanSkill(rows)
+			if err != nil {
+				return err
+			}
+			skills = append(skills, sk)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return attachSkillFolders(ctx, tx, skills)
+	})
+	return skills, err
+}
+
+// SkillBySlug resolves one skill by slug under the tenant (finalized or not),
+// or ErrNotFound.
+func (s *Store) SkillBySlug(ctx context.Context, t Tenant, slug string) (Skill, error) {
+	var sk Skill
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		var err error
+		sk, err = scanSkill(tx.QueryRow(ctx,
+			`SELECT `+skillCols+skillFrom+` WHERE sk.slug = $1`, slug))
+		if err != nil {
+			return err
+		}
+		one := []Skill{sk}
+		if err := attachSkillFolders(ctx, tx, one); err != nil {
+			return err
+		}
+		sk = one[0]
+		return nil
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Skill{}, ErrNotFound
+	}
+	return sk, err
+}
+
+// ListSkillFolders returns the org's skill folders with their item counts.
+func (s *Store) ListSkillFolders(ctx context.Context, t Tenant) ([]SkillFolder, error) {
+	var folders []SkillFolder
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT f.id, f.slug, f.title, COUNT(fi.skill_id)
+			 FROM app.skill_folders f
+			 LEFT JOIN app.skill_folder_items fi ON fi.folder_id = f.id
+			 GROUP BY f.id, f.slug, f.title
+			 ORDER BY f.slug`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var f SkillFolder
+			if err := rows.Scan(&f.ID, &f.Slug, &f.Title, &f.ItemCount); err != nil {
+				return err
+			}
+			folders = append(folders, f)
+		}
+		return rows.Err()
+	})
+	return folders, err
+}
+
+// SkillFolderBySlug resolves one skill folder by slug under the tenant, or
+// ErrNotFound.
+func (s *Store) SkillFolderBySlug(ctx context.Context, t Tenant, slug string) (SkillFolder, error) {
+	var f SkillFolder
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT f.id, f.slug, f.title, COUNT(fi.skill_id)
+			 FROM app.skill_folders f
+			 LEFT JOIN app.skill_folder_items fi ON fi.folder_id = f.id
+			 WHERE f.slug = $1
+			 GROUP BY f.id, f.slug, f.title`, slug).
+			Scan(&f.ID, &f.Slug, &f.Title, &f.ItemCount)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SkillFolder{}, ErrNotFound
+	}
+	return f, err
+}
+
+// ListFolderSkills returns every FINALIZED skill in a folder (the bulk-download
+// set), decorated like ListSkills.
+func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string) ([]Skill, error) {
+	var skills []Skill
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT `+skillCols+`
+			 FROM app.skill_folder_items fi
+			 JOIN app.skills sk ON sk.id = fi.skill_id
+			 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+			 WHERE fi.folder_id = $1 AND sk.current_version_id IS NOT NULL
+			 ORDER BY sk.slug`, folderID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			sk, err := scanSkill(rows)
+			if err != nil {
+				return err
+			}
+			skills = append(skills, sk)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return attachSkillFolders(ctx, tx, skills)
+	})
+	return skills, err
 }

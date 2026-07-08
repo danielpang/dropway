@@ -246,8 +246,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The org feed — sites shared across the org, newest first
-         * @description Returns every site in the caller's org that is feed-visible (not marked private), newest first so freshly created/published sites are at the top and older sites sink to the bottom. The cross-user discovery surface that complements the per-user site list. Any org member may read it (RLS-scoped to their org). Each item is a full Site (owner_id, access_mode, live_url, created_at, …) so the dashboard can render and attribute it like a site card.
+         * The org feed — sites and skills shared across the org, newest first
+         * @description Returns every site AND skill in the caller's org that is feed-visible (not marked private), newest first so freshly created/published posts are at the top and older ones sink to the bottom. The cross-user discovery surface that complements the per-user site/skill lists. Any org member may read it (RLS-scoped to their org). Each item carries a `kind` ("site" | "skill") so the dashboard renders the right card, link, and badges; the site-only fields (access_mode, live_url, storage_bytes) and skill-only fields (is_seeded, size_bytes) are omitted for the other kind.
          */
         get: operations["listFeed"];
         put?: never;
@@ -603,6 +603,323 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List / search the org's skills
+         * @description `q` matches slug/title/description (substring); `folder` filters to one folder's members by folder slug; `presets=true` restricts to admin-curated preset members. Skills with no finalized upload are visible only to their owner.
+         */
+        get: operations["listSkills"];
+        put?: never;
+        /**
+         * Create a shared skill (metadata; content arrives via uploads)
+         * @description Registers a skill for the org. `folders` optionally attaches it to folders immediately; the free tier's 10-skills-per-folder cap returns 402. Content is uploaded afterwards via the prepare→finalize flow.
+         */
+        post: operations["createSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one skill */
+        get: operations["getSkill"];
+        put?: never;
+        post?: never;
+        /** Delete a skill (owner or org admin) */
+        delete: operations["deleteSkill"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/uploads/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare a skill upload — validate + presigned uploads
+         * @description Validates the manifest against the skill rules (a root SKILL.md, ≤ 200 files, ≤ 5 MiB total, clean relative paths) BEFORE any bytes move, then returns the blobs the org doesn't already have with a presigned PUT URL each — the same contract as deployment prepare. Owner-or-admin.
+         */
+        post: operations["prepareSkillUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finalize a skill upload (latest-only — finalize publishes)
+         * @description Server-verifies every blob (stored bytes hash == key), re-asserts the skill rules against server-observed sizes, parses SKILL.md frontmatter to fill empty title/description, inserts the immutable version, and flips the skill's live pointer in the same transaction. Idempotent on the whole-upload digest. Owner-or-admin.
+         */
+        post: operations["finalizeSkillUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a skill's folder memberships (owner or admin)
+         * @description PUT semantics — the body is the complete new set of folder ids. Preset flags on kept folders survive; the free-tier per-folder cap applies to newly-gained memberships (402).
+         */
+        put: operations["setSkillFolders"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the current version's files */
+        get: operations["listSkillFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a skill's files inline
+         * @description Returns the current version's files, utf8 text inline and binary base64-encoded — the shape clients write straight into .claude/skills/<slug>/. Bounded by the 5 MiB per-skill cap.
+         */
+        get: operations["downloadSkill"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Share a skill to the org feed, or make it private (owner or admin)
+         * @description Toggles whether the skill appears in the org feed. The skill's OWNER may toggle their own skill; an org admin/owner may toggle any. Mirror of the site feed-visibility toggle. A skill auto-joins the feed on publish.
+         */
+        put: operations["setSkillFeedVisibility"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/feed-meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a skill's feed title + description (owner or admin)
+         * @description Sets the skill's Title and Description (which double as its feed post's title/description). Owner-or-admin. Empty strings clear the field.
+         */
+        put: operations["setSkillFeedMeta"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/vote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Up/down vote a skill feed post (any org member)
+         * @description Records the caller's vote on a skill: value 1 (up), -1 (down), or 0 to clear it. One vote per member per skill. Returns the new net score + the caller's resulting vote. A skill made private accepts no votes.
+         */
+        put: operations["setSkillVote"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a skill's comment thread (oldest first)
+         * @description The skill's org-internal comment thread, oldest first. Any org member may read it (RLS-scoped to their org).
+         */
+        get: operations["listSkillComments"];
+        put?: never;
+        /**
+         * Post a comment to a skill, optionally tagging teammates
+         * @description Any org member may comment; the author is the authenticated caller. Tagged ids that aren't current org members are dropped so a mention always resolves to a real teammate.
+         */
+        post: operations["addSkillComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skill-folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the org's skill folders */
+        get: operations["listSkillFolders"];
+        put?: never;
+        /** Create a folder (admin/owner) */
+        post: operations["createSkillFolder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skill-folders/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a folder (admin/owner; skills survive) */
+        delete: operations["deleteSkillFolder"];
+        options?: never;
+        head?: never;
+        /** Rename a folder (admin/owner; the slug is immutable) */
+        patch: operations["renameSkillFolder"];
+        trace?: never;
+    };
+    "/v1/skill-folders/{id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a skill to a folder
+         * @description Admins may add any skill and set is_preset; a skill's owner may add their own skill (never as a preset). A genuinely-new membership past the free-tier per-folder cap returns 402.
+         */
+        post: operations["addSkillFolderItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skill-folders/{id}/items/{skillID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a skill from a folder (admin or skill owner) */
+        delete: operations["removeSkillFolderItem"];
+        options?: never;
+        head?: never;
+        /** Set a membership's preset flag (admin/owner) */
+        patch: operations["setSkillFolderItemPreset"];
+        trace?: never;
+    };
+    "/v1/skill-folders/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Bulk-download every skill in a folder
+         * @description The "install the whole preset folder" affordance (any member). Inlines every finalized skill in the folder under a 50 MiB response budget; skills past the budget (or with a read error) come back as truncated stubs to fetch individually via GET /v1/skills/{id}/download.
+         */
+        get: operations["downloadSkillFolder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -695,8 +1012,51 @@ export interface components {
             /** Format: date-time */
             created_at?: string;
         };
-        /** @description One post in the org feed: a Site plus its social metadata (net vote score, the caller's own vote, and its comment count). */
-        FeedItem: components["schemas"]["Site"] & {
+        /** @description One post in the unified org feed: a site OR a skill, tagged by `kind`, plus its social metadata (net vote score, the caller's own vote, comment count). Site-only fields (access_mode, live_url, storage_bytes) and skill-only fields (is_seeded, size_bytes) are present only for the matching kind. */
+        FeedItem: {
+            /**
+             * @description What this post is — a shared site or a shared skill.
+             * @enum {string}
+             */
+            kind: "site" | "skill";
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id?: string;
+            slug: string;
+            /**
+             * Format: uuid
+             * @description The post's owner (the all-zero uuid for Dropway-seeded skills).
+             */
+            owner_id: string;
+            /** @description Owner-set feed title (empty → clients fall back to the slug). */
+            title?: string;
+            description?: string;
+            /** Format: uuid */
+            current_version_id?: string | null;
+            /** @description Whether the post is shared to the feed (always true for items the feed returns). */
+            feed_visible?: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description Site-only — the edge access mode.
+             * @enum {string}
+             */
+            access_mode?: "public" | "password" | "allowlist" | "org_only";
+            /** @description Site-only — the canonical served URL. */
+            live_url?: string;
+            /**
+             * Format: int64
+             * @description Site-only — logical current-version size.
+             */
+            storage_bytes?: number;
+            /** @description Skill-only — a Dropway-provided preset. */
+            is_seeded?: boolean;
+            /**
+             * Format: int64
+             * @description Skill-only — current-version content size.
+             */
+            size_bytes?: number;
             /**
              * Format: int64
              * @description Net up/down vote total (sum of +1/-1).
@@ -710,12 +1070,14 @@ export interface components {
              */
             comment_count?: number;
         };
-        /** @description One org-internal comment on a site, optionally tagging teammates. */
+        /** @description One org-internal comment on a feed post (a site or a skill), optionally tagging teammates. subject_type + subject_id identify the post it's on. */
         SiteComment: {
             /** Format: uuid */
             id?: string;
+            /** @enum {string} */
+            subject_type?: "site" | "skill";
             /** Format: uuid */
-            site_id?: string;
+            subject_id?: string;
             /** Format: uuid */
             author_id?: string;
             body?: string;
@@ -763,6 +1125,81 @@ export interface components {
             /** Format: int64 */
             size: number;
             content_type?: string;
+        };
+        /** @description An org-shared Claude skill: a directory with a root SKILL.md plus supporting files, content-addressed like a deploy. Versions are immutable but v1 exposes only the current one (finalize publishes). */
+        Skill: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            org_id?: string;
+            slug?: string;
+            /**
+             * Format: uuid
+             * @description The uploader (the all-zero uuid for Dropway-seeded presets).
+             */
+            owner_id?: string;
+            /** @description True when the skill is a Dropway-provided preset. Clients render the owner as "Dropway" from this flag rather than matching the sentinel owner_id themselves. */
+            is_seeded?: boolean;
+            /** @description From the create request or SKILL.md frontmatter (empty when unset). */
+            title?: string;
+            description?: string;
+            /** Format: uuid */
+            current_version_id?: string | null;
+            /**
+             * Format: int64
+             * @description Current version's total content size (0 before the first upload).
+             */
+            size_bytes?: number;
+            /** @description Current version's monotonic number (0 before the first upload). Bumps on every content change; CLI/MCP compare it against a downloaded skill's recorded version to detect updates. */
+            version?: number;
+            /** @description Whether the skill is shared to the org feed (default true on publish). The owner/admin can make it private to pull it off the feed. */
+            feed_visible?: boolean;
+            folders?: components["schemas"]["SkillFolderRef"][];
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description One folder membership as seen from a skill. */
+        SkillFolderRef: {
+            /** Format: uuid */
+            id?: string;
+            slug?: string;
+            title?: string;
+            /** @description Admin-curated preset membership (the starter set bulk download surfaces). */
+            is_preset?: boolean;
+        };
+        /** @description An admin-curated skill folder (defaults engineering/product/marketing, seeded per org). */
+        SkillFolder: {
+            /** Format: uuid */
+            id?: string;
+            slug?: string;
+            title?: string;
+            /** Format: int64 */
+            item_count?: number;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description One manifest entry of a skill's current version. */
+        SkillFile: {
+            path?: string;
+            /** Format: int64 */
+            size?: number;
+            content_type?: string;
+            sha256?: string;
+        };
+        /** @description One skill's files inline: utf8 text as-is, binary base64-encoded. truncated=true (bulk downloads only) means the files were omitted for the response budget — fetch via GET /v1/skills/{id}/download. */
+        SkillDownload: {
+            slug?: string;
+            /** Format: uuid */
+            skill_id?: string;
+            /** @description The downloaded content's version number (record it to detect later updates). */
+            version?: number;
+            truncated?: boolean;
+            files?: {
+                path?: string;
+                content?: string;
+                /** @enum {string} */
+                encoding?: "utf8" | "base64";
+            }[];
         };
         Error: {
             /** @description Stable machine-readable code */
@@ -888,6 +1325,10 @@ export interface components {
     parameters: {
         /** @description app.sites.id */
         SiteID: string;
+        /** @description app.skills.id */
+        SkillID: string;
+        /** @description app.skill_folders.id */
+        SkillFolderID: string;
     };
     requestBodies: never;
     headers: never;
@@ -1214,14 +1655,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The org's shared sites, newest first */
+            /** @description The org's shared posts (sites + skills), newest first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        sites?: components["schemas"]["FeedItem"][];
+                        posts?: components["schemas"]["FeedItem"][];
                     };
                 };
             };
@@ -1971,6 +2412,733 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    listSkills: {
+        parameters: {
+            query?: {
+                q?: string;
+                /** @description Folder slug. */
+                folder?: string;
+                presets?: "true";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Matching skills */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        skills?: components["schemas"]["Skill"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Org-unique skill name (DNS-label grammar) */
+                    slug: string;
+                    title?: string;
+                    /** @description Folder ids to join on create. */
+                    folders?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Skill created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        skill?: components["schemas"]["Skill"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skill */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        skill?: components["schemas"]["Skill"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    prepareSkillUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    manifest: components["schemas"]["ManifestFile"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Missing blobs + presigned PUT URLs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        missing?: string[];
+                        uploads?: {
+                            [key: string]: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    finalizeSkillUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    manifest: components["schemas"]["ManifestFile"][];
+                    /** @description sha256 over the sorted "<sha256>  <path>\n" manifest lines. */
+                    digest: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Version finalized + published */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        version_id?: string;
+                        version_no?: number;
+                        warnings?: string[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillFolders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    folders: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated skill */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        skill?: components["schemas"]["Skill"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listSkillFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Manifest entries of the current version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        files?: components["schemas"]["SkillFile"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skill's files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDownload"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillFeedVisibility: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description true shares the skill to the org feed; false makes it private. */
+                    visible: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed visibility updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind?: "skill";
+                        /** Format: uuid */
+                        id?: string;
+                        feed_visible?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillFeedMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human title (empty clears it; max 120 chars). */
+                    title?: string;
+                    /** @description Description (empty clears it; max 500 chars). */
+                    description?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Feed metadata updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind?: "skill";
+                        /** Format: uuid */
+                        id?: string;
+                        title?: string;
+                        description?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillVote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description 1 upvote, -1 downvote, 0 clears the caller's vote.
+                     * @enum {integer}
+                     */
+                    value: -1 | 0 | 1;
+                };
+            };
+        };
+        responses: {
+            /** @description Vote recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind?: "skill";
+                        /** Format: uuid */
+                        id?: string;
+                        /** Format: int64 */
+                        score?: number;
+                        my_vote?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listSkillComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The skill's comments */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        comments?: components["schemas"]["SiteComment"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addSkillComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The comment text (max 4000 chars). */
+                    body: string;
+                    /** @description Org users to tag. Non-members are dropped server-side. */
+                    mentioned_user_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Comment created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteComment"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listSkillFolders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's folders (with item counts) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        folders?: components["schemas"]["SkillFolder"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createSkillFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    slug: string;
+                    title?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Folder created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        folder?: components["schemas"]["SkillFolder"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteSkillFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skill_folders.id */
+                id: components["parameters"]["SkillFolderID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    renameSkillFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skill_folders.id */
+                id: components["parameters"]["SkillFolderID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Renamed folder */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        folder?: components["schemas"]["SkillFolder"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    addSkillFolderItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skill_folders.id */
+                id: components["parameters"]["SkillFolderID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    skill_id: string;
+                    is_preset?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Added */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        added?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removeSkillFolderItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skill_folders.id */
+                id: components["parameters"]["SkillFolderID"];
+                skillID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        removed?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setSkillFolderItemPreset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skill_folders.id */
+                id: components["parameters"]["SkillFolderID"];
+                skillID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    is_preset: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Flag updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        is_preset?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadSkillFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skill_folders.id */
+                id: components["parameters"]["SkillFolderID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The folder's skills, inline */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        folder?: components["schemas"]["SkillFolder"];
+                        skills?: components["schemas"]["SkillDownload"][];
+                        warnings?: string[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

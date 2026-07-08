@@ -40,8 +40,8 @@ func claims(user, org, role string) *auth.Claims {
 type fakeStore struct {
 	sites     map[string]store.Site
 	versions  map[string]store.SiteVersion
-	comments  map[string][]store.SiteComment // siteID → thread (oldest first)
-	votes     map[string]map[string]int      // siteID → userID → vote (+1/-1)
+	comments  map[string][]store.PostComment // "kind:id" → thread (oldest first)
+	votes     map[string]map[string]int      // "kind:id" → userID → vote (+1/-1)
 	createErr error
 
 	// orgSlug is the slug OrgSlug returns; defaults to "org" so the canonical host
@@ -69,10 +69,14 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		sites:    map[string]store.Site{},
 		versions: map[string]store.SiteVersion{},
-		comments: map[string][]store.SiteComment{},
+		comments: map[string][]store.PostComment{},
 		votes:    map[string]map[string]int{},
 	}
 }
+
+// postKey composes the fake's polymorphic subject key (mirrors the real store's
+// (subject_type, subject_id) primary key on post_votes / post_comments).
+func postKey(subjectType, subjectID string) string { return subjectType + ":" + subjectID }
 
 func (f *fakeStore) EnsureOrgProvisioned(_ context.Context, t store.Tenant) error {
 	f.lastTenant, f.provisioned = t, true
@@ -114,15 +118,16 @@ func (f *fakeStore) ListFeedSites(_ context.Context, t store.Tenant) ([]store.Fe
 		if !s.FeedVisible { // mirror the SQL WHERE feed_visible
 			continue
 		}
+		key := postKey(store.SubjectSite, s.ID)
 		var score int64
-		for _, v := range f.votes[s.ID] {
+		for _, v := range f.votes[key] {
 			score += int64(v)
 		}
 		out = append(out, store.FeedSite{
 			Site:         s,
 			Score:        score,
-			MyVote:       f.votes[s.ID][t.UserID],
-			CommentCount: int64(len(f.comments[s.ID])),
+			MyVote:       f.votes[key][t.UserID],
+			CommentCount: int64(len(f.comments[key])),
 		})
 	}
 	// Newest first; the fake has no created_at, so fall back to a stable id order
@@ -131,18 +136,19 @@ func (f *fakeStore) ListFeedSites(_ context.Context, t store.Tenant) ([]store.Fe
 	return out, nil
 }
 
-func (f *fakeStore) SetSiteVote(_ context.Context, t store.Tenant, siteID string, value int) (int64, int, error) {
+func (f *fakeStore) SetPostVote(_ context.Context, t store.Tenant, subjectType, subjectID string, value int) (int64, int, error) {
 	f.lastTenant = t
-	if f.votes[siteID] == nil {
-		f.votes[siteID] = map[string]int{}
+	key := postKey(subjectType, subjectID)
+	if f.votes[key] == nil {
+		f.votes[key] = map[string]int{}
 	}
 	if value == 0 {
-		delete(f.votes[siteID], t.UserID)
+		delete(f.votes[key], t.UserID)
 	} else {
-		f.votes[siteID][t.UserID] = value
+		f.votes[key][t.UserID] = value
 	}
 	var score int64
-	for _, v := range f.votes[siteID] {
+	for _, v := range f.votes[key] {
 		score += int64(v)
 	}
 	return score, value, nil
@@ -170,27 +176,29 @@ func (f *fakeStore) SetSiteFeedMeta(_ context.Context, t store.Tenant, siteID, t
 	return s, nil
 }
 
-func (f *fakeStore) CreateSiteComment(_ context.Context, t store.Tenant, p store.CreateSiteCommentParams) (store.SiteComment, error) {
+func (f *fakeStore) CreatePostComment(_ context.Context, t store.Tenant, p store.CreatePostCommentParams) (store.PostComment, error) {
 	f.lastTenant = t
 	mentions := p.MentionedUserIDs
 	if mentions == nil {
 		mentions = []string{}
 	}
-	c := store.SiteComment{
-		ID:               "cmt_" + p.SiteID + "_" + p.Body,
+	key := postKey(p.SubjectType, p.SubjectID)
+	c := store.PostComment{
+		ID:               "cmt_" + key + "_" + p.Body,
 		OrgID:            t.OrgID,
-		SiteID:           p.SiteID,
+		SubjectType:      p.SubjectType,
+		SubjectID:        p.SubjectID,
 		AuthorUserID:     t.UserID,
 		Body:             p.Body,
 		MentionedUserIDs: mentions,
 	}
-	f.comments[p.SiteID] = append(f.comments[p.SiteID], c)
+	f.comments[key] = append(f.comments[key], c)
 	return c, nil
 }
 
-func (f *fakeStore) ListSiteComments(_ context.Context, t store.Tenant, siteID string) ([]store.SiteComment, error) {
+func (f *fakeStore) ListPostComments(_ context.Context, t store.Tenant, subjectType, subjectID string) ([]store.PostComment, error) {
 	f.lastTenant = t
-	return append([]store.SiteComment(nil), f.comments[siteID]...), nil
+	return append([]store.PostComment(nil), f.comments[postKey(subjectType, subjectID)]...), nil
 }
 
 func (f *fakeStore) GetSite(_ context.Context, t store.Tenant, id string) (store.Site, error) {

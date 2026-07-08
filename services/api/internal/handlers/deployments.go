@@ -93,40 +93,16 @@ func (a *API) PrepareDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	missing := make([]string, 0)
-	uploads := make(map[string]string)
-	seen := make(map[string]struct{})
-	for _, f := range req.Manifest {
-		if !validSHA256(f.SHA256) {
-			httpx.WriteError(w, fmt.Errorf("%w: bad sha256 %q", httpx.ErrBadRequest, f.SHA256))
-			return
-		}
-		if _, dup := seen[f.SHA256]; dup {
-			continue // same content referenced by multiple paths: upload once
-		}
-		seen[f.SHA256] = struct{}{}
-
-		exists, _, err := a.Objects.HeadBlob(r.Context(), t.OrgID, f.SHA256)
-		if err != nil {
-			httpx.WriteError(w, err)
-			return
-		}
-		if exists {
-			continue
-		}
-		url, err := a.Objects.PresignPut(r.Context(), t.OrgID, f.SHA256, presignTTL)
-		if err != nil {
-			httpx.WriteError(w, err)
-			return
-		}
-		missing = append(missing, f.SHA256)
-		uploads[f.SHA256] = url
+	resp, err := a.prepareMissingBlobs(r, t.OrgID, req.Manifest)
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
 	}
 
 	logger(r).Info("deployment prepared",
 		"site_id", siteID, "org_id", t.OrgID,
-		"files", len(req.Manifest), "missing", len(missing))
-	httpx.WriteJSON(w, http.StatusOK, prepareResponse{Missing: missing, Uploads: uploads})
+		"files", len(req.Manifest), "missing", len(resp.Missing))
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // ---------------------------------------------------------------------------
@@ -209,76 +185,24 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Recompute the whole-deploy digest SERVER-SIDE from the manifest and reject a
-	// mismatch (FIX 2): the client digest is never trusted as an identifier.
-	// content_hash is the UNIQUE(site_id,content_hash) idempotency key, so a client
-	// that could forge it could short-circuit GetSiteVersionByContentHash and
-	// republish the wrong version. The server-derived value is what we persist.
-	manifestFiles := make([]manifest.File, len(req.Manifest))
-	for i, f := range req.Manifest {
-		manifestFiles[i] = manifest.File{Path: f.Path, SHA256: f.SHA256}
-	}
-	serverDigest := manifest.Digest(manifestFiles)
-	if serverDigest != req.Digest {
-		httpx.WriteError(w, fmt.Errorf("%w: digest mismatch: client sent %s, server computed %s",
-			httpx.ErrBadRequest, req.Digest, serverDigest))
+	// Server-verify the manifest: recompute the digest (FIX 2 — the client digest
+	// is never trusted as the content_hash idempotency key) and re-hash every blob
+	// with server-observed sizes (FIX 3). Shared verbatim with skill uploads.
+	vm, err := a.verifyManifest(r, t.OrgID, req.Manifest, req.Digest)
+	if err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
-
-	// Server-verify each referenced blob: present + stored bytes hash == key, and
-	// record the SERVER-OBSERVED byte length. Verify once per unique sha (a blob
-	// may back multiple paths). size_bytes is summed from the stored objects, never
-	// the client-claimed f.Size (FIX 3) — and a client size that disagrees with the
-	// stored object is rejected so the manifest can't lie about a file's size.
-	sizeBySHA := make(map[string]int64, len(req.Manifest))
-	files := make(map[string]manifestTarget, len(req.Manifest))
-	for _, f := range req.Manifest {
-		if !validSHA256(f.SHA256) {
-			httpx.WriteError(w, fmt.Errorf("%w: bad sha256 %q", httpx.ErrBadRequest, f.SHA256))
-			return
-		}
-		observed, ok := sizeBySHA[f.SHA256]
-		if !ok {
-			n, err := a.verifyBlob(r, t.OrgID, f.SHA256)
-			if err != nil {
-				httpx.WriteError(w, err)
-				return
-			}
-			observed = n
-			sizeBySHA[f.SHA256] = n
-		}
-		// Reject a client-claimed size that disagrees with the stored object.
-		if f.Size != observed {
-			httpx.WriteError(w, fmt.Errorf("%w: file %q claims size %d but stored blob %s is %d bytes",
-				httpx.ErrBadRequest, f.Path, f.Size, f.SHA256, observed))
-			return
-		}
-		// The manifest records the server-observed size, not the client's claim.
-		files[f.Path] = manifestTarget{SHA256: f.SHA256, ContentType: f.ContentType, Size: observed}
-	}
-
-	// Total size from server-observed blob lengths (one count per unique blob).
-	var totalSize int64
-	for _, n := range sizeBySHA {
-		totalSize += n
-	}
-
-	// The distinct content-addressed blobs (+ server-observed sizes) for the per-org
-	// storage meter; dedup-aware accounting + the cap happen in
-	// the store tx. sizeBySHA is already keyed by unique sha.
-	blobs := make([]store.BlobSize, 0, len(sizeBySHA))
-	for sha, n := range sizeBySHA {
-		blobs = append(blobs, store.BlobSize{SHA: sha, Size: n})
-	}
+	files, totalSize := vm.Files, vm.TotalSize
 
 	// Insert the immutable version (idempotent on per-site content_hash). The
 	// content_hash is the SERVER-computed digest, never the client's claim.
 	ver, err := a.Store.CreateSiteVersion(r.Context(), t, store.CreateSiteVersionParams{
 		SiteID:      siteID,
-		ContentHash: serverDigest,
+		ContentHash: vm.Digest,
 		SizeBytes:   totalSize,
 		Status:      "ready",
-		Blobs:       blobs,
+		Blobs:       vm.Blobs,
 	})
 	if err != nil {
 		writeStoreError(w, err)

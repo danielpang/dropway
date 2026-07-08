@@ -5,20 +5,24 @@ import { revalidatePath } from "next/cache";
 import { api, type SiteComment } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/action-errors";
 
+/** A feed post is a site or a skill; the social actions are keyed by kind. */
+export type PostKind = "site" | "skill";
+
 export type VoteActionResult =
   | { ok: true; score: number; myVote: number }
   | { ok: false; message: string };
 
 /**
- * Cast the caller's vote on a feed post (PUT /v1/sites/{id}/vote). value 1 (up),
- * -1 (down), or 0 to clear. Returns the post's new net score + the caller's vote.
+ * Cast the caller's vote on a feed post (PUT /v1/{sites|skills}/{id}/vote). value
+ * 1 (up), -1 (down), or 0 to clear. Returns the post's new net score + the vote.
  */
 export async function voteAction(input: {
-  siteId: string;
+  kind: PostKind;
+  id: string;
   value: -1 | 0 | 1;
 }): Promise<VoteActionResult> {
   try {
-    const res = await api.setSiteVote(input.siteId, input.value);
+    const res = await api.setPostVote(input.kind, input.id, input.value);
     return { ok: true, score: res.score ?? 0, myVote: res.my_vote ?? 0 };
   } catch (err) {
     return { ok: false, message: apiErrorMessage(err, "Could not record your vote. Try again.") };
@@ -31,10 +35,11 @@ export type PostMetaActionResult =
 
 /**
  * Set a feed post's title + description inline from the feed
- * (PUT /v1/sites/{id}/feed-meta). Owner-or-admin only; empty strings clear a field.
+ * (PUT /v1/{sites|skills}/{id}/feed-meta). Owner-or-admin only; empty clears a field.
  */
 export async function setPostMetaAction(input: {
-  siteId: string;
+  kind: PostKind;
+  id: string;
   title: string;
   description: string;
 }): Promise<PostMetaActionResult> {
@@ -47,7 +52,7 @@ export async function setPostMetaAction(input: {
     return { ok: false, message: "Description must be at most 500 characters." };
   }
   try {
-    const res = await api.setSiteFeedMeta(input.siteId, { title, description });
+    const res = await api.setPostFeedMeta(input.kind, input.id, { title, description });
     revalidatePath("/feed");
     return {
       ok: true,
@@ -63,9 +68,10 @@ export type AddCommentActionResult =
   | { ok: true; comment: SiteComment }
   | { ok: false; message: string };
 
-/** Post a comment to a feed post (POST /v1/sites/{id}/comments), optionally tagging teammates. */
+/** Post a comment to a feed post (site or skill), optionally tagging teammates. */
 export async function addFeedCommentAction(input: {
-  siteId: string;
+  kind: PostKind;
+  id: string;
   body: string;
   mentionedUserIds: string[];
 }): Promise<AddCommentActionResult> {
@@ -77,7 +83,7 @@ export async function addFeedCommentAction(input: {
     return { ok: false, message: "Comment is too long (max 4000 characters)." };
   }
   try {
-    const comment = await api.addComment(input.siteId, {
+    const comment = await api.addPostComment(input.kind, input.id, {
       body,
       mentioned_user_ids: input.mentionedUserIds,
     });
@@ -94,10 +100,11 @@ export type ListCommentsActionResult =
 
 /** Load a feed post's comment thread on demand (when a user expands comments). */
 export async function listFeedCommentsAction(
-  siteId: string,
+  kind: PostKind,
+  id: string,
 ): Promise<ListCommentsActionResult> {
   try {
-    const comments = await api.listComments(siteId);
+    const comments = await api.listPostComments(kind, id);
     return { ok: true, comments };
   } catch (err) {
     return { ok: false, message: apiErrorMessage(err, "Could not load comments. Try again.") };

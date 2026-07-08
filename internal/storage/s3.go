@@ -252,7 +252,30 @@ func (s *S3Store) DeleteBlob(ctx context.Context, orgID, sha256 string) error {
 
 // GetManifest reads a deploy manifest back.
 func (s *S3Store) GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error) {
-	key := ManifestKey(orgID, siteID, versionID)
+	return s.getManifestKey(ctx, ManifestKey(orgID, siteID, versionID))
+}
+
+// PutSkillManifest writes the immutable per-skill-version manifest JSON.
+func (s *S3Store) PutSkillManifest(ctx context.Context, orgID, skillID, versionID string, manifest []byte) error {
+	key := SkillManifestKey(orgID, skillID, versionID)
+	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(manifest),
+		ContentType:   aws.String("application/json"),
+		ContentLength: aws.Int64(int64(len(manifest))),
+	}); err != nil {
+		return fmt.Errorf("storage: put skill manifest %s: %w", key, err)
+	}
+	return nil
+}
+
+// GetSkillManifest reads a skill manifest back.
+func (s *S3Store) GetSkillManifest(ctx context.Context, orgID, skillID, versionID string) ([]byte, error) {
+	return s.getManifestKey(ctx, SkillManifestKey(orgID, skillID, versionID))
+}
+
+func (s *S3Store) getManifestKey(ctx context.Context, key string) ([]byte, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),

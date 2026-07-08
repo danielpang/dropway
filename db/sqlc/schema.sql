@@ -24,7 +24,10 @@ CREATE TABLE app.org_meta (
     created_at             timestamptz NOT NULL DEFAULT now(),
     org_status             text NOT NULL DEFAULT 'active'
                                CHECK (org_status IN ('active', 'suspended', 'over_limit')),
-    mcp_enabled            boolean NOT NULL DEFAULT true
+    mcp_enabled            boolean NOT NULL DEFAULT true,
+    -- Guards the lazy per-org seeding of default skill folders + preset skills
+    -- (migration 0008): set true in the same tx that seeds.
+    skills_seeded          boolean NOT NULL DEFAULT false
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -89,6 +92,72 @@ ALTER TABLE app.sites
         REFERENCES app.site_versions (id)
         DEFERRABLE INITIALLY DEFERRED;
 
+-- skills: a shareable Claude skill (SKILL.md + supporting files) owned by a
+-- user inside an org (migration 0008). owner_user_id
+-- 00000000-0000-0000-0000-000000000000 = seeded by Dropway.
+CREATE TABLE app.skills (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    slug               text NOT NULL,
+    owner_user_id      uuid NOT NULL,
+    title              text,
+    description        text,
+    current_version_id uuid,
+    -- feed_visible (migration 0009): a skill auto-joins the org feed on publish
+    -- unless the owner/admin makes it private (mirrors sites.feed_visible).
+    feed_visible       boolean NOT NULL DEFAULT true,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT skills_org_slug_key UNIQUE (org_id, slug)
+);
+
+-- skill_versions: immutable, content-addressed skill uploads (shape of
+-- site_versions; v1 exposes only the current one).
+CREATE TABLE app.skill_versions (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    skill_id     uuid NOT NULL REFERENCES app.skills (id) ON DELETE CASCADE,
+    version_no   int NOT NULL,
+    status       text NOT NULL DEFAULT 'pending',
+    content_hash text NOT NULL,
+    size_bytes   bigint NOT NULL DEFAULT 0,
+    created_by   uuid NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT skill_versions_skill_version_no_key UNIQUE (skill_id, version_no),
+    CONSTRAINT skill_versions_skill_content_hash_key UNIQUE (skill_id, content_hash)
+);
+
+-- Deferrable FK closing the skills <-> skill_versions cycle.
+ALTER TABLE app.skills
+    ADD CONSTRAINT skills_current_version_id_fkey
+        FOREIGN KEY (current_version_id)
+        REFERENCES app.skill_versions (id)
+        DEFERRABLE INITIALLY DEFERRED;
+
+-- skill_folders: admin-curated org taxonomy for skills (defaults: engineering,
+-- product, marketing — seeded lazily per org).
+CREATE TABLE app.skill_folders (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    slug       text NOT NULL,
+    title      text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT skill_folders_org_slug_key UNIQUE (org_id, slug)
+);
+
+-- skill_folder_items: folder membership; is_preset marks the admin-curated
+-- starter set that bulk "download the presets" surfaces.
+CREATE TABLE app.skill_folder_items (
+    org_id    uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    folder_id uuid NOT NULL REFERENCES app.skill_folders (id) ON DELETE CASCADE,
+    skill_id  uuid NOT NULL REFERENCES app.skills (id) ON DELETE CASCADE,
+    is_preset boolean NOT NULL DEFAULT false,
+    added_by  uuid NOT NULL,
+    added_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (folder_id, skill_id)
+);
+CREATE INDEX skill_folder_items_skill_idx ON app.skill_folder_items (skill_id);
+CREATE INDEX skills_current_version_idx ON app.skills (current_version_id);
+
 -- domains: custom hostnames mapped to a site. hostname is GLOBALLY unique.
 -- cf_hostname_id / dcv_record track the Cloudflare-for-SaaS custom hostname and
 -- the DNS DCV record the user must create (migration 0006). verify_status also
@@ -116,27 +185,32 @@ CREATE TABLE app.site_access_policy (
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- site_comments: org-internal discussion on a shared site, with @mentions.
-CREATE TABLE app.site_comments (
+-- post_comments: polymorphic org-internal discussion on a feed post (a site or a
+-- skill), with @mentions (migration 0009). subject_type is 'site' | 'skill'.
+CREATE TABLE app.post_comments (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    subject_type       text NOT NULL,
+    subject_id         uuid NOT NULL,
     author_user_id     uuid NOT NULL,
     body               text NOT NULL,
     mentioned_user_ids uuid[] NOT NULL DEFAULT '{}',
-    created_at         timestamptz NOT NULL DEFAULT now()
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT post_comments_subject_type_check CHECK (subject_type IN ('site', 'skill'))
 );
 
--- site_votes: up/down votes on feed posts (one per site per user).
-CREATE TABLE app.site_votes (
-    site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
-    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    user_id    uuid NOT NULL,
-    value      smallint NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (site_id, user_id),
-    CONSTRAINT site_votes_value_check CHECK (value IN (-1, 1))
+-- post_votes: polymorphic up/down votes on a feed post (one per subject per user).
+CREATE TABLE app.post_votes (
+    subject_type text NOT NULL,
+    subject_id   uuid NOT NULL,
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    user_id      uuid NOT NULL,
+    value        smallint NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (subject_type, subject_id, user_id),
+    CONSTRAINT post_votes_subject_type_check CHECK (subject_type IN ('site', 'skill')),
+    CONSTRAINT post_votes_value_check CHECK (value IN (-1, 1))
 );
 
 -- allowlist_entries: pre-registration email grants for allowlist sites.

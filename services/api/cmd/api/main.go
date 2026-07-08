@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/phclient"
 	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/skillseeds"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/config"
 	"github.com/danielpang/dropway/services/api/internal/handlers"
@@ -246,6 +248,15 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	// stored host_routes.host stays the bare host). Defaults: https, no port.
 	api.ContentScheme = cfg.ContentScheme
 	api.ContentPort = cfg.ContentPort
+
+	// Embedded default preset skills, materialized lazily per org on its first
+	// skills touch. A bad embedded seed is a build artifact problem — fail
+	// loudly at startup rather than at some org's first request.
+	seeds, err := skillseeds.Load()
+	if err != nil {
+		return fmt.Errorf("load skill seeds: %w", err)
+	}
+	api.SkillSeeds = seeds
 
 	// First-layer brute-force / denial-of-wallet control on the unauthenticated
 	// password exchange (M3): an in-memory token bucket keyed by client IP + target

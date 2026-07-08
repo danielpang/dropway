@@ -46,6 +46,45 @@ func ver(id, siteID string, no int32, current bool) db.ListVersionsForGCRow {
 	}
 }
 
+// TestGC_SkillManifestBlobsRetained guards the skill-protection branch: a blob
+// referenced ONLY by a current skill version (no site references it) must be
+// kept, while a blob no skill or site references is still deleted. Without the
+// skillRetained union in gcCollectAndDelete, all skill content would be treated
+// as orphaned and deleted.
+func TestGC_SkillManifestBlobsRetained(t *testing.T) {
+	ctx := context.Background()
+	obj := storage.NewFake()
+	const org = "org-1"
+
+	const blobSkill = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const blobOrphan = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	must(t, obj.PutBlobBytesAt(ctx, org, blobSkill, []byte("skill"), oldEnough))
+	must(t, obj.PutBlobBytesAt(ctx, org, blobOrphan, []byte("orphan"), oldEnough))
+
+	// The skill's current version manifest references blobSkill; no site exists.
+	must(t, obj.PutSkillManifest(ctx, org, "skill-1", "sv1", manifestJSON(blobSkill)))
+
+	skillRetained := []db.ListCurrentSkillVersionsForGCRow{
+		{SkillID: "skill-1", VersionID: strPtr("sv1")},
+	}
+
+	res, err := gcCollectAndDelete(ctx, obj, org, nil, skillRetained, GCPolicy{}, gcNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Orphans) != 1 || res.Orphans[0] != blobOrphan {
+		t.Fatalf("expected only the orphan deleted, got %v", res.Orphans)
+	}
+	if exists, _, _ := obj.HeadBlob(ctx, org, blobSkill); !exists {
+		t.Error("skill current-version blob was wrongly deleted")
+	}
+	if exists, _, _ := obj.HeadBlob(ctx, org, blobOrphan); exists {
+		t.Error("orphan blob was not deleted")
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 // TestGC_OrphanDeletedReferencedKeptCurrentUntouched is the core GC unit test:
 // with the in-memory fake, an orphan blob is deleted, a
 // referenced blob is kept, and the CURRENT version's blob is never touched.
@@ -81,7 +120,7 @@ func TestGC_OrphanDeletedReferencedKeptCurrentUntouched(t *testing.T) {
 	// Keep last 2 (newest): retains v3 (current+newest) and v2 (2nd newest); v1 drops.
 	retained := selectRetained(rows, 2)
 
-	res, err := gcCollectAndDelete(ctx, obj, org, retained, GCPolicy{KeepLastN: 2}, gcNow)
+	res, err := gcCollectAndDelete(ctx, obj, org, retained, nil, GCPolicy{KeepLastN: 2}, gcNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +149,7 @@ func TestGC_DryRunDeletesNothing(t *testing.T) {
 	const blobOrphan = "4444444444444444444444444444444444444444444444444444444444444444"
 	must(t, obj.PutBlobBytesAt(ctx, org, blobOrphan, []byte("x"), oldEnough))
 
-	res, err := gcCollectAndDelete(ctx, obj, org, nil, GCPolicy{DryRun: true}, gcNow)
+	res, err := gcCollectAndDelete(ctx, obj, org, nil, nil, GCPolicy{DryRun: true}, gcNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +171,7 @@ func TestGC_CrossOrgScoped(t *testing.T) {
 	must(t, obj.PutBlobBytesAt(ctx, "org-B", blob, []byte("b"), oldEnough))
 
 	// GC org-A with NO retained versions → org-A's blob is an orphan, org-B untouched.
-	res, err := gcCollectAndDelete(ctx, obj, "org-A", nil, GCPolicy{}, gcNow)
+	res, err := gcCollectAndDelete(ctx, obj, "org-A", nil, nil, GCPolicy{}, gcNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +214,7 @@ func TestGC_AgeGuard_FreshOrphanSurvivesOldOrphanDeleted(t *testing.T) {
 	must(t, obj.PutManifest(ctx, org, "site-1", "v1", manifestJSON(blobCurrent)))
 	retained := selectRetained([]db.ListVersionsForGCRow{ver("v1", "site-1", 1, true)}, 5)
 
-	res, err := gcCollectAndDelete(ctx, obj, org, retained, GCPolicy{KeepLastN: 5}, gcNow)
+	res, err := gcCollectAndDelete(ctx, obj, org, retained, nil, GCPolicy{KeepLastN: 5}, gcNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +252,7 @@ func TestGC_AgeGuard_DefaultMinAgeApplied(t *testing.T) {
 	must(t, obj.PutBlobBytesAt(ctx, org, blobFresh, []byte("fresh"), gcNow.Add(-5*time.Minute)))
 
 	// MinAge unset (zero) → must fall back to DefaultGCMinAge, not "delete everything".
-	res, err := gcCollectAndDelete(ctx, obj, org, nil, GCPolicy{}, gcNow)
+	res, err := gcCollectAndDelete(ctx, obj, org, nil, nil, GCPolicy{}, gcNow)
 	if err != nil {
 		t.Fatal(err)
 	}

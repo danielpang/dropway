@@ -6,7 +6,7 @@ import (
 )
 
 // TestSummary covers the human-readable CLI summary line and its helpers
-// (humanBytes, short) across the byte-unit boundaries and the short-digest edge.
+// (HumanBytes, short) across the byte-unit boundaries and the short-digest edge.
 
 func TestSummary(t *testing.T) {
 	m := &Manifest{
@@ -44,8 +44,8 @@ func TestHumanBytes(t *testing.T) {
 		{3 * 1024 * 1024 * 1024, "3.0 GB"},
 	}
 	for _, c := range cases {
-		if got := humanBytes(c.n); got != c.want {
-			t.Errorf("humanBytes(%d) = %q, want %q", c.n, got, c.want)
+		if got := HumanBytes(c.n); got != c.want {
+			t.Errorf("HumanBytes(%d) = %q, want %q", c.n, got, c.want)
 		}
 	}
 }

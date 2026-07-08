@@ -27,19 +27,22 @@ type SiteStore interface {
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
 
-	// Org feed: ListFeedSites lists the active org's non-private sites (newest
-	// first, each with vote score / the caller's vote / comment count);
-	// SetSiteFeedVisible flips one site's share-to-feed flag (owner/admin);
-	// SetSiteFeedMeta sets the owner-facing title/description shown in the feed;
-	// SetSiteVote records the caller's up/down vote (or un-vote).
+	// Org feed: ListFeedSites / ListFeedSkills list the active org's non-private
+	// sites / skills (newest first, each with vote score / the caller's vote /
+	// comment count) — the two halves of the unified feed; SetSiteFeedVisible /
+	// SetSkillFeedVisible flip one post's share-to-feed flag (owner/admin);
+	// SetSiteFeedMeta sets the owner-facing site title/description shown in the feed.
 	ListFeedSites(ctx context.Context, t store.Tenant) ([]store.FeedSite, error)
+	ListFeedSkills(ctx context.Context, t store.Tenant) ([]store.FeedSkill, error)
 	SetSiteFeedVisible(ctx context.Context, t store.Tenant, siteID string, visible bool) (store.Site, error)
+	SetSkillFeedVisible(ctx context.Context, t store.Tenant, skillID string, visible bool) (store.Skill, error)
 	SetSiteFeedMeta(ctx context.Context, t store.Tenant, siteID, title, description string) (store.Site, error)
-	SetSiteVote(ctx context.Context, t store.Tenant, siteID string, value int) (score int64, myVote int, err error)
 
-	// Site comments: an org-internal discussion thread per site, with @mentions.
-	CreateSiteComment(ctx context.Context, t store.Tenant, p store.CreateSiteCommentParams) (store.SiteComment, error)
-	ListSiteComments(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteComment, error)
+	// Feed post social: a single up/down vote and a single @mention comment thread,
+	// polymorphic over the subject (a site or a skill).
+	SetPostVote(ctx context.Context, t store.Tenant, subjectType, subjectID string, value int) (score int64, myVote int, err error)
+	CreatePostComment(ctx context.Context, t store.Tenant, p store.CreatePostCommentParams) (store.PostComment, error)
+	ListPostComments(ctx context.Context, t store.Tenant, subjectType, subjectID string) ([]store.PostComment, error)
 	CreateSiteVersion(ctx context.Context, t store.Tenant, p store.CreateSiteVersionParams) (store.SiteVersion, error)
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)
@@ -86,6 +89,34 @@ type SiteStore interface {
 	// Phase 4 — audit logging.
 	WriteAudit(ctx context.Context, t store.Tenant, rec store.AuditRecord) (store.AuditEntry, error)
 	ListAudit(ctx context.Context, t store.Tenant, p store.ListAuditParams) ([]store.AuditEntry, error)
+
+	// Org-wide skill sharing: skills (content-addressed uploads, latest-only
+	// versions) + admin-curated folders with preset flags + lazy per-org seeding.
+	CreateSkill(ctx context.Context, t store.Tenant, slug, title string, folderIDs []string) (store.Skill, error)
+	ListSkills(ctx context.Context, t store.Tenant, q, folderSlug string, presetsOnly bool) ([]store.Skill, error)
+	GetSkill(ctx context.Context, t store.Tenant, id string) (store.Skill, error)
+	DeleteSkill(ctx context.Context, t store.Tenant, id string) error
+	SetSkillMeta(ctx context.Context, t store.Tenant, id, title, description string) (store.Skill, error)
+	SetSkillFolders(ctx context.Context, t store.Tenant, skillID string, folderIDs []string) (store.Skill, error)
+	CreateSkillVersion(ctx context.Context, t store.Tenant, p store.CreateSkillVersionParams) (store.SkillVersion, error)
+	// PublishSkillVersion flips a skill's current version AFTER its manifest is
+	// written (the GC-safe ordering).
+	PublishSkillVersion(ctx context.Context, t store.Tenant, skillID, versionID string) error
+	ListSkillFolders(ctx context.Context, t store.Tenant) ([]store.SkillFolder, error)
+	GetSkillFolder(ctx context.Context, t store.Tenant, id string) (store.SkillFolder, error)
+	CreateSkillFolder(ctx context.Context, t store.Tenant, slug, title string) (store.SkillFolder, error)
+	RenameSkillFolder(ctx context.Context, t store.Tenant, id, title string) (store.SkillFolder, error)
+	DeleteSkillFolder(ctx context.Context, t store.Tenant, id string) error
+	AddSkillToFolder(ctx context.Context, t store.Tenant, folderID, skillID string, isPreset bool) error
+	RemoveSkillFromFolder(ctx context.Context, t store.Tenant, folderID, skillID string) error
+	SetSkillFolderItemPreset(ctx context.Context, t store.Tenant, folderID, skillID string, isPreset bool) error
+	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
+	SkillsSeeded(ctx context.Context, t store.Tenant) (bool, error)
+	// Lazy preset seeding, split so manifests are written between staging and
+	// publishing (GC-safe): stage materializes rows without flipping live
+	// pointers, publish flips them + marks the org seeded.
+	SeedOrgSkillsStage(ctx context.Context, t store.Tenant, seeds []store.SkillSeed) ([]store.SeededSkill, bool, error)
+	SeedOrgSkillsPublish(ctx context.Context, t store.Tenant, created []store.SeededSkill) error
 }
 
 // EdgeRevoker writes the hard-revocation denylist the serving Worker + /authz read

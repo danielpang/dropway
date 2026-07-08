@@ -60,8 +60,8 @@ export default async function FeedPage() {
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Feed</h1>
         <p className="text-muted-foreground">
-          Sites shared across {orgName}. Vote, comment, and tag teammates. Make a
-          site private from its access settings to keep it off the feed.
+          Sites and skills shared across {orgName}. Vote, comment, and tag
+          teammates. Make a post private from its settings to keep it off the feed.
         </p>
       </div>
 
@@ -100,8 +100,8 @@ function EmptyState() {
       <div className="space-y-1">
         <p className="font-medium text-foreground">Nothing shared yet</p>
         <p className="text-sm text-muted-foreground">
-          When you or a teammate creates or publishes a site, it shows up here
-          automatically, unless it&rsquo;s marked private.
+          When you or a teammate creates or publishes a site or skill, it shows up
+          here automatically, unless it&rsquo;s marked private.
         </p>
       </div>
     </Card>

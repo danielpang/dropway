@@ -188,38 +188,70 @@ FROM app.sites
 ORDER BY created_at DESC;
 
 -- name: ListFeedSites :many
--- The org feed: every site in the active org that is feed-visible (not private),
--- newest first (older sites sink to the bottom). Each row carries its net vote
--- score, the CALLER's own vote ($1 = caller user id; 0 when they haven't voted),
--- and its comment count, so the feed renders the up/down controls + counts in one
--- query (no N+1). RLS scopes every read (sites, votes, comments) to the active org.
+-- The org feed's SITE posts: every site in the active org that is feed-visible
+-- (not private), newest first (older sites sink to the bottom). Each row carries
+-- its net vote score, the CALLER's own vote ($1 = caller user id; 0 when they
+-- haven't voted), and its comment count, so the feed renders the up/down controls
+-- + counts in one query (no N+1). Votes/comments are polymorphic (subject_type =
+-- 'site'). RLS scopes every read to the active org.
 SELECT
     sqlc.embed(s),
-    COALESCE((SELECT SUM(v.value) FROM app.site_votes v WHERE v.site_id = s.id), 0)::bigint AS score,
-    COALESCE((SELECT mv.value FROM app.site_votes mv WHERE mv.site_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
-    COALESCE((SELECT COUNT(*) FROM app.site_comments c WHERE c.site_id = s.id), 0)::bigint AS comment_count
+    COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'site' AND v.subject_id = s.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'site' AND mv.subject_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'site' AND c.subject_id = s.id), 0)::bigint AS comment_count
 FROM app.sites s
 WHERE s.feed_visible
 ORDER BY s.created_at DESC;
 
--- name: UpsertSiteVote :exec
--- Cast (or change) the caller's vote on a site. One row per (site, user); a flip
--- from up to down just overwrites value. RLS scopes the write to the active org.
-INSERT INTO app.site_votes (site_id, org_id, user_id, value)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (site_id, user_id) DO UPDATE
+-- name: ListFeedSkills :many
+-- The org feed's SKILL posts: every skill in the active org that is feed-visible,
+-- newest first, each carrying its current-version size, net vote score, the
+-- caller's own vote ($1), and its comment count (subject_type = 'skill'). Skills
+-- that never finalized an upload (no current version) are shown only to their
+-- owner, so half-finished uploads don't clutter the feed. RLS scopes every read.
+SELECT
+    sqlc.embed(sk),
+    COALESCE(ver.size_bytes, 0)::bigint AS size_bytes,
+    COALESCE(ver.version_no, 0)::int AS version,
+    COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'skill' AND v.subject_id = sk.id), 0)::bigint AS score,
+    COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'skill' AND mv.subject_id = sk.id AND mv.user_id = $1), 0)::int AS my_vote,
+    COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'skill' AND c.subject_id = sk.id), 0)::bigint AS comment_count
+FROM app.skills sk
+LEFT JOIN app.skill_versions ver ON ver.id = sk.current_version_id
+WHERE sk.feed_visible
+  AND (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
+ORDER BY sk.created_at DESC;
+
+-- name: UpsertPostVote :exec
+-- Cast (or change) the caller's vote on a feed post (site or skill). One row per
+-- (subject_type, subject_id, user); a flip from up to down overwrites value. RLS
+-- scopes the write to the active org.
+INSERT INTO app.post_votes (subject_type, subject_id, org_id, user_id, value)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (subject_type, subject_id, user_id) DO UPDATE
 SET value = EXCLUDED.value, updated_at = now();
 
--- name: DeleteSiteVote :exec
--- Remove the caller's vote on a site (un-vote). RLS scopes the delete to the org.
-DELETE FROM app.site_votes
-WHERE site_id = $1 AND user_id = $2;
+-- name: DeletePostVote :exec
+-- Remove the caller's vote on a feed post (un-vote). RLS scopes the delete to the org.
+DELETE FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2 AND user_id = $3;
 
--- name: GetSiteVoteScore :one
--- A site's net vote score (sum of +1/-1). RLS scopes the read to the active org.
+-- name: GetPostVoteScore :one
+-- A feed post's net vote score (sum of +1/-1). RLS scopes the read to the org.
 SELECT COALESCE(SUM(value), 0)::bigint AS score
-FROM app.site_votes
-WHERE site_id = $1;
+FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2;
+
+-- name: DeletePostVotesForSubject :exec
+-- Drop every vote on a subject (called when the site/skill itself is deleted,
+-- since the polymorphic table can't FK-cascade to two parents).
+DELETE FROM app.post_votes
+WHERE subject_type = $1 AND subject_id = $2;
+
+-- name: DeletePostCommentsForSubject :exec
+-- Drop every comment on a subject (called on the subject's delete; see above).
+DELETE FROM app.post_comments
+WHERE subject_type = $1 AND subject_id = $2;
 
 -- name: SetSiteFeedVisible :one
 -- Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
@@ -252,26 +284,27 @@ WHERE id = $1;
 -- site_comments — org-internal discussion on a shared site, with @mentions
 -- ===========================================================================
 
--- name: CreateSiteComment :one
--- Add a comment to a site. mentioned_user_ids is the set of tagged org users
--- (identity ids). RLS scopes the INSERT to the active org (the WITH CHECK clause
--- on the tenant policy rejects a row whose org_id isn't the active tenant).
-INSERT INTO app.site_comments (org_id, site_id, author_user_id, body, mentioned_user_ids)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at;
+-- name: CreatePostComment :one
+-- Add a comment to a feed post (site or skill). mentioned_user_ids is the set of
+-- tagged org users (identity ids). RLS scopes the INSERT to the active org (the
+-- WITH CHECK clause on the tenant policy rejects a row whose org_id isn't the
+-- active tenant).
+INSERT INTO app.post_comments (org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at;
 
--- name: ListSiteComments :many
--- A site's comment thread, displayed oldest-first (top-to-bottom like a
--- conversation) but BOUNDED to the most recent $2 comments so a long thread can't
+-- name: ListPostComments :many
+-- A feed post's comment thread, displayed oldest-first (top-to-bottom like a
+-- conversation) but BOUNDED to the most recent $3 comments so a long thread can't
 -- load an unbounded result. RLS scopes the read to the active org; the
--- (site_id, created_at) index backs both the inner ordering and the outer.
-SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
+-- (subject_type, subject_id, created_at) index backs both orderings.
+SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
 FROM (
-    SELECT id, org_id, site_id, author_user_id, body, mentioned_user_ids, created_at
-    FROM app.site_comments
-    WHERE site_id = $1
+    SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
+    FROM app.post_comments
+    WHERE subject_type = $1 AND subject_id = $2
     ORDER BY created_at DESC, id DESC
-    LIMIT $2
+    LIMIT $3
 ) recent
 ORDER BY created_at ASC, id ASC;
 
@@ -601,3 +634,289 @@ SELECT id, org_id, actor_user, actor_token, action, target, metadata, ip, reques
 FROM app.audit_log
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2;
+
+-- ===========================================================================
+-- skills (migration 0008) — org-wide skill sharing
+-- ===========================================================================
+
+-- name: LockOrgSkillQuota :exec
+-- Serialize concurrent skill creates for the SAME org (the same COUNT → policy →
+-- INSERT critical section the site cap uses).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':skills'));
+
+-- name: CountSkillsForOrg :one
+SELECT count(*)::bigint AS n
+FROM app.skills
+WHERE org_id = $1;
+
+-- name: CreateSkill :one
+INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+
+-- name: CreateSeedSkill :one
+-- Insert a preset seed skill, or DO NOTHING if the org already has that slug
+-- (a real user's skill, or this seed from a prior attempt). ON CONFLICT means a
+-- collision never raises 23505 and aborts the seeding transaction; a no-rows
+-- result tells the caller to inspect the existing row and skip it unless it is
+-- our own seed.
+INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (org_id, slug) DO NOTHING
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+
+-- name: GetSkill :one
+-- Embeds the full skill row plus its current version's size (0 when unset), so
+-- reads never N+1 a per-skill version lookup.
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE sk.id = $1;
+
+-- name: GetSkillBySlug :one
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE sk.slug = $1;
+
+-- name: ListSkills :many
+-- Search + filter the active org's skills. q matches slug/title/description
+-- (ILIKE, '' = no text filter); folder_slug restricts to members of that folder
+-- ('' = any); presets_only additionally requires the membership's is_preset flag.
+-- Skills that have never finalized an upload (no current version) are visible
+-- only to their owner (caller_id), so half-finished uploads don't clutter the
+-- org listing. RLS scopes every read to the active org.
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
+FROM app.skills sk
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_id)::uuid)
+  AND (
+        sqlc.arg(q)::text = ''
+        OR sk.slug ILIKE '%' || sqlc.arg(q) || '%'
+        OR COALESCE(sk.title, '') ILIKE '%' || sqlc.arg(q) || '%'
+        OR COALESCE(sk.description, '') ILIKE '%' || sqlc.arg(q) || '%'
+      )
+  AND (
+        (sqlc.arg(folder_slug)::text = '' AND NOT sqlc.arg(presets_only)::boolean)
+        OR EXISTS (
+            SELECT 1
+            FROM app.skill_folder_items fi
+            JOIN app.skill_folders f ON f.id = fi.folder_id
+            WHERE fi.skill_id = sk.id
+              AND (sqlc.arg(folder_slug)::text = '' OR f.slug = sqlc.arg(folder_slug))
+              AND (NOT sqlc.arg(presets_only)::boolean OR fi.is_preset)
+        )
+      )
+ORDER BY sk.created_at DESC;
+
+-- name: DeleteSkill :one
+-- Remove a skill (versions + folder memberships cascade). RETURNING detects an
+-- RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
+DELETE FROM app.skills
+WHERE id = $1
+RETURNING id;
+
+-- name: SetSkillMeta :one
+-- Fill a skill's human metadata (from SKILL.md frontmatter on finalize, or an
+-- explicit edit). Empty strings are passed as NULL so "unset" round-trips.
+UPDATE app.skills
+SET title = $2,
+    description = $3
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+
+-- name: SetSkillFeedVisible :one
+-- Share a skill to the org feed (true) or make it private/off-feed (false). RLS
+-- scopes the UPDATE to the active org; the handler restricts it to the skill's
+-- owner or an org admin/owner. A miss surfaces as a no-rows error (→ ErrNotFound).
+UPDATE app.skills
+SET feed_visible = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+
+-- name: SetSkillCurrentVersion :exec
+-- Flip the live pointer (finalize = publish in the latest-only v1 model).
+UPDATE app.skills
+SET current_version_id = $2
+WHERE id = $1;
+
+-- name: NextSkillVersionNo :one
+SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version_no
+FROM app.skill_versions
+WHERE skill_id = $1;
+
+-- name: CreateSkillVersion :one
+INSERT INTO app.skill_versions (
+    org_id, skill_id, version_no, status, content_hash, size_bytes, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at;
+
+-- name: UpsertSkillVersion :one
+-- Get-or-create a version by its (skill_id, content_hash): a no-op DO UPDATE so
+-- RETURNING always yields the row whether it was just inserted or already
+-- existed. Used by idempotent seeding so a retried seed can't raise 23505 and
+-- abort the transaction. The no-op update sets status to itself.
+INSERT INTO app.skill_versions (
+    org_id, skill_id, version_no, status, content_hash, size_bytes, created_by
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (skill_id, content_hash) DO UPDATE
+SET status = app.skill_versions.status
+RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at;
+
+-- name: GetSkillVersion :one
+SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+FROM app.skill_versions
+WHERE id = $1;
+
+-- name: GetSkillVersionByContentHash :one
+-- Idempotent re-upload of identical content (the per-skill content_hash unique
+-- constraint backs this).
+SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
+FROM app.skill_versions
+WHERE skill_id = $1 AND content_hash = $2;
+
+-- ===========================================================================
+-- skill folders — admin-curated taxonomy + preset flags
+-- ===========================================================================
+
+-- name: CreateSkillFolder :one
+INSERT INTO app.skill_folders (org_id, slug, title)
+VALUES ($1, $2, $3)
+RETURNING id, org_id, slug, title, created_at;
+
+-- name: GetOrCreateSkillFolder :one
+-- Get-or-create a folder by (org_id, slug): a no-op DO UPDATE so RETURNING
+-- always yields the row. Used by idempotent seeding so re-running against an
+-- org that already has a default folder (e.g. an admin created it first) never
+-- raises 23505 and aborts the seed transaction.
+INSERT INTO app.skill_folders (org_id, slug, title)
+VALUES ($1, $2, $3)
+ON CONFLICT (org_id, slug) DO UPDATE
+SET title = app.skill_folders.title
+RETURNING id, org_id, slug, title, created_at;
+
+-- name: GetSkillFolder :one
+SELECT id, org_id, slug, title, created_at
+FROM app.skill_folders
+WHERE id = $1;
+
+-- name: GetSkillFolderBySlug :one
+SELECT id, org_id, slug, title, created_at
+FROM app.skill_folders
+WHERE slug = $1;
+
+-- name: ListSkillFolders :many
+-- The org's folders with their member counts (the folder tabs + admin panel).
+SELECT
+    f.id, f.org_id, f.slug, f.title, f.created_at,
+    COALESCE((SELECT COUNT(*) FROM app.skill_folder_items fi WHERE fi.folder_id = f.id), 0)::bigint AS item_count
+FROM app.skill_folders f
+ORDER BY f.slug;
+
+-- name: RenameSkillFolder :one
+UPDATE app.skill_folders
+SET title = $2
+WHERE id = $1
+RETURNING id, org_id, slug, title, created_at;
+
+-- name: DeleteSkillFolder :one
+-- Memberships cascade; the skills themselves survive.
+DELETE FROM app.skill_folders
+WHERE id = $1
+RETURNING id;
+
+-- name: LockSkillFolderQuota :exec
+-- Serialize concurrent membership inserts for the SAME folder, so the COUNT →
+-- per-folder cap check → INSERT is a critical section (free tier caps skills per
+-- folder; see quota.ResourceSkillPerFolder).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'));
+
+-- name: CountFolderItems :one
+SELECT count(*)::bigint AS n
+FROM app.skill_folder_items
+WHERE folder_id = $1;
+
+-- name: UpsertSkillFolderItem :exec
+-- Add a skill to a folder (or update its preset flag if already a member).
+INSERT INTO app.skill_folder_items (org_id, folder_id, skill_id, is_preset, added_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (folder_id, skill_id) DO UPDATE
+SET is_preset = EXCLUDED.is_preset;
+
+-- name: RemoveSkillFolderItem :one
+DELETE FROM app.skill_folder_items
+WHERE folder_id = $1 AND skill_id = $2
+RETURNING skill_id;
+
+-- name: SetSkillFolderItemPreset :one
+UPDATE app.skill_folder_items
+SET is_preset = $3
+WHERE folder_id = $1 AND skill_id = $2
+RETURNING folder_id, skill_id, is_preset;
+
+-- name: ListFoldersForSkills :many
+-- Folder memberships for a set of skills in one round-trip (the folder chips on
+-- each row of a skills listing — no N+1).
+SELECT fi.skill_id, f.id AS folder_id, f.slug, f.title, fi.is_preset
+FROM app.skill_folder_items fi
+JOIN app.skill_folders f ON f.id = fi.folder_id
+WHERE fi.skill_id = ANY(sqlc.arg(skill_ids)::uuid[])
+ORDER BY f.slug;
+
+-- name: ListFolderSkills :many
+-- Every skill in a folder that has a live version (the bulk-download set).
+SELECT sqlc.embed(sk),
+       COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
+       COALESCE(v.version_no, 0)::int AS version
+FROM app.skill_folder_items fi
+JOIN app.skills sk ON sk.id = fi.skill_id
+LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
+WHERE fi.folder_id = $1
+  AND sk.current_version_id IS NOT NULL
+ORDER BY sk.slug;
+
+-- name: DeleteSkillFolderItemsForSkill :exec
+-- Replace-memberships helper: clear a skill's memberships before re-inserting
+-- the new set (PUT /skills/{id}/folders semantics), preserving nothing.
+DELETE FROM app.skill_folder_items
+WHERE skill_id = $1;
+
+-- ===========================================================================
+-- skills seeding — lazy per-org default folders + preset skills
+-- ===========================================================================
+
+-- name: ListCurrentSkillVersionsForGC :many
+-- Every skill's CURRENT version (latest-only model: that is the only version
+-- whose blobs must survive GC — superseded skill versions' blobs become
+-- orphans). The R2 GC unions these manifests' blob refs with the retained site
+-- versions' refs before deleting unreferenced org blobs; without this, skill
+-- content would look orphaned to a site-only GC and be deleted. RLS scopes the
+-- rows to the active org.
+SELECT sk.id AS skill_id, sk.current_version_id AS version_id
+FROM app.skills sk
+WHERE sk.current_version_id IS NOT NULL
+ORDER BY sk.id;
+
+-- name: LockOrgSkillsSeed :exec
+-- Serialize concurrent first-touches of the skills feature for an org, so the
+-- skills_seeded check → seed → set-flag sequence runs exactly once.
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':skills_seed'));
+
+-- name: GetOrgSkillsSeeded :one
+SELECT COALESCE(
+    (SELECT skills_seeded FROM app.org_meta WHERE id = $1),
+    false
+)::boolean AS skills_seeded;
+
+-- name: SetOrgSkillsSeeded :exec
+UPDATE app.org_meta
+SET skills_seeded = $2
+WHERE id = $1;

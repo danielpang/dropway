@@ -62,6 +62,9 @@ type stubBlobs struct{}
 func (stubBlobs) GetManifest(context.Context, string, string, string) ([]byte, error) {
 	return nil, errors.New("stub: GetManifest not implemented")
 }
+func (stubBlobs) GetSkillManifest(context.Context, string, string, string) ([]byte, error) {
+	return nil, errors.New("stub: GetSkillManifest not implemented")
+}
 func (stubBlobs) GetBlob(context.Context, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("stub: GetBlob not implemented")
 }
@@ -205,7 +208,7 @@ func TestMCPServer_Endpoints(t *testing.T) {
 	verifier := coreauth.NewVerifier(jwks.URL, itIssuer, itResource,
 		coreauth.WithExtraAudiences(itResource+"/"))
 	st := store.New(appPool)
-	svc := &tools.Service{Store: st, Blobs: stubBlobs{}}
+	svc := &tools.Service{Store: st, Skills: st, Blobs: stubBlobs{}}
 
 	ts := httptest.NewServer(newMux(verifier, st, svc, itResource, itIssuer))
 	defer ts.Close()
