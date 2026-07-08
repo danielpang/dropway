@@ -682,7 +682,7 @@ const skillManifestJSON = `{"schema_version":1,"files":{
 
 func skillFixture() (*fakeSkills, *fakeBlobs) {
 	skills := &fakeSkills{bySlug: map[string]store.Skill{
-		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1")},
+		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1"), Version: 2},
 	}}
 	blobs := &fakeBlobs{
 		skillManifests: map[string][]byte{"sk1/v1": []byte(skillManifestJSON)},
@@ -704,6 +704,11 @@ func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
 	}
 	if out.Name != "writing" || out.Truncated {
 		t.Fatalf("out wrong: %+v", out)
+	}
+	// The download carries the current version so a client can record it and later
+	// detect updates (via check_skill_updates).
+	if out.Version != 2 {
+		t.Errorf("download should carry version 2, got %d", out.Version)
 	}
 	if len(out.Files) != 2 {
 		t.Fatalf("want 2 files, got %d", len(out.Files))
