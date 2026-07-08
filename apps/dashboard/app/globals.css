@@ -124,6 +124,23 @@
   }
 }
 
+/*
+ * iOS Safari auto-zooms the viewport whenever a focused form control has a
+ * font-size below 16px. Our inputs/selects render at text-sm (14px), so tapping
+ * one zooms the page in. Force the effective size to 16px on coarse-pointer
+ * (touch) devices only, so the desktop design keeps its 14px scale while iOS no
+ * longer zooms. `!important` is required to win over Tailwind's `.text-sm`
+ * class, which outranks a bare element selector. Checkboxes/radios are excluded
+ * since they carry no text and would only grow their hit box.
+ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Respect users who prefer reduced motion, disable transitions/animations. */
 @media (prefers-reduced-motion: reduce) {
   *,
