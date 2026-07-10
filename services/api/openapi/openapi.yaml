@@ -541,6 +541,241 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/sites/{id}/versions/{versionID}/preview:
+    post:
+      summary: Create, renew, or re-create a version's preview URL
+      description: >
+        Registers (or extends) a time-limited preview host pinned to one draft
+        version and projects it to the edge. Previews default to 7 days
+        (PREVIEW_TTL_HOURS); calling this again re-creates an expired preview or
+        extends a live one. The draft's content is retained by the draft-aware GC,
+        so re-creation is cheap.
+      operationId: createPreview
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+        - name: versionID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Preview registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preview_url: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+                  version_id: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a version's preview URL
+      operationId: deletePreview
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+        - name: versionID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Preview deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/ai/sessions:
+    post:
+      summary: Start an AI builder session
+      description: >
+        Creates a chat session whose LLM (via OpenRouter) edits the site in an
+        isolated sandbox. Provide site_id to edit an existing site, or slug to
+        create a new site first (the "build with AI" flow). Requires the org AI
+        kill switch on and (in the hosted build) a paid plan with a card on file.
+      operationId: createAISession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site_id: { type: string, format: uuid, description: Edit this existing site. }
+                slug: { type: string, description: Create a new site with this slug (when site_id is omitted). }
+                model: { type: string, description: OpenRouter model id (defaults to the server default). }
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AISession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { description: A paid plan is required (hosted build). }
+        "403": { description: The AI builder is disabled for this org. }
+        "429": { description: Too many active AI sessions. }
+        "503": { description: The AI builder is not configured. }
+    get:
+      summary: List a site's AI builder sessions
+      operationId: listAISessions
+      parameters:
+        - name: site_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AISession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/ai/sessions/{id}:
+    get:
+      summary: Get an AI session and its transcript
+      operationId: getAISession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Session + messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session: { $ref: "#/components/schemas/AISession" }
+                  messages: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete an AI session
+      operationId: deleteAISession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/ai/sessions/{id}/messages:
+    post:
+      summary: Send a message and stream the builder turn (SSE)
+      description: >
+        Appends the user message and runs one builder turn, streaming the response
+        as Server-Sent Events (text/event-stream): token deltas, tool activity, and
+        a final draft_ready event carrying the preview URL, then done. A spend-cap
+        hit ends the turn with an error event.
+      operationId: postAIMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        "200":
+          description: SSE stream of the turn
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: The AI builder is disabled for this org. }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/ai/sessions/{id}/events:
+    get:
+      summary: Replay a session's transcript (SSE, resumable)
+      description: >
+        Replays the persisted transcript as SSE, resuming after the Last-Event-ID
+        header (= message seq). Used for reconnect and history; live turn events
+        come from the messages endpoint's streamed response.
+      operationId: getAIEvents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: SSE replay
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/ai/models:
+    get:
+      summary: List the OpenRouter model catalog for the picker
+      operationId: listAIModels
+      responses:
+        "200":
+          description: Models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  default: { type: string }
+                  models: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { description: The AI builder is not configured. }
+
+  /v1/orgs/ai:
+    get:
+      summary: Get the org AI settings and current-period spend
+      operationId: getAIOrgSettings
+      responses:
+        "200":
+          description: AI settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AISettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      summary: Update the org AI kill switch and/or spend cap (admin/owner)
+      operationId: patchAIOrgSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ai_enabled: { type: boolean }
+                ai_monthly_cap_usd: { type: number }
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AISettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/sites/{id}/access:
     put:
       summary: Set a site's access mode + policy (admin/owner only)
@@ -1742,6 +1977,22 @@ components:
               x: { type: string, description: base64url(raw public key) }
               use: { type: string, example: sig }
               alg: { type: string, example: EdDSA }
+
+    AISession:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        site_id: { type: string, format: uuid }
+        status: { type: string, enum: [active, running, idle, archived, failed] }
+        model: { type: string }
+        created_at: { type: string, format: date-time }
+
+    AISettings:
+      type: object
+      properties:
+        ai_enabled: { type: boolean }
+        ai_monthly_cap_usd: { type: number }
+        spent_usd: { type: number, description: AI spend so far in the current calendar month (USD). }
 
     Site:
       type: object

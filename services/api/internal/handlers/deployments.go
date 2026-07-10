@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
-	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
@@ -120,6 +120,9 @@ type finalizeResponse struct {
 	VersionID  string `json:"version_id"`
 	VersionNo  int32  `json:"version_no"`
 	PreviewURL string `json:"preview_url"`
+	// PreviewExpiresAt is the RFC3339 deadline of the preview host (default 7
+	// days; renewable via POST /v1/sites/{id}/versions/{versionID}/preview).
+	PreviewExpiresAt string `json:"preview_expires_at,omitempty"`
 	// Warnings are non-fatal advisories about the finalized deploy (e.g. a missing
 	// root index.html). The deploy still succeeds; clients (dashboard, MCP, CLI)
 	// surface these so a publishable-but-likely-broken upload doesn't 404 silently.
@@ -165,8 +168,8 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	siteID := chi.URLParam(r, "id")
 
-	site, err := a.Store.GetSite(r.Context(), t, siteID)
-	if err != nil {
+	// Confused-deputy guard: the site must belong to the active tenant.
+	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -239,17 +242,29 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	// canonical org-namespaced host with the per-version short id PREPENDED as a
 	// further single label: <shortid>--<orgSlug>--<appSlug>.<ContentDomain>, rendered
 	// with the configured scheme/port.
-	orgSlug, err := a.Store.OrgSlug(r.Context(), t)
+	//
+	// Register the preview route (host_routes kind='preview', pinned to this
+	// version, expiring previewTTL from now) and project it to the edge so the
+	// URL actually serves. Registration failures are surfaced (the URL would be
+	// dead); the KV write is best-effort like every other projection write — the
+	// DB row is authoritative and the rebuild/reconcile path backstops it.
+	prev, err := a.Store.CreatePreviewRoute(r.Context(), t, siteID, ver.ID, a.previewTTL())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	previewHost := shortID(ver.ID) + "--" + projection.HostForSite(orgSlug, site.Slug)
+	if a.Projection != nil {
+		if err := a.Projection.PutRoute(r.Context(), prev.Host, prev.Route); err != nil {
+			logger(r).Error("preview projection write failed after finalize",
+				"host", prev.Host, "site_id", siteID, "version_id", ver.ID, "err", err)
+		}
+	}
 	httpx.WriteJSON(w, http.StatusCreated, finalizeResponse{
-		VersionID:  ver.ID,
-		VersionNo:  ver.VersionNo,
-		PreviewURL: a.ContentURL(previewHost),
-		Warnings:   deployWarnings(files),
+		VersionID:        ver.ID,
+		VersionNo:        ver.VersionNo,
+		PreviewURL:       a.ContentURL(prev.Host),
+		PreviewExpiresAt: prev.ExpiresAt.UTC().Format(time.RFC3339),
+		Warnings:         deployWarnings(files),
 	})
 }
 
@@ -343,6 +358,17 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Publishing deletes the published version's preview: the store already
+	// removed the rows in the publish tx; drop the KV keys too. Best-effort — a
+	// missed delete only means the (now published) draft stays reachable on its
+	// preview host until the deadline; the ops sweep cleans stragglers.
+	for _, host := range res.DeletedPreviewHosts {
+		if err := a.Projection.DeleteRoute(r.Context(), host); err != nil {
+			logger(r).Error("preview route delete failed after publish",
+				"host", host, "site_id", siteID, "version_id", req.VersionID, "err", err)
+		}
+	}
+
 	logger(r).Info("published",
 		"site_id", siteID, "version_id", req.VersionID, "host", res.Host, "org_id", t.OrgID)
 	a.recordAudit(r, t, audit.ActionDeployPublish, "site:"+siteID, map[string]any{
@@ -388,22 +414,4 @@ func validSHA256(s string) bool {
 		}
 	}
 	return true
-}
-
-// shortID returns a short, URL-safe prefix of an id for the preview host label.
-func shortID(id string) string {
-	const n = 8
-	stripped := ""
-	for _, c := range id {
-		if c != '-' {
-			stripped += string(c)
-		}
-		if len(stripped) == n {
-			break
-		}
-	}
-	if stripped == "" {
-		return "preview"
-	}
-	return stripped
 }

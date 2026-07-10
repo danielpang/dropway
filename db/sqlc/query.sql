@@ -29,7 +29,7 @@ VALUES ($1)
 ON CONFLICT (org_id) DO NOTHING;
 
 -- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd
 FROM app.org_meta
 WHERE id = $1;
 
@@ -320,25 +320,25 @@ WHERE site_id = $1;
 
 -- name: CreateSiteVersion :one
 INSERT INTO app.site_versions (
-    org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by
+    org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_via
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at;
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at;
 
 -- name: GetSiteVersion :one
-SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
 WHERE id = $1;
 
 -- name: GetSiteVersionByContentHash :one
 -- Used to make a re-deploy of identical content idempotent (the per-site
 -- content_hash unique constraint backs this).
-SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
 WHERE site_id = $1 AND content_hash = $2;
 
 -- name: ListSiteVersions :many
-SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
 WHERE site_id = $1
 ORDER BY version_no DESC;
@@ -361,7 +361,7 @@ VALUES ($1, $2, $3);
 -- returns a row ONLY if the active org owns the host; another org's row (or an
 -- absent host) is a no-rows miss. Used by Publish / the projection writers to
 -- assert the publishing site OWNS the host before writing route:<host>.
-SELECT host, org_id, site_id, created_at
+SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
 WHERE host = $1;
 
@@ -372,7 +372,7 @@ WHERE host = $1;
 -- hosts. An access-mode / policy change must rewrite EVERY one of these routes
 -- (not just the canonical one), or a verified custom host keeps serving at the
 -- OLD access_mode after the policy tightened (revocation).
-SELECT host, org_id, site_id, created_at
+SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
 WHERE site_id = $1
 ORDER BY host;
@@ -521,10 +521,11 @@ RETURNING id, org_id, site_id, hostname, cf_hostname_id;
 -- updates only when the row is already owned by THIS (org, site) — a different
 -- owner can never be overwritten because RLS makes its row invisible to UPDATE, so
 -- the ON CONFLICT target row isn't visible and the upsert raises instead.
-INSERT INTO app.host_routes (host, org_id, site_id)
-VALUES ($1, $2, $3)
+INSERT INTO app.host_routes (host, org_id, site_id, kind)
+VALUES ($1, $2, $3, 'custom')
 ON CONFLICT (host) DO UPDATE
-SET site_id = EXCLUDED.site_id
+SET site_id = EXCLUDED.site_id,
+    kind    = EXCLUDED.kind
 WHERE app.host_routes.org_id = EXCLUDED.org_id;
 
 -- name: DeleteHostRoute :exec
@@ -545,7 +546,7 @@ SELECT
     s.org_id      AS org_id,
     s.slug        AS slug,
     s.access_mode AS access_mode,
-    s.current_version_id AS version_id
+    COALESCE(hr.version_id, s.current_version_id) AS version_id
 FROM app.host_routes hr
 JOIN app.sites s ON s.id = hr.site_id
 WHERE hr.host = $1;
@@ -621,6 +622,8 @@ SELECT
     v.site_id       AS site_id,
     v.version_no    AS version_no,
     v.r2_prefix     AS r2_prefix,
+    v.created_via   AS created_via,
+    v.created_at    AS created_at,
     (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
 FROM app.site_versions v
 JOIN app.sites s ON s.id = v.site_id
@@ -920,3 +923,201 @@ SELECT COALESCE(
 UPDATE app.org_meta
 SET skills_seeded = $2
 WHERE id = $1;
+
+-- ===========================================================================
+-- preview routes (AI builder / version previews) — time-limited draft hosts
+-- ===========================================================================
+
+-- name: UpsertPreviewRoute :exec
+-- Register (or renew) a preview host pinned to a specific draft version. PK on
+-- host enforces global uniqueness like every other route; ON CONFLICT updates
+-- only a row this org already owns AND that is a preview for the same site (a
+-- canonical/custom route can never be silently downgraded to a preview).
+INSERT INTO app.host_routes (host, org_id, site_id, kind, version_id, expires_at)
+VALUES ($1, $2, $3, 'preview', $4, $5)
+ON CONFLICT (host) DO UPDATE
+SET version_id = EXCLUDED.version_id,
+    expires_at = EXCLUDED.expires_at
+WHERE app.host_routes.org_id = EXCLUDED.org_id
+  AND app.host_routes.site_id = EXCLUDED.site_id
+  AND app.host_routes.kind = 'preview';
+
+-- name: SetVersionPreviewExpiry :exec
+-- Mirror of the preview route's deadline on the version row (NULL = no active
+-- preview); the draft-aware GC and the dashboard's "preview expired" state read
+-- this without joining host_routes.
+UPDATE app.site_versions
+SET preview_expires_at = $2
+WHERE id = $1;
+
+-- name: ListPreviewRoutesForVersion :many
+SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
+FROM app.host_routes
+WHERE version_id = $1 AND kind = 'preview'
+ORDER BY host;
+
+-- name: DeletePreviewRoutesForVersion :many
+-- Drop a version's preview routes, returning the hosts so the caller can also
+-- delete the KV keys (publish and explicit preview deletion).
+DELETE FROM app.host_routes
+WHERE version_id = $1 AND kind = 'preview'
+RETURNING host;
+
+-- name: ListPreviewRoutesForRebuild :many
+-- Unexpired preview routes joined to their site's access fields, for the DR
+-- rebuild: previews are part of the "KV is rebuildable from Postgres"
+-- invariant. Expired rows are skipped (the edge would 410 them anyway).
+SELECT
+    hr.host       AS host,
+    s.id          AS site_id,
+    s.org_id      AS org_id,
+    s.slug        AS slug,
+    s.access_mode AS access_mode,
+    hr.version_id AS version_id,
+    hr.expires_at AS expires_at
+FROM app.host_routes hr
+JOIN app.sites s ON s.id = hr.site_id
+WHERE hr.kind = 'preview'
+  AND hr.version_id IS NOT NULL
+  AND hr.expires_at > now()
+ORDER BY hr.host;
+
+-- name: DeleteExpiredPreviewRoutes :many
+-- Ops sweep: purge preview rows whose deadline passed more than the supplied
+-- grace interval ago, returning hosts for KV cleanup. The edge already 410s
+-- them; this is bookkeeping, not enforcement.
+DELETE FROM app.host_routes
+WHERE kind = 'preview' AND expires_at < $1
+RETURNING host;
+
+-- ===========================================================================
+-- AI builder — sessions, transcript, cost ledger
+-- ===========================================================================
+
+-- name: CreateAISession :one
+INSERT INTO app.ai_sessions (org_id, site_id, created_by, model, base_version_id)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+          base_version_id, latest_version_id, created_at, last_activity_at;
+
+-- name: GetAISession :one
+SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+       base_version_id, latest_version_id, created_at, last_activity_at
+FROM app.ai_sessions
+WHERE id = $1;
+
+-- name: ListAISessionsForOrg :many
+SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+       base_version_id, latest_version_id, created_at, last_activity_at
+FROM app.ai_sessions
+WHERE org_id = $1 AND status <> 'archived'
+ORDER BY last_activity_at DESC;
+
+-- name: ListAISessionsForSite :many
+SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+       base_version_id, latest_version_id, created_at, last_activity_at
+FROM app.ai_sessions
+WHERE site_id = $1 AND status <> 'archived'
+ORDER BY last_activity_at DESC;
+
+-- name: LockOrgAISessionQuota :exec
+-- Serialize concurrent session creates for the SAME org (TOCTOU guard for the
+-- per-org active-session concurrency cap, same pattern as LockOrgSiteQuota).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':ai_sessions'));
+
+-- name: CountActiveAISessions :one
+-- Active = a session a user could still be driving (not archived/failed).
+SELECT count(*)::bigint AS n
+FROM app.ai_sessions
+WHERE org_id = $1 AND status IN ('active', 'running', 'idle');
+
+-- name: SetAISessionStatus :exec
+UPDATE app.ai_sessions
+SET status = $2, last_activity_at = now()
+WHERE id = $1;
+
+-- name: SetAISessionSandbox :exec
+-- Cache the live sandbox handle (NULLs clear it after a reap/destroy).
+UPDATE app.ai_sessions
+SET sandbox_id = $2, sandbox_expires_at = $3, last_activity_at = now()
+WHERE id = $1;
+
+-- name: SetAISessionLatestVersion :exec
+UPDATE app.ai_sessions
+SET latest_version_id = $2, last_activity_at = now()
+WHERE id = $1;
+
+-- name: DeleteAISession :exec
+DELETE FROM app.ai_sessions
+WHERE id = $1;
+
+-- name: AppendAIMessage :one
+-- Transcript append with a per-session monotonic seq (MAX+1 over an empty set
+-- yields 1). Two racing appends can collide on the (session_id, seq) unique
+-- key; the store retries — in practice a session has a single writer (the turn
+-- loop holds the session lock).
+INSERT INTO app.ai_messages (org_id, session_id, seq, role, content)
+SELECT $1, $2, COALESCE(MAX(m.seq), 0) + 1, $3, $4
+FROM app.ai_messages m
+WHERE m.session_id = $2
+RETURNING id, org_id, session_id, seq, role, content, created_at;
+
+-- name: ListAIMessages :many
+-- The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
+-- pass 0 for the full history).
+SELECT id, org_id, session_id, seq, role, content, created_at
+FROM app.ai_messages
+WHERE session_id = $1 AND seq > $2
+ORDER BY seq;
+
+-- name: InsertAIUsage :one
+-- Append one OpenRouter generation to the cost ledger. Idempotent on the
+-- generation id (a retried turn never double-counts); RETURNING yields a row
+-- only when the generation is genuinely new (pgx.ErrNoRows = already recorded),
+-- mirroring InsertOrgBlob's dedup contract.
+INSERT INTO app.ai_usage (org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd)
+VALUES ($1, $2, $3, $4, $5, $6, $7::float8)
+ON CONFLICT (openrouter_generation_id) DO NOTHING
+RETURNING id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at;
+
+-- name: SumAIUsageSince :one
+-- The org's AI spend since a period start (the spend-cap check input and the
+-- dashboard usage figure).
+SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total_cost_usd
+FROM app.ai_usage
+WHERE org_id = $1 AND created_at >= $2;
+
+-- name: ListAIUsageForOrg :many
+-- Recent ledger rows for the billing page's usage detail.
+SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
+FROM app.ai_usage
+WHERE org_id = $1 AND created_at >= $2
+ORDER BY created_at DESC
+LIMIT $3;
+
+-- name: ListUnreportedAIUsage :many
+-- Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
+-- NULL), oldest first, for the per-row meter send + the ops retry sweep.
+SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
+FROM app.ai_usage
+WHERE org_id = $1 AND reported_to_billing_at IS NULL
+ORDER BY created_at
+LIMIT $2;
+
+-- name: MarkAIUsageReported :exec
+UPDATE app.ai_usage
+SET reported_to_billing_at = now()
+WHERE id = $1;
+
+-- name: SetAIEnabled :exec
+-- Org-level AI builder kill switch (owner/admin only, enforced in Go), the
+-- exact analog of SetMcpEnabled.
+UPDATE app.org_meta
+SET ai_enabled = $2
+WHERE id = $1;
+
+-- name: SetAIMonthlyCap :exec
+UPDATE app.org_meta
+SET ai_monthly_cap_usd = $2::float8
+WHERE id = $1;
+

@@ -157,6 +157,47 @@ func (e *Env) GC(ctx context.Context, p GCParams) ([]GCResult, error) {
 	return out, nil
 }
 
+// SweepPreviewsResult summarizes an expired-preview sweep.
+type SweepPreviewsResult struct {
+	Orgs           int
+	RoutesDeleted  int
+	KVDeleteErrors int
+}
+
+// SweepPreviews deletes expired AI/version preview routes across every org and
+// removes their edge KV keys. It is pure bookkeeping: the serving edge already
+// 410s a preview past its deadline, so this only reclaims stale host_routes rows
+// and KV keys. grace holds a just-expired preview a little longer so a race with
+// an in-flight re-create can't delete a freshly renewed row. Cross-org, driven
+// per org under each org's own RLS tenant context (like the GC / DR rebuild).
+func (e *Env) SweepPreviews(ctx context.Context, grace time.Duration) (SweepPreviewsResult, error) {
+	if grace <= 0 {
+		grace = time.Hour
+	}
+	orgIDs, err := e.Store.ListAllOrgIDs(ctx)
+	if err != nil {
+		return SweepPreviewsResult{}, err
+	}
+	cutoff := time.Now().Add(-grace)
+	res := SweepPreviewsResult{Orgs: len(orgIDs)}
+	for _, orgID := range orgIDs {
+		t := store.Tenant{OrgID: orgID, UserID: orgID}
+		hosts, err := e.Store.SweepExpiredPreviews(ctx, t, cutoff)
+		if err != nil {
+			return res, fmt.Errorf("ops: sweep previews for %s: %w", orgID, err)
+		}
+		for _, host := range hosts {
+			res.RoutesDeleted++
+			if e.Projection != nil {
+				if err := e.Projection.DeleteRoute(ctx, host); err != nil {
+					res.KVDeleteErrors++
+				}
+			}
+		}
+	}
+	return res, nil
+}
+
 // RebuildProjection runs the DR drill: rebuild the entire KV/D1 routing projection
 // from Postgres across ALL orgs and push it through the projection writer.
 func (e *Env) RebuildProjection(ctx context.Context) (RebuildResult, error) {

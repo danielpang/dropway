@@ -187,6 +187,34 @@ func HostForSite(orgSlug, appSlug string) string {
 	return orgSlug + "--" + appSlug + "." + ContentDomain
 }
 
+// PreviewHostForSite returns the time-limited preview host for one site
+// VERSION: `<shortVersionID>--<orgSlug>--<appSlug>.<ContentDomain>`. Like
+// HostForSite it stays a SINGLE DNS label (wildcard-cert constraint); the
+// version label goes FIRST so a preview host can never collide with a
+// canonical `<org>--<app>` host (slugs are slugified, the label is hex).
+func PreviewHostForSite(versionID, orgSlug, appSlug string) string {
+	return PreviewLabel(versionID) + "--" + HostForSite(orgSlug, appSlug)
+}
+
+// PreviewLabel is the short, URL-safe version-id prefix used as the leading
+// label segment of a preview host (8 chars of the uuid with dashes stripped).
+func PreviewLabel(versionID string) string {
+	const n = 8
+	stripped := ""
+	for _, c := range versionID {
+		if c != '-' {
+			stripped += string(c)
+		}
+		if len(stripped) == n {
+			break
+		}
+	}
+	if stripped == "" {
+		return "preview"
+	}
+	return stripped
+}
+
 // ContentDomain is the registrable, PSL-listed content domain under which
 // every tenant site is served. It is env-overridable via
 // CONTENT_DOMAIN (default "dropwaycontent.com") so a self-host/dev deployment

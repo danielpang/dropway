@@ -124,6 +124,12 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/{id}/deployments", api.FinalizeDeployment)
 			r.Post("/{id}/publish", api.Publish)
 
+			// Version previews: time-limited hosts pinned to one draft version.
+			// POST creates, renews, or re-creates an expired preview; DELETE
+			// removes it immediately. Publishing a version deletes its preview.
+			r.Post("/{id}/versions/{versionID}/preview", api.CreatePreview)
+			r.Delete("/{id}/versions/{versionID}/preview", api.DeletePreview)
+
 			// Phase 2 — access control & domains.
 			r.Put("/{id}/access", api.SetSiteAccess)
 
@@ -152,6 +158,23 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/{id}/domains", api.AddDomain)
 			r.Get("/{id}/domains", api.ListDomains)
 		})
+
+		// AI website builder: chat sessions whose LLM (via OpenRouter) edits the
+		// site in an isolated sandbox, landing results as time-limited preview
+		// drafts the user publishes by hand. Messages stream the turn as SSE.
+		r.Route("/ai", func(r chi.Router) {
+			r.Post("/sessions", api.CreateAISession)
+			r.Get("/sessions", api.ListAISessions)
+			r.Get("/sessions/{id}", api.GetAISession)
+			r.Delete("/sessions/{id}", api.DeleteAISession)
+			r.Post("/sessions/{id}/messages", api.PostAIMessage)
+			r.Get("/sessions/{id}/events", api.GetAIEvents)
+			r.Get("/models", api.ListAIModels)
+		})
+
+		// Org AI settings: the kill switch + spend cap + current-period spend.
+		r.Get("/orgs/ai", api.GetAIOrgSettings)
+		r.Patch("/orgs/ai", api.PatchAIOrgSettings)
 
 		// Org-wide skill sharing: content-addressed skill uploads (latest-only
 		// versions; finalize = publish) organized into admin-curated folders.

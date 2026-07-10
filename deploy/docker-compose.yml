@@ -367,6 +367,30 @@ services:
     depends_on:
       - serve
 
+  # ---------------------------------------------------------------------------
+  # sandbox-image — build-only helper (profile: ai). The AI website builder runs
+  # untrusted, LLM-generated build commands inside THIS image via sandboxd (the
+  # in-container agent). Build it so SANDBOX_IMAGE=dropway-sandbox resolves:
+  #   COMPOSE_PROFILES=...,ai docker compose -f deploy/docker-compose.yml build sandbox-image
+  #
+  # SELF-HOST CAVEAT: the docker sandbox provider needs the `docker` CLI + socket
+  # in the `api` process (root-equivalent on the host), which the distroless api
+  # image does not ship. Turnkey self-host sandbox execution therefore needs a
+  # docker-enabled api image + a mounted /var/run/docker.sock; until then, point
+  # SANDBOX_PROVIDER at Fly, or run the api outside distroless. The hosted build
+  # uses Fly Machines and has no such caveat.
+  # ---------------------------------------------------------------------------
+  sandbox-image:
+    build:
+      context: ..
+      dockerfile: services/sandboxd/Dockerfile
+    image: dropway-sandbox
+    profiles: ["ai"]
+    # Build-only: it is never `up`'d as a long-running service (sandboxd runs
+    # per session inside a fresh container the provider creates).
+    command: ["--help"]
+    restart: "no"
+
 volumes:
   pgdata:
   miniodata:

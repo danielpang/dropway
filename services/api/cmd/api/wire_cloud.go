@@ -101,6 +101,16 @@ func quotaProviderName() string { return "cloud hard-cap (free/pro/business/ente
 // Without a DB pool or the Stripe secrets, billing can't run; we log and skip so
 // the rest of the API still serves (the webhook would 500 with no store; better to
 // not register it).
+// cloudAIGate adapts cloud/billing's AIMeter (which answers AllowAIForOrg by
+// org id) to the handlers.AIGate interface (which takes a store.Tenant). Go's
+// internal-package rule forbids cloud/ from naming store.Tenant, so this
+// adapter lives here (inside services/api) exactly like storeRoleChecker.
+type cloudAIGate struct{ meter *cloudbilling.AIMeter }
+
+func (g cloudAIGate) AllowAI(ctx context.Context, t store.Tenant) (bool, string, error) {
+	return g.meter.AllowAIForOrg(ctx, t.OrgID)
+}
+
 func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	if deps.Pool == nil {
 		slog.Warn("cloud billing NOT mounted: no DATABASE_URL (billing requires Postgres)")
@@ -147,6 +157,20 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	} else {
 		slog.Warn("cloud billing: no route reprojector — the attribution banner will not update until the org republishes")
 	}
+	// AI pass-through billing: attach the Stripe meter to the AI runner (each
+	// generation's cost + 3% fee is metered) and the paid-plan gate to the API
+	// (the hosted build requires a paid plan with a card on file). Both no-op when
+	// the AI builder is disabled. Requires the Stripe secret (metering) — guarded
+	// by the same key check the webhook mount is under.
+	if deps.API != nil {
+		meter := cloudbilling.NewAIMeter(deps.Pool, deps.Cfg.StripeSecretKey)
+		deps.API.AIGate = cloudAIGate{meter: meter}
+		if deps.AIRunner != nil {
+			deps.AIRunner.UsageReporter = meter
+			slog.Info("cloud AI metering wired (pass-through OpenRouter cost + 3% fee)")
+		}
+	}
+
 	prices := cloudbilling.NewPriceMap(deps.Cfg.StripePricePro, deps.Cfg.StripePriceBusiness, deps.Cfg.StripePriceEnterprise)
 
 	// Webhook: verify → ProcessEvent (dedupe + persist ATOMICALLY in one tx, FIX 1).

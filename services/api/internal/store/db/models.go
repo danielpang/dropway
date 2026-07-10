@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppAiMessage struct {
+	ID        string
+	OrgID     string
+	SessionID string
+	Seq       int32
+	Role      string
+	Content   []byte
+	CreatedAt time.Time
+}
+
+type AppAiSession struct {
+	ID               string
+	OrgID            string
+	SiteID           string
+	CreatedBy        string
+	Status           string
+	Model            string
+	SandboxID        pgtype.Text
+	SandboxExpiresAt pgtype.Timestamptz
+	BaseVersionID    *string
+	LatestVersionID  *string
+	CreatedAt        time.Time
+	LastActivityAt   time.Time
+}
+
+type AppAiUsage struct {
+	ID                     string
+	OrgID                  string
+	SessionID              *string
+	Model                  string
+	OpenrouterGenerationID string
+	PromptTokens           int64
+	CompletionTokens       int64
+	CostUsd                float64
+	ReportedToBillingAt    pgtype.Timestamptz
+	CreatedAt              time.Time
+}
+
 type AppAllowlistEntry struct {
 	ID              string
 	OrgID           string
@@ -63,6 +101,9 @@ type AppHostRoute struct {
 	OrgID     string
 	SiteID    string
 	CreatedAt time.Time
+	Kind      string
+	VersionID *string
+	ExpiresAt pgtype.Timestamptz
 }
 
 type AppOrgBlob struct {
@@ -81,6 +122,8 @@ type AppOrgMetum struct {
 	OrgStatus            string
 	McpEnabled           bool
 	SkillsSeeded         bool
+	AiEnabled            bool
+	AiMonthlyCapUsd      float64
 }
 
 type AppOrgUsage struct {
@@ -136,16 +179,18 @@ type AppSiteAccessPolicy struct {
 }
 
 type AppSiteVersion struct {
-	ID          string
-	OrgID       string
-	SiteID      string
-	VersionNo   int32
-	Status      string
-	R2Prefix    string
-	ContentHash string
-	SizeBytes   int64
-	CreatedBy   string
-	CreatedAt   time.Time
+	ID               string
+	OrgID            string
+	SiteID           string
+	VersionNo        int32
+	Status           string
+	R2Prefix         string
+	ContentHash      string
+	SizeBytes        int64
+	CreatedBy        string
+	CreatedAt        time.Time
+	CreatedVia       string
+	PreviewExpiresAt pgtype.Timestamptz
 }
 
 type AppSkill struct {

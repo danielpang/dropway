@@ -6,17 +6,26 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
 	// Increment the org's running storage total by the new-blob delta (called once per
 	// deploy with the sum of genuinely-new blob sizes).
 	AddOrgStorage(ctx context.Context, arg AddOrgStorageParams) error
+	// Transcript append with a per-session monotonic seq (MAX+1 over an empty set
+	// yields 1). Two racing appends can collide on the (session_id, seq) unique
+	// key; the store retries — in practice a session has a single writer (the turn
+	// loop holds the session lock).
+	AppendAIMessage(ctx context.Context, arg AppendAIMessageParams) (AppAiMessage, error)
 	// Claim a pending grant for the first verified account that matches it: set
 	// claimed_at + claimed_by_user_id. Idempotent — re-claiming by the same user is a
 	// no-op; we only set claim fields when still unclaimed so the original claimant
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
+	// Active = a session a user could still be driving (not archived/failed).
+	CountActiveAISessions(ctx context.Context, orgID string) (int64, error)
 	CountFolderItems(ctx context.Context, folderID string) (int64, error)
 	// The number of sites in the active org (the per-ORG cap input, POOLED across all
 	// members — seats are free, so the lever is org site count). Read under the
@@ -24,6 +33,10 @@ type Querier interface {
 	// org_id to be explicit.
 	CountSitesForOrg(ctx context.Context, orgID string) (int64, error)
 	CountSkillsForOrg(ctx context.Context, orgID string) (int64, error)
+	// ===========================================================================
+	// AI builder — sessions, transcript, cost ledger
+	// ===========================================================================
+	CreateAISession(ctx context.Context, arg CreateAISessionParams) (AppAiSession, error)
 	// ===========================================================================
 	// site_comments — org-internal discussion on a shared site, with @mentions
 	// ===========================================================================
@@ -49,11 +62,16 @@ type Querier interface {
 	// ===========================================================================
 	CreateSkillFolder(ctx context.Context, arg CreateSkillFolderParams) (AppSkillFolder, error)
 	CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (AppSkillVersion, error)
+	DeleteAISession(ctx context.Context, id string) error
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
 	// Remove a custom domain, returning its hostname + cf_hostname_id so the caller can
 	// also drop the global host route (so serve/edge stop resolving the host) and delete
 	// the Cloudflare custom hostname. RLS scopes the delete to the active org.
 	DeleteDomain(ctx context.Context, id string) (DeleteDomainRow, error)
+	// Ops sweep: purge preview rows whose deadline passed more than the supplied
+	// grace interval ago, returning hosts for KV cleanup. The edge already 410s
+	// them; this is bookkeeping, not enforcement.
+	DeleteExpiredPreviewRoutes(ctx context.Context, expiresAt pgtype.Timestamptz) ([]string, error)
 	// Remove every external-email allowlist grant in the active org (reconcile on
 	// disabling external sharing — revoke external access).
 	DeleteExternalAllowlistEntriesForOrg(ctx context.Context) error
@@ -69,6 +87,9 @@ type Querier interface {
 	// Drop every vote on a subject (called when the site/skill itself is deleted,
 	// since the polymorphic table can't FK-cascade to two parents).
 	DeletePostVotesForSubject(ctx context.Context, arg DeletePostVotesForSubjectParams) error
+	// Drop a version's preview routes, returning the hosts so the caller can also
+	// delete the KV keys (publish and explicit preview deletion).
+	DeletePreviewRoutesForVersion(ctx context.Context, versionID *string) ([]string, error)
 	// Remove a skill (versions + folder memberships cascade). RETURNING detects an
 	// RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
 	DeleteSkill(ctx context.Context, id string) (string, error)
@@ -97,6 +118,7 @@ type Querier interface {
 	EnsureOrgMeta(ctx context.Context, id string) error
 	// Idempotent upsert of the per-org counter row backing the quota gate.
 	EnsureOrgUsage(ctx context.Context, orgID string) error
+	GetAISession(ctx context.Context, id string) (AppAiSession, error)
 	// Look up a grant by (site, email) for the authz claim path.
 	GetAllowlistEntryByEmail(ctx context.Context, arg GetAllowlistEntryByEmailParams) (AppAllowlistEntry, error)
 	GetDomain(ctx context.Context, id string) (AppDomain, error)
@@ -148,6 +170,11 @@ type Querier interface {
 	// Bump the org's sites_count counter, returning the new value. Run inside the
 	// create-site tx after the row is inserted.
 	IncSiteCount(ctx context.Context, orgID string) (int32, error)
+	// Append one OpenRouter generation to the cost ledger. Idempotent on the
+	// generation id (a retried turn never double-counts); RETURNING yields a row
+	// only when the generation is genuinely new (pgx.ErrNoRows = already recorded),
+	// mirroring InsertOrgBlob's dedup contract.
+	InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) (AppAiUsage, error)
 	// ===========================================================================
 	// domains (Phase 2) — Cloudflare-for-SaaS custom hostnames
 	// ===========================================================================
@@ -169,6 +196,13 @@ type Querier interface {
 	// yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
 	// the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
 	InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (int64, error)
+	// The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
+	// pass 0 for the full history).
+	ListAIMessages(ctx context.Context, arg ListAIMessagesParams) ([]AppAiMessage, error)
+	ListAISessionsForOrg(ctx context.Context, orgID string) ([]AppAiSession, error)
+	ListAISessionsForSite(ctx context.Context, siteID string) ([]AppAiSession, error)
+	// Recent ledger rows for the billing page's usage detail.
+	ListAIUsageForOrg(ctx context.Context, arg ListAIUsageForOrgParams) ([]AppAiUsage, error)
 	ListAllowlistEntries(ctx context.Context, siteID string) ([]AppAllowlistEntry, error)
 	// Page the active org's audit log newest-first. RLS scopes the read to the org; the
 	// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
@@ -215,6 +249,11 @@ type Querier interface {
 	// load an unbounded result. RLS scopes the read to the active org; the
 	// (subject_type, subject_id, created_at) index backs both orderings.
 	ListPostComments(ctx context.Context, arg ListPostCommentsParams) ([]AppPostComment, error)
+	// Unexpired preview routes joined to their site's access fields, for the DR
+	// rebuild: previews are part of the "KV is rebuildable from Postgres"
+	// invariant. Expired rows are skipped (the edge would 410 them anyway).
+	ListPreviewRoutesForRebuild(ctx context.Context) ([]ListPreviewRoutesForRebuildRow, error)
+	ListPreviewRoutesForVersion(ctx context.Context, versionID *string) ([]AppHostRoute, error)
 	// Every site in the active org whose access_mode = 'public' (used by the reconcile
 	// on disabling external sharing: these are downgraded to org_only).
 	ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error)
@@ -241,6 +280,9 @@ type Querier interface {
 	// only to their owner (caller_id), so half-finished uploads don't clutter the
 	// org listing. RLS scopes every read to the active org.
 	ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListSkillsRow, error)
+	// Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
+	// NULL), oldest first, for the per-row meter send + the ops retry sweep.
+	ListUnreportedAIUsage(ctx context.Context, arg ListUnreportedAIUsageParams) ([]AppAiUsage, error)
 	// ===========================================================================
 	// R2 version GC (Phase 4) — versions to retain per org
 	// ===========================================================================
@@ -251,6 +293,9 @@ type Querier interface {
 	// collect referenced blob shas, and deletes every org blob not in that set. RLS
 	// scopes the rows to the active org. r2_prefix + id locate the manifest object.
 	ListVersionsForGC(ctx context.Context) ([]ListVersionsForGCRow, error)
+	// Serialize concurrent session creates for the SAME org (TOCTOU guard for the
+	// per-org active-session concurrency cap, same pattern as LockOrgSiteQuota).
+	LockOrgAISessionQuota(ctx context.Context, dollar_1 string) error
 	// Serialize the members-cap preflight for an org: a transaction-scoped advisory
 	// lock keyed by hashtext(org||':members'). Best-effort server-side enforcement on
 	// OUR code path (Better Auth actually inserts the member row), so the lock just
@@ -284,6 +329,7 @@ type Querier interface {
 	// per-folder cap check → INSERT is a critical section (free tier caps skills per
 	// folder; see quota.ResourceSkillPerFolder).
 	LockSkillFolderQuota(ctx context.Context, dollar_1 string) error
+	MarkAIUsageReported(ctx context.Context, id string) error
 	NextSkillVersionNo(ctx context.Context, skillID string) (int32, error)
 	// ===========================================================================
 	// site_versions
@@ -303,6 +349,14 @@ type Querier interface {
 	// access fields. Runs under RLS so only the active org's hosts resolve — the
 	// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
 	ResolveSiteByHostRoute(ctx context.Context, host string) (ResolveSiteByHostRouteRow, error)
+	// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
+	// exact analog of SetMcpEnabled.
+	SetAIEnabled(ctx context.Context, arg SetAIEnabledParams) error
+	SetAIMonthlyCap(ctx context.Context, arg SetAIMonthlyCapParams) error
+	SetAISessionLatestVersion(ctx context.Context, arg SetAISessionLatestVersionParams) error
+	// Cache the live sandbox handle (NULLs clear it after a reap/destroy).
+	SetAISessionSandbox(ctx context.Context, arg SetAISessionSandboxParams) error
+	SetAISessionStatus(ctx context.Context, arg SetAISessionStatusParams) error
 	// ===========================================================================
 	// org policy (Phase 2) — allow_external_sharing toggle + reconcile
 	// ===========================================================================
@@ -342,9 +396,16 @@ type Querier interface {
 	// Fill a skill's human metadata (from SKILL.md frontmatter on finalize, or an
 	// explicit edit). Empty strings are passed as NULL so "unset" round-trips.
 	SetSkillMeta(ctx context.Context, arg SetSkillMetaParams) (AppSkill, error)
+	// Mirror of the preview route's deadline on the version row (NULL = no active
+	// preview); the draft-aware GC and the dashboard's "preview expired" state read
+	// this without joining host_routes.
+	SetVersionPreviewExpiry(ctx context.Context, arg SetVersionPreviewExpiryParams) error
 	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
 	// floors at zero so a reconciliation skew can never make the counter negative.
 	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error
+	// The org's AI spend since a period start (the spend-cap check input and the
+	// dashboard usage figure).
+	SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams) (float64, error)
 	// Advance the custom-domain state machine (pending → verifying → verified/failed)
 	// and the TLS status from a Cloudflare Status() poll.
 	UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error)
@@ -370,6 +431,14 @@ type Querier interface {
 	// (subject_type, subject_id, user); a flip from up to down overwrites value. RLS
 	// scopes the write to the active org.
 	UpsertPostVote(ctx context.Context, arg UpsertPostVoteParams) error
+	// ===========================================================================
+	// preview routes (AI builder / version previews) — time-limited draft hosts
+	// ===========================================================================
+	// Register (or renew) a preview host pinned to a specific draft version. PK on
+	// host enforces global uniqueness like every other route; ON CONFLICT updates
+	// only a row this org already owns AND that is a preview for the same site (a
+	// canonical/custom route can never be silently downgraded to a preview).
+	UpsertPreviewRoute(ctx context.Context, arg UpsertPreviewRouteParams) error
 	// Insert or replace the per-site access policy (one row per site, PK = site_id).
 	// password_hash is non-null only for mode='password'; expires_at / unlisted are
 	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'

@@ -4,12 +4,15 @@ package handlers
 
 import (
 	"context"
+	"time"
 
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgerevoke"
 	"github.com/danielpang/dropway/internal/edgetoken"
+	"github.com/danielpang/dropway/internal/openrouter"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
+	aipkg "github.com/danielpang/dropway/services/api/internal/ai"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -86,6 +89,23 @@ type SiteStore interface {
 	// rewrite EVERY route on an access/policy change (FIX 1).
 	ListHostRoutesForSite(ctx context.Context, t store.Tenant, siteID string) ([]store.HostRoute, error)
 
+	// Version previews: time-limited hosts pinned to one draft version. Create
+	// also renews/extends; the returned route is projected by the handler.
+	CreatePreviewRoute(ctx context.Context, t store.Tenant, siteID, versionID string, ttl time.Duration) (store.PreviewResult, error)
+	DeletePreviewRoutes(ctx context.Context, t store.Tenant, siteID, versionID string) ([]string, error)
+
+	// AI builder: sessions, transcript, cost/spend, and the org AI settings.
+	StartAISession(ctx context.Context, t store.Tenant, siteID, model string, baseVersionID *string, maxConcurrent int) (store.AISession, error)
+	GetAISession(ctx context.Context, t store.Tenant, id string) (store.AISession, error)
+	ListAISessionsForSite(ctx context.Context, t store.Tenant, siteID string) ([]store.AISession, error)
+	DeleteAISession(ctx context.Context, t store.Tenant, id string) error
+	ListAIMessages(ctx context.Context, t store.Tenant, sessionID string, afterSeq int32) ([]store.AIMessage, error)
+	AISpendSince(ctx context.Context, t store.Tenant, since time.Time) (float64, error)
+	ListAIUsage(ctx context.Context, t store.Tenant, since time.Time, limit int32) ([]store.AIUsageRow, error)
+	GetAISettings(ctx context.Context, t store.Tenant) (store.AISettings, error)
+	SetAIEnabled(ctx context.Context, t store.Tenant, enabled bool) error
+	SetAIMonthlyCap(ctx context.Context, t store.Tenant, capUSD float64) error
+
 	// Phase 4 — audit logging.
 	WriteAudit(ctx context.Context, t store.Tenant, rec store.AuditRecord) (store.AuditEntry, error)
 	ListAudit(ctx context.Context, t store.Tenant, p store.ListAuditParams) ([]store.AuditEntry, error)
@@ -159,3 +179,32 @@ var _ EdgeSigner = (*edgetoken.Signer)(nil)
 // DomainProvider is the Cloudflare-for-SaaS custom-hostname surface
 // (customdomains.Provider).
 type DomainProvider = customdomains.Provider
+
+// AIGate decides whether an org may use the AI builder beyond the org-level
+// ai_enabled switch (the cloud build gates it on a paid plan with a card on
+// file; OSS allows all). Reason is a short machine code the dashboard maps to a
+// message (e.g. "plan_required"). The open default (aiGateAllowAll) allows all.
+type AIGate interface {
+	AllowAI(ctx context.Context, t store.Tenant) (allowed bool, reason string, err error)
+}
+
+// aiGateAllowAll is the open-core default: AI is allowed for any org (self-host
+// with a BYO OpenRouter key). The cloud build swaps in a plan-tier gate.
+type aiGateAllowAll struct{}
+
+func (aiGateAllowAll) AllowAI(context.Context, store.Tenant) (bool, string, error) {
+	return true, "", nil
+}
+
+// AIModelCatalog fetches the OpenRouter model catalog for the picker. The
+// concrete impl is *openrouter.Client; nil means the models endpoint 503s.
+type AIModelCatalog interface {
+	Models(ctx context.Context) ([]openrouter.Model, error)
+}
+
+// AITurnRunner runs one builder turn, streaming events to emit. The concrete
+// impl is *ai.Runner; defining it as an interface keeps the handlers testable
+// with a scripted fake (no OpenRouter, no sandbox).
+type AITurnRunner interface {
+	RunTurn(ctx context.Context, t store.Tenant, sess store.AISession, userText string, previewTTL time.Duration, contentURL aipkg.ContentURL) error
+}

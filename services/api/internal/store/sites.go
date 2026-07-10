@@ -174,6 +174,12 @@ type SiteVersion struct {
 	SizeBytes   int64
 	CreatedBy   string
 	CreatedAt   time.Time
+	// CreatedVia distinguishes AI-builder drafts ('ai') from regular deploys
+	// ('deploy'); the draft-aware GC pins young 'ai' versions.
+	CreatedVia string
+	// PreviewExpiresAt mirrors the version's active preview-route deadline
+	// (nil = no active preview).
+	PreviewExpiresAt *time.Time
 }
 
 // ErrOrgSlugNotFound is returned when an org has no identity.organization row to read
@@ -356,6 +362,12 @@ type HostRoute struct {
 	Host   string
 	OrgID  string
 	SiteID string
+	// Kind is 'canonical' (the <org>--<slug> host), 'custom' (a verified custom
+	// domain), or 'preview' (a time-limited host pinned to one draft version).
+	Kind string
+	// VersionID / ExpiresAt are set only on kind='preview' rows.
+	VersionID *string
+	ExpiresAt *time.Time
 }
 
 // ListHostRoutesForSite returns EVERY host registered for a site in the global
@@ -376,11 +388,20 @@ func (s *Store) ListHostRoutesForSite(ctx context.Context, t Tenant, siteID stri
 		}
 		out = make([]HostRoute, len(rows))
 		for i, r := range rows {
-			out[i] = HostRoute{Host: r.Host, OrgID: r.OrgID, SiteID: r.SiteID}
+			out[i] = hostRouteFromDB(r)
 		}
 		return nil
 	})
 	return out, err
+}
+
+func hostRouteFromDB(r db.AppHostRoute) HostRoute {
+	hr := HostRoute{Host: r.Host, OrgID: r.OrgID, SiteID: r.SiteID, Kind: r.Kind, VersionID: r.VersionID}
+	if r.ExpiresAt.Valid {
+		t := r.ExpiresAt.Time
+		hr.ExpiresAt = &t
+	}
+	return hr
 }
 
 // ListSites returns the active tenant's sites (RLS scopes the query to the org).
@@ -524,7 +545,7 @@ func siteFromDB(r db.AppSite) Site {
 }
 
 func versionFromDB(r db.AppSiteVersion) SiteVersion {
-	return SiteVersion{
+	v := SiteVersion{
 		ID:          r.ID,
 		OrgID:       r.OrgID,
 		SiteID:      r.SiteID,
@@ -535,5 +556,11 @@ func versionFromDB(r db.AppSiteVersion) SiteVersion {
 		SizeBytes:   r.SizeBytes,
 		CreatedBy:   r.CreatedBy,
 		CreatedAt:   r.CreatedAt,
+		CreatedVia:  r.CreatedVia,
 	}
+	if r.PreviewExpiresAt.Valid {
+		t := r.PreviewExpiresAt.Time
+		v.PreviewExpiresAt = &t
+	}
+	return v
 }

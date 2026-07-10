@@ -31,6 +31,18 @@ const (
 	// ActionDeployPublish records a publish / rollback pointer flip
 	// (POST /v1/sites/{id}/publish).
 	ActionDeployPublish Action = "deploy.publish"
+	// ActionPreviewCreate records a version-preview host created/renewed
+	// (POST /v1/sites/{id}/versions/{versionID}/preview).
+	ActionPreviewCreate Action = "deploy.preview_create"
+	// ActionPreviewDelete records a version-preview host removed
+	// (DELETE /v1/sites/{id}/versions/{versionID}/preview).
+	ActionPreviewDelete Action = "deploy.preview_delete"
+	// ActionAISessionStart records a new AI builder session
+	// (POST /v1/ai/sessions).
+	ActionAISessionStart Action = "ai.session_start"
+	// ActionAISettings records a change to the org AI kill switch / spend cap
+	// (PATCH /v1/orgs/ai).
+	ActionAISettings Action = "ai.settings"
 	// ActionDomainAdd records a custom domain registered
 	// (POST /v1/sites/{id}/domains).
 	ActionDomainAdd Action = "domain.add"

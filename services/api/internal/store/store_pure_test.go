@@ -270,7 +270,7 @@ func TestSelectRetained_NegativeKeepClampsToCurrentOnly(t *testing.T) {
 		ver("v1", "s", 1, false),
 	}
 	// keepLastN < 0 is clamped to 0 → only the current version is retained.
-	got := selectRetained(rows, -5)
+	got := selectRetained(rows, -5, time.Now())
 	if len(got) != 1 || got[0].VersionID != "v2" {
 		t.Fatalf("keepLastN<0 should retain only the current version, got %+v", got)
 	}
@@ -284,7 +284,7 @@ func TestSelectRetained_PerSiteIndependent(t *testing.T) {
 		ver("b2", "site-b", 2, false),
 		ver("b1", "site-b", 1, true),
 	}
-	got := selectRetained(rows, 1)
+	got := selectRetained(rows, 1, time.Now())
 	keep := map[string]bool{}
 	for _, v := range got {
 		keep[v.VersionID] = true
@@ -305,7 +305,7 @@ func TestSelectRetained_NoCurrentFlag(t *testing.T) {
 		{VersionID: "v2", SiteID: "s", VersionNo: 2, IsCurrent: pgtype.Bool{}}, // invalid → not current
 		{VersionID: "v1", SiteID: "s", VersionNo: 1, IsCurrent: pgtype.Bool{Bool: false, Valid: true}},
 	}
-	got := selectRetained(rows, 1)
+	got := selectRetained(rows, 1, time.Now())
 	if len(got) != 1 || got[0].VersionID != "v2" {
 		t.Fatalf("want only the newest (v2) retained when nothing is current, got %+v", got)
 	}

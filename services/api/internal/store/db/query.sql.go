@@ -32,6 +32,45 @@ func (q *Queries) AddOrgStorage(ctx context.Context, arg AddOrgStorageParams) er
 	return err
 }
 
+const appendAIMessage = `-- name: AppendAIMessage :one
+INSERT INTO app.ai_messages (org_id, session_id, seq, role, content)
+SELECT $1, $2, COALESCE(MAX(m.seq), 0) + 1, $3, $4
+FROM app.ai_messages m
+WHERE m.session_id = $2
+RETURNING id, org_id, session_id, seq, role, content, created_at
+`
+
+type AppendAIMessageParams struct {
+	OrgID     string
+	SessionID string
+	Role      string
+	Content   []byte
+}
+
+// Transcript append with a per-session monotonic seq (MAX+1 over an empty set
+// yields 1). Two racing appends can collide on the (session_id, seq) unique
+// key; the store retries — in practice a session has a single writer (the turn
+// loop holds the session lock).
+func (q *Queries) AppendAIMessage(ctx context.Context, arg AppendAIMessageParams) (AppAiMessage, error) {
+	row := q.db.QueryRow(ctx, appendAIMessage,
+		arg.OrgID,
+		arg.SessionID,
+		arg.Role,
+		arg.Content,
+	)
+	var i AppAiMessage
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SessionID,
+		&i.Seq,
+		&i.Role,
+		&i.Content,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const claimAllowlistEntry = `-- name: ClaimAllowlistEntry :exec
 UPDATE app.allowlist_entries
 SET claimed_at         = COALESCE(claimed_at, now()),
@@ -51,6 +90,20 @@ type ClaimAllowlistEntryParams struct {
 func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error {
 	_, err := q.db.Exec(ctx, claimAllowlistEntry, arg.ID, arg.ClaimedByUserID)
 	return err
+}
+
+const countActiveAISessions = `-- name: CountActiveAISessions :one
+SELECT count(*)::bigint AS n
+FROM app.ai_sessions
+WHERE org_id = $1 AND status IN ('active', 'running', 'idle')
+`
+
+// Active = a session a user could still be driving (not archived/failed).
+func (q *Queries) CountActiveAISessions(ctx context.Context, orgID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAISessions, orgID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
 }
 
 const countFolderItems = `-- name: CountFolderItems :one
@@ -94,6 +147,51 @@ func (q *Queries) CountSkillsForOrg(ctx context.Context, orgID string) (int64, e
 	var n int64
 	err := row.Scan(&n)
 	return n, err
+}
+
+const createAISession = `-- name: CreateAISession :one
+
+INSERT INTO app.ai_sessions (org_id, site_id, created_by, model, base_version_id)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+          base_version_id, latest_version_id, created_at, last_activity_at
+`
+
+type CreateAISessionParams struct {
+	OrgID         string
+	SiteID        string
+	CreatedBy     string
+	Model         string
+	BaseVersionID *string
+}
+
+// ===========================================================================
+// AI builder — sessions, transcript, cost ledger
+// ===========================================================================
+func (q *Queries) CreateAISession(ctx context.Context, arg CreateAISessionParams) (AppAiSession, error) {
+	row := q.db.QueryRow(ctx, createAISession,
+		arg.OrgID,
+		arg.SiteID,
+		arg.CreatedBy,
+		arg.Model,
+		arg.BaseVersionID,
+	)
+	var i AppAiSession
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.CreatedBy,
+		&i.Status,
+		&i.Model,
+		&i.SandboxID,
+		&i.SandboxExpiresAt,
+		&i.BaseVersionID,
+		&i.LatestVersionID,
+		&i.CreatedAt,
+		&i.LastActivityAt,
+	)
+	return i, err
 }
 
 const createPostComment = `-- name: CreatePostComment :one
@@ -227,10 +325,10 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 
 const createSiteVersion = `-- name: CreateSiteVersion :one
 INSERT INTO app.site_versions (
-    org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by
+    org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_via
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 `
 
 type CreateSiteVersionParams struct {
@@ -242,6 +340,7 @@ type CreateSiteVersionParams struct {
 	ContentHash string
 	SizeBytes   int64
 	CreatedBy   string
+	CreatedVia  string
 }
 
 func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionParams) (AppSiteVersion, error) {
@@ -254,6 +353,7 @@ func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionPa
 		arg.ContentHash,
 		arg.SizeBytes,
 		arg.CreatedBy,
+		arg.CreatedVia,
 	)
 	var i AppSiteVersion
 	err := row.Scan(
@@ -267,6 +367,8 @@ func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionPa
 		&i.SizeBytes,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.CreatedVia,
+		&i.PreviewExpiresAt,
 	)
 	return i, err
 }
@@ -380,6 +482,16 @@ func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersion
 	return i, err
 }
 
+const deleteAISession = `-- name: DeleteAISession :exec
+DELETE FROM app.ai_sessions
+WHERE id = $1
+`
+
+func (q *Queries) DeleteAISession(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deleteAISession, id)
+	return err
+}
+
 const deleteAllowlistEntry = `-- name: DeleteAllowlistEntry :exec
 DELETE FROM app.allowlist_entries
 WHERE site_id = $1 AND email = $2
@@ -423,6 +535,35 @@ func (q *Queries) DeleteDomain(ctx context.Context, id string) (DeleteDomainRow,
 		&i.CfHostnameID,
 	)
 	return i, err
+}
+
+const deleteExpiredPreviewRoutes = `-- name: DeleteExpiredPreviewRoutes :many
+DELETE FROM app.host_routes
+WHERE kind = 'preview' AND expires_at < $1
+RETURNING host
+`
+
+// Ops sweep: purge preview rows whose deadline passed more than the supplied
+// grace interval ago, returning hosts for KV cleanup. The edge already 410s
+// them; this is bookkeeping, not enforcement.
+func (q *Queries) DeleteExpiredPreviewRoutes(ctx context.Context, expiresAt pgtype.Timestamptz) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteExpiredPreviewRoutes, expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteExternalAllowlistEntriesForOrg = `-- name: DeleteExternalAllowlistEntriesForOrg :exec
@@ -517,6 +658,34 @@ func (q *Queries) DeletePostVotesForSubject(ctx context.Context, arg DeletePostV
 	return err
 }
 
+const deletePreviewRoutesForVersion = `-- name: DeletePreviewRoutesForVersion :many
+DELETE FROM app.host_routes
+WHERE version_id = $1 AND kind = 'preview'
+RETURNING host
+`
+
+// Drop a version's preview routes, returning the hosts so the caller can also
+// delete the KV keys (publish and explicit preview deletion).
+func (q *Queries) DeletePreviewRoutesForVersion(ctx context.Context, versionID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, deletePreviewRoutesForVersion, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteSkill = `-- name: DeleteSkill :one
 DELETE FROM app.skills
 WHERE id = $1
@@ -598,6 +767,33 @@ func (q *Queries) EnsureOrgUsage(ctx context.Context, orgID string) error {
 	return err
 }
 
+const getAISession = `-- name: GetAISession :one
+SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+       base_version_id, latest_version_id, created_at, last_activity_at
+FROM app.ai_sessions
+WHERE id = $1
+`
+
+func (q *Queries) GetAISession(ctx context.Context, id string) (AppAiSession, error) {
+	row := q.db.QueryRow(ctx, getAISession, id)
+	var i AppAiSession
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.CreatedBy,
+		&i.Status,
+		&i.Model,
+		&i.SandboxID,
+		&i.SandboxExpiresAt,
+		&i.BaseVersionID,
+		&i.LatestVersionID,
+		&i.CreatedAt,
+		&i.LastActivityAt,
+	)
+	return i, err
+}
+
 const getAllowlistEntryByEmail = `-- name: GetAllowlistEntryByEmail :one
 SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
 FROM app.allowlist_entries
@@ -650,7 +846,7 @@ func (q *Queries) GetDomain(ctx context.Context, id string) (AppDomain, error) {
 }
 
 const getHostRoute = `-- name: GetHostRoute :one
-SELECT host, org_id, site_id, created_at
+SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
 WHERE host = $1
 `
@@ -667,6 +863,9 @@ func (q *Queries) GetHostRoute(ctx context.Context, host string) (AppHostRoute, 
 		&i.OrgID,
 		&i.SiteID,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.VersionID,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -703,7 +902,7 @@ func (q *Queries) GetOrCreateSkillFolder(ctx context.Context, arg GetOrCreateSki
 }
 
 const getOrgMeta = `-- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd
 FROM app.org_meta
 WHERE id = $1
 `
@@ -715,6 +914,8 @@ type GetOrgMetaRow struct {
 	DefaultVisibility    string
 	CreatedAt            time.Time
 	McpEnabled           bool
+	AiEnabled            bool
+	AiMonthlyCapUsd      float64
 }
 
 func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, error) {
@@ -727,6 +928,8 @@ func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, err
 		&i.DefaultVisibility,
 		&i.CreatedAt,
 		&i.McpEnabled,
+		&i.AiEnabled,
+		&i.AiMonthlyCapUsd,
 	)
 	return i, err
 }
@@ -888,7 +1091,7 @@ func (q *Queries) GetSiteStorageBytes(ctx context.Context, id string) (int64, er
 }
 
 const getSiteVersion = `-- name: GetSiteVersion :one
-SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
 WHERE id = $1
 `
@@ -907,12 +1110,14 @@ func (q *Queries) GetSiteVersion(ctx context.Context, id string) (AppSiteVersion
 		&i.SizeBytes,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.CreatedVia,
+		&i.PreviewExpiresAt,
 	)
 	return i, err
 }
 
 const getSiteVersionByContentHash = `-- name: GetSiteVersionByContentHash :one
-SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
 WHERE site_id = $1 AND content_hash = $2
 `
@@ -938,6 +1143,8 @@ func (q *Queries) GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVe
 		&i.SizeBytes,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.CreatedVia,
+		&i.PreviewExpiresAt,
 	)
 	return i, err
 }
@@ -1120,6 +1327,53 @@ func (q *Queries) IncSiteCount(ctx context.Context, orgID string) (int32, error)
 	return sites_count, err
 }
 
+const insertAIUsage = `-- name: InsertAIUsage :one
+INSERT INTO app.ai_usage (org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd)
+VALUES ($1, $2, $3, $4, $5, $6, $7::float8)
+ON CONFLICT (openrouter_generation_id) DO NOTHING
+RETURNING id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
+`
+
+type InsertAIUsageParams struct {
+	OrgID                  string
+	SessionID              *string
+	Model                  string
+	OpenrouterGenerationID string
+	PromptTokens           int64
+	CompletionTokens       int64
+	Column7                float64
+}
+
+// Append one OpenRouter generation to the cost ledger. Idempotent on the
+// generation id (a retried turn never double-counts); RETURNING yields a row
+// only when the generation is genuinely new (pgx.ErrNoRows = already recorded),
+// mirroring InsertOrgBlob's dedup contract.
+func (q *Queries) InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) (AppAiUsage, error) {
+	row := q.db.QueryRow(ctx, insertAIUsage,
+		arg.OrgID,
+		arg.SessionID,
+		arg.Model,
+		arg.OpenrouterGenerationID,
+		arg.PromptTokens,
+		arg.CompletionTokens,
+		arg.Column7,
+	)
+	var i AppAiUsage
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SessionID,
+		&i.Model,
+		&i.OpenrouterGenerationID,
+		&i.PromptTokens,
+		&i.CompletionTokens,
+		&i.CostUsd,
+		&i.ReportedToBillingAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertDomain = `-- name: InsertDomain :one
 
 INSERT INTO app.domains (org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record)
@@ -1211,6 +1465,176 @@ func (q *Queries) InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (i
 	var size_bytes int64
 	err := row.Scan(&size_bytes)
 	return size_bytes, err
+}
+
+const listAIMessages = `-- name: ListAIMessages :many
+SELECT id, org_id, session_id, seq, role, content, created_at
+FROM app.ai_messages
+WHERE session_id = $1 AND seq > $2
+ORDER BY seq
+`
+
+type ListAIMessagesParams struct {
+	SessionID string
+	Seq       int32
+}
+
+// The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
+// pass 0 for the full history).
+func (q *Queries) ListAIMessages(ctx context.Context, arg ListAIMessagesParams) ([]AppAiMessage, error) {
+	rows, err := q.db.Query(ctx, listAIMessages, arg.SessionID, arg.Seq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAiMessage{}
+	for rows.Next() {
+		var i AppAiMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.Seq,
+			&i.Role,
+			&i.Content,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAISessionsForOrg = `-- name: ListAISessionsForOrg :many
+SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+       base_version_id, latest_version_id, created_at, last_activity_at
+FROM app.ai_sessions
+WHERE org_id = $1 AND status <> 'archived'
+ORDER BY last_activity_at DESC
+`
+
+func (q *Queries) ListAISessionsForOrg(ctx context.Context, orgID string) ([]AppAiSession, error) {
+	rows, err := q.db.Query(ctx, listAISessionsForOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAiSession{}
+	for rows.Next() {
+		var i AppAiSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SiteID,
+			&i.CreatedBy,
+			&i.Status,
+			&i.Model,
+			&i.SandboxID,
+			&i.SandboxExpiresAt,
+			&i.BaseVersionID,
+			&i.LatestVersionID,
+			&i.CreatedAt,
+			&i.LastActivityAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAISessionsForSite = `-- name: ListAISessionsForSite :many
+SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
+       base_version_id, latest_version_id, created_at, last_activity_at
+FROM app.ai_sessions
+WHERE site_id = $1 AND status <> 'archived'
+ORDER BY last_activity_at DESC
+`
+
+func (q *Queries) ListAISessionsForSite(ctx context.Context, siteID string) ([]AppAiSession, error) {
+	rows, err := q.db.Query(ctx, listAISessionsForSite, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAiSession{}
+	for rows.Next() {
+		var i AppAiSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SiteID,
+			&i.CreatedBy,
+			&i.Status,
+			&i.Model,
+			&i.SandboxID,
+			&i.SandboxExpiresAt,
+			&i.BaseVersionID,
+			&i.LatestVersionID,
+			&i.CreatedAt,
+			&i.LastActivityAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAIUsageForOrg = `-- name: ListAIUsageForOrg :many
+SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
+FROM app.ai_usage
+WHERE org_id = $1 AND created_at >= $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListAIUsageForOrgParams struct {
+	OrgID     string
+	CreatedAt time.Time
+	Limit     int32
+}
+
+// Recent ledger rows for the billing page's usage detail.
+func (q *Queries) ListAIUsageForOrg(ctx context.Context, arg ListAIUsageForOrgParams) ([]AppAiUsage, error) {
+	rows, err := q.db.Query(ctx, listAIUsageForOrg, arg.OrgID, arg.CreatedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAiUsage{}
+	for rows.Next() {
+		var i AppAiUsage
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.Model,
+			&i.OpenrouterGenerationID,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.CostUsd,
+			&i.ReportedToBillingAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAllowlistEntries = `-- name: ListAllowlistEntries :many
@@ -1593,7 +2017,7 @@ func (q *Queries) ListFoldersForSkills(ctx context.Context, skillIds []string) (
 }
 
 const listHostRoutesForSite = `-- name: ListHostRoutesForSite :many
-SELECT host, org_id, site_id, created_at
+SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
 WHERE site_id = $1
 ORDER BY host
@@ -1619,6 +2043,9 @@ func (q *Queries) ListHostRoutesForSite(ctx context.Context, siteID string) ([]A
 			&i.OrgID,
 			&i.SiteID,
 			&i.CreatedAt,
+			&i.Kind,
+			&i.VersionID,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1670,6 +2097,99 @@ func (q *Queries) ListPostComments(ctx context.Context, arg ListPostCommentsPara
 			&i.Body,
 			&i.MentionedUserIds,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPreviewRoutesForRebuild = `-- name: ListPreviewRoutesForRebuild :many
+SELECT
+    hr.host       AS host,
+    s.id          AS site_id,
+    s.org_id      AS org_id,
+    s.slug        AS slug,
+    s.access_mode AS access_mode,
+    hr.version_id AS version_id,
+    hr.expires_at AS expires_at
+FROM app.host_routes hr
+JOIN app.sites s ON s.id = hr.site_id
+WHERE hr.kind = 'preview'
+  AND hr.version_id IS NOT NULL
+  AND hr.expires_at > now()
+ORDER BY hr.host
+`
+
+type ListPreviewRoutesForRebuildRow struct {
+	Host       string
+	SiteID     string
+	OrgID      string
+	Slug       string
+	AccessMode string
+	VersionID  *string
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// Unexpired preview routes joined to their site's access fields, for the DR
+// rebuild: previews are part of the "KV is rebuildable from Postgres"
+// invariant. Expired rows are skipped (the edge would 410 them anyway).
+func (q *Queries) ListPreviewRoutesForRebuild(ctx context.Context) ([]ListPreviewRoutesForRebuildRow, error) {
+	rows, err := q.db.Query(ctx, listPreviewRoutesForRebuild)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPreviewRoutesForRebuildRow{}
+	for rows.Next() {
+		var i ListPreviewRoutesForRebuildRow
+		if err := rows.Scan(
+			&i.Host,
+			&i.SiteID,
+			&i.OrgID,
+			&i.Slug,
+			&i.AccessMode,
+			&i.VersionID,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPreviewRoutesForVersion = `-- name: ListPreviewRoutesForVersion :many
+SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
+FROM app.host_routes
+WHERE version_id = $1 AND kind = 'preview'
+ORDER BY host
+`
+
+func (q *Queries) ListPreviewRoutesForVersion(ctx context.Context, versionID *string) ([]AppHostRoute, error) {
+	rows, err := q.db.Query(ctx, listPreviewRoutesForVersion, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppHostRoute{}
+	for rows.Next() {
+		var i AppHostRoute
+		if err := rows.Scan(
+			&i.Host,
+			&i.OrgID,
+			&i.SiteID,
+			&i.CreatedAt,
+			&i.Kind,
+			&i.VersionID,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1815,7 +2335,7 @@ func (q *Queries) ListSiteStorageForOrg(ctx context.Context) ([]ListSiteStorageF
 }
 
 const listSiteVersions = `-- name: ListSiteVersions :many
-SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at
+SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
 WHERE site_id = $1
 ORDER BY version_no DESC
@@ -1841,6 +2361,8 @@ func (q *Queries) ListSiteVersions(ctx context.Context, siteID string) ([]AppSit
 			&i.SizeBytes,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.CreatedVia,
+			&i.PreviewExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2017,6 +2539,52 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListS
 	return items, nil
 }
 
+const listUnreportedAIUsage = `-- name: ListUnreportedAIUsage :many
+SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
+FROM app.ai_usage
+WHERE org_id = $1 AND reported_to_billing_at IS NULL
+ORDER BY created_at
+LIMIT $2
+`
+
+type ListUnreportedAIUsageParams struct {
+	OrgID string
+	Limit int32
+}
+
+// Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
+// NULL), oldest first, for the per-row meter send + the ops retry sweep.
+func (q *Queries) ListUnreportedAIUsage(ctx context.Context, arg ListUnreportedAIUsageParams) ([]AppAiUsage, error) {
+	rows, err := q.db.Query(ctx, listUnreportedAIUsage, arg.OrgID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppAiUsage{}
+	for rows.Next() {
+		var i AppAiUsage
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.Model,
+			&i.OpenrouterGenerationID,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.CostUsd,
+			&i.ReportedToBillingAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVersionsForGC = `-- name: ListVersionsForGC :many
 
 SELECT
@@ -2024,6 +2592,8 @@ SELECT
     v.site_id       AS site_id,
     v.version_no    AS version_no,
     v.r2_prefix     AS r2_prefix,
+    v.created_via   AS created_via,
+    v.created_at    AS created_at,
     (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
 FROM app.site_versions v
 JOIN app.sites s ON s.id = v.site_id
@@ -2031,11 +2601,13 @@ ORDER BY v.site_id, v.version_no DESC
 `
 
 type ListVersionsForGCRow struct {
-	VersionID string
-	SiteID    string
-	VersionNo int32
-	R2Prefix  string
-	IsCurrent pgtype.Bool
+	VersionID  string
+	SiteID     string
+	VersionNo  int32
+	R2Prefix   string
+	CreatedVia string
+	CreatedAt  time.Time
+	IsCurrent  pgtype.Bool
 }
 
 // ===========================================================================
@@ -2061,6 +2633,8 @@ func (q *Queries) ListVersionsForGC(ctx context.Context) ([]ListVersionsForGCRow
 			&i.SiteID,
 			&i.VersionNo,
 			&i.R2Prefix,
+			&i.CreatedVia,
+			&i.CreatedAt,
 			&i.IsCurrent,
 		); err != nil {
 			return nil, err
@@ -2071,6 +2645,17 @@ func (q *Queries) ListVersionsForGC(ctx context.Context) ([]ListVersionsForGCRow
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockOrgAISessionQuota = `-- name: LockOrgAISessionQuota :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':ai_sessions'))
+`
+
+// Serialize concurrent session creates for the SAME org (TOCTOU guard for the
+// per-org active-session concurrency cap, same pattern as LockOrgSiteQuota).
+func (q *Queries) LockOrgAISessionQuota(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockOrgAISessionQuota, dollar_1)
+	return err
 }
 
 const lockOrgMemberQuota = `-- name: LockOrgMemberQuota :exec
@@ -2153,6 +2738,17 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'))
 // folder; see quota.ResourceSkillPerFolder).
 func (q *Queries) LockSkillFolderQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockSkillFolderQuota, dollar_1)
+	return err
+}
+
+const markAIUsageReported = `-- name: MarkAIUsageReported :exec
+UPDATE app.ai_usage
+SET reported_to_billing_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) MarkAIUsageReported(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markAIUsageReported, id)
 	return err
 }
 
@@ -2253,7 +2849,7 @@ SELECT
     s.org_id      AS org_id,
     s.slug        AS slug,
     s.access_mode AS access_mode,
-    s.current_version_id AS version_id
+    COALESCE(hr.version_id, s.current_version_id) AS version_id
 FROM app.host_routes hr
 JOIN app.sites s ON s.id = hr.site_id
 WHERE hr.host = $1
@@ -2287,6 +2883,90 @@ func (q *Queries) ResolveSiteByHostRoute(ctx context.Context, host string) (Reso
 		&i.VersionID,
 	)
 	return i, err
+}
+
+const setAIEnabled = `-- name: SetAIEnabled :exec
+UPDATE app.org_meta
+SET ai_enabled = $2
+WHERE id = $1
+`
+
+type SetAIEnabledParams struct {
+	ID        string
+	AiEnabled bool
+}
+
+// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
+// exact analog of SetMcpEnabled.
+func (q *Queries) SetAIEnabled(ctx context.Context, arg SetAIEnabledParams) error {
+	_, err := q.db.Exec(ctx, setAIEnabled, arg.ID, arg.AiEnabled)
+	return err
+}
+
+const setAIMonthlyCap = `-- name: SetAIMonthlyCap :exec
+UPDATE app.org_meta
+SET ai_monthly_cap_usd = $2::float8
+WHERE id = $1
+`
+
+type SetAIMonthlyCapParams struct {
+	ID      string
+	Column2 float64
+}
+
+func (q *Queries) SetAIMonthlyCap(ctx context.Context, arg SetAIMonthlyCapParams) error {
+	_, err := q.db.Exec(ctx, setAIMonthlyCap, arg.ID, arg.Column2)
+	return err
+}
+
+const setAISessionLatestVersion = `-- name: SetAISessionLatestVersion :exec
+UPDATE app.ai_sessions
+SET latest_version_id = $2, last_activity_at = now()
+WHERE id = $1
+`
+
+type SetAISessionLatestVersionParams struct {
+	ID              string
+	LatestVersionID *string
+}
+
+func (q *Queries) SetAISessionLatestVersion(ctx context.Context, arg SetAISessionLatestVersionParams) error {
+	_, err := q.db.Exec(ctx, setAISessionLatestVersion, arg.ID, arg.LatestVersionID)
+	return err
+}
+
+const setAISessionSandbox = `-- name: SetAISessionSandbox :exec
+UPDATE app.ai_sessions
+SET sandbox_id = $2, sandbox_expires_at = $3, last_activity_at = now()
+WHERE id = $1
+`
+
+type SetAISessionSandboxParams struct {
+	ID               string
+	SandboxID        pgtype.Text
+	SandboxExpiresAt pgtype.Timestamptz
+}
+
+// Cache the live sandbox handle (NULLs clear it after a reap/destroy).
+func (q *Queries) SetAISessionSandbox(ctx context.Context, arg SetAISessionSandboxParams) error {
+	_, err := q.db.Exec(ctx, setAISessionSandbox, arg.ID, arg.SandboxID, arg.SandboxExpiresAt)
+	return err
+}
+
+const setAISessionStatus = `-- name: SetAISessionStatus :exec
+UPDATE app.ai_sessions
+SET status = $2, last_activity_at = now()
+WHERE id = $1
+`
+
+type SetAISessionStatusParams struct {
+	ID     string
+	Status string
+}
+
+func (q *Queries) SetAISessionStatus(ctx context.Context, arg SetAISessionStatusParams) error {
+	_, err := q.db.Exec(ctx, setAISessionStatus, arg.ID, arg.Status)
+	return err
 }
 
 const setAllowExternalSharing = `-- name: SetAllowExternalSharing :exec
@@ -2563,6 +3243,25 @@ func (q *Queries) SetSkillMeta(ctx context.Context, arg SetSkillMetaParams) (App
 	return i, err
 }
 
+const setVersionPreviewExpiry = `-- name: SetVersionPreviewExpiry :exec
+UPDATE app.site_versions
+SET preview_expires_at = $2
+WHERE id = $1
+`
+
+type SetVersionPreviewExpiryParams struct {
+	ID               string
+	PreviewExpiresAt pgtype.Timestamptz
+}
+
+// Mirror of the preview route's deadline on the version row (NULL = no active
+// preview); the draft-aware GC and the dashboard's "preview expired" state read
+// this without joining host_routes.
+func (q *Queries) SetVersionPreviewExpiry(ctx context.Context, arg SetVersionPreviewExpiryParams) error {
+	_, err := q.db.Exec(ctx, setVersionPreviewExpiry, arg.ID, arg.PreviewExpiresAt)
+	return err
+}
+
 const subOrgStorage = `-- name: SubOrgStorage :exec
 UPDATE app.org_usage
 SET storage_bytes = GREATEST(0, storage_bytes - $1::bigint),
@@ -2580,6 +3279,26 @@ type SubOrgStorageParams struct {
 func (q *Queries) SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error {
 	_, err := q.db.Exec(ctx, subOrgStorage, arg.Delta, arg.OrgID)
 	return err
+}
+
+const sumAIUsageSince = `-- name: SumAIUsageSince :one
+SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total_cost_usd
+FROM app.ai_usage
+WHERE org_id = $1 AND created_at >= $2
+`
+
+type SumAIUsageSinceParams struct {
+	OrgID     string
+	CreatedAt time.Time
+}
+
+// The org's AI spend since a period start (the spend-cap check input and the
+// dashboard usage figure).
+func (q *Queries) SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams) (float64, error) {
+	row := q.db.QueryRow(ctx, sumAIUsageSince, arg.OrgID, arg.CreatedAt)
+	var total_cost_usd float64
+	err := row.Scan(&total_cost_usd)
+	return total_cost_usd, err
 }
 
 const updateDomainStatus = `-- name: UpdateDomainStatus :one
@@ -2663,10 +3382,11 @@ func (q *Queries) UpsertAllowlistEntry(ctx context.Context, arg UpsertAllowlistE
 
 const upsertHostRoute = `-- name: UpsertHostRoute :exec
 
-INSERT INTO app.host_routes (host, org_id, site_id)
-VALUES ($1, $2, $3)
+INSERT INTO app.host_routes (host, org_id, site_id, kind)
+VALUES ($1, $2, $3, 'custom')
 ON CONFLICT (host) DO UPDATE
-SET site_id = EXCLUDED.site_id
+SET site_id = EXCLUDED.site_id,
+    kind    = EXCLUDED.kind
 WHERE app.host_routes.org_id = EXCLUDED.org_id
 `
 
@@ -2715,6 +3435,44 @@ func (q *Queries) UpsertPostVote(ctx context.Context, arg UpsertPostVoteParams) 
 		arg.OrgID,
 		arg.UserID,
 		arg.Value,
+	)
+	return err
+}
+
+const upsertPreviewRoute = `-- name: UpsertPreviewRoute :exec
+
+INSERT INTO app.host_routes (host, org_id, site_id, kind, version_id, expires_at)
+VALUES ($1, $2, $3, 'preview', $4, $5)
+ON CONFLICT (host) DO UPDATE
+SET version_id = EXCLUDED.version_id,
+    expires_at = EXCLUDED.expires_at
+WHERE app.host_routes.org_id = EXCLUDED.org_id
+  AND app.host_routes.site_id = EXCLUDED.site_id
+  AND app.host_routes.kind = 'preview'
+`
+
+type UpsertPreviewRouteParams struct {
+	Host      string
+	OrgID     string
+	SiteID    string
+	VersionID *string
+	ExpiresAt pgtype.Timestamptz
+}
+
+// ===========================================================================
+// preview routes (AI builder / version previews) — time-limited draft hosts
+// ===========================================================================
+// Register (or renew) a preview host pinned to a specific draft version. PK on
+// host enforces global uniqueness like every other route; ON CONFLICT updates
+// only a row this org already owns AND that is a preview for the same site (a
+// canonical/custom route can never be silently downgraded to a preview).
+func (q *Queries) UpsertPreviewRoute(ctx context.Context, arg UpsertPreviewRouteParams) error {
+	_, err := q.db.Exec(ctx, upsertPreviewRoute,
+		arg.Host,
+		arg.OrgID,
+		arg.SiteID,
+		arg.VersionID,
+		arg.ExpiresAt,
 	)
 	return err
 }

@@ -45,6 +45,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 //	ErrForbidden             → 403 Forbidden
 //	ErrNotFound              → 404 Not Found
 //	ErrConflict              → 409 Conflict
+//	ErrTooManyRequests       → 429 Too Many Requests
 //	ErrBadRequest            → 400 Bad Request
 //	anything else            → 500 Internal Server Error (detail withheld)
 //
@@ -72,6 +73,8 @@ func WriteError(w http.ResponseWriter, err error) {
 		WriteJSON(w, http.StatusNotFound, ErrorBody{Error: "not_found", Message: err.Error()})
 	case errors.Is(err, ErrConflict):
 		WriteJSON(w, http.StatusConflict, ErrorBody{Error: "conflict", Message: err.Error()})
+	case errors.Is(err, ErrTooManyRequests):
+		WriteJSON(w, http.StatusTooManyRequests, ErrorBody{Error: "too_many_requests", Message: err.Error()})
 	case errors.Is(err, ErrBadRequest):
 		WriteJSON(w, http.StatusBadRequest, ErrorBody{Error: "bad_request", Message: err.Error()})
 	default:
@@ -84,9 +87,10 @@ func WriteError(w http.ResponseWriter, err error) {
 // Sentinel errors handlers can wrap (with %w) to drive WriteError's status
 // mapping without importing net/http constants everywhere.
 var (
-	ErrUnauthorized = errors.New("unauthorized")
-	ErrForbidden    = errors.New("forbidden")
-	ErrNotFound     = errors.New("not found")
-	ErrConflict     = errors.New("conflict")
-	ErrBadRequest   = errors.New("bad request")
+	ErrUnauthorized    = errors.New("unauthorized")
+	ErrForbidden       = errors.New("forbidden")
+	ErrNotFound        = errors.New("not found")
+	ErrConflict        = errors.New("conflict")
+	ErrTooManyRequests = errors.New("too many requests")
+	ErrBadRequest      = errors.New("bad request")
 )

@@ -95,6 +95,26 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 		return serve.Route{}, err
 	}
 
+	// A preview host additionally carries its own deadline on the host_routes row
+	// (kind='preview', migration 0010). Enforce the EARLIER of the two expiries,
+	// mirroring the Worker's RouteValue.expires_at semantics.
+	var previewExpires pgtype.Timestamptz
+	row = tx.QueryRow(ctx,
+		`SELECT expires_at FROM app.host_routes WHERE host = $1 AND kind = 'preview'`, normalizedHost)
+	switch err := row.Scan(&previewExpires); {
+	case err == nil:
+		if previewExpires.Valid {
+			t := previewExpires.Time
+			if out.ExpiresAt == nil || t.Before(*out.ExpiresAt) {
+				out.ExpiresAt = &t
+			}
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// Not a preview host.
+	default:
+		return serve.Route{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return serve.Route{}, err
 	}

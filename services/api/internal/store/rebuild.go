@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
@@ -82,8 +83,38 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 				return perr
 			}
 			for _, hr := range hostRoutes {
+				// Preview rows pin their own version + deadline; they are
+				// re-projected below, NOT at the live version.
+				if hr.Kind == RouteKindPreview {
+					continue
+				}
 				routes[hr.Host] = routeValue(r.OrgID, r.SiteID, *r.VersionID, r.AccessMode, expiresAt, planTier)
 			}
+		}
+
+		// Unexpired preview routes join the rebuild (they are part of the "KV is
+		// rebuildable from Postgres" invariant). Each pins its draft version and
+		// carries its own deadline; expired rows are skipped (the edge would 410
+		// them anyway, and the ops sweep purges the rows). This also covers
+		// previews of sites with NO live version (an AI-created site that has
+		// never been published), which the published-sites loop above misses.
+		previews, err := q.ListPreviewRoutesForRebuild(ctx)
+		if err != nil {
+			return err
+		}
+		for _, p := range previews {
+			var policyExpiry string
+			if pol, perr := q.GetSiteAccessPolicy(ctx, p.SiteID); perr == nil {
+				policyExpiry = routeExpiry(p.AccessMode, accessPolicyFromDB(pol))
+			} else if !isNoRows(perr) {
+				return perr
+			}
+			var deadline time.Time
+			if p.ExpiresAt.Valid {
+				deadline = p.ExpiresAt.Time
+			}
+			routes[p.Host] = routeValue(p.OrgID, p.SiteID, *p.VersionID, p.AccessMode,
+				earliestExpiry(policyExpiry, deadline), planTier)
 		}
 		return nil
 	})

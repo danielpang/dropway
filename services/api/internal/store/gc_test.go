@@ -118,7 +118,7 @@ func TestGC_OrphanDeletedReferencedKeptCurrentUntouched(t *testing.T) {
 		ver("v1", "site-1", 1, false),
 	}
 	// Keep last 2 (newest): retains v3 (current+newest) and v2 (2nd newest); v1 drops.
-	retained := selectRetained(rows, 2)
+	retained := selectRetained(rows, 2, time.Now())
 
 	res, err := gcCollectAndDelete(ctx, obj, org, retained, nil, GCPolicy{KeepLastN: 2}, gcNow)
 	if err != nil {
@@ -212,7 +212,7 @@ func TestGC_AgeGuard_FreshOrphanSurvivesOldOrphanDeleted(t *testing.T) {
 	// One site, current version v1 → blobCurrent. blobOld and blobFresh are
 	// referenced by NO retained version (both are orphans by the reference rule).
 	must(t, obj.PutManifest(ctx, org, "site-1", "v1", manifestJSON(blobCurrent)))
-	retained := selectRetained([]db.ListVersionsForGCRow{ver("v1", "site-1", 1, true)}, 5)
+	retained := selectRetained([]db.ListVersionsForGCRow{ver("v1", "site-1", 1, true)}, 5, time.Now())
 
 	res, err := gcCollectAndDelete(ctx, obj, org, retained, nil, GCPolicy{KeepLastN: 5}, gcNow)
 	if err != nil {
@@ -279,7 +279,7 @@ func TestSelectRetained_KeepsCurrentEvenIfOld(t *testing.T) {
 		ver("v2", "s", 2, false),
 		ver("v1", "s", 1, true), // current, but oldest
 	}
-	got := selectRetained(rows, 2)
+	got := selectRetained(rows, 2, time.Now())
 	keep := map[string]bool{}
 	for _, v := range got {
 		keep[v.VersionID] = true

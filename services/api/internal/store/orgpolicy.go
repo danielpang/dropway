@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
@@ -139,29 +140,43 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 			} else if !isNoRows(err) {
 				return err
 			}
-			// Only sites with a live version have an edge route to rewrite.
-			if site.CurrentVersionID == nil {
-				continue
-			}
 			// Rewrite EVERY host of the site (canonical + verified custom domains),
 			// not just the canonical one — each has its own route:<host> KV entry, and
 			// a custom host left at 'public' keeps serving publicly after the policy
-			// tightened (FIX 1).
+			// tightened (FIX 1). Preview hosts downgrade too (keeping their pinned
+			// version + deadline) — they exist even for sites with no live version.
 			hostRoutes, err := q.ListHostRoutesForSite(ctx, site.ID)
 			if err != nil {
 				return err
 			}
 			for _, hr := range hostRoutes {
-				res.Downgraded = append(res.Downgraded, RouteUpdate{
-					Host: hr.Host,
-					Route: projection.RouteValue{
+				var rv projection.RouteValue
+				switch {
+				case hr.Kind == "preview" && hr.VersionID != nil:
+					var expiresAt string
+					if hr.ExpiresAt.Valid {
+						expiresAt = hr.ExpiresAt.Time.UTC().Format(time.RFC3339)
+					}
+					rv = projection.RouteValue{
+						OrgID:         t.OrgID,
+						SiteID:        site.ID,
+						VersionID:     *hr.VersionID,
+						AccessMode:    projection.AccessOrgOnly,
+						SchemaVersion: projection.SchemaVersion,
+						ExpiresAt:     expiresAt,
+					}
+				case site.CurrentVersionID != nil:
+					rv = projection.RouteValue{
 						OrgID:         t.OrgID,
 						SiteID:        site.ID,
 						VersionID:     *site.CurrentVersionID,
 						AccessMode:    projection.AccessOrgOnly,
 						SchemaVersion: projection.SchemaVersion,
-					},
-				})
+					}
+				default:
+					continue // no live version and not a preview → no route to rewrite
+				}
+				res.Downgraded = append(res.Downgraded, RouteUpdate{Host: hr.Host, Route: rv})
 			}
 		}
 
