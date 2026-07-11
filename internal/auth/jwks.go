@@ -26,6 +26,13 @@ import (
 // (HS256/384/512) — the classic public-key-as-HMAC-secret confusion attack.
 const allowedAlg = "EdDSA"
 
+// ClockSkewLeeway is the wall-clock drift tolerated when validating exp/iat/nbf.
+// The dashboard (Vercel) mints and this verifier (Fly) checks on different
+// clocks; with zero leeway a few seconds of NTP drift intermittently 401s valid
+// tokens. Shared as a package const so the edge-token verifier (Go serve) and
+// the Worker's clockTolerance stay on the same value by reference.
+const ClockSkewLeeway = 60 * time.Second
+
 // Claims is the verified token payload. Better Auth's JWT plugin carries the
 // subject (user id); org_id and role are injected via the organization plugin /
 // custom claims. Email/EmailVerified back the allowlist authz path (a grant is
@@ -148,6 +155,12 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		jwt.WithValidMethods([]string{allowedAlg}), // rejects none + HMAC
 		jwt.WithIssuer(v.issuer),
 		jwt.WithExpirationRequired(),
+		// Absorb modest wall-clock drift between the minting host (dashboard on
+		// Vercel) and this verifier (Fly). golang-jwt's default tolerance is ZERO,
+		// so a few seconds of NTP skew would intermittently reject valid tokens as
+		// expired (or not-yet-valid via iat). 60s is small next to the 10m token
+		// lifetime and is bounded: a token is accepted at most 60s past exp.
+		jwt.WithLeeway(ClockSkewLeeway),
 	}
 	// With no extra audiences keep the library's strict single-audience check (the
 	// API path, unchanged). With extras, validate the audience ourselves against the

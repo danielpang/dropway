@@ -204,6 +204,14 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		return err
 	}
 	if generated {
+		// An ephemeral signer means every restart mints under a NEW key: the JWKS
+		// kid changes and every live edge token/cookie 401s, bouncing all
+		// gated-content viewers back through /authz after each deploy. Tolerable
+		// in dev; in production it is a silent, recurring outage — fail the boot
+		// instead so the misconfiguration is caught at deploy time.
+		if cfg.Environment == "production" {
+			return fmt.Errorf("EDGE_SIGNING_KEY must be set in production: an ephemeral edge signer invalidates all gated-content sessions on every restart")
+		}
 		slog.Warn("EDGE_SIGNING_KEY not set — generated an EPHEMERAL edge signer; set EDGE_SIGNING_KEY to persist",
 			"kid", edgeSigner.Kid(), "seed_base64url", seed)
 	} else {

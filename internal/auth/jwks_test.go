@@ -237,10 +237,28 @@ func TestVerify_RejectsExpired(t *testing.T) {
 	defer js.Close()
 
 	c := goodClaims()
-	c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
+	// Clearly beyond ClockSkewLeeway so this pins "expired means expired", not
+	// the leeway boundary (covered separately below).
+	c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-ClockSkewLeeway - time.Minute))
 	v := NewVerifier(js.URL, testIssuer, testAud, WithHTTPClient(js.Client()))
 	if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", c)); err == nil {
 		t.Fatal("expected expired token to be rejected")
+	}
+}
+
+// A token expired by LESS than the clock-skew leeway still verifies: the
+// dashboard (Vercel) and the API (Fly) run on different clocks, and with zero
+// tolerance a few seconds of NTP drift intermittently 401s valid tokens.
+func TestVerify_AcceptsWithinClockSkewLeeway(t *testing.T) {
+	pub, priv := newKey(t)
+	js := newJWKSServer(map[string]ed25519.PublicKey{"k1": pub})
+	defer js.Close()
+
+	c := goodClaims()
+	c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-ClockSkewLeeway / 2))
+	v := NewVerifier(js.URL, testIssuer, testAud, WithHTTPClient(js.Client()))
+	if _, err := v.Verify(context.Background(), signEdDSA(t, priv, "k1", c)); err != nil {
+		t.Fatalf("token expired within leeway should verify, got: %v", err)
 	}
 }
 

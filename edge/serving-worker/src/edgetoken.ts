@@ -230,8 +230,10 @@ export async function verifyEdgeToken(p: VerifyParams): Promise<EdgeClaims | nul
         // jose enforces exp automatically when present; require it explicitly so
         // a token without exp is rejected (mirrors the Go verifier).
         requiredClaims: ["exp", "sub"],
-        // Default clock tolerance is 0; keep it tight (short-lived tokens).
-        clockTolerance: 0,
+        // Tolerate modest clock drift between the minting API and this edge —
+        // MUST match auth.ClockSkewLeeway (internal/auth/jwks.go) and the Go
+        // edge verifier so a token near expiry is judged the same everywhere.
+        clockTolerance: 60,
         currentDate: new Date(now),
       },
     );
