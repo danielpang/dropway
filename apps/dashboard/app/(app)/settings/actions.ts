@@ -71,3 +71,38 @@ export async function setMcpEnabledAction(input: {
     return { ok: false, message: "Could not reach the API. Try again." };
   }
 }
+
+export type AiBuilderActionResult =
+  | { ok: true; aiEnabled: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Toggle whether the AI website builder is available to this org (owner/admin
+ * only → the Go API re-checks the role and 403s otherwise). Enforced on every
+ * /v1/ai/* call, so disabling stops new builder sessions immediately.
+ */
+export async function setAiBuilderEnabledAction(input: {
+  enabled: boolean;
+}): Promise<AiBuilderActionResult> {
+  try {
+    const result = await api.setAIEnabled(input.enabled);
+    revalidatePath("/settings");
+    return { ok: true, aiEnabled: result.ai_enabled };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      if (apiMsg) return { ok: false, message: apiMsg };
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can change the AI builder setting.",
+        };
+      }
+      return {
+        ok: false,
+        message: "Could not update the AI builder setting. Try again.",
+      };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}

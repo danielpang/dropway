@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, CreditCard, Globe2, ShieldAlert, Users } from "lucide-react";
+import { Bot, CreditCard, Globe2, ShieldAlert, Sparkles, Users } from "lucide-react";
 
+import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { McpAccess } from "@/components/settings/mcp-access";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,17 @@ export default async function OrgSettingsPage() {
     .catch(() => ({ allow_external_sharing: false, mcp_enabled: true }));
   const allowExternalSharing = policy.allow_external_sharing;
   const mcpEnabled = policy.mcp_enabled;
+
+  // The AI builder card is shown ONLY on a paid plan (the builder requires one,
+  // so a free org has nothing to toggle). getBilling 404s on OSS/self-host, which
+  // is unlimited → treat as paid so a self-hoster still sees the toggle. We read
+  // the live ai_enabled state; a 503 (builder not configured) hides the card.
+  const planTier = await api
+    .getBilling()
+    .then((b) => b.plan_tier ?? "free")
+    .catch(() => "pro"); // OSS/self-host: unlimited, show the toggle
+  const aiSettings = await api.getAIOrgSettings().catch(() => null);
+  const showAiBuilder = planTier !== "free" && aiSettings !== null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -117,6 +129,29 @@ export default async function OrgSettingsPage() {
           />
         </CardContent>
       </Card>
+
+      {/* AI website builder (paid plans only) */}
+      {showAiBuilder && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Sparkles className="size-4 text-muted-foreground" aria-hidden />
+              AI website builder
+            </CardTitle>
+            <CardDescription>
+              Let members create and edit sites by chatting with AI. Usage is
+              billed on your plan at the model provider&rsquo;s cost. On by
+              default; admins can turn it off for the whole organization.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AiBuilderAccess
+              initialEnabled={aiSettings.ai_enabled}
+              canManage={manage}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Members shortcut */}
       <Card>

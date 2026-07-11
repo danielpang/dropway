@@ -63,7 +63,7 @@ func (a *API) requireAI(w http.ResponseWriter, r *http.Request, t store.Tenant) 
 
 func aiGateMessage(reason string) string {
 	if reason == "plan_required" {
-		return "the AI builder requires a paid plan with a payment method on file"
+		return "the AI builder requires a paid plan; upgrade in billing to continue"
 	}
 	return "the AI builder is not available for this organization"
 }
