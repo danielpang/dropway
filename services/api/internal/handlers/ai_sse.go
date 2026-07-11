@@ -51,11 +51,16 @@ func parseInt32(s string) (int32, error) {
 	return int32(n), err
 }
 
-// aiErrorMessage maps a turn error to a client-facing SSE error message. A spend
-// cap surfaces its own text; concurrency and not-found map to clear strings;
-// anything else is a generic message (internals are logged, not leaked).
+// aiErrorMessage maps a turn error to a client-facing SSE error message. The two
+// spend limits surface DIFFERENT text: the monthly cap is raisable in settings,
+// the per-turn backstop is not (it's a fixed runaway guard). Concurrency and
+// not-found map to clear strings; anything else is generic (internals are logged,
+// not leaked).
 func aiErrorMessage(err error) string {
-	if _, ok := quota.AsExceeded(err); ok {
+	if ex, ok := quota.AsExceeded(err); ok {
+		if ex.Limit == aipkg.AITurnSpendLimit {
+			return "this request reached the per-turn spending limit and stopped; start a new message to continue"
+		}
 		return "monthly AI spend cap reached; raise it in settings to continue"
 	}
 	switch {

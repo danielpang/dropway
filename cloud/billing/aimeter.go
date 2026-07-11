@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	stripe "github.com/stripe/stripe-go/v84"
 	meterevent "github.com/stripe/stripe-go/v84/billing/meterevent"
@@ -92,6 +94,28 @@ func (m *AIMeter) AllowAIForOrg(ctx context.Context, orgID string) (bool, string
 		return false, "plan_required", nil
 	}
 	return true, "", nil
+}
+
+// BillingPeriodStart returns the start of the org's CURRENT Stripe billing
+// period, so the AI spend window (cap + "usage this month") lines up with the
+// exact day the subscription renews, and reconciles with the invoice. ok is
+// false when the org has no subscription or no recorded period yet, in which case
+// the caller falls back to the calendar month.
+func (m *AIMeter) BillingPeriodStart(ctx context.Context, orgID string) (start time.Time, ok bool, err error) {
+	var ts pgtype.Timestamptz
+	qerr := m.pool.QueryRow(ctx,
+		`SELECT current_period_start FROM billing.subscriptions WHERE org_id = $1`, orgID).
+		Scan(&ts)
+	if qerr != nil {
+		if errors.Is(qerr, pgx.ErrNoRows) {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, false, qerr
+	}
+	if !ts.Valid {
+		return time.Time{}, false, nil
+	}
+	return ts.Time, true, nil
 }
 
 func (m *AIMeter) customerID(ctx context.Context, orgID string) (string, error) {

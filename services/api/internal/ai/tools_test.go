@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/danielpang/dropway/internal/openrouter"
+	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/internal/sandbox"
 )
 
@@ -133,6 +134,31 @@ func TestCheckTurnBudget(t *testing.T) {
 	// No monthly cap, under per-turn ceiling → allowed.
 	if err := r.checkTurnBudget(0, 100, 1); err != nil {
 		t.Errorf("no monthly cap + under per-turn ceiling should allow: %v", err)
+	}
+
+	// The two limits carry DIFFERENT labels so the handler can distinguish them.
+	monthlyErr := r.checkTurnBudget(20, 19, 1.5)
+	if ex, ok := quota.AsExceeded(monthlyErr); !ok || ex.Limit != quotaResourceAISpend {
+		t.Errorf("monthly-cap error label = %v, want %s", monthlyErr, quotaResourceAISpend)
+	}
+	turnErr := r.checkTurnBudget(0, 0, 5)
+	if ex, ok := quota.AsExceeded(turnErr); !ok || ex.Limit != quotaResourceAITurnSpend {
+		t.Errorf("per-turn error label = %v, want %s", turnErr, quotaResourceAITurnSpend)
+	}
+}
+
+// A sub-dollar cap is preserved (in cents), not truncated to 0.
+func TestCapExceededSubDollar(t *testing.T) {
+	err := capExceeded(quotaResourceAISpend, 0.50, 0.55)
+	ex, ok := quota.AsExceeded(err)
+	if !ok {
+		t.Fatalf("not a quota error: %v", err)
+	}
+	if ex.Max != 50 {
+		t.Errorf("Max = %d cents, want 50 ($0.50)", ex.Max)
+	}
+	if ex.Current != 55 {
+		t.Errorf("Current = %d cents, want 55 ($0.55)", ex.Current)
 	}
 }
 

@@ -370,15 +370,17 @@ services:
   # ---------------------------------------------------------------------------
   # sandbox-image — build-only helper (profile: ai). The AI website builder runs
   # untrusted, LLM-generated build commands inside THIS image via sandboxd (the
-  # in-container agent). Build it so SANDBOX_IMAGE=dropway-sandbox resolves:
-  #   COMPOSE_PROFILES=...,ai docker compose -f deploy/docker-compose.yml build sandbox-image
+  # in-container agent). Build + push it to your Fly sandbox app:
+  #   docker build -f services/sandboxd/Dockerfile -t registry.fly.io/<app>:latest .
+  #   flyctl auth docker && docker push registry.fly.io/<app>:latest
   #
-  # SELF-HOST CAVEAT: the docker sandbox provider needs the `docker` CLI + socket
-  # in the `api` process (root-equivalent on the host), which the distroless api
-  # image does not ship. Turnkey self-host sandbox execution therefore needs a
-  # docker-enabled api image + a mounted /var/run/docker.sock; until then, point
-  # SANDBOX_PROVIDER at Fly, or run the api outside distroless. The hosted build
-  # uses Fly Machines and has no such caveat.
+  # SELF-HOST: the AI builder is supported ONLY with SANDBOX_PROVIDER=fly. The
+  # local `docker` provider is NOT wired into this compose stack (and is dev-only
+  # at best): it needs the `docker` CLI + /var/run/docker.sock in the `api`
+  # process, which the distroless api image does not ship, and mounting the socket
+  # would grant the api root-equivalent host access. See deploy/README.md
+  # ("AI website builder"). This build-only service just produces the image; it is
+  # never `up`'d (sandboxd runs per session inside a fresh machine Fly creates).
   # ---------------------------------------------------------------------------
   sandbox-image:
     build:

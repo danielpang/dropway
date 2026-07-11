@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 	"unicode/utf8"
 
@@ -176,8 +177,12 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 			return err
 		}
 		if result.Usage != nil {
-			turnSpent += result.Usage.Cost
-			r.recordUsage(ctx, t, sess.ID, sess.Model, result.Usage)
+			// Only count the cost toward the per-turn/cap total when the ledger
+			// GENUINELY recorded it (recordUsage dedupes on the generation id), so a
+			// replayed generation can't inflate turnSpent and trip the cap early.
+			if r.recordUsage(ctx, t, sess.ID, sess.Model, result.Usage) {
+				turnSpent += result.Usage.Cost
+			}
 		}
 		messages = append(messages, result.Message)
 
@@ -235,29 +240,55 @@ func (r *Runner) publishDraft(ctx context.Context, t store.Tenant, sess *store.A
 
 	ver, err := ingestTar(ctx, r.Objects, r.Store, t, sess.SiteID, tarRC)
 	if err != nil {
-		return err
+		return err // the draft was never created → a legitimate turn failure
 	}
 	_ = r.Store.SetAISessionLatestVersion(ctx, t, sess.ID, ver.ID)
 
-	prev, err := r.Store.CreatePreviewRoute(ctx, t, sess.SiteID, ver.ID, previewTTL)
-	if err != nil {
-		return err
-	}
-	// Project the preview route to the edge so the URL serves. Best-effort: the
-	// row is authoritative and the reconcile/rebuild path backstops a KV miss, but
-	// tell the user the preview may lag so a temporary 404 isn't mysterious.
-	if r.Projection != nil {
-		if err := r.Projection.PutRoute(ctx, prev.Host, prev.Route); err != nil {
-			emit(Event{Type: "status", Text: "The preview is taking a moment to go live. If it does not load, refresh in a few seconds."})
+	// From here the draft version IS committed (and the turn's generations are
+	// already billed), so a preview-registration failure must NOT fail the turn.
+	// We always emit draft_ready; the preview URL is the authoritative host from
+	// the row when it succeeds, else the deterministic fallback host.
+	var previewURL, expiresAt string
+	if prev, perr := r.Store.CreatePreviewRoute(ctx, t, sess.SiteID, ver.ID, previewTTL); perr != nil {
+		emit(Event{Type: "status", Text: "Your changes are saved as a draft. The preview link is taking a moment to activate."})
+		if url, ok := r.draftPreviewURL(ctx, t, sess.SiteID, ver.ID, contentURL); ok {
+			previewURL = url
+			expiresAt = time.Now().UTC().Add(previewTTL).Format(time.RFC3339)
+		}
+	} else {
+		previewURL = contentURL(prev.Host)
+		expiresAt = prev.ExpiresAt.UTC().Format(time.RFC3339)
+		// Project the preview route to the edge so the URL serves. Best-effort: the
+		// row is authoritative and the reconcile/rebuild path backstops a KV miss;
+		// tell the user the preview may lag so a temporary 404 isn't mysterious.
+		if r.Projection != nil {
+			if err := r.Projection.PutRoute(ctx, prev.Host, prev.Route); err != nil {
+				emit(Event{Type: "status", Text: "The preview is taking a moment to go live. If it does not load, refresh in a few seconds."})
+			}
 		}
 	}
 	emit(Event{
 		Type:       "draft_ready",
 		VersionID:  ver.ID,
-		PreviewURL: contentURL(prev.Host),
-		ExpiresAt:  prev.ExpiresAt.UTC().Format(time.RFC3339),
+		PreviewURL: previewURL,
+		ExpiresAt:  expiresAt,
 	})
 	return nil
+}
+
+// draftPreviewURL computes the DETERMINISTIC preview URL for a draft version
+// (org slug + site slug + version id), used as a fallback when the preview-route
+// row couldn't be written. ok is false if the org slug or site can't be read.
+func (r *Runner) draftPreviewURL(ctx context.Context, t store.Tenant, siteID, versionID string, contentURL ContentURL) (string, bool) {
+	orgSlug, err := r.Store.OrgSlug(ctx, t)
+	if err != nil {
+		return "", false
+	}
+	site, err := r.Store.GetSite(ctx, t, siteID)
+	if err != nil {
+		return "", false
+	}
+	return contentURL(projection.PreviewHostForSite(versionID, orgSlug, site.Slug)), true
 }
 
 // defaultMaxTurnSpendUSD bounds how much a single turn may spend before it is
@@ -277,34 +308,49 @@ func (r *Runner) maxTurnSpendUSD() float64 {
 // its per-turn ceiling. Pure (no DB read per generation): priorSpent is read
 // once at the top of the turn and turnSpent accumulates the recorded costs.
 func (r *Runner) checkTurnBudget(monthlyCapUSD, priorSpent, turnSpent float64) error {
+	// The per-turn ceiling is a non-configurable runaway backstop; the monthly cap
+	// is the org's own setting. They carry DIFFERENT labels so the handler can tell
+	// the user which one tripped (only the monthly one is raisable in settings).
 	if turnSpent >= r.maxTurnSpendUSD() {
-		return capExceeded(r.maxTurnSpendUSD(), priorSpent+turnSpent)
+		return capExceeded(quotaResourceAITurnSpend, r.maxTurnSpendUSD(), priorSpent+turnSpent)
 	}
 	if monthlyCapUSD > 0 && priorSpent+turnSpent >= monthlyCapUSD {
-		return capExceeded(monthlyCapUSD, priorSpent+turnSpent)
+		return capExceeded(quotaResourceAISpend, monthlyCapUSD, priorSpent+turnSpent)
 	}
 	return nil
 }
 
 // capExceeded builds the quota error the handler maps to the existing 402/cap
-// pathway (the dashboard's cap/upgrade UI).
-func capExceeded(capUSD, spent float64) error {
+// pathway. The USD amounts are carried in CENTS (Current/Max) so a sub-dollar cap
+// (e.g. $0.50) is preserved rather than truncated to 0 by the int64 fields.
+func capExceeded(limit quota.Resource, capUSD, spent float64) error {
 	return &quota.ExceededError{
-		Limit:   quotaResourceAISpend,
-		Current: int64(spent),
-		Max:     int64(capUSD),
+		Limit:   limit,
+		Current: int64(math.Round(spent * 100)),
+		Max:     int64(math.Round(capUSD * 100)),
 	}
 }
 
-// quotaResourceAISpend labels the AI monthly-spend cap in a quota.ExceededError
-// so the 402 body distinguishes it from the site/storage caps.
-const quotaResourceAISpend quota.Resource = "ai_monthly_spend_usd"
+// quotaResourceAISpend labels the org's monthly AI-spend cap (raisable in
+// settings); quotaResourceAITurnSpend labels the non-configurable per-turn
+// runaway backstop. The handler maps each to a different user message.
+const (
+	quotaResourceAISpend     quota.Resource = "ai_monthly_spend_usd"
+	quotaResourceAITurnSpend quota.Resource = "ai_turn_spend_usd"
+)
 
-func (r *Runner) recordUsage(ctx context.Context, t store.Tenant, sessionID, model string, u *openrouter.Usage) {
+// AITurnSpendLimit is exported so the handler (a different package) can tell the
+// per-turn backstop apart from the monthly cap when shaping the error message.
+const AITurnSpendLimit = quotaResourceAITurnSpend
+
+// recordUsage writes one generation to the cost ledger and (cloud) meters it.
+// It returns true only when the ledger GENUINELY recorded a NEW row (dedup on
+// the generation id), so the caller counts the cost toward the cap exactly once.
+func (r *Runner) recordUsage(ctx context.Context, t store.Tenant, sessionID, model string, u *openrouter.Usage) (recorded bool) {
 	sid := sessionID
 	genID := u.GenerationID
 	if genID == "" {
-		return // nothing to reconcile against; skip (free/unpriced)
+		return false // nothing to reconcile against; skip (free/unpriced)
 	}
 	recorded, err := r.Store.RecordAIUsage(ctx, t, store.AIUsageRow{
 		SessionID:              &sid,
@@ -314,13 +360,17 @@ func (r *Runner) recordUsage(ctx context.Context, t store.Tenant, sessionID, mod
 		CompletionTokens:       u.CompletionTokens,
 		CostUSD:                u.Cost,
 	})
+	if err != nil {
+		return false
+	}
 	// Push the pass-through cost to the billing meter (cloud). Only on a
 	// genuinely-new ledger row (recorded), so a retried turn never double-bills.
 	// Best-effort: a failed report leaves reported_to_billing_at NULL for the ops
 	// retry sweep.
-	if err == nil && recorded && r.UsageReporter != nil && u.Cost > 0 {
+	if recorded && r.UsageReporter != nil && u.Cost > 0 {
 		_ = r.UsageReporter.ReportUsage(ctx, t.OrgID, genID, u.Cost)
 	}
+	return recorded
 }
 
 // appendMessage persists one OpenRouter message as an ai_messages row.

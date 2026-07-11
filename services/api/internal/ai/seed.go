@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/danielpang/dropway/internal/manifest"
 	"github.com/danielpang/dropway/internal/sandbox"
 	"github.com/danielpang/dropway/internal/storage"
 )
@@ -29,7 +30,7 @@ func seedSandbox(ctx context.Context, objects storage.Store, sb sandbox.Sandbox,
 		}
 		return fmt.Errorf("ai seed: read manifest: %w", err)
 	}
-	var mani storedManifest
+	var mani manifest.Stored
 	if err := json.Unmarshal(body, &mani); err != nil {
 		return fmt.Errorf("ai seed: parse manifest: %w", err)
 	}

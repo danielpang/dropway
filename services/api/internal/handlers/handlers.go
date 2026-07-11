@@ -39,6 +39,16 @@ func (a *API) previewTTL() time.Duration {
 	return defaultPreviewTTL
 }
 
+// aiSpendPeriodStart returns the start of the AI spend window (cap + usage
+// display), using the injected resolver when present, else the calendar month.
+func (a *API) aiSpendPeriodStart(ctx context.Context, t store.Tenant) time.Time {
+	if a.AISpendPeriodStart != nil {
+		return a.AISpendPeriodStart(ctx, t)
+	}
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
 // API holds the handler dependencies wired in main.go. Quota is the open-core
 // seam (Unlimited in OSS, the cloud hard-cap provider under -tags cloud). Store,
 // Objects, and Projection are the Phase-1 publish/serve loop; they may be nil in
@@ -120,6 +130,12 @@ type API struct {
 	AIDefaultModel string
 	// AIMaxConcurrent bounds active AI sessions per org (0 → default 2).
 	AIMaxConcurrent int
+	// AISpendPeriodStart returns the start of the window the AI spend cap + the
+	// "usage this month" display are computed over. Nil → the calendar month; the
+	// cloud build injects the Stripe billing-period resolver so the number the
+	// user sees matches what the cap enforces (the SAME resolver the AI runner's
+	// PeriodStart uses).
+	AISpendPeriodStart func(ctx context.Context, t store.Tenant) time.Time
 
 	// seededOrgs is a process-local set of org ids already observed as
 	// skills-seeded, so ensureSkillsSeeded can skip its per-request DB round-trip

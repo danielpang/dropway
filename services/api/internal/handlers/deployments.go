@@ -16,6 +16,7 @@ import (
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
+	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
@@ -34,19 +35,14 @@ type ManifestFile struct {
 	ContentType string `json:"content_type,omitempty"`
 }
 
-// storedManifest is the immutable per-deploy manifest written to R2 at
-// manifests/<org>/<site>/<version>.json. Serving resolves request-path → sha256
-// via this map, then streams blobs/<org>/<sha256>.
-type storedManifest struct {
-	SchemaVersion int                       `json:"schema_version"`
-	Files         map[string]manifestTarget `json:"files"` // request-path → target
-}
-
-type manifestTarget struct {
-	SHA256      string `json:"sha256"`
-	ContentType string `json:"content_type,omitempty"`
-	Size        int64  `json:"size"`
-}
+// storedManifest / manifestTarget are the immutable per-deploy manifest written
+// to R2 at manifests/<org>/<site>/<version>.json (serving resolves request-path →
+// sha256 via Files, then streams blobs/<org>/<sha256>). They are ALIASES of the
+// canonical shape in internal/manifest so the deploy finalize path, the skill
+// upload path, and the AI-draft ingest path all marshal the exact same type —
+// a field/tag change can never drift one writer from the others.
+type storedManifest = manifest.Stored
+type manifestTarget = manifest.Target
 
 // ---------------------------------------------------------------------------
 // POST /v1/sites/{id}/deployments/prepare
@@ -169,7 +165,8 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	siteID := chi.URLParam(r, "id")
 
 	// Confused-deputy guard: the site must belong to the active tenant.
-	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -243,32 +240,38 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	// further single label: <shortid>--<orgSlug>--<appSlug>.<ContentDomain>, rendered
 	// with the configured scheme/port.
 	//
-	// Register the preview route (host_routes kind='preview', pinned to this
-	// version, expiring previewTTL from now) and project it to the edge so the URL
-	// serves. This is BEST-EFFORT: the version + manifest are already committed and
-	// publishable, so a preview-registration failure must NOT fail the deploy (the
-	// pre-preview code returned 201 unconditionally, and the client would otherwise
-	// see a committed deploy as failed and retry). On failure we log, omit the
-	// preview URL from the response, and let the caller re-request a preview via
-	// POST /v1/sites/{id}/versions/{versionID}/preview. The KV write is best-effort
-	// too — the DB row is authoritative and the rebuild/reconcile path backstops it.
+	// The preview host is DETERMINISTIC (org slug + site slug + version id), so we
+	// ALWAYS compute and return it — a deploy that just returned 201 must never come
+	// back without a preview link (that was the pre-preview contract). Registering
+	// the host_routes row and projecting it to the edge are BEST-EFFORT: the version
+	// + manifest are already committed, so neither failure fails the deploy. When
+	// the row succeeds we use its authoritative host + expiry; when it (or the KV
+	// write) fails the URL is briefly unresolvable until the reconcile/rebuild
+	// backstop runs or the caller re-requests a preview — the same eventual
+	// consistency as publish's live_url.
 	resp := finalizeResponse{
 		VersionID: ver.ID,
 		VersionNo: ver.VersionNo,
 		Warnings:  deployWarnings(files),
 	}
+	orgSlug, slugErr := a.Store.OrgSlug(r.Context(), t)
+	if slugErr == nil {
+		resp.PreviewURL = a.ContentURL(projection.PreviewHostForSite(ver.ID, orgSlug, site.Slug))
+		resp.PreviewExpiresAt = time.Now().UTC().Add(a.previewTTL()).Format(time.RFC3339)
+	}
 	if prev, err := a.Store.CreatePreviewRoute(r.Context(), t, siteID, ver.ID, a.previewTTL()); err != nil {
 		logger(r).Error("preview route registration failed after finalize (deploy still succeeded)",
 			"site_id", siteID, "version_id", ver.ID, "err", err)
 	} else {
+		// Authoritative host + expiry from the committed row.
+		resp.PreviewURL = a.ContentURL(prev.Host)
+		resp.PreviewExpiresAt = prev.ExpiresAt.UTC().Format(time.RFC3339)
 		if a.Projection != nil {
 			if err := a.Projection.PutRoute(r.Context(), prev.Host, prev.Route); err != nil {
 				logger(r).Error("preview projection write failed after finalize",
 					"host", prev.Host, "site_id", siteID, "version_id", ver.ID, "err", err)
 			}
 		}
-		resp.PreviewURL = a.ContentURL(prev.Host)
-		resp.PreviewExpiresAt = prev.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
