@@ -14,6 +14,7 @@ import (
 	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/services/api/internal/store"
@@ -306,6 +307,12 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, middleware.ErrMissingTenant), errors.Is(err, store.ErrMissingViewer):
+		// The verified JWT carries no user/org (a session minted before the org
+		// existed). The store fails closed; to the client this is a credential
+		// problem, so answer 401 and let the dashboard re-authenticate instead of
+		// surfacing an opaque 500.
+		httpx.WriteError(w, fmt.Errorf("%w: session has no active organization, please sign in again", httpx.ErrUnauthorized))
 	case errors.Is(err, store.ErrInvalidSlug):
 		httpx.WriteError(w, fmt.Errorf("%w: slug is not a valid single DNS label", httpx.ErrBadRequest))
 	case errors.Is(err, store.ErrReservedSlug):

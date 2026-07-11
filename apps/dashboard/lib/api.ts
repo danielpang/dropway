@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { headers } from "next/headers";
+import { isAPIError } from "better-auth/api";
 
 import { auth } from "@/lib/auth";
 import { API_URL } from "@/lib/env";
@@ -214,11 +215,22 @@ export class ApiError extends Error {
 
 /** Mint a fresh EdDSA JWT for the caller's session (the costly path: a jwks
  * read + private-key decrypt + sign inside Better Auth). Forwards the request
- * cookies so the jwt() plugin resolves the caller's session. */
+ * cookies so the jwt() plugin resolves the caller's session.
+ *
+ * Better Auth throws an APIError("Unauthorized") when the session expired
+ * between the page's session check and this mint. That is a normal signed-out
+ * state, not a server fault: swallow it to null so the request goes out
+ * unauthenticated and the Go API's 401 drives the usual re-auth path, instead
+ * of the render crashing into onRequestError and error tracking. */
 async function mintBearerToken(): Promise<string | null> {
   const requestHeaders = await headers();
-  const result = await auth.api.getToken({ headers: requestHeaders });
-  return result?.token ?? null;
+  try {
+    const result = await auth.api.getToken({ headers: requestHeaders });
+    return result?.token ?? null;
+  } catch (err) {
+    if (isAPIError(err)) return null;
+    throw err;
+  }
 }
 
 /**
