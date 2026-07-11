@@ -843,9 +843,11 @@ paths:
     post:
       summary: Register a custom domain for a site (admin/owner only)
       description: >
-        Owner/admin only. Creates a Cloudflare-for-SaaS custom hostname and stores a
-        pending domains row, returning the DNS DCV record the user must create.
-        hostname is GLOBALLY UNIQUE → 409 if taken by another org/site.
+        Owner/admin only. Custom domains are a PAID feature: a free-tier org is
+        rejected with 402 (upgrade body) before any provisioning. Otherwise creates
+        a Cloudflare-for-SaaS custom hostname and stores a pending domains row,
+        returning the DNS DCV record the user must create. hostname is GLOBALLY
+        UNIQUE → 409 if taken by another org/site.
       operationId: addDomain
       parameters:
         - { $ref: "#/components/parameters/SiteID" }
@@ -866,6 +868,7 @@ paths:
               schema: { $ref: "#/components/schemas/Domain" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
@@ -1991,7 +1994,7 @@ components:
       type: object
       description: 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal.
       properties:
-        limit: { type: string, enum: [sites_per_user, members_per_org] }
+        limit: { type: string, enum: [sites_per_user, members_per_org, custom_domains_per_org] }
         current: { type: integer, format: int64 }
         max: { type: integer, format: int64 }
         plan_tier: { type: string }

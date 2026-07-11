@@ -14,8 +14,10 @@
 //	Enterprise : unlimited sites  (no site cap)
 //
 // SEATS ARE FREE: members are unlimited on every plan, so ResourceMemberPerOrg
-// always passes. Storage (bytes/org) keeps its own bands but is GATED OFF by
-// default — it's metered, not enforced, until storage billing ships (toggle with
+// always passes. CUSTOM DOMAINS are a PAID feature: the free tier is capped at 0
+// (ResourceCustomDomainPerOrg → 402 {next_tier: pro} on the first add) and every
+// paid tier is unlimited. Storage (bytes/org) keeps its own bands but is GATED OFF
+// by default — it's metered, not enforced, until storage billing ships (toggle with
 // ENFORCE_STORAGE_QUOTA / NewProvider's enforceStorage). Business is the $150
 // unlimited-sites tier between Pro and Enterprise; the internal tier keys now
 // match the public labels (free / pro / business / enterprise).
@@ -143,6 +145,15 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 			return nil
 		}
 		capMax, next = freeSkillsPerFolderCap, TierPro
+	case corequota.ResourceCustomDomainPerOrg:
+		// Custom domains are a PAID feature modeled as a 0/unlimited band: the free
+		// tier may register NONE (cap 0 → the first add is current+1 > 0 → 402
+		// {next_tier: pro}); every paid tier is unlimited. The preflight passes
+		// current=0, so a free org is rejected at its first domain.
+		if tier != TierFree {
+			return nil
+		}
+		capMax, next = 0, TierPro
 	default:
 		// Unknown resources are not capped by the cloud policy (the store only
 		// calls Allow for the resources it enforces).

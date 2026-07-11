@@ -43,6 +43,15 @@ export async function addDomainAction(input: {
     return { ok: true, domain };
   } catch (err) {
     if (err instanceof ApiError) {
+      // Custom domains are a paid feature: the API returns 402 for free-tier orgs.
+      // This is a backstop — the UI already routes free orgs to the upgrade page —
+      // so surface an upgrade nudge rather than a generic failure.
+      if (err.status === 402) {
+        return {
+          ok: false,
+          message: "Custom domains require a paid plan. Upgrade to add one.",
+        };
+      }
       const apiMsg = (err.body as { message?: string } | null)?.message;
       if (apiMsg) return { ok: false, message: apiMsg };
       if (err.status === 409) {

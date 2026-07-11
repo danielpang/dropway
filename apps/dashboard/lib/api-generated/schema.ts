@@ -514,7 +514,7 @@ export interface paths {
         put?: never;
         /**
          * Register a custom domain for a site (admin/owner only)
-         * @description Owner/admin only. Creates a Cloudflare-for-SaaS custom hostname and stores a pending domains row, returning the DNS DCV record the user must create. hostname is GLOBALLY UNIQUE → 409 if taken by another org/site.
+         * @description Owner/admin only. Custom domains are a PAID feature: a free-tier org is rejected with 402 (upgrade body) before any provisioning. Otherwise creates a Cloudflare-for-SaaS custom hostname and stores a pending domains row, returning the DNS DCV record the user must create. hostname is GLOBALLY UNIQUE → 409 if taken by another org/site.
          */
         post: operations["addDomain"];
         delete?: never;
@@ -1226,7 +1226,7 @@ export interface components {
         /** @description 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal. */
         QuotaExceeded: {
             /** @enum {string} */
-            limit?: "sites_per_user" | "members_per_org";
+            limit?: "sites_per_user" | "members_per_org" | "custom_domains_per_org";
             /** Format: int64 */
             current?: number;
             /** Format: int64 */
@@ -2272,6 +2272,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];

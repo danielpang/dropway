@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
@@ -34,6 +35,40 @@ type CreateDomainParams struct {
 	Hostname     string
 	CFHostnameID string
 	DCVRecord    string
+}
+
+// PreflightCustomDomain is the server-side custom-domains ENTITLEMENT gate the
+// AddDomain handler calls BEFORE creating the Cloudflare custom hostname, so a
+// free-tier org is rejected (402, upgrade body) without ever provisioning a
+// provider-side hostname. Custom domains are a PAID feature: the cloud provider
+// caps the free tier at 0 and leaves every paid tier unlimited (OSS Unlimited
+// always passes). It reads the org's live plan_tier under the tenant's RLS
+// context and asks the pure policy whether creating one more is allowed.
+//
+// current is 0 because this is a BINARY entitlement, not a count band: the free
+// cap is 0 (so the first add is always rejected) and paid is unlimited (always
+// allowed), so there is no count/lock TOCTOU to guard — the plan tier is the only
+// input and it doesn't change within the check.
+func (s *Store) PreflightCustomDomain(ctx context.Context, t Tenant) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := setTenant(ctx, tx, t.UserID, t.OrgID); err != nil {
+		return err
+	}
+	q := db.New(tx)
+
+	planTier, err := q.GetPlanTier(ctx, t.OrgID)
+	if err != nil {
+		return err
+	}
+	if err := s.quota.Allow(planTier, quota.ResourceCustomDomainPerOrg, 0); err != nil {
+		return err // *quota.ExceededError → handler renders HTTP 402
+	}
+	return tx.Commit(ctx)
 }
 
 // CreateDomain inserts a pending custom-domain row for a site (confused-deputy

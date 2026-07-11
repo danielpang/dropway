@@ -28,6 +28,7 @@ type p2State struct {
 	members      map[string]string                 // userID → role
 	memberErr    error
 	preflightErr error                        // injected by MembersPreflight (e.g. a *quota.ExceededError)
+	domainErr    error                        // injected by PreflightCustomDomain (e.g. a *quota.ExceededError)
 	orgPolicy    bool                         // allow_external_sharing
 	mcpEnabled   bool                         // org_meta.mcp_enabled (default true)
 	domains      map[string]store.Domain      // domainID → domain
@@ -220,6 +221,10 @@ func (f *fakeStore) ResolveForPassword(_ context.Context, host string) (store.Pa
 		return f.p2().passwordFn(host)
 	}
 	return store.PasswordDecision{}, "", store.ErrHostNotFound
+}
+
+func (f *fakeStore) PreflightCustomDomain(_ context.Context, _ store.Tenant) error {
+	return f.p2().domainErr
 }
 
 func (f *fakeStore) CreateDomain(_ context.Context, t store.Tenant, p store.CreateDomainParams) (store.Domain, error) {

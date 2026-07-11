@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ShieldAlert } from "lucide-react";
 
 import { DomainsManager } from "@/components/sites/domains-manager";
@@ -11,7 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api, ApiError, type Domain, type Site } from "@/lib/api";
+import { api, ApiError, type Domain, type PlanTier, type Site } from "@/lib/api";
+import { customDomainsEntitled } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const dynamic = "force-dynamic";
@@ -48,15 +49,24 @@ export default async function SiteDomainsPage({
     throw err;
   }
 
-  const [org, domains, me] = await Promise.all([
+  const [org, domains, me, plan] = await Promise.all([
     loadActiveOrg(),
     api.listDomains(id).catch((): Domain[] => []),
     api.me().catch(() => null),
+    api.getBilling().catch(() => null),
   ]);
   const manage = org ? canManage(org.myRole) : false;
   // Custom domains only work when the API has a real Cloudflare-for-SaaS provider.
   // In self-host/dev the feature is hidden (it could never finish verification).
   const enabled = me?.custom_domains_enabled ?? false;
+
+  // Custom domains are a PAID feature (the server enforces this with a 402). When
+  // the feature is available on this deployment but the org is on the free tier,
+  // send them to the upgrade page rather than a page whose actions would 402.
+  const planTier = (plan?.plan_tier ?? "free") as PlanTier;
+  if (enabled && !customDomainsEntitled(planTier)) {
+    redirect("/billing");
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

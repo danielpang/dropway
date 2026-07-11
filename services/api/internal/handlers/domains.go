@@ -58,6 +58,16 @@ func (a *API) AddDomain(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r, t) {
 		return
 	}
+
+	// Custom domains are a PAID feature: reject free-tier orgs with 402 (upgrade
+	// body) BEFORE provisioning anything at Cloudflare, so we never create an
+	// orphan custom hostname for an org that isn't entitled. OSS/self-host is
+	// Unlimited, so this always passes there.
+	if err := a.Store.PreflightCustomDomain(r.Context(), t); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
 	siteID := chi.URLParam(r, "id")
 
 	var req addDomainRequest

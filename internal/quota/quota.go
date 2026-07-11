@@ -53,6 +53,13 @@ const (
 	// (pro/business/enterprise unlimited); OSS self-host is Unlimited. Checked
 	// under a per-folder advisory lock inside the membership-insert tx.
 	ResourceSkillPerFolder Resource = "skills_per_folder"
+	// ResourceCustomDomainPerOrg gates custom domains as a PAID feature rather than
+	// a count band: the cloud provider caps the free tier at 0 (so registering the
+	// first custom hostname returns 402 {next_tier: pro}) and leaves every paid tier
+	// unlimited. OSS self-host is Unlimited. Checked by the AddDomain preflight
+	// BEFORE the Cloudflare custom hostname is provisioned, so a free org never
+	// creates a provider-side hostname it isn't entitled to.
+	ResourceCustomDomainPerOrg Resource = "custom_domains_per_org"
 )
 
 // ExceededError is returned by an enforcing Provider when an action would cross

@@ -76,6 +76,10 @@ type SiteStore interface {
 	ResolveForPassword(ctx context.Context, host string) (store.PasswordDecision, string, error)
 
 	// Custom domains.
+	// PreflightCustomDomain is the custom-domains entitlement gate; returns a
+	// *quota.ExceededError when the org's plan tier doesn't include custom domains
+	// (the free tier), so AddDomain can 402 before provisioning at Cloudflare.
+	PreflightCustomDomain(ctx context.Context, t store.Tenant) error
 	CreateDomain(ctx context.Context, t store.Tenant, p store.CreateDomainParams) (store.Domain, error)
 	GetDomain(ctx context.Context, t store.Tenant, id string) (store.Domain, error)
 	ListDomainsForSite(ctx context.Context, t store.Tenant, siteID string) ([]store.Domain, error)

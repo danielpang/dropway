@@ -171,6 +171,17 @@ export const PLAN_MATRIX: PlanFeatureRow[] = [
 export const MATRIX_TIERS: PlanTier[] = ["free", "pro", "business", "enterprise"];
 
 /**
+ * Whether a tier includes custom domains. Custom domains are a PAID feature —
+ * excluded on Free, included on every paid tier — mirroring the "Custom domains"
+ * row of PLAN_MATRIX. This is DISPLAY/UX gating only: the authoritative gate is
+ * server-side (cloud/quota's ResourceCustomDomainPerOrg → 402 on the free tier).
+ * The UI uses it to route the Domains CTA to the upgrade page for free orgs.
+ */
+export function customDomainsEntitled(tier: PlanTier): boolean {
+  return tier !== "free";
+}
+
+/**
  * Numeric per-org site cap by tier for the usage meter (null = unlimited).
  * Mirrors cloud/quota's bands (Free 10 / Pro 100; Business and Enterprise
  * unlimited). Display-only — the real cap is enforced server-side.

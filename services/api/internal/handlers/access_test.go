@@ -546,6 +546,37 @@ func TestAddDomain_MemberForbidden(t *testing.T) {
 	}
 }
 
+// A free-tier org (custom domains not entitled) is rejected with 402 and the
+// upgrade body BEFORE any Cloudflare hostname is provisioned or a domain row is
+// created — the entitlement gate short-circuits AddDomain.
+func TestAddDomain_FreeTier_PaymentRequired(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["site_1"] = store.Site{ID: "site_1", OrgID: "org_1", Slug: "s"}
+	fs.p2().members["user_1"] = store.RoleAdmin
+	// Simulate the cloud provider's free-tier gate: the preflight returns a 402.
+	fs.p2().domainErr = &quota.ExceededError{
+		Limit: quota.ResourceCustomDomainPerOrg, Current: 0, Max: 0,
+		PlanTier: "free", NextTier: "pro", UpgradeURL: "https://app.dropway.dev/billing",
+	}
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	a.Domains = newFakeDomains()
+	h := mountAccess(a, claims("user_1", "org_1", "admin"))
+
+	rr := postJSON(h, "/v1/sites/site_1/domains", `{"hostname":"docs.acme.com"}`)
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402: %s", rr.Code, rr.Body.String())
+	}
+	var body quota.ExceededError
+	_ = json.Unmarshal(rr.Body.Bytes(), &body)
+	if body.Limit != quota.ResourceCustomDomainPerOrg || body.NextTier != "pro" {
+		t.Fatalf("402 body = %+v, want custom_domains_per_org → pro", body)
+	}
+	// The gate must short-circuit before any domain row is created.
+	if len(fs.p2().domains) != 0 {
+		t.Errorf("no domain should be created on a rejected entitlement, got %d", len(fs.p2().domains))
+	}
+}
+
 func TestListMembers_OK(t *testing.T) {
 	fs := newFakeStore()
 	fs.p2().members["user_1"] = store.RoleOwner
