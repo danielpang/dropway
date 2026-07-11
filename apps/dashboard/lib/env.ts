@@ -107,6 +107,21 @@ export function mailFrom(): string {
   return process.env.MAIL_FROM ?? "Dropway <no-reply@localhost>";
 }
 
+/**
+ * Inbox the in-app contact form (bug reports / feature requests) delivers to.
+ * The contact action routes each submission here via the same SMTP seam
+ * (lib/email.ts) the auth flows use, so it inherits the vendor-neutral transport
+ * and the "log, don't send" degradation when MAIL_SMTP_URL is unset.
+ *
+ * UNSET → the contact form is unavailable (the footer link hides and the action
+ * refuses), rather than silently dropping user feedback to nowhere. Set
+ * SUPPORT_EMAIL to a monitored address to turn it on.
+ */
+export function supportEmail(): string | undefined {
+  requireServer();
+  return process.env.SUPPORT_EMAIL || undefined;
+}
+
 export function googleClientId(): string {
   requireServer();
   return process.env.GOOGLE_CLIENT_ID ?? "";
