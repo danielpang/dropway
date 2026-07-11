@@ -99,8 +99,8 @@ func TestStorage_NotEnforcedByDefault(t *testing.T) {
 		tier           string
 		current, delta int64
 	}{
-		{"free", 4 * gib, 100 * gib},  // way past the 5 GiB Free band
-		{"pro", 100 * gib, 50 * gib},  // past the 100 GiB Pro band
+		{"free", 4 * gib, 100 * gib},     // way past the 5 GiB Free band
+		{"pro", 100 * gib, 50 * gib},     // past the 100 GiB Pro band
 		{"business", 250 * gib, 1 * gib}, // past the 250 GiB Business band
 		{"enterprise", 500 * gib, 1 * gib},
 	}
@@ -112,6 +112,46 @@ func TestStorage_NotEnforcedByDefault(t *testing.T) {
 	// Site caps are still enforced regardless of the storage flag.
 	if err := p.Allow("free", corequota.ResourceSitePerOrg, 10); err == nil {
 		t.Error("the site cap must still fire even with storage gating off")
+	}
+}
+
+// Custom domains are a PAID feature: the free tier is capped at 0, so the first
+// custom hostname (current=0 → 0+1 > 0) is rejected with a free→pro upgrade body.
+func TestCustomDomains_FreeTierRejected(t *testing.T) {
+	err := newProvider().Allow("free", corequota.ResourceCustomDomainPerOrg, 0)
+	ex, ok := corequota.AsExceeded(err)
+	if !ok {
+		t.Fatalf("want ExceededError, got %v", err)
+	}
+	if ex.Max != 0 || ex.Current != 0 {
+		t.Errorf("max/current = %d/%d, want 0/0", ex.Max, ex.Current)
+	}
+	if ex.PlanTier != "free" || ex.NextTier != "pro" {
+		t.Errorf("tiers = %q→%q, want free→pro", ex.PlanTier, ex.NextTier)
+	}
+	if ex.UpgradeURL == "" {
+		t.Error("free→pro should carry an upgrade_url")
+	}
+	if ex.SalesURL != "" {
+		t.Errorf("free→pro should not carry a sales_url, got %q", ex.SalesURL)
+	}
+}
+
+// Every PAID tier gets unlimited custom domains: Allow must pass regardless of how
+// many the org already has.
+func TestCustomDomains_PaidTiersUnlimited(t *testing.T) {
+	p := newProvider()
+	cases := []struct {
+		tier    string
+		current int64
+	}{
+		{"pro", 0}, {"pro", 50}, {"business", 0}, {"business", 999},
+		{"enterprise", 0}, {"enterprise", 1_000_000},
+	}
+	for _, c := range cases {
+		if err := p.Allow(c.tier, corequota.ResourceCustomDomainPerOrg, c.current); err != nil {
+			t.Errorf("custom domains must be unlimited on paid tiers: Allow(%q, %d) = %v, want nil", c.tier, c.current, err)
+		}
 	}
 }
 

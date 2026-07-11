@@ -18,7 +18,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api, ApiError, type Site, type SiteComment } from "@/lib/api";
+import { api, ApiError, type PlanTier, type Site, type SiteComment } from "@/lib/api";
+import { customDomainsEntitled } from "@/lib/billing";
 import { MCP_URL } from "@/lib/env";
 import { loadActiveOrg } from "@/lib/org";
 import { formatBytes } from "@/lib/utils";
@@ -61,6 +62,16 @@ export default async function SiteDetailPage({
     .me()
     .then((me) => me.custom_domains_enabled ?? false)
     .catch(() => false);
+  // Whether this org may use custom domains: a PAID feature on the hosted build,
+  // so a free-tier org's Domains button routes to the upgrade page instead of the
+  // (server-gated) domains page. getBilling 404s on OSS/self-host, which is
+  // UNLIMITED (mirrors the server's Unlimited provider) → treat as entitled so a
+  // self-hoster with Cloudflare configured is never sent to a nonexistent billing
+  // page. A transient failure also fails OPEN here since the server is the real gate.
+  const domainsEntitledPromise = api
+    .getBilling()
+    .then((b) => customDomainsEntitled((b.plan_tier ?? "free") as PlanTier))
+    .catch(() => true);
   // Deploy history for the rollback picker (newest first). Best-effort: an empty
   // list just renders the dialog's "no versions yet" state.
   const versionsPromise = api.listVersions(id).catch(() => []);
@@ -78,12 +89,18 @@ export default async function SiteDetailPage({
     throw err;
   }
 
-  const [customDomainsEnabled, versions, comments, org] = await Promise.all([
-    customDomainsPromise,
-    versionsPromise,
-    commentsPromise,
-    orgPromise,
-  ]);
+  const [customDomainsEnabled, domainsEntitled, versions, comments, org] =
+    await Promise.all([
+      customDomainsPromise,
+      domainsEntitledPromise,
+      versionsPromise,
+      commentsPromise,
+      orgPromise,
+    ]);
+  // Free-tier orgs see the Domains button but it routes to the upgrade page; paid
+  // (and self-host/unlimited) orgs go straight to the domains manager. The server
+  // enforces the same gate.
+  const domainsHref = domainsEntitled ? `/sites/${id}/domains` : "/billing";
 
   const commentMembers: CommentMember[] = (org?.members ?? []).map((m) => ({
     userId: m.userId,
@@ -136,7 +153,7 @@ export default async function SiteDetailPage({
           </Button>
           {customDomainsEnabled && (
             <Button asChild variant="outline" size="sm">
-              <Link href={`/sites/${id}/domains`}>
+              <Link href={domainsHref}>
                 <Link2 aria-hidden />
                 Domains
               </Link>
