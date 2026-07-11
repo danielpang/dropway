@@ -62,14 +62,16 @@ export default async function SiteDetailPage({
     .me()
     .then((me) => me.custom_domains_enabled ?? false)
     .catch(() => false);
-  // The org's plan tier gates the Domains CTA: custom domains are a PAID feature,
-  // so a free-tier org's button routes to the upgrade page instead of the (server-
-  // gated) domains page. getBilling 404s on OSS/self-host → treat as "free" (the
-  // button is hidden there anyway since customDomainsEnabled is false).
-  const planTierPromise = api
+  // Whether this org may use custom domains: a PAID feature on the hosted build,
+  // so a free-tier org's Domains button routes to the upgrade page instead of the
+  // (server-gated) domains page. getBilling 404s on OSS/self-host, which is
+  // UNLIMITED (mirrors the server's Unlimited provider) → treat as entitled so a
+  // self-hoster with Cloudflare configured is never sent to a nonexistent billing
+  // page. A transient failure also fails OPEN here since the server is the real gate.
+  const domainsEntitledPromise = api
     .getBilling()
-    .then((b) => (b.plan_tier ?? "free") as PlanTier)
-    .catch(() => "free" as PlanTier);
+    .then((b) => customDomainsEntitled((b.plan_tier ?? "free") as PlanTier))
+    .catch(() => true);
   // Deploy history for the rollback picker (newest first). Best-effort: an empty
   // list just renders the dialog's "no versions yet" state.
   const versionsPromise = api.listVersions(id).catch(() => []);
@@ -87,19 +89,18 @@ export default async function SiteDetailPage({
     throw err;
   }
 
-  const [customDomainsEnabled, planTier, versions, comments, org] =
+  const [customDomainsEnabled, domainsEntitled, versions, comments, org] =
     await Promise.all([
       customDomainsPromise,
-      planTierPromise,
+      domainsEntitledPromise,
       versionsPromise,
       commentsPromise,
       orgPromise,
     ]);
   // Free-tier orgs see the Domains button but it routes to the upgrade page; paid
-  // orgs go straight to the domains manager. The server enforces the same gate.
-  const domainsHref = customDomainsEntitled(planTier)
-    ? `/sites/${id}/domains`
-    : "/billing";
+  // (and self-host/unlimited) orgs go straight to the domains manager. The server
+  // enforces the same gate.
+  const domainsHref = domainsEntitled ? `/sites/${id}/domains` : "/billing";
 
   const commentMembers: CommentMember[] = (org?.members ?? []).map((m) => ({
     userId: m.userId,

@@ -60,11 +60,13 @@ export default async function SiteDomainsPage({
   // In self-host/dev the feature is hidden (it could never finish verification).
   const enabled = me?.custom_domains_enabled ?? false;
 
-  // Custom domains are a PAID feature (the server enforces this with a 402). When
-  // the feature is available on this deployment but the org is on the free tier,
-  // send them to the upgrade page rather than a page whose actions would 402.
-  const planTier = (plan?.plan_tier ?? "free") as PlanTier;
-  if (enabled && !customDomainsEntitled(planTier)) {
+  // Custom domains are a PAID feature on the HOSTED build (the server enforces it
+  // with a 402). When billing exists and the org is on the free tier, send them to
+  // the upgrade page rather than a page whose actions would 402. `plan == null`
+  // means billing isn't available on this deployment (OSS/self-host is UNLIMITED,
+  // mirroring the server's Unlimited provider) — so we must NOT redirect a
+  // self-hoster to a nonexistent billing page.
+  if (enabled && plan != null && !customDomainsEntitled((plan.plan_tier ?? "free") as PlanTier)) {
     redirect("/billing");
   }
 
