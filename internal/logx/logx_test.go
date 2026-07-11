@@ -39,6 +39,34 @@ func TestMiddleware_PropagatesAndEchoesRequestID(t *testing.T) {
 	}
 }
 
+// TestMiddleware_PreservesFlusher guards the SSE/streaming path: the access-log
+// wrapper must still satisfy http.Flusher, otherwise streaming handlers see the
+// wrapped writer, fail their w.(http.Flusher) assertion, and return "streaming
+// unsupported". httptest.ResponseRecorder implements Flusher, so the wrapper is
+// expected to forward it.
+func TestMiddleware_PreservesFlusher(t *testing.T) {
+	var flushable, flushed bool
+	final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		f, ok := w.(http.Flusher)
+		flushable = ok
+		if ok {
+			f.Flush()
+			flushed = true
+		}
+	})
+
+	h := Middleware(nil)(final)
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if !flushable {
+		t.Fatal("wrapped ResponseWriter does not satisfy http.Flusher; SSE would break")
+	}
+	if !flushed {
+		t.Error("Flush() was not reached")
+	}
+}
+
 // TestValidRequestID asserts the allowlist accepts safe correlation ids and rejects
 // forgeable / oversized ones (the log/audit-forgery guard).
 func TestValidRequestID(t *testing.T) {
