@@ -52,6 +52,7 @@ type EventData struct {
 	PlanTier             PlanTier // derived from the subscription's price
 	Seats                int64
 	Status               string // active | past_due | canceled | ...
+	CurrentPeriodStart   int64  // unix seconds (subscription's current billing period start)
 	CurrentPeriodEnd     int64  // unix seconds
 	CancelAtPeriodEnd    bool
 	// UnknownPrice is set when a subscription line item carried a non-empty price id

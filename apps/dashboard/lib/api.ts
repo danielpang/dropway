@@ -45,6 +45,15 @@ export type SiteComment = components["schemas"]["SiteComment"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
 
+/** One entry in the OpenRouter model catalog the AI builder's picker renders. */
+export type AiModel = {
+  id: string;
+  name?: string;
+  description?: string;
+  context_length?: number;
+  pricing?: { prompt?: string; completion?: string };
+};
+
 // ---- Org-wide skill sharing shapes -----------------------------------------
 
 /** An org-shared Claude skill (SKILL.md + supporting files, latest-only versions). */
@@ -389,16 +398,14 @@ export const api = {
 
   /**
    * The OpenRouter model catalog for the AI builder's model picker, plus the
-   * server's default model id. Returns an empty catalog when the builder is not
-   * configured (503), so callers can degrade gracefully.
+   * server's default model id. Includes context window + per-token pricing so the
+   * picker can show a context badge and a cost tier. Returns an empty catalog
+   * when the builder is not configured (503), so callers degrade gracefully.
    */
-  async aiModels(): Promise<{
-    models: { id: string; name?: string }[];
-    default: string;
-  }> {
+  async aiModels(): Promise<{ models: AiModel[]; default: string }> {
     try {
       const body = (await apiGet("/v1/ai/models")) as {
-        models?: { id: string; name?: string }[];
+        models?: AiModel[];
         default?: string;
       };
       return { models: body.models ?? [], default: body.default ?? "" };

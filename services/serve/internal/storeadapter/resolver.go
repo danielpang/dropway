@@ -11,13 +11,24 @@ package storeadapter
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/danielpang/dropway/services/serve/internal/serve"
 )
+
+// isMissingColumn reports whether err is a Postgres undefined-column error
+// (SQLSTATE 42703) — what selecting preview_expires_at from a pre-0010,
+// 6-column app.resolve_host raises. Used to latch the resolver to the legacy
+// query so a migration-lag deploy doesn't error every request.
+func isMissingColumn(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42703"
+}
 
 // RouteResolver resolves a content host to its routing identity via Postgres. It
 // connects as the non-BYPASSRLS dropway_app role and uses ONLY the narrow,
@@ -26,6 +37,13 @@ import (
 // under the resolved org's own RLS tenant context.
 type RouteResolver struct {
 	pool *pgxpool.Pool
+	// legacyResolveHost is set once (atomically) if app.resolve_host still has the
+	// pre-migration-0010 6-column signature (no preview_expires_at). It makes the
+	// resolver tolerant of a deploy/rollback where the serve code is newer than the
+	// applied schema: instead of erroring on EVERY request (taking all sites down),
+	// it falls back to the 6-column query. Previews then rely on the separate
+	// host_routes lookup below until the migration lands. 0 = unknown/new, 1 = legacy.
+	legacyResolveHost atomic.Int32
 }
 
 // NewRouteResolver builds a RouteResolver over a dropway_app pgxpool.
@@ -57,14 +75,35 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 		// query against host_routes on the 99% of traffic that isn't a preview.
 		previewExpires pgtype.Timestamptz
 	)
-	row := tx.QueryRow(ctx,
-		`SELECT host, site_id, org_id, slug, access_mode, version_id, preview_expires_at FROM app.resolve_host($1)`,
-		normalizedHost)
-	if err := row.Scan(&host, &siteID, &orgID, &slug, &accessMode, &versionID, &previewExpires); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return serve.Route{}, serve.ErrHostNotFound
+	if a.legacyResolveHost.Load() == 1 {
+		// Pre-0010 schema: 6-column resolve_host (no preview_expires_at).
+		row := tx.QueryRow(ctx,
+			`SELECT host, site_id, org_id, slug, access_mode, version_id FROM app.resolve_host($1)`,
+			normalizedHost)
+		if err := row.Scan(&host, &siteID, &orgID, &slug, &accessMode, &versionID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return serve.Route{}, serve.ErrHostNotFound
+			}
+			return serve.Route{}, err
 		}
-		return serve.Route{}, err
+	} else {
+		row := tx.QueryRow(ctx,
+			`SELECT host, site_id, org_id, slug, access_mode, version_id, preview_expires_at FROM app.resolve_host($1)`,
+			normalizedHost)
+		if err := row.Scan(&host, &siteID, &orgID, &slug, &accessMode, &versionID, &previewExpires); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return serve.Route{}, serve.ErrHostNotFound
+			}
+			// If resolve_host lacks the preview column (migration 0010 not applied
+			// yet — a deploy/rollback ordering gap), latch to the legacy query so we
+			// don't error on every request. The current request retries below via a
+			// fresh tx path; the aborted tx is rolled back by the deferred Rollback.
+			if isMissingColumn(err) {
+				a.legacyResolveHost.Store(1)
+				return a.Resolve(ctx, normalizedHost)
+			}
+			return serve.Route{}, err
+		}
 	}
 	if versionID == nil {
 		// No live version → nothing to serve (mirror authz.go's NULL-version → 404).
@@ -90,7 +129,7 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 		return serve.Route{}, err
 	}
 	var expiresAt pgtype.Timestamptz
-	row = tx.QueryRow(ctx,
+	row := tx.QueryRow(ctx,
 		`SELECT expires_at FROM app.site_access_policy WHERE site_id = $1`, siteID)
 	switch err := row.Scan(&expiresAt); {
 	case err == nil:

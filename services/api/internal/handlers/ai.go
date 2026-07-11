@@ -438,9 +438,10 @@ func (a *API) GetAIOrgSettings(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	now := time.Now().UTC()
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	spent, err := a.Store.AISpendSince(r.Context(), t, monthStart)
+	// Sum spend over the SAME window the cap is enforced against (the Stripe
+	// billing period on cloud, the calendar month otherwise), so the displayed
+	// figure can't disagree with a 402 the user hits.
+	spent, err := a.Store.AISpendSince(r.Context(), t, a.aiSpendPeriodStart(r.Context(), t))
 	if err != nil {
 		writeStoreError(w, err)
 		return

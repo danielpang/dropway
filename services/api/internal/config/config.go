@@ -111,6 +111,12 @@ type Config struct {
 	StripePriceBusiness   string
 	StripePriceEnterprise string
 
+	// StripeAIMeterPrice is the usage-based Stripe Price id for AI builder usage
+	// (the metered price attached to the ai_cost_cents Billing Meter, $0.01/unit).
+	// Set STRIPE_AI_METER_PRICE to bill pass-through AI cost on the org's
+	// subscription. Empty → AI usage is metered to the ledger but not to Stripe.
+	StripeAIMeterPrice string
+
 	// DashboardURL is the dashboard origin (DASHBOARD_URL) used for Checkout
 	// success/cancel + Billing-Portal return URLs. Defaults to https://app.dropway.dev.
 	DashboardURL string
@@ -210,6 +216,7 @@ func Load() (Config, error) {
 		StripePricePro:        os.Getenv("STRIPE_PRICE_PRO"),
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
+		StripeAIMeterPrice:    os.Getenv("STRIPE_AI_METER_PRICE"),
 		DashboardURL:          envOr("DASHBOARD_URL", "https://app.dropway.dev"),
 		Environment:           envOr("ENVIRONMENT", "development"),
 		EnforceStorageQuota:   parseBool(os.Getenv("ENFORCE_STORAGE_QUOTA")),

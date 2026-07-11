@@ -24,19 +24,6 @@ import (
 // build can't fill the org's storage). 100 MiB is well above any static site.
 const maxIngestBytes = 100 << 20
 
-// storedManifest mirrors the deploy handler's on-disk manifest shape so the
-// serving worker resolves AI drafts identically to normal deploys.
-type storedManifest struct {
-	SchemaVersion int                       `json:"schema_version"`
-	Files         map[string]manifestTarget `json:"files"`
-}
-
-type manifestTarget struct {
-	SHA256      string `json:"sha256"`
-	ContentType string `json:"content_type,omitempty"`
-	Size        int64  `json:"size"`
-}
-
 // ingestTar reads a tar of the sandbox's working tree, uploads each file as a
 // content-addressed blob (server computes the hashes — never the sandbox), then
 // creates an immutable AI draft version with the manifest written to storage.
@@ -48,7 +35,7 @@ type manifestTarget struct {
 // trip, but the hashing + dedup-aware metering are identical (store.CreateSiteVersion
 // runs the same accountStorage path).
 func ingestTar(ctx context.Context, objects storage.Store, st *store.Store, t store.Tenant, siteID string, r io.Reader) (store.SiteVersion, error) {
-	files := map[string]manifestTarget{}
+	files := map[string]manifest.Target{}
 	blobs := []store.BlobSize{}
 	seen := map[string]struct{}{}
 	manifestFiles := []manifest.File{}
@@ -88,7 +75,7 @@ func ingestTar(ctx context.Context, objects storage.Store, st *store.Store, t st
 			}
 			blobs = append(blobs, store.BlobSize{SHA: sha, Size: int64(len(data))})
 		}
-		files[rel] = manifestTarget{SHA256: sha, ContentType: contentType(rel), Size: int64(len(data))}
+		files[rel] = manifest.Target{SHA256: sha, ContentType: contentType(rel), Size: int64(len(data))}
 		manifestFiles = append(manifestFiles, manifest.File{Path: rel, SHA256: sha})
 	}
 	if len(files) == 0 {
@@ -108,7 +95,7 @@ func ingestTar(ctx context.Context, objects storage.Store, st *store.Store, t st
 		return store.SiteVersion{}, err
 	}
 
-	body, err := json.Marshal(storedManifest{SchemaVersion: manifest.SchemaVersion, Files: files})
+	body, err := json.Marshal(manifest.Stored{SchemaVersion: manifest.SchemaVersion, Files: files})
 	if err != nil {
 		return store.SiteVersion{}, err
 	}

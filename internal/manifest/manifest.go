@@ -42,6 +42,25 @@ type File struct {
 	SHA256 string
 }
 
+// Stored is the immutable per-deploy manifest written to object storage at
+// manifests/<org>/<site>/<version>.json. Serving resolves a request path →
+// sha256 via Files, then streams blobs/<org>/<sha256>. This is a SINGLE serving
+// contract, so its Go shape lives here (not duplicated per writer) — the deploy
+// finalize path and the AI-draft ingest path both marshal this exact type, so a
+// new field or json tag can never drift one writer from the other.
+type Stored struct {
+	SchemaVersion int               `json:"schema_version"`
+	Files         map[string]Target `json:"files"` // request-path → target
+}
+
+// Target is one file in a Stored manifest: its content hash, optional
+// content-type, and size.
+type Target struct {
+	SHA256      string `json:"sha256"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size"`
+}
+
 // Digest returns the whole-deploy content address: the SHA-256 over the files
 // sorted by Path, one "<sha256>  <path>\n" line each (two-space separator). The
 // input slice is not mutated (sorting happens on a copy), so callers may pass

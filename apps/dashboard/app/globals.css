@@ -152,3 +152,22 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* AI model picker popover entrance (the global reduced-motion block above
+ * already neutralizes this for users who prefer reduced motion). */
+@layer utilities {
+  @keyframes model-picker-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .animate-popover-in {
+    animation: model-picker-in 120ms ease-out;
+    transform-origin: top right;
+  }
+}

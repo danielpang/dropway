@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Send, Sparkles } from "lucide-react";
 
+import { ModelPicker } from "@/components/ai/model-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { AiModel } from "@/lib/api";
 
 /**
  * The AI builder chat + live preview. It talks to the Go API through the
@@ -31,7 +33,7 @@ interface DraftInfo {
 interface BuilderChatProps {
   siteId: string;
   initialModel: string;
-  models: { id: string; name?: string }[];
+  models: AiModel[];
   onPublish: (versionId: string) => Promise<{ ok: boolean; message?: string }>;
 }
 
@@ -50,6 +52,7 @@ export function BuilderChat({
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -132,18 +135,12 @@ export function BuilderChat({
             <Sparkles className="h-4 w-4 text-primary" />
             AI builder
           </div>
-          <select
-            className="rounded-md border bg-background px-2 py-1 text-xs"
+          <ModelPicker
+            models={models}
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={setModel}
             disabled={running || sessionId !== null}
-          >
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name ?? m.id}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
         <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
@@ -231,10 +228,15 @@ function previewLifetimeCopy(expiresAt: string): string {
   if (!expiresAt || Number.isNaN(ts)) {
     return "This preview link expires after a while.";
   }
-  const days = Math.round((ts - Date.now()) / (24 * 60 * 60 * 1000));
+  const remainingMs = ts - Date.now();
+  // Already expired (clock skew or a very short TTL): don't promise a lifetime.
+  if (remainingMs <= 0) {
+    return "This preview link has expired. Re-run the change to get a fresh one.";
+  }
+  const days = Math.round(remainingMs / (24 * 60 * 60 * 1000));
   if (days >= 2) return `This preview link is live for about ${days} days.`;
   if (days === 1) return "This preview link is live for about a day.";
-  const hours = Math.max(1, Math.round((ts - Date.now()) / (60 * 60 * 1000)));
+  const hours = Math.max(1, Math.round(remainingMs / (60 * 60 * 1000)));
   return `This preview link is live for about ${hours} hour${hours === 1 ? "" : "s"}.`;
 }
 

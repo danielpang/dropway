@@ -7,6 +7,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/quota"
@@ -32,3 +34,11 @@ func quotaProviderName() string { return "unlimited (oss)" }
 // signature-verified Stripe webhook + the authed billing routes. The deps argument
 // is accepted for signature parity with the cloud variant and is unused here.
 func mountCloud(_ *chi.Mux, _ cloudDeps) {}
+
+// runCloudBillingTask is a NO-OP in the OSS build (no billing). The cloud build
+// (wire_cloud.go) implements the one-off BILLING_TASK operator tasks (AI meter
+// bootstrap + metered-price backfill). Returns handled=false so run() proceeds
+// to start the server normally.
+func runCloudBillingTask(_ context.Context, _ config.Config) (handled bool, err error) {
+	return false, nil
+}

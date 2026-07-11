@@ -156,6 +156,50 @@ balancer terminating TLS to `:8092`), set `MCP_PUBLIC_URL=https://mcp.dropway.de
 `NEXT_PUBLIC_MCP_URL=https://mcp.dropway.dev`, and point `MCP_DASHBOARD_URL` at your
 dashboard origin (the browser-facing authorization server).
 
+## AI website builder (Fly.io sandbox required for self-host)
+
+The **"Build with AI"** feature lets users create or edit a site by chatting with an
+LLM (via OpenRouter) that runs its generated build commands in an isolated sandbox.
+It is **off by default** (the `/v1/ai/*` routes return 503) until you set
+`OPENROUTER_API_KEY`.
+
+> **Self-host status: available only with the Fly.io sandbox provider.** The bundled
+> compose stack does **not** support the AI builder out of the box. The sandbox has to
+> run the LLM's untrusted build commands somewhere isolated, and the only provider that
+> works without weakening the deployment is **Fly Machines** (`SANDBOX_PROVIDER=fly`),
+> which boots an ephemeral microVM over Fly's API. The local `docker` provider is **not
+> usable as shipped**: the `api` image is distroless (no `docker` CLI) and the compose
+> `api` service does not mount the Docker socket, and mounting it would grant the API
+> root-equivalent access to the host. Treat the `docker` provider as dev-only / at your
+> own risk, not a supported self-host path.
+
+**To enable it (Fly sandbox):**
+
+1. Create a **dedicated Fly app** to hold the ephemeral sandbox machines (kept separate
+   from your API app), and a Fly API token scoped to it.
+2. Build and push the sandbox image to that app's registry:
+   ```sh
+   docker build -f services/sandboxd/Dockerfile -t registry.fly.io/<sandbox-app>:latest .
+   flyctl auth docker && docker push registry.fly.io/<sandbox-app>:latest
+   ```
+3. Set on the **`api`** service (in `deploy/.env`, or as Fly secrets in production):
+   ```sh
+   OPENROUTER_API_KEY=sk-or-...            # required; BYO OpenRouter key
+   SANDBOX_PROVIDER=fly
+   FLY_API_TOKEN=...
+   FLY_SANDBOX_APP=<sandbox-app>
+   SANDBOX_IMAGE=registry.fly.io/<sandbox-app>:latest
+   # optional:
+   AI_DEFAULT_MODEL=anthropic/claude-sonnet-4.5   # default when the user picks none
+   AI_MONTHLY_CAP_USD=0                            # 0 = unlimited (per-org cap still applies)
+   PREVIEW_TTL_HOURS=168                           # preview-link lifetime (7 days)
+   ```
+4. Rebuild + restart the `api` service. On startup it logs `AI builder enabled`. A quick
+   check: `GET /v1/ai/models` returns the OpenRouter catalog instead of 503.
+
+Self-host is **bring-your-own-key**: you pay OpenRouter directly, and there is no markup
+or metering (the pass-through Stripe billing is a hosted-cloud-only feature).
+
 ## Two database roles (why there are two URLs)
 
 Migrations and runtime use **different roles**, on purpose:

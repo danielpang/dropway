@@ -61,7 +61,17 @@ type Handlers struct {
 	dashboardURL   string // e.g. https://app.dropway.dev
 	roles          RoleChecker
 	allowJWTRoleFB bool // ALLOW_JWT_ROLE_FALLBACK: trust the JWT role only when identity.member is unavailable
+	// aiMeteredPrice is the usage-based AI price id added as a second checkout line
+	// item so AI usage bills onto the same subscription. Empty → not added.
+	aiMeteredPrice string
 	log            *slog.Logger
+}
+
+// WithAIMeteredPrice sets the metered AI price id added to new checkouts, so AI
+// usage rides on the plan subscription (one invoice). Returns h for chaining.
+func (h *Handlers) WithAIMeteredPrice(priceID string) *Handlers {
+	h.aiMeteredPrice = priceID
+	return h
 }
 
 // NewHandlers builds the billing HTTP handlers. dashboardURL is the dashboard
@@ -187,6 +197,7 @@ func (h *Handlers) Checkout(w http.ResponseWriter, r *http.Request) {
 		SuccessURL:        h.dashboardURL + "/billing?status=processing",
 		CancelURL:         h.dashboardURL + "/billing?status=canceled",
 		LocalCurrency:     req.LocalCurrency,
+		MeteredPriceID:    h.aiMeteredPrice,
 	})
 	if err != nil {
 		h.log.Error("create checkout session failed", "org_id", orgID, "err", err)

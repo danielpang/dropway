@@ -34,8 +34,8 @@ import (
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/skillseeds"
 	"github.com/danielpang/dropway/internal/storage"
-	"github.com/danielpang/dropway/services/api/internal/config"
 	"github.com/danielpang/dropway/services/api/internal/ai"
+	"github.com/danielpang/dropway/services/api/internal/config"
 	"github.com/danielpang/dropway/services/api/internal/handlers"
 	"github.com/danielpang/dropway/services/api/internal/router"
 	"github.com/danielpang/dropway/services/api/internal/store"
@@ -132,6 +132,13 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	}
 
 	ctx := context.Background()
+
+	// One-off cloud billing operator tasks (BILLING_TASK): AI meter bootstrap /
+	// metered-price backfill. In the OSS build this is a no-op that returns false.
+	// When handled, we ran the task instead of starting the server.
+	if handled, err := runCloudBillingTask(ctx, cfg); handled || err != nil {
+		return err
+	}
 
 	if cfg.JWKSURL == "" {
 		// The authenticated routes can't verify without a JWKS; surface it loudly.

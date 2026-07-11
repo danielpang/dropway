@@ -438,8 +438,8 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (applyRes
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO billing.subscriptions
 		   (org_id, stripe_customer_id, stripe_subscription_id, plan_tier,
-		    seats, status, cancel_at_period_end, current_period_end, org_status)
-		 VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7, $8, $9)
+		    seats, status, cancel_at_period_end, current_period_start, current_period_end, org_status)
+		 VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (org_id) DO UPDATE SET
 		    stripe_customer_id     = COALESCE(NULLIF(EXCLUDED.stripe_customer_id, ''), billing.subscriptions.stripe_customer_id),
 		    stripe_subscription_id = COALESCE(EXCLUDED.stripe_subscription_id, billing.subscriptions.stripe_subscription_id),
@@ -451,11 +451,15 @@ func upsertSubscriptionTx(ctx context.Context, tx pgx.Tx, d EventData) (applyRes
 		    seats                  = COALESCE(NULLIF(EXCLUDED.seats, 0), billing.subscriptions.seats),
 		    status                 = EXCLUDED.status,
 		    cancel_at_period_end   = EXCLUDED.cancel_at_period_end,
-		    current_period_end     = EXCLUDED.current_period_end,
+		    -- Keep an existing period when the incoming event omits it (checkout.session
+		    -- carries no period), so a retried/out-of-order event can't null a real one.
+		    current_period_start   = COALESCE(EXCLUDED.current_period_start, billing.subscriptions.current_period_start),
+		    current_period_end     = COALESCE(EXCLUDED.current_period_end, billing.subscriptions.current_period_end),
 		    org_status             = EXCLUDED.org_status,
 		    updated_at             = now()`,
 		d.OrgID, d.StripeCustomerID, d.StripeSubscriptionID, string(tier),
-		d.Seats, normalizeStatus(d.Status), d.CancelAtPeriodEnd, periodEnd(d.CurrentPeriodEnd), orgStatus,
+		d.Seats, normalizeStatus(d.Status), d.CancelAtPeriodEnd,
+		periodEnd(d.CurrentPeriodStart), periodEnd(d.CurrentPeriodEnd), orgStatus,
 	); err != nil {
 		return applyResult{}, fmt.Errorf("billing: upsert subscription %s: %w", d.OrgID, err)
 	}
@@ -745,8 +749,8 @@ func normalizeStatus(status string) string {
 	}
 }
 
-// periodEnd converts a unix-seconds current_period_end into a value pgx stores as
-// timestamptz, or nil when unset (0).
+// periodEnd converts a unix-seconds period boundary (current_period_start or
+// current_period_end) into a value pgx stores as timestamptz, or nil when unset (0).
 func periodEnd(unix int64) any {
 	if unix <= 0 {
 		return nil

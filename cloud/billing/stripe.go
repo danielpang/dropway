@@ -223,20 +223,23 @@ func (v RealSignatureVerifier) fromCheckoutSession(raw json.RawMessage) (EventDa
 
 // subscriptionRaw is the subset of a Subscription object we read from the webhook.
 type subscriptionRaw struct {
-	ID                string            `json:"id"`
-	Customer          idObject          `json:"customer"`
-	Status            string            `json:"status"`
-	CancelAtPeriodEnd bool              `json:"cancel_at_period_end"`
-	CurrentPeriodEnd  int64             `json:"current_period_end"`
-	Metadata          map[string]string `json:"metadata"`
-	Items             struct {
+	ID                 string            `json:"id"`
+	Customer           idObject          `json:"customer"`
+	Status             string            `json:"status"`
+	CancelAtPeriodEnd  bool              `json:"cancel_at_period_end"`
+	CurrentPeriodStart int64             `json:"current_period_start"`
+	CurrentPeriodEnd   int64             `json:"current_period_end"`
+	Metadata           map[string]string `json:"metadata"`
+	Items              struct {
 		Data []struct {
 			Quantity int64 `json:"quantity"`
 			Price    struct {
 				ID string `json:"id"`
 			} `json:"price"`
-			// current_period_end can live on the item in newer API versions.
-			CurrentPeriodEnd int64 `json:"current_period_end"`
+			// current_period_start/end can live on the item in newer API versions
+			// (they moved off the subscription top level).
+			CurrentPeriodStart int64 `json:"current_period_start"`
+			CurrentPeriodEnd   int64 `json:"current_period_end"`
 		} `json:"data"`
 	} `json:"items"`
 }
@@ -252,12 +255,22 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 		StripeSubscriptionID: sub.ID,
 		Status:               sub.Status,
 		CancelAtPeriodEnd:    sub.CancelAtPeriodEnd,
+		CurrentPeriodStart:   sub.CurrentPeriodStart,
 		CurrentPeriodEnd:     sub.CurrentPeriodEnd,
 		PlanTier:             TierFree,
 	}
-	// Derive seats + tier from the first (and, for us, only) line item's price.
+	// Derive seats + tier from the PLAN line item's price. With the metered AI
+	// price now riding on the same subscription as a second item, pick the item
+	// whose price maps to a known plan tier (the metered price maps to none), so a
+	// two-item subscription still resolves the right tier + seats.
 	if len(sub.Items.Data) > 0 {
 		item := sub.Items.Data[0]
+		for _, it := range sub.Items.Data {
+			if _, known := v.prices.TierForChecked(it.Price.ID); known {
+				item = it
+				break
+			}
+		}
 		d.Seats = item.Quantity
 		// H6: an UNRECOGNIZED non-empty price must NOT resolve to Free (that would
 		// silently downgrade a paying org). Flag it so applyEvent refuses to change
@@ -265,8 +278,13 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 		tier, ok := v.prices.TierForChecked(item.Price.ID)
 		d.PlanTier = tier
 		d.UnknownPrice = !ok
+		// Period start/end can be per-item in newer API versions; fall back to the
+		// item's values when the subscription top level omitted them.
 		if d.CurrentPeriodEnd == 0 {
 			d.CurrentPeriodEnd = item.CurrentPeriodEnd
+		}
+		if d.CurrentPeriodStart == 0 {
+			d.CurrentPeriodStart = item.CurrentPeriodStart
 		}
 	}
 	if d.OrgID == "" {
@@ -304,6 +322,11 @@ type CheckoutParams struct {
 	Metadata          map[string]string
 	SuccessURL        string
 	CancelURL         string
+	// MeteredPriceID, when set, is the usage-based AI price ($0.01 per
+	// ai_cost_cents unit) added as a SECOND subscription item so AI usage bills
+	// onto the SAME subscription (one invoice per cycle). Metered items carry no
+	// quantity. Empty → the subscription is plan-only (AI metering off).
+	MeteredPriceID string
 	// LocalCurrency turns on Stripe Adaptive Pricing for the session: the customer
 	// is presented and charged in their local currency (Stripe converts from the
 	// USD price). When false the session stays USD and the customer's bank does the
@@ -361,6 +384,22 @@ func (c *realStripeClient) EnsureCustomer(existingID, orgID, email string) (stri
 	return cust.ID, nil
 }
 
+// checkoutLineItems builds the subscription line items: the plan price (with the
+// seat quantity) plus, when configured, the metered AI price (no quantity, as
+// metered prices reject it) so AI usage accrues on the same subscription.
+func checkoutLineItems(p CheckoutParams, qty int64) []*stripe.CheckoutSessionLineItemParams {
+	items := []*stripe.CheckoutSessionLineItemParams{{
+		Price:    stripe.String(p.PriceID),
+		Quantity: stripe.Int64(qty),
+	}}
+	if p.MeteredPriceID != "" {
+		items = append(items, &stripe.CheckoutSessionLineItemParams{
+			Price: stripe.String(p.MeteredPriceID),
+		})
+	}
+	return items
+}
+
 func (c *realStripeClient) CreateCheckoutSession(p CheckoutParams) (string, error) {
 	qty := p.Quantity
 	if qty < 1 {
@@ -376,10 +415,7 @@ func (c *realStripeClient) CreateCheckoutSession(p CheckoutParams) (string, erro
 		// coupon/discount code. Codes must be created in the Stripe Dashboard
 		// (Products → Coupons → Promotion codes) to be accepted.
 		AllowPromotionCodes: stripe.Bool(true),
-		LineItems: []*stripe.CheckoutSessionLineItemParams{{
-			Price:    stripe.String(p.PriceID),
-			Quantity: stripe.Int64(qty),
-		}},
+		LineItems:           checkoutLineItems(p, qty),
 		// Adaptive Pricing: enabled → local-currency presentment (Stripe converts
 		// from USD); disabled → plain USD (bank does FX). Set explicitly either way
 		// so the customer's choice wins over the account-level default.
