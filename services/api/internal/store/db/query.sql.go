@@ -3301,6 +3301,24 @@ func (q *Queries) SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams
 	return total_cost_usd, err
 }
 
+const tryBeginAITurn = `-- name: TryBeginAITurn :one
+UPDATE app.ai_sessions
+SET status = 'running', last_activity_at = now()
+WHERE id = $1 AND status IN ('active', 'idle')
+RETURNING id
+`
+
+// Atomically claim a session for a turn: flip active/idle -> running and RETURN
+// the id ONLY if the claim won. A session already 'running' matches no row
+// (no-rows), so a concurrent second turn is rejected instead of racing on the
+// ai_messages (session_id, seq) unique key. The single-writer guarantee this
+// gives is what AppendAIMessage relies on.
+func (q *Queries) TryBeginAITurn(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, tryBeginAITurn, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updateDomainStatus = `-- name: UpdateDomainStatus :one
 UPDATE app.domains
 SET verify_status = $2,

@@ -406,6 +406,12 @@ type Querier interface {
 	// The org's AI spend since a period start (the spend-cap check input and the
 	// dashboard usage figure).
 	SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams) (float64, error)
+	// Atomically claim a session for a turn: flip active/idle -> running and RETURN
+	// the id ONLY if the claim won. A session already 'running' matches no row
+	// (no-rows), so a concurrent second turn is rejected instead of racing on the
+	// ai_messages (session_id, seq) unique key. The single-writer guarantee this
+	// gives is what AppendAIMessage relies on.
+	TryBeginAITurn(ctx context.Context, id string) (string, error)
 	// Advance the custom-domain state machine (pending → verifying → verified/failed)
 	// and the TLS status from a Cloudflare Status() poll.
 	UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error)

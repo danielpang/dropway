@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/danielpang/dropway/internal/openrouter"
 	"github.com/danielpang/dropway/internal/projection"
@@ -38,6 +39,10 @@ type Runner struct {
 	// SandboxTTL is the hard machine lifetime; SandboxIdle is how long an idle
 	// sandbox is reused before being recreated.
 	SandboxTTL time.Duration
+	// MaxTurnSpendUSD bounds how much a single turn may spend before it is
+	// stopped (a runaway-loop backstop that applies even with no monthly cap).
+	// 0 → defaultMaxTurnSpendUSD.
+	MaxTurnSpendUSD float64
 	// PeriodStart returns the start of the org's current billing period for the
 	// spend-cap sum. Defaults to the start of the calendar month (self-host); the
 	// cloud build injects the Stripe billing-period resolver.
@@ -82,7 +87,7 @@ const defaultSystemPrompt = `You are Dropway's AI website builder. You edit a us
 // Event is a builder-loop event streamed to the caller (SSE). It is a superset
 // of the OpenRouter stream events plus tool + draft lifecycle.
 type Event struct {
-	Type string `json:"type"` // token | tool_started | tool_finished | draft_ready | error | done
+	Type string `json:"type"` // token | status | tool_started | tool_finished | draft_ready | error | done
 	// token
 	Text string `json:"text,omitempty"`
 	// tool_started / tool_finished
@@ -109,12 +114,21 @@ type ContentURL func(host string) string
 // preview URL. Events are streamed via emit; the returned error is terminal
 // (also emitted as an error event by the caller).
 func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISession, userText string, previewTTL time.Duration, contentURL ContentURL) error {
+	// The caller (the handler) has already claimed the session for this turn
+	// (status 'running') via TryBeginAITurn, which serializes writers so the
+	// per-session seq allocation below is race-free. We only release the claim
+	// (back to 'active') when the turn ends. RunTurn uses a detached context for
+	// the release so a cancelled/timed-out turn still frees the session.
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = r.Store.SetAISessionStatus(releaseCtx, t, sess.ID, "active")
+	}()
+
 	// 1. Persist the user message.
 	if _, err := r.appendMessage(ctx, t, sess.ID, openrouter.Message{Role: "user", Content: userText}); err != nil {
 		return err
 	}
-	_ = r.Store.SetAISessionStatus(ctx, t, sess.ID, "running")
-	defer func() { _ = r.Store.SetAISessionStatus(ctx, t, sess.ID, "active") }()
 
 	// 2. Ensure a live, seeded sandbox for the session.
 	sb, err := r.ensureSandbox(ctx, t, &sess)
@@ -130,15 +144,25 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 	messages := append([]openrouter.Message{{Role: "system", Content: r.systemPrompt()}}, history...)
 
 	tools := builderTools()
-	cap, err := r.Store.GetAISettings(ctx, t)
+	settings, err := r.Store.GetAISettings(ctx, t)
 	if err != nil {
 		return err
 	}
+	// Spend before this turn started; the running per-turn total is added to it so
+	// the cap is enforced immediately after each generation, not a full iteration
+	// late. periodStart is read once (stable for the turn).
+	priorSpent, err := r.Store.AISpendSince(ctx, t, r.periodStart(ctx, t))
+	if err != nil {
+		return err
+	}
+	var turnSpent float64
 
 	// 4. The tool-call loop.
 	for i := 0; i < r.maxIterations(); i++ {
-		// Spend-cap check before each generation.
-		if err := r.checkSpendCap(ctx, t, cap.MonthlyCapUSD); err != nil {
+		// Refuse the next generation if the org is already at/over its monthly cap,
+		// or if this single turn has hit its own ceiling (a runaway-loop backstop
+		// that applies even when there is no monthly cap, e.g. self-host unlimited).
+		if err := r.checkTurnBudget(settings.MonthlyCapUSD, priorSpent, turnSpent); err != nil {
 			return err
 		}
 
@@ -152,6 +176,7 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 			return err
 		}
 		if result.Usage != nil {
+			turnSpent += result.Usage.Cost
 			r.recordUsage(ctx, t, sess.ID, sess.Model, result.Usage)
 		}
 		messages = append(messages, result.Message)
@@ -219,11 +244,11 @@ func (r *Runner) publishDraft(ctx context.Context, t store.Tenant, sess *store.A
 		return err
 	}
 	// Project the preview route to the edge so the URL serves. Best-effort: the
-	// row is authoritative and the reconcile/rebuild path backstops a KV miss.
+	// row is authoritative and the reconcile/rebuild path backstops a KV miss, but
+	// tell the user the preview may lag so a temporary 404 isn't mysterious.
 	if r.Projection != nil {
 		if err := r.Projection.PutRoute(ctx, prev.Host, prev.Route); err != nil {
-			// Non-fatal: the draft exists and the preview row is authoritative.
-			emit(Event{Type: "token", Text: ""})
+			emit(Event{Type: "status", Text: "The preview is taking a moment to go live. If it does not load, refresh in a few seconds."})
 		}
 	}
 	emit(Event{
@@ -235,25 +260,40 @@ func (r *Runner) publishDraft(ctx context.Context, t store.Tenant, sess *store.A
 	return nil
 }
 
-func (r *Runner) checkSpendCap(ctx context.Context, t store.Tenant, capUSD float64) error {
-	if capUSD <= 0 {
-		return nil // no cap configured (self-host default = unlimited)
+// defaultMaxTurnSpendUSD bounds how much a single turn may spend before it is
+// stopped, so a runaway tool loop can't rack up unbounded cost even when there
+// is no monthly cap. Overridable via Runner.MaxTurnSpendUSD.
+const defaultMaxTurnSpendUSD = 5.0
+
+func (r *Runner) maxTurnSpendUSD() float64 {
+	if r.MaxTurnSpendUSD > 0 {
+		return r.MaxTurnSpendUSD
 	}
-	spent, err := r.Store.AISpendSince(ctx, t, r.periodStart(ctx, t))
-	if err != nil {
-		return err
+	return defaultMaxTurnSpendUSD
+}
+
+// checkTurnBudget refuses the next generation when the org has hit its monthly
+// cap (priorSpent + this turn's spend so far) or when this single turn has hit
+// its per-turn ceiling. Pure (no DB read per generation): priorSpent is read
+// once at the top of the turn and turnSpent accumulates the recorded costs.
+func (r *Runner) checkTurnBudget(monthlyCapUSD, priorSpent, turnSpent float64) error {
+	if turnSpent >= r.maxTurnSpendUSD() {
+		return capExceeded(r.maxTurnSpendUSD(), priorSpent+turnSpent)
 	}
-	if spent >= capUSD {
-		// Surface as a quota-exceeded error so the handler maps it to the existing
-		// 402 pathway (the dashboard's cap/upgrade UI). Max carries the cap in
-		// whole USD; the message is spend-specific.
-		return &quota.ExceededError{
-			Limit:   quotaResourceAISpend,
-			Current: int64(spent),
-			Max:     int64(capUSD),
-		}
+	if monthlyCapUSD > 0 && priorSpent+turnSpent >= monthlyCapUSD {
+		return capExceeded(monthlyCapUSD, priorSpent+turnSpent)
 	}
 	return nil
+}
+
+// capExceeded builds the quota error the handler maps to the existing 402/cap
+// pathway (the dashboard's cap/upgrade UI).
+func capExceeded(capUSD, spent float64) error {
+	return &quota.ExceededError{
+		Limit:   quotaResourceAISpend,
+		Current: int64(spent),
+		Max:     int64(capUSD),
+	}
 }
 
 // quotaResourceAISpend labels the AI monthly-spend cap in a quota.ExceededError
@@ -309,11 +349,18 @@ func (r *Runner) loadHistory(ctx context.Context, t store.Tenant, sessionID stri
 	return out, nil
 }
 
+// truncate caps s at n bytes, backing up to a UTF-8 rune boundary so it never
+// splits a multi-byte rune (which would emit invalid UTF-8 that json.Marshal
+// then replaces with U+FFFD in the streamed tool_result).
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // emitCtxKey carries the per-turn Emit sink through ctx so streamOnce and the

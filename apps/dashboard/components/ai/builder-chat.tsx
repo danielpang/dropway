@@ -214,12 +214,28 @@ export function BuilderChat({
         </div>
         {draft && (
           <div className="border-t px-4 py-2 text-xs text-muted-foreground">
-            Preview link is live for 7 days. Publishing removes it.
+            {previewLifetimeCopy(draft.expiresAt)} Publishing removes it.
           </div>
         )}
       </div>
     </div>
   );
+}
+
+// previewLifetimeCopy describes how long the preview link lives, derived from the
+// server's expires_at (the TTL is operator-configurable, so a hardcoded "7 days"
+// would be wrong whenever PREVIEW_TTL_HOURS is changed). Falls back to a generic
+// line if the timestamp is missing or unparseable.
+function previewLifetimeCopy(expiresAt: string): string {
+  const ts = Date.parse(expiresAt);
+  if (!expiresAt || Number.isNaN(ts)) {
+    return "This preview link expires after a while.";
+  }
+  const days = Math.round((ts - Date.now()) / (24 * 60 * 60 * 1000));
+  if (days >= 2) return `This preview link is live for about ${days} days.`;
+  if (days === 1) return "This preview link is live for about a day.";
+  const hours = Math.max(1, Math.round((ts - Date.now()) / (60 * 60 * 1000)));
+  return `This preview link is live for about ${hours} hour${hours === 1 ? "" : "s"}.`;
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {
@@ -298,6 +314,9 @@ async function consumeStream(
       switch (ev.type) {
         case "token":
           if (ev.text) handlers.onToken(ev.text);
+          break;
+        case "status":
+          if (ev.text) handlers.onStatus(ev.text);
           break;
         case "tool_started":
           handlers.onStatus(`Running ${ev.tool ?? "a tool"}...`);

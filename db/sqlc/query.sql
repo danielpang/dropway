@@ -1036,6 +1036,17 @@ UPDATE app.ai_sessions
 SET status = $2, last_activity_at = now()
 WHERE id = $1;
 
+-- name: TryBeginAITurn :one
+-- Atomically claim a session for a turn: flip active/idle -> running and RETURN
+-- the id ONLY if the claim won. A session already 'running' matches no row
+-- (no-rows), so a concurrent second turn is rejected instead of racing on the
+-- ai_messages (session_id, seq) unique key. The single-writer guarantee this
+-- gives is what AppendAIMessage relies on.
+UPDATE app.ai_sessions
+SET status = 'running', last_activity_at = now()
+WHERE id = $1 AND status IN ('active', 'idle')
+RETURNING id;
+
 -- name: SetAISessionSandbox :exec
 -- Cache the live sandbox handle (NULLs clear it after a reap/destroy).
 UPDATE app.ai_sessions

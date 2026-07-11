@@ -152,6 +152,28 @@ func TestPostAIMessage_StreamsSSE(t *testing.T) {
 	}
 }
 
+func TestPostAIMessage_ConcurrentTurnRejected(t *testing.T) {
+	fs := newFakeStore()
+	a := newAITestAPI(fs)
+	fs.sites["site_x"] = store.Site{ID: "site_x", OrgID: "org_1", Slug: "x"}
+	sess, err := fs.StartAISession(context.Background(), store.Tenant{OrgID: "org_1", UserID: "user_1"}, "site_x", "m", nil, 2)
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	// Simulate a turn already running.
+	_ = fs.SetAISessionStatus(context.Background(), store.Tenant{OrgID: "org_1", UserID: "user_1"}, sess.ID, "running")
+
+	h := authed(a.PostAIMessage, claims("user_1", "org_1", "member"))
+	req := jsonReq(http.MethodPost, "/v1/ai/sessions/"+sess.ID+"/messages", `{"text":"again"}`)
+	req = withURLParam(req, "id", sess.ID)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestListAIModels(t *testing.T) {
 	fs := newFakeStore()
 	a := newAITestAPI(fs)

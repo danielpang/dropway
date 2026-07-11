@@ -244,28 +244,33 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	// with the configured scheme/port.
 	//
 	// Register the preview route (host_routes kind='preview', pinned to this
-	// version, expiring previewTTL from now) and project it to the edge so the
-	// URL actually serves. Registration failures are surfaced (the URL would be
-	// dead); the KV write is best-effort like every other projection write — the
-	// DB row is authoritative and the rebuild/reconcile path backstops it.
-	prev, err := a.Store.CreatePreviewRoute(r.Context(), t, siteID, ver.ID, a.previewTTL())
-	if err != nil {
-		writeStoreError(w, err)
-		return
+	// version, expiring previewTTL from now) and project it to the edge so the URL
+	// serves. This is BEST-EFFORT: the version + manifest are already committed and
+	// publishable, so a preview-registration failure must NOT fail the deploy (the
+	// pre-preview code returned 201 unconditionally, and the client would otherwise
+	// see a committed deploy as failed and retry). On failure we log, omit the
+	// preview URL from the response, and let the caller re-request a preview via
+	// POST /v1/sites/{id}/versions/{versionID}/preview. The KV write is best-effort
+	// too — the DB row is authoritative and the rebuild/reconcile path backstops it.
+	resp := finalizeResponse{
+		VersionID: ver.ID,
+		VersionNo: ver.VersionNo,
+		Warnings:  deployWarnings(files),
 	}
-	if a.Projection != nil {
-		if err := a.Projection.PutRoute(r.Context(), prev.Host, prev.Route); err != nil {
-			logger(r).Error("preview projection write failed after finalize",
-				"host", prev.Host, "site_id", siteID, "version_id", ver.ID, "err", err)
+	if prev, err := a.Store.CreatePreviewRoute(r.Context(), t, siteID, ver.ID, a.previewTTL()); err != nil {
+		logger(r).Error("preview route registration failed after finalize (deploy still succeeded)",
+			"site_id", siteID, "version_id", ver.ID, "err", err)
+	} else {
+		if a.Projection != nil {
+			if err := a.Projection.PutRoute(r.Context(), prev.Host, prev.Route); err != nil {
+				logger(r).Error("preview projection write failed after finalize",
+					"host", prev.Host, "site_id", siteID, "version_id", ver.ID, "err", err)
+			}
 		}
+		resp.PreviewURL = a.ContentURL(prev.Host)
+		resp.PreviewExpiresAt = prev.ExpiresAt.UTC().Format(time.RFC3339)
 	}
-	httpx.WriteJSON(w, http.StatusCreated, finalizeResponse{
-		VersionID:        ver.ID,
-		VersionNo:        ver.VersionNo,
-		PreviewURL:       a.ContentURL(prev.Host),
-		PreviewExpiresAt: prev.ExpiresAt.UTC().Format(time.RFC3339),
-		Warnings:         deployWarnings(files),
-	})
+	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
 // verifyBlob streams the stored blob, asserts its bytes hash == the key, and

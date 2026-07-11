@@ -145,19 +145,31 @@ CREATE INDEX host_routes_preview_expiry_idx ON app.host_routes USING btree (expi
 -- +goose StatementEnd
 
 -- +goose StatementBegin
--- Preview hosts pin a specific version; resolve_host must surface the pinned
--- version_id instead of the site's live pointer so the /authz exchange for a
--- gated preview host mints a token for the draft actually being served.
-CREATE OR REPLACE FUNCTION app.resolve_host(p_host text) RETURNS TABLE(host text, site_id uuid, org_id uuid, slug text, access_mode text, version_id uuid)
+-- Preview hosts pin a specific version AND carry their own edge-expiry deadline.
+-- resolve_host now surfaces both: the pinned version_id (so the /authz exchange
+-- for a gated preview mints a token for the draft actually served) and the
+-- preview deadline as a 7th column, so the serving plane enforces preview expiry
+-- WITHOUT a second per-request query against host_routes (that lookup was on
+-- 100% of traffic to save work for the rare preview host). Adding a return column
+-- needs DROP + CREATE (CREATE OR REPLACE can't change a function's return type).
+DROP FUNCTION IF EXISTS app.resolve_host(text);
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE FUNCTION app.resolve_host(p_host text)
+    RETURNS TABLE(host text, site_id uuid, org_id uuid, slug text, access_mode text, version_id uuid, preview_expires_at timestamptz)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'app', 'pg_temp'
     AS $$
     SELECT hr.host, s.id, s.org_id, s.slug, s.access_mode,
-           COALESCE(hr.version_id, s.current_version_id)
+           COALESCE(hr.version_id, s.current_version_id),
+           CASE WHEN hr.kind = 'preview' THEN hr.expires_at ELSE NULL END
     FROM app.host_routes hr
     JOIN app.sites s ON s.id = hr.site_id
     WHERE hr.host = p_host;
 $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+GRANT ALL ON FUNCTION app.resolve_host(text) TO dropway_app;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -214,7 +226,13 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE app.ai_usage TO dropway_app;
 
 -- +goose Down
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION app.resolve_host(p_host text) RETURNS TABLE(host text, site_id uuid, org_id uuid, slug text, access_mode text, version_id uuid)
+-- Restore the baseline 6-column signature (DROP + CREATE, since the return type
+-- differs). This must run BEFORE the host_routes.kind/expires_at columns are
+-- dropped below, because the up-version referenced them.
+DROP FUNCTION IF EXISTS app.resolve_host(text);
+-- +goose StatementEnd
+-- +goose StatementBegin
+CREATE FUNCTION app.resolve_host(p_host text) RETURNS TABLE(host text, site_id uuid, org_id uuid, slug text, access_mode text, version_id uuid)
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'app', 'pg_temp'
     AS $$
@@ -223,6 +241,9 @@ CREATE OR REPLACE FUNCTION app.resolve_host(p_host text) RETURNS TABLE(host text
     JOIN app.sites s ON s.id = hr.site_id
     WHERE hr.host = p_host;
 $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+GRANT ALL ON FUNCTION app.resolve_host(text) TO dropway_app;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE app.org_meta DROP COLUMN IF EXISTS ai_monthly_cap_usd;

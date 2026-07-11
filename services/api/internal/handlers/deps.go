@@ -97,6 +97,10 @@ type SiteStore interface {
 	// AI builder: sessions, transcript, cost/spend, and the org AI settings.
 	StartAISession(ctx context.Context, t store.Tenant, siteID, model string, baseVersionID *string, maxConcurrent int) (store.AISession, error)
 	GetAISession(ctx context.Context, t store.Tenant, id string) (store.AISession, error)
+	// TryBeginAITurn atomically claims a session for a turn (rejects a second
+	// concurrent turn); claimed=false means a turn is already running.
+	TryBeginAITurn(ctx context.Context, t store.Tenant, id string) (claimed bool, err error)
+	SetAISessionStatus(ctx context.Context, t store.Tenant, id, status string) error
 	ListAISessionsForSite(ctx context.Context, t store.Tenant, siteID string) ([]store.AISession, error)
 	DeleteAISession(ctx context.Context, t store.Tenant, id string) error
 	ListAIMessages(ctx context.Context, t store.Tenant, sessionID string, afterSeq int32) ([]store.AIMessage, error)

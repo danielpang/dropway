@@ -63,6 +63,29 @@ func (f *fakeStore) GetAISession(_ context.Context, t store.Tenant, id string) (
 	return s, nil
 }
 
+func (f *fakeStore) TryBeginAITurn(_ context.Context, t store.Tenant, id string) (bool, error) {
+	s, ok := f.ai().sessions[id]
+	if !ok || s.OrgID != t.OrgID {
+		return false, store.ErrNotFound
+	}
+	if s.Status == "running" {
+		return false, nil // already claimed
+	}
+	s.Status = "running"
+	f.ai().sessions[id] = s
+	return true, nil
+}
+
+func (f *fakeStore) SetAISessionStatus(_ context.Context, t store.Tenant, id, status string) error {
+	s, ok := f.ai().sessions[id]
+	if !ok || s.OrgID != t.OrgID {
+		return store.ErrNotFound
+	}
+	s.Status = status
+	f.ai().sessions[id] = s
+	return nil
+}
+
 func (f *fakeStore) ListAISessionsForSite(_ context.Context, _ store.Tenant, siteID string) ([]store.AISession, error) {
 	var out []store.AISession
 	for _, s := range f.ai().sessions {

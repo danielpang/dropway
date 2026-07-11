@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/danielpang/dropway/internal/openrouter"
 	"github.com/danielpang/dropway/internal/sandbox"
@@ -112,6 +113,41 @@ func TestNormalizePath(t *testing.T) {
 		if got := normalizePath(in); got != want {
 			t.Errorf("normalizePath(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestCheckTurnBudget(t *testing.T) {
+	r := &Runner{MaxTurnSpendUSD: 5}
+	// Under both limits → allowed.
+	if err := r.checkTurnBudget(20, 10, 2); err != nil {
+		t.Errorf("under limits should be allowed: %v", err)
+	}
+	// Monthly cap reached (prior 19 + turn 1.5 >= 20) → blocked.
+	if err := r.checkTurnBudget(20, 19, 1.5); err == nil {
+		t.Error("monthly cap reached should block")
+	}
+	// Per-turn ceiling hit (turn 5 >= 5) even with no monthly cap → blocked.
+	if err := r.checkTurnBudget(0, 0, 5); err == nil {
+		t.Error("per-turn ceiling should block even with no monthly cap")
+	}
+	// No monthly cap, under per-turn ceiling → allowed.
+	if err := r.checkTurnBudget(0, 100, 1); err != nil {
+		t.Errorf("no monthly cap + under per-turn ceiling should allow: %v", err)
+	}
+}
+
+func TestTruncateRuneSafe(t *testing.T) {
+	// A string of multi-byte runes; truncating at a byte offset mid-rune must back
+	// up to a rune boundary and never emit invalid UTF-8.
+	s := strings.Repeat("é", 100) // each 'é' is 2 bytes
+	for n := 1; n < len(s); n++ {
+		got := truncate(s, n)
+		if !utf8.ValidString(got) {
+			t.Fatalf("truncate(s, %d) produced invalid UTF-8: %q", n, got)
+		}
+	}
+	if got := truncate("hi", 100); got != "hi" {
+		t.Errorf("short string changed: %q", got)
 	}
 }
 

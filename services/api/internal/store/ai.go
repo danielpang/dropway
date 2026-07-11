@@ -86,38 +86,6 @@ func sessionFromDB(r db.AppAiSession) AISession {
 	return s
 }
 
-// CreateAISession creates a session for a site the active tenant owns. The
-// caller has already resolved model + base version and run the AI gate +
-// concurrency preflight (StartAISession wraps all of that atomically).
-func (s *Store) CreateAISession(ctx context.Context, t Tenant, siteID, model string, baseVersionID *string) (AISession, error) {
-	var out AISession
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
-		if err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
-			}
-			return err
-		}
-		if site.OrgID != t.OrgID {
-			return ErrNotFound
-		}
-		row, err := q.CreateAISession(ctx, db.CreateAISessionParams{
-			OrgID:         t.OrgID,
-			SiteID:        siteID,
-			CreatedBy:     t.UserID,
-			Model:         model,
-			BaseVersionID: baseVersionID,
-		})
-		if err != nil {
-			return err
-		}
-		out = sessionFromDB(row)
-		return nil
-	})
-	return out, err
-}
-
 // ErrAIConcurrencyLimit is returned when an org already has the maximum number
 // of active AI sessions (the per-org concurrency cap → 429).
 var ErrAIConcurrencyLimit = errors.New("store: AI session concurrency limit reached")
@@ -209,6 +177,38 @@ func (s *Store) SetAISessionStatus(ctx context.Context, t Tenant, id, status str
 	})
 }
 
+// TryBeginAITurn atomically claims a session for a turn (active/idle -> running),
+// returning claimed=false when a turn is already running for it. This enforces
+// the single-writer guarantee AppendAIMessage's MAX(seq)+1 insert relies on, so
+// two concurrent turns (double-click, second tab, reconnect) can't race on the
+// (session_id, seq) unique key. A missing/other-tenant session is ErrNotFound.
+func (s *Store) TryBeginAITurn(ctx context.Context, t Tenant, id string) (claimed bool, err error) {
+	err = s.withTx(ctx, t, func(q *db.Queries) error {
+		// Confirm the session exists for this tenant first, so a caller can tell
+		// "not found" (404) apart from "busy" (409).
+		sess, gerr := q.GetAISession(ctx, id)
+		if gerr != nil {
+			if isNoRows(gerr) {
+				return ErrNotFound
+			}
+			return gerr
+		}
+		if sess.OrgID != t.OrgID {
+			return ErrNotFound
+		}
+		if _, uerr := q.TryBeginAITurn(ctx, id); uerr != nil {
+			if isNoRows(uerr) {
+				claimed = false // already running → not claimed
+				return nil
+			}
+			return uerr
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
+}
+
 // SetAISessionSandbox caches (or clears) the live sandbox handle for a session.
 func (s *Store) SetAISessionSandbox(ctx context.Context, t Tenant, id, sandboxID string, expiresAt *time.Time) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
@@ -249,24 +249,41 @@ func (s *Store) DeleteAISession(ctx context.Context, t Tenant, id string) error 
 	})
 }
 
+// appendAIMessageMaxRetries bounds the seq-collision retry below. The turn-level
+// TryBeginAITurn claim makes a collision nearly impossible (single writer per
+// session); this is belt-and-suspenders for a pathological interleaving.
+const appendAIMessageMaxRetries = 3
+
 // AppendAIMessage appends one transcript message with the next per-session seq,
-// returning the assigned seq (the SSE Last-Event-ID).
+// returning the assigned seq (the SSE Last-Event-ID). The seq is MAX(seq)+1, so a
+// (theoretical) concurrent append can collide on the (session_id, seq) unique
+// key; we retry a bounded number of times rather than fail the turn. In practice
+// the per-session turn claim (TryBeginAITurn) already serializes writers.
 func (s *Store) AppendAIMessage(ctx context.Context, t Tenant, sessionID, role string, content json.RawMessage) (AIMessage, error) {
 	var out AIMessage
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.AppendAIMessage(ctx, db.AppendAIMessageParams{
-			OrgID:     t.OrgID,
-			SessionID: sessionID,
-			Role:      role,
-			Content:   content,
+	for attempt := 0; ; attempt++ {
+		err := s.withTx(ctx, t, func(q *db.Queries) error {
+			row, err := q.AppendAIMessage(ctx, db.AppendAIMessageParams{
+				OrgID:     t.OrgID,
+				SessionID: sessionID,
+				Role:      role,
+				Content:   content,
+			})
+			if err != nil {
+				return err
+			}
+			out = messageFromDB(row)
+			return nil
 		})
-		if err != nil {
-			return err
+		if err == nil {
+			return out, nil
 		}
-		out = messageFromDB(row)
-		return nil
-	})
-	return out, err
+		// A racing append took the same seq → retry with a fresh MAX(seq)+1.
+		if uniqueViolation(err, "ai_messages_session_seq_key") && attempt < appendAIMessageMaxRetries {
+			continue
+		}
+		return AIMessage{}, err
+	}
 }
 
 // ListAIMessages returns a session's transcript after afterSeq (0 = all).

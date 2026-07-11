@@ -339,18 +339,20 @@ CREATE INDEX ai_usage_org_created_idx ON app.ai_usage (org_id, created_at);
 -- sqlc typing.
 CREATE FUNCTION app.resolve_host(p_host text)
     RETURNS TABLE (
-        host        text,
-        site_id     uuid,
-        org_id      uuid,
-        slug        text,
-        access_mode text,
-        version_id  uuid
+        host               text,
+        site_id            uuid,
+        org_id             uuid,
+        slug               text,
+        access_mode        text,
+        version_id         uuid,
+        preview_expires_at timestamptz
     )
     LANGUAGE sql
     STABLE
 AS $$
     SELECT hr.host, s.id, s.org_id, s.slug, s.access_mode,
-           COALESCE(hr.version_id, s.current_version_id)
+           COALESCE(hr.version_id, s.current_version_id),
+           CASE WHEN hr.kind = 'preview' THEN hr.expires_at ELSE NULL END
     FROM app.host_routes hr
     JOIN app.sites s ON s.id = hr.site_id
     WHERE hr.host = p_host;

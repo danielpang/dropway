@@ -287,8 +287,24 @@ func (a *API) PostAIMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Atomically claim the session for this turn. A second concurrent turn (double
+	// click, second tab, reconnect) is rejected here rather than racing on the
+	// ai_messages seq unique key and dying with a raw DB error. The claim is
+	// released when RunTurn resets the status to active.
+	claimed, err := a.Store.TryBeginAITurn(r.Context(), t, id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !claimed {
+		httpx.WriteError(w, fmt.Errorf("%w: a turn is already running for this session", httpx.ErrConflict))
+		return
+	}
+	// If we fail to start streaming below (no Flusher), release the claim so the
+	// session isn't stuck 'running'.
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		_ = a.Store.SetAISessionStatus(r.Context(), t, id, "active")
 		httpx.WriteJSON(w, http.StatusInternalServerError,
 			httpx.ErrorBody{Error: "internal_error", Message: "streaming unsupported"})
 		return

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -166,10 +167,17 @@ func (a *agentClient) ListFiles(ctx context.Context, dir string) ([]FileInfo, er
 	return out, nil
 }
 
+// dirQuery builds the escaped "dir=<dir>" query string for the tar endpoints, so
+// a workdir containing reserved characters (#, &, +, space) can't corrupt the
+// request path or be misparsed by the agent.
+func dirQuery(dir string) string {
+	return url.Values{"dir": {dir}}.Encode()
+}
+
 // ImportTar streams a tar into dir via the agent's raw /import endpoint (the tar
 // bytes are the request body, not base64 JSON, to avoid buffering a whole site).
 func (a *agentClient) ImportTar(ctx context.Context, dir string, r io.Reader) error {
-	resp, err := a.do(ctx, http.MethodPost, "/import?dir="+dir, r, "application/x-tar")
+	resp, err := a.do(ctx, http.MethodPost, "/import?"+dirQuery(dir), r, "application/x-tar")
 	if err != nil {
 		return err
 	}
@@ -184,7 +192,7 @@ func (a *agentClient) ImportTar(ctx context.Context, dir string, r io.Reader) er
 
 // ExportTar streams dir back as a tar. The caller must Close the returned reader.
 func (a *agentClient) ExportTar(ctx context.Context, dir string) (io.ReadCloser, error) {
-	resp, err := a.do(ctx, http.MethodGet, "/export?dir="+dir, nil, "")
+	resp, err := a.do(ctx, http.MethodGet, "/export?"+dirQuery(dir), nil, "")
 	if err != nil {
 		return nil, err
 	}

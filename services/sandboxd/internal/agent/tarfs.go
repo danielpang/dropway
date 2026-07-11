@@ -66,6 +66,13 @@ func (a *Agent) handleImport(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleExport streams ?dir= (default workdir) back as a tar of regular files.
+//
+// The export is all-or-nothing: the status + headers are already sent, so a
+// mid-walk failure (a file removed by a still-running build, a permission error)
+// can't become an HTTP error. Instead we DELIBERATELY skip the tar footer on any
+// walk error, so the reader (the API's ingestTar) hits io.ErrUnexpectedEOF and
+// fails the ingest rather than silently accepting a valid-but-truncated archive
+// that would publish a draft missing files.
 func (a *Agent) handleExport(w http.ResponseWriter, r *http.Request) {
 	dir, err := a.resolve(r.URL.Query().Get("dir"))
 	if err != nil {
@@ -74,9 +81,8 @@ func (a *Agent) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-tar")
 	tw := tar.NewWriter(w)
-	defer tw.Close()
 
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, werr error) error {
+	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
 		}
@@ -99,4 +105,12 @@ func (a *Agent) handleExport(w http.ResponseWriter, r *http.Request) {
 		_, cerr := io.Copy(tw, f)
 		return cerr
 	})
+	if walkErr != nil {
+		// Do NOT call tw.Close(): omitting the zero-block footer makes the reader
+		// fail (io.ErrUnexpectedEOF) rather than accept a truncated tar.
+		return
+	}
+	// Success: finalize the archive (writes the footer). A Close error here also
+	// leaves the stream unterminated, which the reader treats as a failure.
+	_ = tw.Close()
 }
