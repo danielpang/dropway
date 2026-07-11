@@ -476,12 +476,20 @@ export const auth = betterAuth({
         audience: jwtAudience(),
         // CUSTOM CLAIMS the Go API reads (internal/auth/jwks.go Claims): `org_id` is
         // the user's ACTIVE organization, REQUIRED for the per-request RLS tenant
-        // context (without it the API 500s "claims missing org_id"). email/
+        // context (without it the API rejects the request as unauthorized). email/
         // email_verified back the allowlist authz path. `role` is intentionally
         // omitted: it's a hint the API re-checks LIVE against identity.member, so a stale
         // claim can't grant admin. `sub` (user id) is set separately by getSubject.
-        definePayload: ({ user, session }) => ({
-          org_id: session.activeOrganizationId ?? "",
+        //
+        // The firstOrgId fallback mirrors customAccessTokenClaims below: the session
+        // hook's active-org backfill is best-effort, and a session it missed (a
+        // transient lookup failure at sign-in) would otherwise mint org_id="" for its
+        // whole lifetime, locking the user out until they re-authenticate. Falling
+        // back to the live membership at mint time heals such sessions. A user with
+        // no membership at all still mints "" (onboarding is the fix there).
+        definePayload: async ({ user, session }) => ({
+          org_id:
+            session.activeOrganizationId ?? (await firstOrgId(user.id)) ?? "",
           email: user.email,
           email_verified: user.emailVerified,
         }),

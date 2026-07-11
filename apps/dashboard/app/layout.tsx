@@ -37,8 +37,13 @@ export default function RootLayout({
   return (
     // suppressHydrationWarning: next-themes sets the `class`/`style` on <html>
     // before hydration, which would otherwise trip React's mismatch warning.
+    // translate="no": in-place page translators (Yandex Browser, Google
+    // Translate) wrap React-owned text nodes in <font> elements, and React's
+    // next commit then crashes on removeChild/insertBefore against the mutated
+    // DOM. The dashboard is an app surface, not content, so opt it out.
     <html
       lang="en"
+      translate="no"
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable}`}
     >

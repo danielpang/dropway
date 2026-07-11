@@ -119,9 +119,21 @@ export default async function AuthzPage({
       );
     }
 
-    // 401 here means the session token didn't satisfy the API, re-auth.
+    // 401 here means the viewer's credential can't be scoped to a tenant. Two
+    // distinct causes with distinct fixes:
+    //  - the user has NO organization (skipped onboarding): re-auth mints the
+    //    same org-less token forever → a sign-in loop. Send them through
+    //    onboarding instead, returning here once the org exists.
+    //  - the user HAS an org but the token predates it / went stale: a fresh
+    //    sign-in mints a token with the org claim, so bounce to sign-in.
     if (err.status === 401) {
       const returnTo = `/authz?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
+      const orgs = await auth.api
+        .listOrganizations({ headers: requestHeaders })
+        .catch(() => null); // lookup failure → fall through to sign-in, not onboarding
+      if (orgs && orgs.length === 0) {
+        redirect(`/onboarding?next=${encodeURIComponent(returnTo)}`);
+      }
       redirect(`/sign-in?callbackURL=${encodeURIComponent(returnTo)}`);
     }
 

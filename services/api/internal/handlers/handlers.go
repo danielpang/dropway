@@ -171,10 +171,14 @@ func (a *API) Me(w http.ResponseWriter, r *http.Request) {
 
 // tenant derives the RLS tenant from verified claims. Callers that reach here are
 // behind the Auth middleware, so claims are present; the bool guards the rare
-// "mounted bare" path.
+// "mounted bare" path. A verified JWT can still lack a tenant (a session minted
+// before the user's organization existed carries no org claim), and an empty
+// org/user cannot be scoped for RLS — the store would fail closed with
+// middleware.ErrMissingTenant as an opaque 500. Report !ok instead so callers
+// render the 401 that tells the client to re-authenticate.
 func tenant(ctx context.Context) (store.Tenant, bool) {
 	c, ok := middleware.ClaimsFromContext(ctx)
-	if !ok {
+	if !ok || c.OrgID == "" || c.UserID() == "" {
 		return store.Tenant{}, false
 	}
 	return store.Tenant{OrgID: c.OrgID, UserID: c.UserID()}, true

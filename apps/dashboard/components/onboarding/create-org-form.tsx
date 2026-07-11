@@ -47,10 +47,18 @@ function describeError(err: unknown): string {
 
 /**
  * Creates the user's first organization via the Better Auth organization plugin
- * (`createOrganization`), sets it active, then lands on the dashboard. The org
- * is the tenant the Go API scopes every site/version to.
+ * (`createOrganization`), sets it active, then continues to `next` (a
+ * server-validated same-site path; the dashboard by default — /authz passes the
+ * share link so gated viewers resume where they left off). The org is the
+ * tenant the Go API scopes every site/version to.
  */
-export function CreateOrgForm({ suggestedName }: { suggestedName: string }) {
+export function CreateOrgForm({
+  suggestedName,
+  next = "/dashboard",
+}: {
+  suggestedName: string;
+  next?: string;
+}) {
   const [name, setName] = React.useState(suggestedName);
   // Slug auto-follows the name until the user edits it directly.
   const [slug, setSlug] = React.useState(slugify(suggestedName));
@@ -100,9 +108,10 @@ export function CreateOrgForm({ suggestedName }: { suggestedName: string }) {
           window.location.href = url;
           return;
         }
-        // Fall through to the dashboard if the provider returned no redirect.
+        // Fall through to the regular destination if the provider returned no
+        // redirect.
       }
-      window.location.assign("/dashboard");
+      window.location.assign(next);
     } catch (err) {
       setError(describeError(err));
       setPending(false);

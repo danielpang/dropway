@@ -105,6 +105,22 @@ func TestListSites_NoClaims_401(t *testing.T) {
 	}
 }
 
+// A verified JWT whose claims carry no org (a session minted before the user's
+// organization existed) cannot be scoped for RLS. tenant() must report !ok so
+// the handler answers 401 (re-authenticate) rather than passing an empty tenant
+// to the store, which fails closed as middleware.ErrMissingTenant → opaque 500.
+func TestListSites_EmptyOrgClaim_401(t *testing.T) {
+	a := NewFull(quota.Unlimited{}, newFakeStore(), nil, nil)
+	h := authed(a.ListSites, claims("user_1", "", "member"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer x")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (empty org claim)", rr.Code)
+	}
+}
+
 func TestGetSite_OK(t *testing.T) {
 	fs := newFakeStore()
 	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "alpha", OwnerUserID: "user_1", AccessMode: "public"}
@@ -517,6 +533,8 @@ func TestWriteStoreError_StatusMapping(t *testing.T) {
 		{"not org member → 403", store.ErrNotOrgMember, http.StatusForbidden},
 		{"not allowlisted → 403", store.ErrNotAllowlisted, http.StatusForbidden},
 		{"not gated → 400", store.ErrNotGated, http.StatusBadRequest},
+		{"missing tenant → 401", middleware.ErrMissingTenant, http.StatusUnauthorized},
+		{"missing viewer → 401", store.ErrMissingViewer, http.StatusUnauthorized},
 		{"unknown → 500", errors.New("boom"), http.StatusInternalServerError},
 		{"wrapped not-found → 404", fmt.Errorf("ctx: %w", store.ErrNotFound), http.StatusNotFound},
 	}
