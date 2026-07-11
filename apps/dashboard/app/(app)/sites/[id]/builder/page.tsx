@@ -36,6 +36,22 @@ export default async function BuilderPage({
 
   const catalog = await api.aiModels();
 
+  // Resume the most recent session for this site (newest first) so the user sees
+  // their prior conversation instead of a blank chat every visit. A brand-new
+  // site has none, and the builder starts fresh (creating one on the first send).
+  const sessions = await api.aiSessions(id);
+  const latest = sessions[0] ?? null;
+  const initial = latest
+    ? await api.aiSession(latest.id)
+    : { session: null, messages: [] };
+  const initialMessages = initial.messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      text: typeof m.content?.content === "string" ? m.content.content : "",
+    }))
+    .filter((m) => m.text.length > 0);
+
   async function publish(versionId: string) {
     "use server";
     const result = await publishVersionAction({ siteId: id, versionId });
@@ -68,9 +84,11 @@ export default async function BuilderPage({
       ) : (
         <BuilderChat
           siteId={id}
-          initialModel={catalog.default || (catalog.models[0]?.id ?? "")}
+          initialModel={latest?.model || catalog.default || (catalog.models[0]?.id ?? "")}
           models={catalog.models}
           onPublish={publish}
+          initialSessionId={latest?.id ?? null}
+          initialMessages={initialMessages}
         />
       )}
     </div>

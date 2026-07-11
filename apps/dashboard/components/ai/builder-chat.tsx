@@ -35,6 +35,10 @@ interface BuilderChatProps {
   initialModel: string;
   models: AiModel[];
   onPublish: (versionId: string) => Promise<{ ok: boolean; message?: string }>;
+  // The most recent session for this site and its persisted transcript, so the
+  // chat resumes where the user left off instead of starting blank each visit.
+  initialSessionId?: string | null;
+  initialMessages?: ChatMessage[];
 }
 
 export function BuilderChat({
@@ -42,10 +46,12 @@ export function BuilderChat({
   initialModel,
   models,
   onPublish,
+  initialSessionId = null,
+  initialMessages = [],
 }: BuilderChatProps) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [model, setModel] = useState(initialModel);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
   const [draft, setDraft] = useState<DraftInfo | null>(null);

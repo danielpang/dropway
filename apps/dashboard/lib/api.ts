@@ -54,6 +54,23 @@ export type AiModel = {
   pricing?: { prompt?: string; completion?: string };
 };
 
+/** An AI builder chat session for a site. */
+export type AiSession = {
+  id: string;
+  site_id: string;
+  status: string;
+  model: string;
+  created_at: string;
+};
+
+/** One persisted transcript message (OpenAI message shape in `content`). */
+export type AiMessage = {
+  seq: number;
+  role: "system" | "user" | "assistant" | "tool";
+  content: { role?: string; content?: string; [k: string]: unknown };
+  created_at: string;
+};
+
 // ---- Org-wide skill sharing shapes -----------------------------------------
 
 /** An org-shared Claude skill (SKILL.md + supporting files, latest-only versions). */
@@ -415,6 +432,40 @@ export const api = {
   },
 
   /**
+   * The AI builder sessions for a site (newest activity first). Best-effort:
+   * returns an empty list when the builder is not configured or on any error, so
+   * the builder page still renders (starting a fresh session).
+   */
+  async aiSessions(siteId: string): Promise<AiSession[]> {
+    try {
+      const body = (await apiGet(
+        `/v1/ai/sessions?site_id=${encodeURIComponent(siteId)}`,
+      )) as { sessions?: AiSession[] };
+      return body.sessions ?? [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * One AI session plus its persisted transcript, so the builder can rehydrate a
+   * conversation the user returns to. Best-effort (empty transcript on error).
+   */
+  async aiSession(
+    id: string,
+  ): Promise<{ session: AiSession | null; messages: AiMessage[] }> {
+    try {
+      const body = (await apiGet(`/v1/ai/sessions/${id}`)) as {
+        session?: AiSession;
+        messages?: AiMessage[];
+      };
+      return { session: body.session ?? null, messages: body.messages ?? [] };
+    } catch {
+      return { session: null, messages: [] };
+    }
+  },
+
+  /**
    * The org feed: every site teammates have shared (feed-visible, not private),
    * newest first. Any member may read it; it's the cross-user discovery surface
    * that complements the per-user site list. Private sites are filtered server-side.
@@ -720,6 +771,34 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     });
+  },
+
+  /**
+   * Toggle whether the AI website builder is available to this org (owner/admin
+   * only → 403). Enforced on every /v1/ai/* call, so a disable takes effect
+   * immediately. Returns the org's AI settings (enabled + cap + current spend).
+   */
+  setAIEnabled(enabled: boolean): Promise<{
+    ai_enabled: boolean;
+    ai_monthly_cap_usd: number;
+    spent_usd: number;
+  }> {
+    return apiFetch("/v1/orgs/ai", {
+      method: "PATCH",
+      body: JSON.stringify({ ai_enabled: enabled }),
+    });
+  },
+
+  /**
+   * The org's AI builder settings: the enabled toggle, the monthly spend cap, and
+   * the current-period spend. 503 when the builder isn't configured on the server.
+   */
+  getAIOrgSettings(): Promise<{
+    ai_enabled: boolean;
+    ai_monthly_cap_usd: number;
+    spent_usd: number;
+  }> {
+    return apiFetch("/v1/orgs/ai", { method: "GET" });
   },
 
   /**

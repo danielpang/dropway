@@ -82,9 +82,15 @@ func ceilCents(costUSD, feePct float64) int64 {
 	return int64(math.Ceil(costUSD * (1 + feePct) * 100))
 }
 
-// AllowAIForOrg reports whether the org may use the AI builder. In the hosted
-// build a paid plan (pro/business/enterprise) is required; free orgs get a
-// "plan_required" reason the dashboard turns into an upgrade prompt.
+// AllowAIForOrg reports whether the org may use the AI builder. A paid plan
+// (pro/business/enterprise) is required — a paying org always has a card on file
+// (checkout requires one), so the plan tier is the same gate the rest of the app
+// uses for paid features (e.g. custom domains), kept consistent here rather than
+// a bespoke billing query. Free orgs get a "plan_required" reason.
+//
+// This is the CLOUD billing gate and only ONE of the AI checks — the org-level
+// ai_enabled admin toggle (settable during onboarding) gates the builder
+// independently and is enforced before this.
 func (m *AIMeter) AllowAIForOrg(ctx context.Context, orgID string) (bool, string, error) {
 	tier, err := m.planTier(ctx, orgID)
 	if err != nil {
@@ -94,6 +100,32 @@ func (m *AIMeter) AllowAIForOrg(ctx context.Context, orgID string) (bool, string
 		return false, "plan_required", nil
 	}
 	return true, "", nil
+}
+
+// planTier reads the org's live entitlement tier from billing.subscriptions (the
+// billing module's own mirror, written by the same webhook as app.org_meta.plan_tier
+// in one tx). It reads billing.subscriptions rather than app.org_meta ON PURPOSE:
+// app.org_meta is FORCE ROW LEVEL SECURITY, and this query runs over the bare
+// billing pool WITHOUT the app.current_org_id tenant GUC, so a SELECT from
+// app.org_meta would be RLS-filtered to zero rows for EVERY org and resolve to
+// Free — blocking the AI builder for paying orgs too. billing.subscriptions has
+// no RLS, so the tier reads correctly. Fail-soft to Free when the row is absent
+// (a free org that never subscribed has none).
+// planTierQuery reads the entitlement tier from billing.subscriptions (no RLS),
+// NOT app.org_meta (FORCE RLS — would return zero rows over the bare pool). A
+// regression test asserts this targets billing.subscriptions.
+const planTierQuery = `SELECT plan_tier FROM billing.subscriptions WHERE org_id = $1`
+
+func (m *AIMeter) planTier(ctx context.Context, orgID string) (PlanTier, error) {
+	var tier string
+	err := m.pool.QueryRow(ctx, planTierQuery, orgID).Scan(&tier)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TierFree, nil
+		}
+		return "", err
+	}
+	return PlanTier(tier), nil
 }
 
 // BillingPeriodStart returns the start of the org's CURRENT Stripe billing
@@ -133,18 +165,6 @@ func (m *AIMeter) customerID(ctx context.Context, orgID string) (string, error) 
 	return id, nil
 }
 
-func (m *AIMeter) planTier(ctx context.Context, orgID string) (PlanTier, error) {
-	var tier string
-	err := m.pool.QueryRow(ctx,
-		`SELECT plan_tier FROM app.org_meta WHERE id = $1`, orgID).Scan(&tier)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return TierFree, nil
-		}
-		return "", err
-	}
-	return PlanTier(tier), nil
-}
 
 // sendMeterEvent posts a Billing Meter event to Stripe.
 func (m *AIMeter) sendMeterEvent(customerID, identifier string, valueCents int64) error {
