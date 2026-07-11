@@ -6,9 +6,9 @@ import "server-only";
  * Better Auth's `getToken()` does a `jwks` table read + a private-key decrypt +
  * an EdDSA sign on EVERY call (it caches no key), so re-minting on each page
  * load is the dashboard's dominant per-request auth cost. The minted token is
- * valid for ~10 minutes; this cache reuses it for a short window (default 60s)
- * so a burst of navigations by the same user shares one mint instead of
- * re-signing every time.
+ * valid for ~10 minutes; this cache reuses it for a shorter window (default
+ * 4 min) so navigations by the same user share one mint instead of re-signing
+ * every time.
  *
  * Keyed by session id + active org so a different user — or the SAME user after
  * an org switch — never reuses another context's token (the key changes the
@@ -23,7 +23,10 @@ import "server-only";
  * and any pathological staleness self-heals within one TTL.
  */
 export interface TokenCacheOptions {
-  /** How long a minted token is reused before re-minting. Default 60_000ms. */
+  /** How long a minted token is reused before re-minting. Default 240_000ms
+   * (4 min): the token itself lives ~10 min, so even a token cached at the very
+   * end of the window still has ≥6 min of validity when the Go API verifies it —
+   * the TTL stays comfortably below expiry while cutting mints ~4× vs. 60s. */
   ttlMs?: number;
   /** Hard cap on retained entries; at the cap, stale entries are swept and then
    * the oldest insertion is evicted. Default 10_000. */
@@ -44,7 +47,7 @@ export class TokenCache {
   private readonly now: () => number;
 
   constructor(options: TokenCacheOptions = {}) {
-    this.ttlMs = options.ttlMs ?? 60_000;
+    this.ttlMs = options.ttlMs ?? 240_000;
     this.maxEntries = options.maxEntries ?? 10_000;
     this.now = options.now ?? Date.now;
   }
