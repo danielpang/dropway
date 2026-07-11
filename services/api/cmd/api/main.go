@@ -35,6 +35,7 @@ import (
 	"github.com/danielpang/dropway/internal/skillseeds"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/config"
+	"github.com/danielpang/dropway/services/api/internal/ai"
 	"github.com/danielpang/dropway/services/api/internal/handlers"
 	"github.com/danielpang/dropway/services/api/internal/router"
 	"github.com/danielpang/dropway/services/api/internal/store"
@@ -61,6 +62,11 @@ type cloudDeps struct {
 	// cloud build hands it to the BillingStore for plan upgrade/downgrade events; the
 	// OSS build ignores it. Its lifecycle (flush on shutdown) is owned by run().
 	Analytics analytics.Emitter
+	// API + AIRunner let the cloud build attach the AI pass-through meter (Stripe)
+	// and the paid-plan gate. Both nil when the AI builder is disabled; the OSS
+	// mountCloud ignores them.
+	API      *handlers.API
+	AIRunner *ai.Runner
 }
 
 // newPostHogClient is the seam wireTelemetry builds the shared client through.
@@ -248,6 +254,17 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	// stored host_routes.host stays the bare host). Defaults: https, no port.
 	api.ContentScheme = cfg.ContentScheme
 	api.ContentPort = cfg.ContentPort
+	// Version-preview lifetime (PREVIEW_TTL_HOURS, default 7 days).
+	api.PreviewTTL = time.Duration(cfg.PreviewTTLHours) * time.Hour
+
+	// AI website builder. Wired only when an OpenRouter key is configured (self-
+	// host brings its own); otherwise the /v1/ai routes 503. The sandbox provider
+	// is selected by SANDBOX_PROVIDER. The plan/card gate is added by the cloud
+	// build via mountCloud; the OSS default allows all (BYO key).
+	aiRunner, err := wireAIBuilder(api, cfg, siteStore, obj, proj, baseLogger)
+	if err != nil {
+		return fmt.Errorf("wire AI builder: %w", err)
+	}
 
 	// Embedded default preset skills, materialized lazily per org on its first
 	// skills touch. A bad embedded seed is a build artifact problem — fail
@@ -300,6 +317,8 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		EnsureOrgProvisioned: api.EnsureOrgProvisioned,
 		Projection:           proj,
 		Analytics:            analyticsEmitter,
+		API:                  api,
+		AIRunner:             aiRunner,
 	})
 
 	srv := &http.Server{

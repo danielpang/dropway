@@ -37,3 +37,13 @@ sql:
               pointer: true
           - db_type: "timestamptz"
             go_type: "time.Time"
+          # Money-ish columns (AI cost ledger, spend cap). numeric(12,6) fits
+          # float64 losslessly at the magnitudes involved; the values originate
+          # as JSON floats from OpenRouter anyway.
+          - db_type: "pg_catalog.numeric"
+            go_type: "float64"
+          - db_type: "pg_catalog.numeric"
+            nullable: true
+            go_type:
+              type: "float64"
+              pointer: true

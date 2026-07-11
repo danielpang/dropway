@@ -52,11 +52,15 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 	var (
 		host, siteID, orgID, slug, accessMode string
 		versionID                             *string
+		// previewExpires is set ONLY for a preview host (kind='preview'); it is the
+		// preview deadline, returned by resolve_host so the hot path needs no second
+		// query against host_routes on the 99% of traffic that isn't a preview.
+		previewExpires pgtype.Timestamptz
 	)
 	row := tx.QueryRow(ctx,
-		`SELECT host, site_id, org_id, slug, access_mode, version_id FROM app.resolve_host($1)`,
+		`SELECT host, site_id, org_id, slug, access_mode, version_id, preview_expires_at FROM app.resolve_host($1)`,
 		normalizedHost)
-	if err := row.Scan(&host, &siteID, &orgID, &slug, &accessMode, &versionID); err != nil {
+	if err := row.Scan(&host, &siteID, &orgID, &slug, &accessMode, &versionID, &previewExpires); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return serve.Route{}, serve.ErrHostNotFound
 		}
@@ -73,10 +77,15 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 		VersionID:  *versionID,
 		AccessMode: accessMode,
 	}
+	if previewExpires.Valid {
+		t := previewExpires.Time
+		out.ExpiresAt = &t
+	}
 
 	// Read public/unlisted link-expiry under the SITE's own tenant context (RLS-scoped
 	// to the resolved org). A missing policy is fine (no expiry); only a real read
-	// error is fatal.
+	// error is fatal. The edge enforces the EARLIER of the policy expiry and the
+	// preview deadline set above.
 	if err := setTenant(ctx, tx, "", orgID); err != nil {
 		return serve.Route{}, err
 	}
@@ -87,7 +96,9 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 	case err == nil:
 		if expiresAt.Valid {
 			t := expiresAt.Time
-			out.ExpiresAt = &t
+			if out.ExpiresAt == nil || t.Before(*out.ExpiresAt) {
+				out.ExpiresAt = &t
+			}
 		}
 	case errors.Is(err, pgx.ErrNoRows):
 		// No access policy row → no edge expiry.

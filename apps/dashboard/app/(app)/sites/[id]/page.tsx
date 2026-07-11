@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, Globe, Link2, Settings } from "lucide-react";
+import { ArrowLeft, ExternalLink, Globe, Link2, Settings, Sparkles } from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
@@ -145,6 +145,12 @@ export default async function SiteDetailPage({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm">
+            <Link href={`/sites/${id}/builder`}>
+              <Sparkles aria-hidden />
+              Build with AI
+            </Link>
+          </Button>
           <Button asChild variant="outline" size="sm">
             <Link href={`/sites/${id}/settings`}>
               <Settings aria-hidden />

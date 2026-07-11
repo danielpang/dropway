@@ -142,6 +142,28 @@ type Config struct {
 	ContentScheme string // CONTENT_SCHEME (default "https")
 	ContentPort   string // CONTENT_PORT (default "" → no explicit port)
 
+	// PreviewTTLHours is how long a version-preview host lives from creation or
+	// renewal, in hours (PREVIEW_TTL_HOURS; default 168 = 7 days). Re-creating an
+	// expired preview restarts the clock.
+	PreviewTTLHours int
+
+	// --- AI website builder ---------------------------------------------------
+	// OpenRouterAPIKey enables the AI builder (self-host: bring your own key).
+	// Empty → the AI routes 503.
+	OpenRouterAPIKey string // OPENROUTER_API_KEY
+	// AIDefaultModel is the OpenRouter model a session uses when none is picked.
+	AIDefaultModel string // AI_DEFAULT_MODEL
+	// SandboxProvider selects the sandbox backend: "fly" or "docker".
+	SandboxProvider string // SANDBOX_PROVIDER (default "docker")
+	// SandboxImage is the builder image the sandbox boots.
+	SandboxImage string // SANDBOX_IMAGE
+	// FlyAPIToken / FlySandboxApp configure the Fly Machines sandbox provider.
+	FlyAPIToken   string // FLY_API_TOKEN
+	FlySandboxApp string // FLY_SANDBOX_APP
+	// AIMonthlyCapUSD is the self-host default AI spend cap (0 → unlimited). The
+	// cloud build reads the per-org cap from org_meta; this is the OSS fallback.
+	AIMonthlyCapUSD float64 // AI_MONTHLY_CAP_USD
+
 	// PasswordRateLimitPerMin / PasswordRateLimitBurst bound the unauthenticated
 	// POST /v1/authz/password exchange (M3), keyed by client IP + target host. Each
 	// attempt otherwise runs a cost-12 bcrypt, so this is both brute-force and
@@ -195,6 +217,16 @@ func Load() (Config, error) {
 		ContentScheme: envOr("CONTENT_SCHEME", "https"),
 		ContentPort:   os.Getenv("CONTENT_PORT"),
 
+		PreviewTTLHours: envIntOr("PREVIEW_TTL_HOURS", 168),
+
+		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
+		AIDefaultModel:   envOr("AI_DEFAULT_MODEL", "anthropic/claude-sonnet-4.5"),
+		SandboxProvider:  envOr("SANDBOX_PROVIDER", "docker"),
+		SandboxImage:     os.Getenv("SANDBOX_IMAGE"),
+		FlyAPIToken:      os.Getenv("FLY_API_TOKEN"),
+		FlySandboxApp:    os.Getenv("FLY_SANDBOX_APP"),
+		AIMonthlyCapUSD:  envFloatOr("AI_MONTHLY_CAP_USD", 0),
+
 		PasswordRateLimitPerMin: envIntOr("PASSWORD_RATELIMIT_PER_MIN", 10),
 		PasswordRateLimitBurst:  envIntOr("PASSWORD_RATELIMIT_BURST", 5),
 	}
@@ -247,6 +279,17 @@ func envIntOr(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
 			return n
+		}
+	}
+	return def
+}
+
+// envFloatOr parses the environment value for key as a float, falling back to
+// def when unset/empty or unparseable / negative.
+func envFloatOr(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && f >= 0 {
+			return f
 		}
 	}
 	return def

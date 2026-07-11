@@ -27,6 +27,18 @@ import (
 // presignTTL bounds how long a direct-to-store upload URL is valid.
 const presignTTL = 15 * time.Minute
 
+// defaultPreviewTTL is how long a version-preview host lives when PREVIEW_TTL_HOURS
+// is unset: 7 days, renewable (re-creating an expired preview is the same call).
+const defaultPreviewTTL = 7 * 24 * time.Hour
+
+// previewTTL returns the configured preview lifetime, defaulting to 7 days.
+func (a *API) previewTTL() time.Duration {
+	if a.PreviewTTL > 0 {
+		return a.PreviewTTL
+	}
+	return defaultPreviewTTL
+}
+
 // API holds the handler dependencies wired in main.go. Quota is the open-core
 // seam (Unlimited in OSS, the cloud hard-cap provider under -tags cloud). Store,
 // Objects, and Projection are the Phase-1 publish/serve loop; they may be nil in
@@ -93,6 +105,21 @@ type API struct {
 	// org on the first skills touch (internal/skillseeds.Load, wired in main.go).
 	// Empty → orgs start with no folders/presets (they can still create both).
 	SkillSeeds []skillseeds.Seed
+
+	// PreviewTTL is how long a version-preview host lives from creation/renewal
+	// (PREVIEW_TTL_HOURS; default 7 days). The zero value falls back to
+	// defaultPreviewTTL so a bare unit-test API still gets a sane deadline.
+	PreviewTTL time.Duration
+
+	// AI builder wiring. All optional: when AI or AIModels is nil the AI routes
+	// return 503 (self-host without an OPENROUTER_API_KEY, or a DB-less API).
+	AI       AITurnRunner   // runs one builder turn (streamed); *ai.Runner
+	AIModels AIModelCatalog // OpenRouter model catalog for the picker
+	AIGate   AIGate         // plan/card gate (cloud); nil → allow all
+	// AIDefaultModel is the model used when a session omits one.
+	AIDefaultModel string
+	// AIMaxConcurrent bounds active AI sessions per org (0 → default 2).
+	AIMaxConcurrent int
 
 	// seededOrgs is a process-local set of org ids already observed as
 	// skills-seeded, so ensureSkillsSeeded can skip its per-request DB round-trip

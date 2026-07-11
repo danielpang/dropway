@@ -376,6 +376,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/versions/{versionID}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create, renew, or re-create a version's preview URL
+         * @description Registers (or extends) a time-limited preview host pinned to one draft version and projects it to the edge. Previews default to 7 days (PREVIEW_TTL_HOURS); calling this again re-creates an expired preview or extends a live one. The draft's content is retained by the draft-aware GC, so re-creation is cheap.
+         */
+        post: operations["createPreview"];
+        /** Delete a version's preview URL */
+        delete: operations["deletePreview"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a site's AI builder sessions */
+        get: operations["listAISessions"];
+        put?: never;
+        /**
+         * Start an AI builder session
+         * @description Creates a chat session whose LLM (via OpenRouter) edits the site in an isolated sandbox. Provide site_id to edit an existing site, or slug to create a new site first (the "build with AI" flow). Requires the org AI kill switch on and (in the hosted build) a paid plan with a card on file.
+         */
+        post: operations["createAISession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an AI session and its transcript */
+        get: operations["getAISession"];
+        put?: never;
+        post?: never;
+        /** Delete an AI session */
+        delete: operations["deleteAISession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/sessions/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a message and stream the builder turn (SSE)
+         * @description Appends the user message and runs one builder turn, streaming the response as Server-Sent Events (text/event-stream): token deltas, tool activity, and a final draft_ready event carrying the preview URL, then done. A spend-cap hit ends the turn with an error event.
+         */
+        post: operations["postAIMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/sessions/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Replay a session's transcript (SSE, resumable)
+         * @description Replays the persisted transcript as SSE, resuming after the Last-Event-ID header (= message seq). Used for reconnect and history; live turn events come from the messages endpoint's streamed response.
+         */
+        get: operations["getAIEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the OpenRouter model catalog for the picker */
+        get: operations["listAIModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the org AI settings and current-period spend */
+        get: operations["getAIOrgSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update the org AI kill switch and/or spend cap (admin/owner) */
+        patch: operations["patchAIOrgSettings"];
+        trace?: never;
+    };
     "/v1/sites/{id}/access": {
         parameters: {
             query?: never;
@@ -983,6 +1118,23 @@ export interface components {
                 /** @example EdDSA */
                 alg?: string;
             }[];
+        };
+        AISession: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            site_id?: string;
+            /** @enum {string} */
+            status?: "active" | "running" | "idle" | "archived" | "failed";
+            model?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        AISettings: {
+            ai_enabled?: boolean;
+            ai_monthly_cap_usd?: number;
+            /** @description AI spend so far in the current calendar month (USD). */
+            spent_usd?: number;
         };
         Site: {
             /** Format: uuid */
@@ -1886,6 +2038,345 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    createPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview registered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uri */
+                        preview_url?: string;
+                        /** Format: date-time */
+                        expires_at?: string;
+                        /** Format: uuid */
+                        version_id?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deletePreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAISessions: {
+        parameters: {
+            query: {
+                site_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sessions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sessions?: components["schemas"]["AISession"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createAISession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uuid
+                     * @description Edit this existing site.
+                     */
+                    site_id?: string;
+                    /** @description Create a new site with this slug (when site_id is omitted). */
+                    slug?: string;
+                    /** @description OpenRouter model id (defaults to the server default). */
+                    model?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Session created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AISession"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description A paid plan is required (hosted build). */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The AI builder is disabled for this org. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many active AI sessions. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The AI builder is not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAISession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session + messages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        session?: components["schemas"]["AISession"];
+                        messages?: Record<string, never>[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteAISession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    postAIMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    text: string;
+                };
+            };
+        };
+        responses: {
+            /** @description SSE stream of the turn */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description The AI builder is disabled for this org. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getAIEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAIModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Models */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        default?: string;
+                        models?: Record<string, never>[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description The AI builder is not configured. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAIOrgSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AISettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    patchAIOrgSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ai_enabled?: boolean;
+                    ai_monthly_cap_usd?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AISettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     setSiteAccess: {

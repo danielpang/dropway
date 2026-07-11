@@ -137,18 +137,58 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 		// version to serve; otherwise Routes is empty and the caller skips the write).
 		res.Site = siteFromDB(site)
 		res.Site.AccessMode = p.Mode
-		if site.CurrentVersionID != nil {
+		{
 			expiresAt := routeExpiry(p.Mode, accessPolicyFromDB(row))
 			// Rewrite EVERY host of the site (canonical + verified custom domains),
 			// not just the canonical one — each custom host has its own route:<host>
 			// KV entry, and leaving it at the old access_mode keeps the Worker serving
 			// the custom host under the OLD tier after the policy tightened (FIX 1).
+			// Preview hosts are rewritten too (a gated site's draft must gate the
+			// same way), but keep their pinned version + preview deadline. They also
+			// exist for sites with NO live version (an unpublished AI-created site).
 			hostRoutes, err := q.ListHostRoutesForSite(ctx, p.SiteID)
 			if err != nil {
 				return err
 			}
 			for _, hr := range hostRoutes {
-				rv := projection.RouteValue{
+				var rv projection.RouteValue
+				switch {
+				case hr.Kind == RouteKindPreview && hr.VersionID != nil:
+					var deadline time.Time
+					if hr.ExpiresAt.Valid {
+						deadline = hr.ExpiresAt.Time
+					}
+					rv = projection.RouteValue{
+						OrgID:         t.OrgID,
+						SiteID:        p.SiteID,
+						VersionID:     *hr.VersionID,
+						AccessMode:    p.Mode,
+						SchemaVersion: projection.SchemaVersion,
+						ExpiresAt:     earliestExpiry(expiresAt, deadline),
+					}
+				case site.CurrentVersionID != nil:
+					rv = projection.RouteValue{
+						OrgID:         t.OrgID,
+						SiteID:        p.SiteID,
+						VersionID:     *site.CurrentVersionID,
+						AccessMode:    p.Mode,
+						SchemaVersion: projection.SchemaVersion,
+						ExpiresAt:     expiresAt,
+					}
+				default:
+					continue // no live version and not a preview → no route to rewrite
+				}
+				res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: rv})
+			}
+			// Keep the canonical Host/Route populated for back-compat (the historical
+			// single-route shape); the handler now iterates Routes.
+			if site.CurrentVersionID != nil {
+				orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
+				if err != nil {
+					return err
+				}
+				res.Host = projection.HostForSite(orgSlug, site.Slug)
+				res.Route = projection.RouteValue{
 					OrgID:         t.OrgID,
 					SiteID:        p.SiteID,
 					VersionID:     *site.CurrentVersionID,
@@ -156,22 +196,6 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 					SchemaVersion: projection.SchemaVersion,
 					ExpiresAt:     expiresAt,
 				}
-				res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: rv})
-			}
-			// Keep the canonical Host/Route populated for back-compat (the historical
-			// single-route shape); the handler now iterates Routes.
-			orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
-			if err != nil {
-				return err
-			}
-			res.Host = projection.HostForSite(orgSlug, site.Slug)
-			res.Route = projection.RouteValue{
-				OrgID:         t.OrgID,
-				SiteID:        p.SiteID,
-				VersionID:     *site.CurrentVersionID,
-				AccessMode:    p.Mode,
-				SchemaVersion: projection.SchemaVersion,
-				ExpiresAt:     expiresAt,
 			}
 		}
 		return nil

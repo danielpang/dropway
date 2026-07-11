@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
@@ -27,6 +28,9 @@ type CreateSiteVersionParams struct {
 	ContentHash string // sha256 of the deploy manifest (the whole-deploy digest)
 	SizeBytes   int64
 	Status      string // typically "ready" once blobs are verified + manifest written
+	// CreatedVia marks how the version was produced: "deploy" (default) or "ai"
+	// (an AI-builder draft the GC pins for the draft-retention window).
+	CreatedVia string
 	// Blobs are the deploy's DISTINCT content-addressed blobs (+ sizes). On a
 	// genuinely-new version they feed the dedup-aware storage meter + cap; on an
 	// idempotent re-deploy (existing content_hash) they're ignored (no new storage).
@@ -45,6 +49,10 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 	status := p.Status
 	if status == "" {
 		status = "ready"
+	}
+	createdVia := p.CreatedVia
+	if createdVia == "" {
+		createdVia = "deploy"
 	}
 
 	var out SiteVersion
@@ -103,6 +111,7 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 			ContentHash: p.ContentHash,
 			SizeBytes:   p.SizeBytes,
 			CreatedBy:   t.UserID,
+			CreatedVia:  createdVia,
 		})
 		if err != nil {
 			return err
@@ -315,6 +324,10 @@ type PublishResult struct {
 	Route  projection.RouteValue
 	Routes []RouteUpdate
 	Site   Site
+	// DeletedPreviewHosts are the preview hosts of the version that was just
+	// published, removed in the publish tx ("publishing deletes the preview").
+	// The handler must also delete their route:<host> KV keys.
+	DeletedPreviewHosts []string
 }
 
 // Publish flips a site's current_version_id to versionID (publish OR rollback —
@@ -415,12 +428,33 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		// new version — each custom host has its own route:<host> KV entry, and a host
 		// left pointing at the OLD version_id keeps serving the stale build after a
 		// publish/rollback (parity with SetSiteAccess / the reconcile path; FIX 1).
+		// Preview rows are excluded: each pins its own draft version and must not be
+		// repointed at the published one.
 		hostRoutes, err := q.ListHostRoutesForSite(ctx, siteID)
 		if err != nil {
 			return err
 		}
 		for _, hr := range hostRoutes {
+			if hr.Kind == RouteKindPreview {
+				continue
+			}
 			res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: newRoute()})
+		}
+
+		// Publishing deletes the published version's preview: the draft is now the
+		// live site, so its time-limited preview host goes away. Other versions'
+		// previews are untouched (they pin different drafts).
+		deleted, err := q.DeletePreviewRoutesForVersion(ctx, &vid)
+		if err != nil {
+			return err
+		}
+		res.DeletedPreviewHosts = deleted
+		if len(deleted) > 0 {
+			if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
+				ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{},
+			}); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

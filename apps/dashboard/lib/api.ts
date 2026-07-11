@@ -275,6 +275,16 @@ const bearerToken = cache(async (): Promise<string | null> => {
   return minted;
 });
 
+/**
+ * The current session's bearer token, for callers that talk to the Go API
+ * OUTSIDE this typed client — notably the AI builder SSE proxy route handler,
+ * which streams `text/event-stream` and so can't use apiFetch's JSON path. It
+ * reuses the same mint + cache, so no extra signing cost.
+ */
+export async function mintApiToken(): Promise<string | null> {
+  return bearerToken();
+}
+
 // ---- Core fetch wrapper ---------------------------------------------------
 
 async function apiFetch<T>(
@@ -375,6 +385,26 @@ export const api = {
   /** Get one site by id (404 → ApiError with status 404). */
   getSite(id: string): Promise<Site> {
     return apiGet(`/v1/sites/${id}`) as Promise<Site>;
+  },
+
+  /**
+   * The OpenRouter model catalog for the AI builder's model picker, plus the
+   * server's default model id. Returns an empty catalog when the builder is not
+   * configured (503), so callers can degrade gracefully.
+   */
+  async aiModels(): Promise<{
+    models: { id: string; name?: string }[];
+    default: string;
+  }> {
+    try {
+      const body = (await apiGet("/v1/ai/models")) as {
+        models?: { id: string; name?: string }[];
+        default?: string;
+      };
+      return { models: body.models ?? [], default: body.default ?? "" };
+    } catch {
+      return { models: [], default: "" };
+    }
   },
 
   /**
