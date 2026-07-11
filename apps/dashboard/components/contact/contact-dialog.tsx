@@ -89,7 +89,8 @@ function ContactForm({ onDone }: { onDone: () => void }) {
         <DialogBody>
           <p className="text-sm text-muted-foreground">
             Your {kind === "bug" ? "bug report" : "feature request"} is on its
-            way to our team. We read every one.
+            way to our team. We read every one, and may reach out to your account
+            email to follow up.
           </p>
         </DialogBody>
         <DialogFooter>
@@ -169,6 +170,11 @@ function ContactForm({ onDone }: { onDone: () => void }) {
             className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           />
         </div>
+
+        <p className="text-xs text-muted-foreground">
+          We may reach out to your account email to follow up on this{" "}
+          {kind === "bug" ? "bug report" : "feature request"}.
+        </p>
 
         {error ? (
           <p role="alert" className="text-sm text-destructive">

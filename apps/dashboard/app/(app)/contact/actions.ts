@@ -22,8 +22,9 @@ const MAX_MESSAGE = 5000;
 /**
  * Deliver a contact-form submission (bug report / feature request) to the org's
  * support inbox, reusing the same transactional email seam (lib/email.ts) the
- * auth flows send through. The submission is stamped with the signed-in user's
- * email as the reply-to context so support can respond directly.
+ * auth flows send through. The submission carries the signed-in user's id and
+ * email in the body AND sets Reply-To to that email, so support can reply to the
+ * user directly.
  *
  * Refuses when SUPPORT_EMAIL is unset (the feature is off, not silently
  * dropping feedback) and validates the payload server-side, since a "use server"
@@ -80,11 +81,19 @@ export async function submitContactAction(input: {
   }${subject ? `<br/>Subject: ${escapeHtml(subject)}` : ""}</p>
 <p style="white-space:pre-wrap">${escapeHtml(message)}</p>`;
 
+  // Route replies straight back to the submitter (when we know their email), so
+  // support can respond to a bug report / feature request with a plain reply. A
+  // basic shape check keeps a malformed value out of the Reply-To header.
+  const replyTo =
+    user?.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email)
+      ? user.email
+      : undefined;
+
   // sendEmail never throws (it logs + recovers), but a misconfigured SMTP URL is
   // still a no-op the user should not be told "sent" about. We can't distinguish
   // that here, so we optimistically report success; delivery failures surface in
   // the dashboard logs, same as every other outgoing mail.
-  await sendEmail({ to, subject: mailSubject, text, html });
+  await sendEmail({ to, replyTo, subject: mailSubject, text, html });
   return { ok: true };
 }
 

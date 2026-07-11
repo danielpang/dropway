@@ -33,6 +33,12 @@ export type EmailMessage = {
   text: string;
   /** Optional HTML body; falls back to `text` when absent. */
   html?: string;
+  /**
+   * Optional Reply-To address. `from` stays the branded sender, but a reply is
+   * routed here instead. The contact form sets it to the submitter's email so
+   * support can respond to a bug report / feature request with a plain reply.
+   */
+  replyTo?: string;
 };
 
 // Lazily build a single pooled transport, reused across requests (and kept out
@@ -68,6 +74,7 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
     await transport(url).sendMail({
       from: mailFrom(),
       to: msg.to,
+      replyTo: msg.replyTo,
       subject: msg.subject,
       text: msg.text,
       html: msg.html ?? msg.text,
