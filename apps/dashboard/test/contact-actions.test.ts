@@ -87,10 +87,27 @@ describe("submitContactAction", () => {
     const msg = sendEmail.mock.calls[0]![0];
     expect(msg.to).toBe("support@example.com");
     expect(msg.subject).toBe("[Bug report] Deploys fail");
+    // Reply-To routes support's reply straight back to the submitter.
+    expect(msg.replyTo).toBe("dev@example.com");
     // The sender's identity and the body are carried in the text part.
     expect(msg.text).toContain("dev@example.com");
     expect(msg.text).toContain("user-1");
     expect(msg.text).toContain("It 500s on upload");
+  });
+
+  it("omits Reply-To when the session email is missing or malformed", async () => {
+    supportEmail.mockReturnValue("support@example.com");
+    getCurrentSession.mockResolvedValue({ user: { id: "user-2" } });
+    sendEmail.mockResolvedValue(undefined);
+
+    await submitContactAction({
+      kind: "bug",
+      subject: "No email on session",
+      message: "still send it",
+    });
+
+    const msg = sendEmail.mock.calls[0]![0];
+    expect(msg.replyTo).toBeUndefined();
   });
 
   it("labels a feature request and falls back to the label when no subject", async () => {
