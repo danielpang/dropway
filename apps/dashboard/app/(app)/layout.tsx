@@ -6,11 +6,13 @@ import { AnalyticsIdentify } from "@/components/analytics/analytics-identify";
 import { SessionCacheRefresh } from "@/components/auth/session-cache-refresh";
 import { BrandMark } from "@/components/brand-mark";
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
+import { DashboardFooter } from "@/components/dashboard-footer";
 import { MainNav } from "@/components/main-nav";
 import { MobileNav } from "@/components/mobile-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
+import { supportEmail } from "@/lib/env";
 import { loadOrgBillingState } from "@/lib/billing-server";
 import { canManage, loadActiveRole } from "@/lib/org";
 import { getCurrentSession } from "@/lib/session";
@@ -95,6 +97,8 @@ export default async function AppLayout({
       <OverLimitBanner status={orgStatus} />
 
       <main className="container flex-1 py-6 sm:py-10">{children}</main>
+
+      <DashboardFooter contactEnabled={Boolean(supportEmail())} />
     </div>
   );
 }
