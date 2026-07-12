@@ -233,6 +233,110 @@ export function magicLinkEmail(p: { url: string; appUrl: string }): RenderedEmai
   };
 }
 
+/**
+ * Two-factor authentication enabled: a compromise tripwire, not a CTA email. The
+ * button just deep-links to the security page so the recipient can review (and,
+ * if this wasn't them, disable + rotate credentials).
+ */
+export function mfaEnabledEmail(p: { appUrl: string }): RenderedEmail {
+  const url = `${p.appUrl.replace(/\/$/, "")}/account/security`;
+  const security =
+    "If you didn't enable two factor authentication, someone else may have access to your account. Review your security settings and change your password right away.";
+  const body =
+    "Two factor authentication is now active on your Dropway account. From now on, signing in requires a code from your authenticator app. Keep your backup codes somewhere safe: they are the only way back in if you lose your device.";
+  return {
+    subject: "Two-factor authentication was enabled on your account",
+    html: renderLayout({
+      preheader: "Two factor authentication is now active on your Dropway account.",
+      kicker: "Security update",
+      heading: "Two-factor authentication enabled",
+      bodyHtml: body,
+      buttonLabel: "Review security settings",
+      url,
+      securityHtml: security,
+      footerReason:
+        "You received this email because the security settings on your Dropway account changed.",
+      appUrl: p.appUrl,
+    }),
+    text: renderText({
+      heading: "Two-factor authentication enabled",
+      body,
+      cta: "Review your security settings",
+      url,
+      security,
+    }),
+  };
+}
+
+/** Two-factor authentication disabled: the matching tripwire for the off switch. */
+export function mfaDisabledEmail(p: { appUrl: string }): RenderedEmail {
+  const url = `${p.appUrl.replace(/\/$/, "")}/account/security`;
+  const security =
+    "If you didn't disable two factor authentication, someone else may have access to your account. Re-enable it and change your password right away.";
+  const body =
+    "Two factor authentication was turned off on your Dropway account. Signing in now requires only your usual method. You can re-enable it any time from your security settings.";
+  return {
+    subject: "Two-factor authentication was disabled on your account",
+    html: renderLayout({
+      preheader: "Two factor authentication was turned off on your Dropway account.",
+      kicker: "Security update",
+      heading: "Two-factor authentication disabled",
+      bodyHtml: body,
+      buttonLabel: "Review security settings",
+      url,
+      securityHtml: security,
+      footerReason:
+        "You received this email because the security settings on your Dropway account changed.",
+      appUrl: p.appUrl,
+    }),
+    text: renderText({
+      heading: "Two-factor authentication disabled",
+      body,
+      cta: "Review your security settings",
+      url,
+      security,
+    }),
+  };
+}
+
+/**
+ * Two-factor authentication reset by an org owner/admin (the lockout recovery
+ * path): the member re-enrolls at their next sign-in.
+ */
+export function mfaResetEmail(p: {
+  appUrl: string;
+  orgName: string;
+}): RenderedEmail {
+  const url = `${p.appUrl.replace(/\/$/, "")}/account/security`;
+  const org = esc(p.orgName);
+  const security =
+    "If you weren't expecting this, contact your organization's admin. Your password was not changed.";
+  const bodyHtml = `An owner or admin of <b style="color:${INK};font-weight:600;">${org}</b> reset two factor authentication on your Dropway account, usually because you lost access to your authenticator. Your existing codes no longer work. Set it up again from your security settings.`;
+  const bodyText = `An owner or admin of ${p.orgName} reset two factor authentication on your Dropway account, usually because you lost access to your authenticator. Your existing codes no longer work. Set it up again from your security settings.`;
+  return {
+    subject: "Two-factor authentication was reset on your account",
+    html: renderLayout({
+      preheader: "Two factor authentication was reset on your Dropway account.",
+      kicker: "Security update",
+      heading: "Two-factor authentication was reset",
+      bodyHtml,
+      buttonLabel: "Set up two-factor again",
+      url,
+      securityHtml: security,
+      footerReason:
+        "You received this email because the security settings on your Dropway account changed.",
+      appUrl: p.appUrl,
+    }),
+    text: renderText({
+      heading: "Two-factor authentication was reset",
+      body: bodyText,
+      cta: "Set up two factor again",
+      url,
+      security,
+    }),
+  };
+}
+
 /** Password reset link. */
 export function passwordResetEmail(p: {
   url: string;

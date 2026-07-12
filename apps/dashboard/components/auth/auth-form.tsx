@@ -133,12 +133,21 @@ export function AuthForm({
           window.location.assign(callbackURL);
         }
       } else {
-        const { error: err } = await authClient.signIn.email({
+        const { data, error: err } = await authClient.signIn.email({
           email,
           password,
           callbackURL: callbackURL,
         });
         if (err) throw err;
+        // 2FA users get no session yet: the twoFactor plugin answers with a
+        // challenge marker instead. Hand off to the verification page, carrying
+        // the destination so it can complete the journey.
+        if ((data as { twoFactorRedirect?: boolean } | null)?.twoFactorRedirect) {
+          window.location.assign(
+            `/two-factor?next=${encodeURIComponent(callbackURL)}`,
+          );
+          return;
+        }
         window.location.assign(callbackURL);
       }
     } catch (err) {

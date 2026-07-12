@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, CreditCard, Globe2, ShieldAlert, Sparkles, Users } from "lucide-react";
+import { Bot, CreditCard, Globe2, KeyRound, ShieldAlert, Sparkles, Users } from "lucide-react";
 
 import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
@@ -152,6 +152,24 @@ export default async function OrgSettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Account security shortcut (per-user, not org policy) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <KeyRound className="size-4 text-muted-foreground" aria-hidden />
+            Your account security
+          </CardTitle>
+          <CardDescription>
+            Two-factor authentication and backup codes for your own account.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline">
+            <Link href="/account/security">Manage account security</Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Members shortcut */}
       <Card>
