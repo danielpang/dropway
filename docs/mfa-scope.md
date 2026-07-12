@@ -82,6 +82,17 @@ phased work plan, and the decisions already made.
 - Members page shows per-member MFA status, since the first thing an admin
   asks after flipping the toggle is "who isn't enrolled yet?"
 
+### Recovery & operations
+
+- **Admin MFA reset**: owner/admin can clear a member's second factor so a
+  locked-out member re-enrolls at next sign-in. With enforcement on, this is
+  the complete lockout story for orgs.
+- Solo users (no org admin): backup codes are the recovery path, plus the
+  support process. No email-OTP fallback — it would reduce MFA to the
+  strength of the mailbox.
+- Audit log entries (existing audit infrastructure): `mfa.enrolled`,
+  `mfa.disabled`, `mfa.reset_by_admin`, `org.mfa_enforcement_changed`.
+
 ## Database migrations
 
 Two migrations, in two different systems — plus two explicit "no migration
@@ -120,11 +131,12 @@ it's easy to misremember as goose):
   (`.github/workflows/ci.yml`). Goose never touches identity *tables*; the
   goose migrations that mention identity (baseline, `0003`, `0011`, `0012`)
   only handle the namespace, grants, and search_path plumbing.
-- **`migrate.yml` (dev/prod) has no identity step** — it applies goose to
-  `app` and `billing` only. Shipping this feature therefore needs an explicit
-  prod deployment step: run the Better Auth migrate against prod before the
-  new dashboard build goes live (or, nicer, add an identity step to
-  `migrate.yml` as part of this work).
+- **`migrate.yml` (dev/prod) now runs identity too**: an "apply identity
+  migrations (Better Auth)" step follows the goose step in both jobs, and
+  `apps/dashboard/lib/auth.ts` is in the workflow's trigger paths — so
+  merging the `twoFactor()` plugin change automatically migrates dev, then
+  pauses on the production environment's reviewer gate before touching
+  prod. No manual prod CLI run is needed.
 - **Self-host**: operators run the same CLI one-liner on upgrade (per
   `deploy/docker-compose.yml` / `deploy/.env.example`); call it out in the
   release notes.
@@ -185,17 +197,6 @@ API layer (quota-provider style), not schema. Nothing changes under
 
 A future grace period (a v1 non-goal) would be one more nullable
 `org_meta` timestamp column — deliberately not added now.
-
-### Recovery & operations
-
-- **Admin MFA reset**: owner/admin can clear a member's second factor so a
-  locked-out member re-enrolls at next sign-in. With enforcement on, this is
-  the complete lockout story for orgs.
-- Solo users (no org admin): backup codes are the recovery path, plus the
-  support process. No email-OTP fallback — it would reduce MFA to the
-  strength of the mailbox.
-- Audit log entries (existing audit infrastructure): `mfa.enrolled`,
-  `mfa.disabled`, `mfa.reset_by_admin`, `org.mfa_enforcement_changed`.
 
 ## Work plan
 
