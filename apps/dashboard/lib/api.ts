@@ -742,10 +742,15 @@ export const api = {
    * can render the toggle in its true state instead of a hardcoded default (H10).
    * Any member may read it.
    */
-  getOrgPolicy(): Promise<{ allow_external_sharing: boolean; mcp_enabled: boolean }> {
+  getOrgPolicy(): Promise<{
+    allow_external_sharing: boolean;
+    mcp_enabled: boolean;
+    require_mfa: boolean;
+  }> {
     return apiGet("/v1/orgs/policy") as Promise<{
       allow_external_sharing: boolean;
       mcp_enabled: boolean;
+      require_mfa: boolean;
     }>;
   },
 
@@ -768,6 +773,19 @@ export const api = {
    */
   setMcpEnabled(enabled: boolean): Promise<{ mcp_enabled: boolean }> {
     return apiFetch<{ mcp_enabled: boolean }>("/v1/orgs/mcp", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  /**
+   * Toggle org-wide MFA enforcement (owner/admin only → 403). Enabling is
+   * tier-gated: a free/pro org gets 402 with the standard upgrade body;
+   * disabling always succeeds. Enforcement is next-request — unenrolled members
+   * are locked into the two-factor setup flow on their next request.
+   */
+  setRequireMfa(enabled: boolean): Promise<{ require_mfa: boolean }> {
+    return apiFetch<{ require_mfa: boolean }>("/v1/orgs/require-mfa", {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     });

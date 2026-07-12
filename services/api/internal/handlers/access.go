@@ -284,6 +284,7 @@ func (a *API) GetOrgPolicy(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"allow_external_sharing": pol.AllowExternalSharing,
 		"mcp_enabled":            pol.MCPEnabled,
+		"require_mfa":            pol.RequireMfa,
 	})
 }
 
@@ -331,6 +332,54 @@ func (a *API) SetMcpEnabled(w http.ResponseWriter, r *http.Request) {
 	})
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"mcp_enabled": pol.MCPEnabled,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /v1/orgs/require-mfa  {enabled}
+// ---------------------------------------------------------------------------
+
+type requireMfaRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetRequireMfa toggles org-wide MFA enforcement (ADMIN/OWNER only — role
+// re-checked against the member table). Enabling is tier-gated in the store
+// (business/enterprise via the quota provider; a free/pro org gets the standard
+// 402 upgrade body); disabling always succeeds so a downgraded org can turn it
+// off. Enforcement is next-request in the dashboard — no sessions are revoked
+// here, unenrolled members are locked into the setup flow on their next request.
+func (a *API) SetRequireMfa(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	if !a.requireAdmin(w, r, t) {
+		return
+	}
+
+	var req requireMfaRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+
+	pol, err := a.Store.SetRequireMfa(r.Context(), t, req.Enabled)
+	if err != nil {
+		writeStoreError(w, err) // *quota.ExceededError → 402 upgrade body
+		return
+	}
+
+	logger(r).Info("require_mfa toggled", "org_id", t.OrgID, "enabled", pol.RequireMfa)
+	a.recordAudit(r, t, audit.ActionRequireMfaToggle, "org:"+t.OrgID, map[string]any{
+		"enabled": pol.RequireMfa,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"require_mfa": pol.RequireMfa,
 	})
 }
 

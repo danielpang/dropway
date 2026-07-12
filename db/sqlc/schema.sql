@@ -31,7 +31,10 @@ CREATE TABLE app.org_meta (
     -- AI builder kill switch (mirrors mcp_enabled) + owner-adjustable monthly
     -- AI spend cap in USD (migration 0010).
     ai_enabled             boolean NOT NULL DEFAULT true,
-    ai_monthly_cap_usd     numeric(10,2) NOT NULL DEFAULT 20.00
+    ai_monthly_cap_usd     numeric(10,2) NOT NULL DEFAULT 20.00,
+    -- Org MFA enforcement (migration 0013): members without two-factor enrolled
+    -- are locked into the setup flow. Business/enterprise only, admin-set.
+    require_mfa            boolean NOT NULL DEFAULT false
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.

@@ -124,6 +124,7 @@ type AppOrgMetum struct {
 	SkillsSeeded         bool
 	AiEnabled            bool
 	AiMonthlyCapUsd      float64
+	RequireMfa           bool
 }
 
 type AppOrgUsage struct {

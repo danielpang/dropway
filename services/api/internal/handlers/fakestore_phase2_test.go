@@ -31,6 +31,7 @@ type p2State struct {
 	domainErr    error                        // injected by PreflightCustomDomain (e.g. a *quota.ExceededError)
 	orgPolicy    bool                         // allow_external_sharing
 	mcpEnabled   bool                         // org_meta.mcp_enabled (default true)
+	requireMfa   bool                         // org_meta.require_mfa (default false)
 	domains      map[string]store.Domain      // domainID → domain
 	hostRoutes   map[string][]store.HostRoute // siteID → registered hosts (canonical + custom)
 	mintFn       func(v store.MintViewer, host string) (store.MintDecision, error)
@@ -172,6 +173,17 @@ func (f *fakeStore) SetMcpEnabled(_ context.Context, t store.Tenant, enabled boo
 		OrgID:                t.OrgID,
 		AllowExternalSharing: f.p2().orgPolicy,
 		MCPEnabled:           enabled,
+	}, nil
+}
+
+func (f *fakeStore) SetRequireMfa(_ context.Context, t store.Tenant, enabled bool) (store.OrgPolicy, error) {
+	f.lastTenant = t
+	f.p2().requireMfa = enabled
+	return store.OrgPolicy{
+		OrgID:                t.OrgID,
+		AllowExternalSharing: f.p2().orgPolicy,
+		MCPEnabled:           f.p2().mcpEnabled,
+		RequireMfa:           enabled,
 	}, nil
 }
 

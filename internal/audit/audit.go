@@ -58,6 +58,14 @@ const (
 	// ActionMcpToggle records the org mcp_enabled toggle (PATCH /v1/orgs/mcp) —
 	// enabling/disabling the Dropway MCP server for the org.
 	ActionMcpToggle Action = "org.mcp_toggle"
+	// ActionRequireMfaToggle records the org require_mfa enforcement toggle
+	// (PATCH /v1/orgs/require-mfa) — requiring (or no longer requiring) every
+	// member to have two-factor authentication enrolled.
+	ActionRequireMfaToggle Action = "org.require_mfa_toggle"
+	// ActionMfaReset records an owner/admin clearing a member's two-factor
+	// enrollment (the lockout recovery path); the member re-enrolls at next
+	// sign-in. Recorded by the dashboard, which performs the reset.
+	ActionMfaReset Action = "member.mfa_reset"
 	// ActionMemberRevoke records an admin revoking a member's edge tokens /
 	// removing them (POST /v1/members/{userId}/revoke).
 	ActionMemberRevoke Action = "member.revoke"

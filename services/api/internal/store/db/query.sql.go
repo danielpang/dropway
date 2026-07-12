@@ -939,7 +939,7 @@ func (q *Queries) GetOrCreateSkillFolder(ctx context.Context, arg GetOrCreateSki
 }
 
 const getOrgMeta = `-- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd, require_mfa
 FROM app.org_meta
 WHERE id = $1
 `
@@ -953,6 +953,7 @@ type GetOrgMetaRow struct {
 	McpEnabled           bool
 	AiEnabled            bool
 	AiMonthlyCapUsd      float64
+	RequireMfa           bool
 }
 
 func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, error) {
@@ -967,6 +968,7 @@ func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, err
 		&i.McpEnabled,
 		&i.AiEnabled,
 		&i.AiMonthlyCapUsd,
+		&i.RequireMfa,
 	)
 	return i, err
 }
@@ -3077,6 +3079,25 @@ type SetOrgSkillsSeededParams struct {
 
 func (q *Queries) SetOrgSkillsSeeded(ctx context.Context, arg SetOrgSkillsSeededParams) error {
 	_, err := q.db.Exec(ctx, setOrgSkillsSeeded, arg.ID, arg.SkillsSeeded)
+	return err
+}
+
+const setRequireMfa = `-- name: SetRequireMfa :exec
+UPDATE app.org_meta
+SET require_mfa = $2
+WHERE id = $1
+`
+
+type SetRequireMfaParams struct {
+	ID         string
+	RequireMfa bool
+}
+
+// Toggle org-wide MFA enforcement (owner/admin only AND business/enterprise
+// only, both enforced in Go). Enforcement is next-request: the dashboard checks
+// the flag per authenticated request and locks unenrolled members into setup.
+func (q *Queries) SetRequireMfa(ctx context.Context, arg SetRequireMfaParams) error {
+	_, err := q.db.Exec(ctx, setRequireMfa, arg.ID, arg.RequireMfa)
 	return err
 }
 

@@ -103,6 +103,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// MCP access toggle (admin/owner only, re-checked in the handler). Default on;
 		// disabling immediately stops the Dropway MCP server from serving the org.
 		r.Patch("/orgs/mcp", api.SetMcpEnabled)
+		r.Patch("/orgs/require-mfa", api.SetRequireMfa)
 
 		// Generic hard-revoke (admin/owner only): {kind:user|site|org, id} → bump the
 		// denylist min_iat. The unified "sign-out-everywhere" affordance the dashboard

@@ -162,6 +162,16 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 			return nil
 		}
 		capMax, next = 0, TierPro
+	case corequota.ResourceMfaEnforcement:
+		// Org-wide MFA enforcement is a BUSINESS/ENTERPRISE feature, same
+		// 0/unlimited band shape as custom domains but with the boundary one tier
+		// up: free and pro may not enable it (cap 0 → 402 {next_tier: business});
+		// business and enterprise are unlimited. MFA enrollment itself is never
+		// gated — this caps only the org-wide "require MFA" toggle.
+		if tier == TierBusiness || tier == TierEnterprise {
+			return nil
+		}
+		capMax, next = 0, TierBusiness
 	default:
 		// Unknown resources are not capped by the cloud policy (the store only
 		// calls Allow for the resources it enforces).

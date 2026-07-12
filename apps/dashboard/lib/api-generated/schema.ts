@@ -198,6 +198,26 @@ export interface paths {
         patch: operations["setMcpEnabled"];
         trace?: never;
     };
+    "/v1/orgs/require-mfa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Toggle org-wide MFA enforcement (admin/owner only; business/enterprise)
+         * @description Owner/admin only (role re-checked against the member table). Flips org_meta.require_mfa. Enabling is tier-gated (business/enterprise; a free/pro org receives 402 with the standard upgrade body); disabling always succeeds so a downgraded org can turn it off. Enforcement is next-request in the dashboard: members without two-factor enrolled are locked into the setup flow. Default disabled.
+         */
+        patch: operations["setRequireMfa"];
+        trace?: never;
+    };
     "/v1/domains/{domainID}": {
         parameters: {
             query?: never;
@@ -1713,6 +1733,7 @@ export interface operations {
                     "application/json": {
                         allow_external_sharing?: boolean;
                         mcp_enabled?: boolean;
+                        require_mfa?: boolean;
                     };
                 };
             };
@@ -1746,6 +1767,37 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setRequireMfa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The new require_mfa value */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        require_mfa?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
             403: components["responses"]["Forbidden"];
         };
     };
