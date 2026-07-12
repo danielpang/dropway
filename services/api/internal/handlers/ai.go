@@ -333,6 +333,15 @@ func (a *API) PostAIMessage(w http.ResponseWriter, r *http.Request) {
 				Groups:     map[string]string{"organization": t.OrgID},
 			})
 		}
+		// Log the REAL error server-side (the client only sees the shaped message).
+		// Without this the turn failure is invisible in logs and error tracking, so
+		// "the AI builder hit an error and stopped" is undiagnosable. Cap-hit and
+		// concurrency are expected control flow (Info); everything else is an Error.
+		if _, expected := quota.AsExceeded(err); expected {
+			logger(r).Info("ai turn stopped", "session_id", id, "org_id", t.OrgID, "reason", err)
+		} else {
+			logger(r).Error("ai turn failed", "session_id", id, "org_id", t.OrgID, "err", err)
+		}
 		// Surface a terminal error event, then close the stream.
 		emit(aipkg.Event{Type: "error", Error: aiErrorMessage(err)})
 		return
