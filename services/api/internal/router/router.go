@@ -81,6 +81,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// here after the fact. invites = admin/owner only (the inviter); joined = any
 		// member recording their OWN join into the active org.
 		r.Post("/members/invites", api.RecordMemberInvite)
+		r.Post("/members/mfa-reset", api.RecordMfaReset)
 		r.Post("/members/joined", api.RecordMemberJoin)
 
 		// Hard revocation (Phase 4): admin/owner writes the edge denylist so a

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, CreditCard, Globe2, KeyRound, ShieldAlert, Sparkles, Users } from "lucide-react";
+import { Bot, CreditCard, Globe2, KeyRound, ShieldAlert, ShieldCheck, Sparkles, Users } from "lucide-react";
 
 import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { McpAccess } from "@/components/settings/mcp-access";
+import { RequireMfaToggle } from "@/components/settings/require-mfa-toggle";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -47,20 +48,34 @@ export default async function OrgSettingsPage() {
   // ON, its column default), the steady-state values show on the next load.
   const policy = await api
     .getOrgPolicy()
-    .catch(() => ({ allow_external_sharing: false, mcp_enabled: true }));
+    .catch(() => ({
+      allow_external_sharing: false,
+      mcp_enabled: true,
+      require_mfa: false,
+    }));
   const allowExternalSharing = policy.allow_external_sharing;
   const mcpEnabled = policy.mcp_enabled;
+  const requireMfa = policy.require_mfa;
 
   // The AI builder card is shown ONLY on a paid plan (the builder requires one,
   // so a free org has nothing to toggle). getBilling 404s on OSS/self-host, which
   // is unlimited → treat as paid so a self-hoster still sees the toggle. We read
   // the live ai_enabled state; a 503 (builder not configured) hides the card.
-  const planTier = await api
+  const billingTier = await api
     .getBilling()
     .then((b) => b.plan_tier ?? "free")
-    .catch(() => "pro"); // OSS/self-host: unlimited, show the toggle
+    .catch(() => null); // OSS/self-host (404) or transient error
+  const planTier = billingTier ?? "pro"; // OSS/self-host: unlimited, show the toggle
   const aiSettings = await api.getAIOrgSettings().catch(() => null);
   const showAiBuilder = planTier !== "free" && aiSettings !== null;
+
+  // MFA enforcement is business/enterprise; self-host (no billing) is unlimited
+  // so the toggle shows there too. This gate is UI convenience — the Go API
+  // re-checks the tier on the write and answers 402.
+  const mfaEnforceEligible =
+    billingTier === null ||
+    billingTier === "business" ||
+    billingTier === "enterprise";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -152,6 +167,28 @@ export default async function OrgSettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Org MFA enforcement (business/enterprise) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
+            Two-factor authentication
+          </CardTitle>
+          <CardDescription>
+            Anyone can turn on two-factor for their own account under Account
+            security. On Business and Enterprise plans, owners and admins can
+            make it mandatory for every member of this organization.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RequireMfaToggle
+            initialEnabled={requireMfa}
+            canManage={manage}
+            eligible={mfaEnforceEligible}
+          />
+        </CardContent>
+      </Card>
 
       {/* Account security shortcut (per-user, not org policy) */}
       <Card>

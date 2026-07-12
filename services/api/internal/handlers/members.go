@@ -63,6 +63,51 @@ func (a *API) RecordMemberInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// POST /v1/members/mfa-reset   (admin/owner only)
+// ---------------------------------------------------------------------------
+
+type recordMfaResetRequest struct {
+	UserID string `json:"user_id"`
+}
+
+// RecordMfaReset records an audit entry for an owner/admin clearing a member's
+// two-factor enrollment (the lockout recovery path). The reset itself is
+// performed by the dashboard against the Better Auth identity schema (which the
+// Go API never writes); this captures WHO reset WHOM in the org's audit trail.
+// ADMIN/OWNER only (re-checked live), matching the gate the dashboard action
+// enforces on the reset. Best-effort from the caller's side, like the invite
+// trail: a failure here only loses the trail row, never the reset.
+func (a *API) RecordMfaReset(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	if !a.requireAdmin(w, r, t) {
+		return
+	}
+
+	var req recordMfaResetRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, badRequest(err.Error()))
+		return
+	}
+	userID := strings.TrimSpace(req.UserID)
+	if userID == "" || len(userID) > 64 {
+		httpx.WriteError(w, badRequest("a target user_id is required"))
+		return
+	}
+
+	a.recordAudit(r, t, audit.ActionMfaReset, "member:"+userID, map[string]any{
+		"user_id": userID,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"recorded": true})
+}
+
+// ---------------------------------------------------------------------------
 // POST /v1/members/joined   (any member — records their OWN join)
 // ---------------------------------------------------------------------------
 

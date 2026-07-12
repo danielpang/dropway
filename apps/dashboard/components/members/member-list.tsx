@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { HardDrive, Loader2, Trash2 } from "lucide-react";
+import { HardDrive, Loader2, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
-import { removeMemberAction } from "@/app/(app)/members/actions";
+import {
+  removeMemberAction,
+  resetMemberMfaAction,
+} from "@/app/(app)/members/actions";
 import type { Role } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import type { OrgMember } from "@/lib/org";
@@ -58,6 +61,7 @@ export function MemberList({
   myUserId,
   canManage,
   storageByUser = {},
+  mfaByUser,
 }: {
   members: OrgMember[];
   organizationId: string;
@@ -69,11 +73,19 @@ export function MemberList({
    * users: a file two people upload counts for both, like a Dropbox/Drive folder.
    */
   storageByUser?: Record<string, number>;
+  /**
+   * Two-factor enrollment per user id (admins only — the page passes undefined
+   * for plain members, which hides the column entirely). Drives the 2FA badge
+   * and the reset control; the first question after enforcement turns on is
+   * "who isn't enrolled yet?".
+   */
+  mfaByUser?: Record<string, boolean>;
 }) {
   const router = useRouter();
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [removing, setRemoving] = React.useState<OrgMember | null>(null);
+  const [resettingMfa, setResettingMfa] = React.useState<OrgMember | null>(null);
 
   async function changeRole(member: OrgMember, role: Role) {
     if (role === member.role) return;
@@ -86,6 +98,25 @@ export function MemberList({
         organizationId,
       });
       if (err) throw err;
+      router.refresh();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function confirmResetMfa() {
+    if (!resettingMfa) return;
+    setError(null);
+    setBusyId(resettingMfa.id);
+    try {
+      const res = await resetMemberMfaAction({ memberId: resettingMfa.id });
+      if (!res.ok) {
+        setError(res.message);
+        return;
+      }
+      setResettingMfa(null);
       router.refresh();
     } catch (err) {
       setError(describeError(err));
@@ -179,6 +210,24 @@ export function MemberList({
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
+                {mfaByUser &&
+                  (mfaByUser[member.userId] ? (
+                    <span
+                      className="hidden items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 sm:inline-flex"
+                      title="Two-factor authentication is enabled"
+                    >
+                      <ShieldCheck className="size-3.5" aria-hidden />
+                      2FA
+                    </span>
+                  ) : (
+                    <span
+                      className="hidden items-center gap-1 text-xs text-muted-foreground sm:inline-flex"
+                      title="Two-factor authentication is not set up"
+                    >
+                      <ShieldOff className="size-3.5" aria-hidden />
+                      No 2FA
+                    </span>
+                  ))}
                 <span
                   className="hidden items-center gap-1.5 text-xs tabular-nums text-muted-foreground sm:inline-flex"
                   title="Storage used by this member's sites (logical, not deduplicated)"
@@ -203,6 +252,21 @@ export function MemberList({
                   </Badge>
                 )}
 
+                {canEditThis && mfaByUser?.[member.userId] && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-9 text-muted-foreground hover:text-foreground"
+                    aria-label={`Reset two-factor for ${member.email || member.name}`}
+                    title="Reset two-factor (lost authenticator)"
+                    onClick={() => setResettingMfa(member)}
+                    disabled={busy}
+                  >
+                    <ShieldOff aria-hidden />
+                  </Button>
+                )}
+
                 {canEditThis && (
                   <Button
                     type="button"
@@ -225,6 +289,49 @@ export function MemberList({
           );
         })}
       </ul>
+
+      <Dialog
+        open={resettingMfa !== null}
+        onOpenChange={(next) => {
+          if (!next) setResettingMfa(null);
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>Reset two-factor authentication?</DialogTitle>
+          <DialogDescription>
+            Use this when {resettingMfa?.email || resettingMfa?.name} lost their
+            authenticator and backup codes. Their two-factor is removed, they are
+            signed out everywhere, and they set it up again at their next sign-in
+            (immediately, if this organization requires two-factor). They&rsquo;ll
+            be notified by email.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody />
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setResettingMfa(null)}
+            disabled={busyId !== null}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={confirmResetMfa}
+            disabled={busyId !== null}
+            aria-busy={busyId !== null}
+          >
+            {busyId !== null ? (
+              <Loader2 className="animate-spin" aria-hidden />
+            ) : (
+              <ShieldOff aria-hidden />
+            )}
+            Reset two-factor
+          </Button>
+        </DialogFooter>
+      </Dialog>
 
       <Dialog
         open={removing !== null}

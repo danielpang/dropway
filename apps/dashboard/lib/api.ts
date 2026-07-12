@@ -956,6 +956,19 @@ export const api = {
   },
 
   /**
+   * Record a `member.mfa_reset` audit entry after an owner/admin clears a
+   * member's two-factor enrollment (the reset itself happens in the dashboard
+   * against the identity schema). Owner/admin only. Best-effort, like
+   * recordMemberInvite.
+   */
+  recordMfaReset(input: { user_id: string }): Promise<{ recorded: boolean }> {
+    return apiFetch<{ recorded: boolean }>("/v1/members/mfa-reset", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /**
    * Record a `member.join` audit entry after the caller accepts an invitation and
    * joins the org. Call it only once the JOINED org is the active org (after
    * setActive), so the Go API scopes the row (RLS + actor) to the org they joined.

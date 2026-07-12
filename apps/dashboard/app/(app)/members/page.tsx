@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { mfaEnabledByUser } from "@/lib/mfa-server";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Members" };
@@ -51,6 +52,15 @@ export default async function MembersPage() {
       Object.fromEntries(rows.map((r) => [r.user_id ?? "", r.bytes ?? 0])),
     )
     .catch(() => ({}) as Record<string, number>);
+
+  // Per-member two-factor status, admins only (it drives the 2FA badge + the
+  // reset control; plain members don't see other people's security posture).
+  // Best-effort: a failure hides the column rather than erroring the page.
+  const mfaByUser = manage
+    ? await mfaEnabledByUser(org.members.map((m) => m.userId)).catch(
+        () => undefined,
+      )
+    : undefined;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -103,6 +113,7 @@ export default async function MembersPage() {
             myUserId={org.myUserId}
             canManage={manage}
             storageByUser={storageByUser}
+            mfaByUser={mfaByUser}
           />
         </CardContent>
       </Card>
