@@ -57,7 +57,7 @@ function signTrustToken(secret: string, data: string): string {
  * use it as ?next= without opening a redirect. Falls back to the app's default
  * landing page.
  */
-function nextPathFrom(returned: unknown): string {
+export function nextPathFrom(returned: unknown): string {
   let location: string | null = null;
   if (isAPIError(returned)) {
     const headers = (returned as { headers?: Headers }).headers;
