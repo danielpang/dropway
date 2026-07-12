@@ -145,3 +145,13 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	s.bytes += n
 	return n, err
 }
+
+// Flush forwards to the wrapped writer so SSE/streaming handlers keep working.
+// Embedding the http.ResponseWriter interface does NOT promote Flush (it isn't
+// part of that interface's method set), so without this the wrapper hides the
+// underlying Flusher and streaming handlers see "streaming unsupported".
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
