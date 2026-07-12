@@ -85,6 +85,14 @@ describe("TIER_LABEL + matrix tables", () => {
     expect(members?.values.business).toBe("Unlimited");
     expect(members?.values.enterprise).toBe("Unlimited");
   });
+
+  it("encodes the per-org skill band (10 on free, unlimited on paid)", () => {
+    const skills = PLAN_MATRIX.find((r) => r.label === "Skills / workspace");
+    expect(skills?.values.free).toBe("Up to 10");
+    expect(skills?.values.pro).toBe("Unlimited");
+    expect(skills?.values.business).toBe("Unlimited");
+    expect(skills?.values.enterprise).toBe("Unlimited");
+  });
 });
 
 describe("isRestricted (billing-derived read-only gate)", () => {

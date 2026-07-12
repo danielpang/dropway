@@ -85,6 +85,15 @@ export const PLAN_MATRIX: PlanFeatureRow[] = [
     },
   },
   {
+    label: "Skills / workspace",
+    values: {
+      free: "Up to 10",
+      pro: "Unlimited",
+      business: "Unlimited",
+      enterprise: "Unlimited",
+    },
+  },
+  {
     label: "Team members",
     values: {
       free: "Unlimited",
