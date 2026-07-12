@@ -441,20 +441,20 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 			res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: newRoute()})
 		}
 
-		// Publishing deletes the published version's preview: the draft is now the
-		// live site, so its time-limited preview host goes away. Other versions'
-		// previews are untouched (they pin different drafts).
-		deleted, err := q.DeletePreviewRoutesForVersion(ctx, &vid)
+		// Publishing wipes ALL of the site's previews (not just this version's):
+		// once a draft goes live, the whole draft-review surface is moot, so every
+		// pending preview host for the site is removed. Returns hosts for KV cleanup.
+		deleted, err := q.DeleteSitePreviewRoutesExcept(ctx, db.DeleteSitePreviewRoutesExceptParams{
+			SiteID: siteID, KeepVersionID: nil,
+		})
 		if err != nil {
 			return err
 		}
 		res.DeletedPreviewHosts = deleted
-		if len(deleted) > 0 {
-			if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
-				ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{},
-			}); err != nil {
-				return err
-			}
+		if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
+			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{},
+		}); err != nil {
+			return err
 		}
 		return nil
 	})

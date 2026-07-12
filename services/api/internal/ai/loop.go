@@ -266,6 +266,14 @@ func (r *Runner) publishDraft(ctx context.Context, t store.Tenant, sess *store.A
 				emit(Event{Type: "status", Text: "The preview is taking a moment to go live. If it does not load, refresh in a few seconds."})
 			}
 		}
+		// Keep at most one live preview per site: drop the earlier drafts' preview
+		// hosts (and their KV keys). Best-effort — a failure just leaves the old
+		// previews to expire on their TTL, so it never fails the turn.
+		if stale, derr := r.Store.DeleteOtherSitePreviewRoutes(ctx, t, sess.SiteID, ver.ID); derr == nil && r.Projection != nil {
+			for _, host := range stale {
+				_ = r.Projection.DeleteRoute(ctx, host)
+			}
+		}
 	}
 	emit(Event{
 		Type:       "draft_ready",
