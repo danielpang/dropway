@@ -110,18 +110,35 @@ ALTER TABLE identity."user"
 ```
 
 The authoritative DDL comes from the CLI against our pinned Better Auth
-version — treat the above as the review checklist, not the source. Two
-follow-ups belong to this migration:
+version — treat the above as the review checklist, not the source.
 
-- **Grant check**: the Go API's runtime role has read access to the identity
-  schema from the baseline. If the members-page MFA status is served by the
-  Go API (reading `identity."user"."twoFactorEnabled"` alongside its existing
-  `identity.member` role reads), confirm the grant covers the new
-  table/column; if status is served via Better Auth's server API in the
-  dashboard instead, no grant is needed. The `twoFactor` secrets table should
-  **never** be readable by the Go API either way.
-- **Self-host docs**: OSS operators must run the Better Auth migrate step on
-  upgrade; call it out in the release notes.
+**How this migration actually runs** (verified against the workflows, since
+it's easy to misremember as goose):
+
+- CI runs it in the e2e job — the "run Better Auth migration" step executes
+  `pnpm dlx @better-auth/cli@latest migrate --yes` inside the compose stack
+  (`.github/workflows/ci.yml`). Goose never touches identity *tables*; the
+  goose migrations that mention identity (baseline, `0003`, `0011`, `0012`)
+  only handle the namespace, grants, and search_path plumbing.
+- **`migrate.yml` (dev/prod) has no identity step** — it applies goose to
+  `app` and `billing` only. Shipping this feature therefore needs an explicit
+  prod deployment step: run the Better Auth migrate against prod before the
+  new dashboard build goes live (or, nicer, add an identity step to
+  `migrate.yml` as part of this work).
+- **Self-host**: operators run the same CLI one-liner on upgrade (per
+  `deploy/docker-compose.yml` / `deploy/.env.example`); call it out in the
+  release notes.
+
+**Grant fallout**: the baseline and `0003_identity_app_writes.sql` set
+`ALTER DEFAULT PRIVILEGES IN SCHEMA identity`, so the new `twoFactor` table
+is *automatically* readable (and, in single-role deploys, writable) by
+`dropway_app`. That conveniently covers the Go API reading
+`"twoFactorEnabled"` for member MFA status — but it also means the TOTP
+secrets table is exposed to the shared runtime role by default. Add an
+explicit `REVOKE ALL ON identity."twoFactor" FROM dropway_app` (goose,
+same PR as `0013`) unless the single-role Better Auth deployment shape
+requires the DML, in which case scope the revoke to the two-role split and
+document it.
 
 ### 2. App schema — `db/migrations/app/0013_mfa_enforcement.sql` (goose)
 
