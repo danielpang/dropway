@@ -54,22 +54,25 @@ import {
  *  - Google sign-in is a core, first-class method alongside email/password and
  *    magic link. Email verification is required.
  */
-// A single shared pg Pool for Better Auth's `identity` schema (search_path pinned
-// to identity). Reused by the session hook below to look up a user's organization.
+// A single shared pg Pool for Better Auth's `identity` schema. Reused by the
+// session hook below to look up a user's organization.
+//
+// search_path: we do NOT pin it here via the `options` startup parameter, because
+// Supabase's TRANSACTION-mode pooler (the runtime target: ...:6543, IPv4, which is
+// what Vercel can reach) rejects startup `options` with
+// `08P01 unsupported startup parameter in options: search_path`. Instead the
+// search_path is set once at the DB ROLE level so every connection inherits it
+// without a startup param (transaction-pooler safe):
+//   ALTER ROLE postgres IN DATABASE postgres SET search_path = "$user", public, extensions, identity;
+// That lets Better Auth's UNqualified tables (user, session, member, organization,
+// …) resolve to `identity`, exactly where the Go API reads them (identity.member).
+//
 // Pool sizing is tuned for SERVERLESS: each warm Vercel function instance holds its
 // own copy of this module-level pool, so the cap must be per-instance, not global.
-// `pg` defaults to max:10 with no idle timeout, so a few warm instances (10 each)
-// blow past Supabase's session-pooler cap (pool_size: 15) and acquireConnection
-// throws EMAXCONNSESSION. Keep `max` small and let idle connections drain back so
-// pooler slots free up between bursts. The runtime URL should point at Supabase's
-// TRANSACTION-mode pooler (...pooler.supabase.com:6543), which multiplexes these onto
-// few backends and is reachable over IPv4 (Vercel is IPv4-only; the DIRECT host
-// db.<ref>.supabase.co is IPv6-only and would not connect). The one-time CLI migrate
-// (DDL) needs a real session, so point IT at the pooler's SESSION port (5432) — same
-// IPv4 hostname, not the IPv6 direct connection.
+// `pg` defaults to max:10 with no idle timeout, so a few warm instances would open
+// many backends; keep `max` small and let idle connections drain back between bursts.
 const authPool = new Pool({
   connectionString: databaseUrl(),
-  options: "-c search_path=identity",
   max: 3,
   idleTimeoutMillis: 10_000,
   connectionTimeoutMillis: 10_000,
@@ -180,10 +183,11 @@ export const auth = betterAuth({
   // Postgres via a node-postgres Pool. Better Auth uses its built-in Kysely
   // adapter when handed a `Pool`, generating + migrating its own identity tables.
   //
-  // Better Auth OWNS the `identity` schema: `databaseUrl()` is
-  // a PRIVILEGED connection (it must CREATE its tables), and `options` pins the
-  // session search_path to `identity` so the adapter's UNqualified tables (user,
-  // session, member, organization, …) are created in + read from `identity`, // exactly where the Go API reads them (identity.member) for authz.
+  // Better Auth OWNS the `identity` schema: `databaseUrl()` is a PRIVILEGED
+  // connection (it must CREATE its tables). The role-level search_path (see the
+  // authPool comment above) resolves the adapter's UNqualified tables (user,
+  // session, member, organization, …) to `identity`, exactly where the Go API
+  // reads them (identity.member) for authz.
   database: authPool,
 
   // Set the user's first organization as the session's ACTIVE org on every new
