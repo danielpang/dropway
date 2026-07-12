@@ -963,6 +963,17 @@ DELETE FROM app.host_routes
 WHERE version_id = $1 AND kind = 'preview'
 RETURNING host;
 
+-- name: DeleteSitePreviewRoutesExcept :many
+-- Drop a site's preview routes except the one pinning keep_version_id, returning
+-- the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
+-- AI draft removes the earlier drafts' previews (pass the new version to keep).
+-- Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
+DELETE FROM app.host_routes
+WHERE site_id = sqlc.arg('site_id')
+  AND kind = 'preview'
+  AND version_id IS DISTINCT FROM sqlc.narg('keep_version_id')
+RETURNING host;
+
 -- name: ListPreviewRoutesForRebuild :many
 -- Unexpired preview routes joined to their site's access fields, for the DR
 -- rebuild: previews are part of the "KV is rebuildable from Postgres"

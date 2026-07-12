@@ -169,6 +169,23 @@ func (s *Store) DeletePreviewRoutes(ctx context.Context, t Tenant, siteID, versi
 	return hosts, err
 }
 
+// DeleteOtherSitePreviewRoutes drops every preview route of the site EXCEPT the
+// one pinning keepVersionID, so a site has at most one live preview at a time (a
+// new AI draft supersedes the earlier drafts' previews). Returns the removed
+// hosts so the caller deletes their KV keys. RLS scopes the delete to the tenant.
+func (s *Store) DeleteOtherSitePreviewRoutes(ctx context.Context, t Tenant, siteID, keepVersionID string) ([]string, error) {
+	var hosts []string
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		vid := keepVersionID
+		var derr error
+		hosts, derr = q.DeleteSitePreviewRoutesExcept(ctx, db.DeleteSitePreviewRoutesExceptParams{
+			SiteID: siteID, KeepVersionID: &vid,
+		})
+		return derr
+	})
+	return hosts, err
+}
+
 // SweepExpiredPreviews deletes this org's preview routes whose deadline passed
 // more than grace ago (bookkeeping; the edge already 410s them), returning the
 // removed hosts so the caller deletes their KV keys. Run per org under the org's

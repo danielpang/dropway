@@ -686,6 +686,43 @@ func (q *Queries) DeletePreviewRoutesForVersion(ctx context.Context, versionID *
 	return items, nil
 }
 
+const deleteSitePreviewRoutesExcept = `-- name: DeleteSitePreviewRoutesExcept :many
+DELETE FROM app.host_routes
+WHERE site_id = $1
+  AND kind = 'preview'
+  AND version_id IS DISTINCT FROM $2
+RETURNING host
+`
+
+type DeleteSitePreviewRoutesExceptParams struct {
+	SiteID        string
+	KeepVersionID *string
+}
+
+// Drop a site's preview routes except the one pinning keep_version_id, returning
+// the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
+// AI draft removes the earlier drafts' previews (pass the new version to keep).
+// Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
+func (q *Queries) DeleteSitePreviewRoutesExcept(ctx context.Context, arg DeleteSitePreviewRoutesExceptParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, deleteSitePreviewRoutesExcept, arg.SiteID, arg.KeepVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteSkill = `-- name: DeleteSkill :one
 DELETE FROM app.skills
 WHERE id = $1

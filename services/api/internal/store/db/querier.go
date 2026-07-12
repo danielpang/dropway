@@ -90,6 +90,11 @@ type Querier interface {
 	// Drop a version's preview routes, returning the hosts so the caller can also
 	// delete the KV keys (publish and explicit preview deletion).
 	DeletePreviewRoutesForVersion(ctx context.Context, versionID *string) ([]string, error)
+	// Drop a site's preview routes except the one pinning keep_version_id, returning
+	// the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
+	// AI draft removes the earlier drafts' previews (pass the new version to keep).
+	// Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
+	DeleteSitePreviewRoutesExcept(ctx context.Context, arg DeleteSitePreviewRoutesExceptParams) ([]string, error)
 	// Remove a skill (versions + folder memberships cascade). RETURNING detects an
 	// RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
 	DeleteSkill(ctx context.Context, id string) (string, error)
