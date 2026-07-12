@@ -41,6 +41,39 @@ func TestFreeTier_UnderSiteCap(t *testing.T) {
 	}
 }
 
+func TestFreeTier_SkillsPerOrgCap(t *testing.T) {
+	// 10 skills in the org already → the 11th is rejected (per-ORG cap).
+	err := newProvider().Allow("free", corequota.ResourceSkillPerOrg, 10)
+	ex, ok := corequota.AsExceeded(err)
+	if !ok {
+		t.Fatalf("want ExceededError, got %v", err)
+	}
+	if ex.Max != 10 || ex.Current != 10 {
+		t.Errorf("max/current = %d/%d, want 10/10", ex.Max, ex.Current)
+	}
+	if ex.PlanTier != "free" || ex.NextTier != "pro" {
+		t.Errorf("tiers = %q→%q, want free→pro", ex.PlanTier, ex.NextTier)
+	}
+	if ex.UpgradeURL == "" {
+		t.Error("free→pro should carry an upgrade_url")
+	}
+}
+
+func TestFreeTier_UnderSkillsPerOrgCap(t *testing.T) {
+	if err := newProvider().Allow("free", corequota.ResourceSkillPerOrg, 9); err != nil {
+		t.Fatalf("the 10th skill should be allowed on free: %v", err)
+	}
+}
+
+func TestSkillsPerOrg_PaidTiersUnlimited(t *testing.T) {
+	p := newProvider()
+	for _, tier := range []string{"pro", "business", "enterprise"} {
+		if err := p.Allow(tier, corequota.ResourceSkillPerOrg, 10_000); err != nil {
+			t.Errorf("skills per org must be unlimited on %q: %v", tier, err)
+		}
+	}
+}
+
 func TestStorageCap_Bands(t *testing.T) {
 	const gib = int64(1) << 30
 	p := newProvider()
