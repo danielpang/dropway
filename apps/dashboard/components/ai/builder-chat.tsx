@@ -28,6 +28,10 @@ interface DraftInfo {
   versionId: string;
   previewUrl: string;
   expiresAt: string;
+  // The preview's access mode ("public", "org_only", …). A public preview renders
+  // inline; a gated one must open in a new tab (its cross-site auth cookie is
+  // blocked inside a cross-origin iframe, which otherwise loops on /authz).
+  accessMode?: string;
 }
 
 interface BuilderChatProps {
@@ -204,11 +208,32 @@ export function BuilderChat({
         </div>
         <div className="flex-1 overflow-hidden">
           {draft ? (
-            <iframe
-              title="Preview"
-              src={draft.previewUrl}
-              className="h-full w-full border-0"
-            />
+            (draft.accessMode ?? "public") === "public" ? (
+              <iframe
+                title="Preview"
+                src={draft.previewUrl}
+                className="h-full w-full border-0"
+              />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+                <p className="max-w-xs text-sm text-muted-foreground">
+                  This site is private, so its preview opens in a new tab where
+                  you can sign in. It can&rsquo;t display inside this panel.
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    window.open(
+                      draft.previewUrl,
+                      "_blank",
+                      "noopener,noreferrer",
+                    )
+                  }
+                >
+                  Open preview
+                </Button>
+              </div>
+            )
           ) : (
             <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
               Your preview appears here after the builder makes a change.
@@ -312,6 +337,7 @@ async function consumeStream(
         version_id?: string;
         preview_url?: string;
         expires_at?: string;
+        access_mode?: string;
         error?: string;
       };
       try {
@@ -335,6 +361,7 @@ async function consumeStream(
               versionId: ev.version_id,
               previewUrl: ev.preview_url,
               expiresAt: ev.expires_at ?? "",
+              accessMode: ev.access_mode,
             });
           }
           break;

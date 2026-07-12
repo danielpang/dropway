@@ -98,6 +98,11 @@ type Event struct {
 	VersionID  string `json:"version_id,omitempty"`
 	PreviewURL string `json:"preview_url,omitempty"`
 	ExpiresAt  string `json:"expires_at,omitempty"`
+	// AccessMode is the preview's access mode (mirrors the site's): "public",
+	// "org_only", etc. The UI renders a public preview inline in an iframe but
+	// must open a gated one in a NEW TAB — gated content authenticates via a
+	// cross-site redirect whose cookie is blocked inside a cross-origin iframe.
+	AccessMode string `json:"access_mode,omitempty"`
 	// error
 	Error string `json:"error,omitempty"`
 }
@@ -248,16 +253,18 @@ func (r *Runner) publishDraft(ctx context.Context, t store.Tenant, sess *store.A
 	// already billed), so a preview-registration failure must NOT fail the turn.
 	// We always emit draft_ready; the preview URL is the authoritative host from
 	// the row when it succeeds, else the deterministic fallback host.
-	var previewURL, expiresAt string
+	var previewURL, expiresAt, accessMode string
 	if prev, perr := r.Store.CreatePreviewRoute(ctx, t, sess.SiteID, ver.ID, previewTTL); perr != nil {
 		emit(Event{Type: "status", Text: "Your changes are saved as a draft. The preview link is taking a moment to activate."})
-		if url, ok := r.draftPreviewURL(ctx, t, sess.SiteID, ver.ID, contentURL); ok {
+		if url, mode, ok := r.draftPreviewURL(ctx, t, sess.SiteID, ver.ID, contentURL); ok {
 			previewURL = url
+			accessMode = mode
 			expiresAt = time.Now().UTC().Add(previewTTL).Format(time.RFC3339)
 		}
 	} else {
 		previewURL = contentURL(prev.Host)
 		expiresAt = prev.ExpiresAt.UTC().Format(time.RFC3339)
+		accessMode = prev.Route.AccessMode
 		// Project the preview route to the edge so the URL serves. Best-effort: the
 		// row is authoritative and the reconcile/rebuild path backstops a KV miss;
 		// tell the user the preview may lag so a temporary 404 isn't mysterious.
@@ -272,23 +279,26 @@ func (r *Runner) publishDraft(ctx context.Context, t store.Tenant, sess *store.A
 		VersionID:  ver.ID,
 		PreviewURL: previewURL,
 		ExpiresAt:  expiresAt,
+		AccessMode: accessMode,
 	})
 	return nil
 }
 
 // draftPreviewURL computes the DETERMINISTIC preview URL for a draft version
 // (org slug + site slug + version id), used as a fallback when the preview-route
-// row couldn't be written. ok is false if the org slug or site can't be read.
-func (r *Runner) draftPreviewURL(ctx context.Context, t store.Tenant, siteID, versionID string, contentURL ContentURL) (string, bool) {
+// row couldn't be written. It also returns the site's access mode so the UI can
+// choose inline-iframe (public) vs open-in-new-tab (gated). ok is false if the
+// org slug or site can't be read.
+func (r *Runner) draftPreviewURL(ctx context.Context, t store.Tenant, siteID, versionID string, contentURL ContentURL) (url, accessMode string, ok bool) {
 	orgSlug, err := r.Store.OrgSlug(ctx, t)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	site, err := r.Store.GetSite(ctx, t, siteID)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	return contentURL(projection.PreviewHostForSite(versionID, orgSlug, site.Slug)), true
+	return contentURL(projection.PreviewHostForSite(versionID, orgSlug, site.Slug)), site.AccessMode, true
 }
 
 // defaultMaxTurnSpendUSD bounds how much a single turn may spend before it is
