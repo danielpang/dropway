@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/jwtclock"
 )
 
 // The edge-token verification contract is implemented twice — here in Go (this
@@ -60,8 +60,8 @@ func TestClockToleranceMatchesWorker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse worker clockTolerance: %v", err)
 	}
-	goSecs := int(auth.ClockSkewLeeway.Seconds())
+	goSecs := int(jwtclock.Leeway.Seconds())
 	if workerSecs != goSecs {
-		t.Fatalf("clock-skew drift: Go auth.ClockSkewLeeway=%ds, Worker clockTolerance=%ds — a token near expiry would be judged differently at the edge vs the API", goSecs, workerSecs)
+		t.Fatalf("clock-skew drift: Go jwtclock.Leeway=%ds, Worker clockTolerance=%ds — a token near expiry would be judged differently at the edge vs the API", goSecs, workerSecs)
 	}
 }

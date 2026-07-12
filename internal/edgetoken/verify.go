@@ -9,7 +9,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/jwtclock"
 )
 
 // Verifier verifies edge tokens against a set of trusted Ed25519 public keys
@@ -65,7 +65,7 @@ func (v *Verifier) Verify(token, expectedHost string) (*Claims, error) {
 		// Same drift tolerance as the user-JWT verifier and the Worker's
 		// clockTolerance (edge/serving-worker/src/edgetoken.ts) — the API mints on
 		// one clock, the edge verifies on another. Keep all three in lockstep.
-		jwt.WithLeeway(auth.ClockSkewLeeway),
+		jwt.WithLeeway(jwtclock.Leeway),
 	)
 	if _, err := parser.ParseWithClaims(token, claims, keyfunc); err != nil {
 		return nil, err

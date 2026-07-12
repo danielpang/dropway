@@ -252,19 +252,41 @@ async function mintBearerToken(): Promise<string | null> {
 const tokenCache = new TokenCache();
 
 /**
+ * Per-request cell holding the in-flight/resolved token promise for THIS request.
+ * `cache()` yields one cell per request (and is a plain passthrough in unit
+ * tests, so each call there gets a fresh cell).
+ *
+ * Holding the PROMISE — not the resolved value — preserves the concurrent
+ * fan-out dedup the old `cache(async …)` memo gave (a page hitting sites +
+ * billing + org mints once, the rest await the same promise). But unlike that
+ * memo, the cell is MUTABLE: after a 401 recovery, refreshBearerToken republishes
+ * a fresh promise here, so later apiFetch calls in the same render pick up the
+ * new token instead of the stale one the first resolve pinned for the whole
+ * request (which used to make every endpoint re-mint on a mid-render staleness).
+ */
+const requestToken = cache((): { promise?: Promise<string | null> } => ({}));
+
+/**
  * The short-lived EdDSA JWT for the current Better Auth session.
  *
  * Two layers of reuse, both preserving the exact same token semantics:
- *  - React `cache()` memoizes the result for the CURRENT request, so a page that
- *    fans out to several endpoints (sites + billing + org) mints/looks-up once
- *    rather than per call. cache() is request-scoped, so requests never share.
+ *  - the per-request `requestToken` cell dedupes the mint/look-up across a
+ *    single render's fan-out (and lets a mid-render refresh be seen — above).
  *  - `tokenCache` reuses a still-valid token ACROSS requests for a short window,
  *    avoiding a jwks read + decrypt + sign on every page load. Keyed by session
  *    id + active org so a different user — or an org switch — always re-mints.
- *
- * Falls back to an uncached mint when there's no resolvable session id to key on.
  */
-const bearerToken = cache(async (): Promise<string | null> => {
+function bearerToken(): Promise<string | null> {
+  const cell = requestToken();
+  if (!cell.promise) cell.promise = resolveBearerToken();
+  return cell.promise;
+}
+
+/**
+ * Resolve a token from the cross-request cache or a fresh mint. Falls back to an
+ * uncached mint when there's no resolvable session id to key on.
+ */
+async function resolveBearerToken(): Promise<string | null> {
   const key = await currentTokenKey();
 
   // No resolvable session id → can't form a safe per-user key; mint directly.
@@ -276,7 +298,7 @@ const bearerToken = cache(async (): Promise<string | null> => {
   const minted = await mintBearerToken();
   if (minted) tokenCache.set(key, minted);
   return minted;
-});
+}
 
 /** The current session's token-cache key, or null when there's no session id to
  * key on. Shared by the cached read path and the 401-recovery path so both
@@ -305,6 +327,9 @@ async function refreshBearerToken(): Promise<string | null> {
   if (key) tokenCache.delete(key);
   const minted = await mintBearerToken();
   if (minted && key) tokenCache.set(key, minted);
+  // Publish to the per-request cell so later bearerToken() calls in this render
+  // see the fresh token rather than the stale one the first resolve pinned.
+  requestToken().promise = Promise.resolve(minted);
   return minted;
 }
 

@@ -65,9 +65,14 @@ func Auth(v Verifier) func(http.Handler) http.Handler {
 				return
 			}
 			if claims.UserID() == "" || claims.OrgID == "" {
+				// The token verified but carries no tenant. Two distinct causes with
+				// different fixes, so the message names both rather than only "sign in
+				// again": a user who never created an org (onboarding) is NOT helped by
+				// re-authenticating — it re-mints the same org-less token. The dashboard
+				// disambiguates via listOrganizations; the CLI shows this text.
 				httpx.WriteJSON(w, http.StatusUnauthorized, httpx.ErrorBody{
 					Error:   ReauthRequiredCode,
-					Message: "session has no active organization; sign in again",
+					Message: "session has no active organization; create one or sign in again",
 				})
 				return
 			}
