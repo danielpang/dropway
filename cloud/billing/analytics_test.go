@@ -115,6 +115,39 @@ func TestCapturePlanChange_ShapesEvent(t *testing.T) {
 	if ev.Groups["organization"] != "org_123" {
 		t.Errorf("group organization = %v, want org_123", ev.Groups["organization"])
 	}
+	// business ($150) → pro ($25): both prices known, so the MRR props are stamped.
+	if ev.Properties["from_tier_mrr_usd"] != 150.0 || ev.Properties["to_tier_mrr_usd"] != 25.0 {
+		t.Errorf("mrr props = %v / %v, want 150 / 25",
+			ev.Properties["from_tier_mrr_usd"], ev.Properties["to_tier_mrr_usd"])
+	}
+	if ev.Properties["mrr_delta_usd"] != -125.0 {
+		t.Errorf("mrr_delta_usd = %v, want -125", ev.Properties["mrr_delta_usd"])
+	}
+}
+
+func TestCapturePlanChange_OmitsMRRForCustomPricing(t *testing.T) {
+	em := &fakeEmitter{}
+	pa := NewPlanAnalytics(em)
+
+	pa.CapturePlanChange(context.Background(), PlanChange{
+		OrgID:     "org_123",
+		FromTier:  TierPro,
+		ToTier:    TierEnterprise,
+		Direction: DirectionUpgrade,
+		Reason:    "subscription_updated",
+	})
+
+	if len(em.events) != 1 {
+		t.Fatalf("expected 1 captured event, got %d", len(em.events))
+	}
+	ev := em.events[0]
+	// Enterprise pricing is custom/negotiated: a fake $0 would corrupt MRR sums,
+	// so all three MRR props must be absent.
+	for _, k := range []string{"from_tier_mrr_usd", "to_tier_mrr_usd", "mrr_delta_usd"} {
+		if _, present := ev.Properties[k]; present {
+			t.Errorf("property %s must be omitted for custom-priced tiers, got %v", k, ev.Properties[k])
+		}
+	}
 }
 
 func TestCapturePlanChange_SkipsNoMoveAndEmptyOrg(t *testing.T) {

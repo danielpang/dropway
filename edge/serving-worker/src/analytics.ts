@@ -88,6 +88,13 @@ export function buildVisitPayload(input: {
       path: input.path,
       environment: input.environment,
       $lib: "dropway-serving-worker",
+      // Group analytics: tie the visit to the site's ORG so org-aggregated
+      // funnels/retention (site_created → site_visit) can join with the
+      // dashboard/API events, which already carry this group.
+      $groups: { organization: input.route.org_id },
+      // Visitors are daily-rotating anonymous hashes, never people: don't mint
+      // a PostHog person profile per visitor-day.
+      $process_person_profile: false,
     },
   };
 }
@@ -138,6 +145,10 @@ export function buildServe404Payload(input: {
       version_id: input.route?.version_id ?? null,
       environment: input.environment,
       $lib: "dropway-serving-worker",
+      // Same group/person semantics as site_visit: org-group the event when the
+      // host resolved to a known site, and never mint a person for a visitor.
+      ...(input.route ? { $groups: { organization: input.route.org_id } } : {}),
+      $process_person_profile: false,
     },
   };
 }

@@ -441,6 +441,26 @@ export const auth = betterAuth({
       // otherwise break an Enterprise org (cap 1000) and cap an unlimited self-host.
       // Keep it well above any tier cap so it never spuriously blocks.
       membershipLimit: 100_000,
+      // Record an `organization_created` analytics event — the top of the
+      // org-level activation funnel (organization_created → site_created →
+      // site_visit). Lazily imported + self-swallowing like the user/session
+      // hooks above; never blocks org creation.
+      organizationHooks: {
+        afterCreateOrganization: async ({ organization, user }) => {
+          try {
+            const { captureOrganizationCreated } = await import(
+              "@/lib/analytics-server"
+            );
+            await captureOrganizationCreated({
+              userId: user.id,
+              organization: organization.id,
+              organizationName: organization.name,
+            });
+          } catch {
+            // Analytics must never block org creation.
+          }
+        },
+      },
       // Invitation email. Better Auth writes the identity.invitation row and then
       // calls THIS to deliver the accept link. WITHOUT this callback the invite is
       // created and the form reports success, but no mail is ever attempted (no
