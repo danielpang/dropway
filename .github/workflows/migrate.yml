@@ -13,16 +13,26 @@
 #             approve before any DDL touches prod (configure that in Settings →
 #             Environments → production → Required reviewers).
 #
-# Trigger: a push to main that touches db/migrations/** (or a manual run from the
-# Actions tab).
+# Trigger: a push to main that touches db/migrations/** or the Better Auth config
+# (apps/dashboard/lib/auth.ts — the identity schema's shape is derived from its
+# plugin list, so e.g. adding a plugin must reach the databases). Or a manual run
+# from the Actions tab.
 #
-# Two migration sets per database, applied in this order (the order is load-bearing):
+# THREE migration sets per database, applied in this order (the order is load-bearing):
 #   1. db/migrations/app      — open-core app schema. Default goose_db_version table.
 #   2. db/migrations/billing  — cloud-only. A SEPARATE -table goose_db_version_billing,
 #      because app and billing both start at 0001; with the shared default table goose
 #      would treat billing's 0001 as already-applied (same version id) and SKIP it.
+#   3. identity (Better Auth) — NOT goose. `@better-auth/cli migrate` loads
+#      apps/dashboard/lib/auth.ts under jiti and diffs/creates the identity tables
+#      the enabled plugins require. Idempotent like goose: no drift → no-op.
 #   App must run first: the tier rename (app/0004) lands app.org_meta on the new key
 #   space before billing/0002 widens its CHECK constraint and migrates the mirror.
+#   Identity must run LAST: the Better Auth CLI creates UNqualified tables, which
+#   resolve to the `identity` schema only via the role-level search_path pin
+#   (app/0011+0012) — and app/0001+0003's ALTER DEFAULT PRIVILEGES must predate
+#   table creation for dropway_app's grants to apply. On an already-migrated
+#   database both are in place, but the ordering keeps a fresh database correct.
 #
 # `goose up` is idempotent — it applies only versions newer than what each table
 # records, so a re-run with no new migrations is a clean no-op.
@@ -31,6 +41,9 @@
 # dropway_app role). Set each on its matching GitHub Environment:
 #   development → DEV_DATABASE_OWNER_URL  / DEV_BILLING_OWNER_URL   — dev schemas.
 #   production  → PROD_DATABASE_OWNER_URL / PROD_BILLING_OWNER_URL  — prod schemas.
+# The identity step reuses DEV/PROD_DATABASE_OWNER_URL — Better Auth must CREATE
+# its tables, so it needs the same owner role goose runs as (and the CLI keeps
+# running as the owner even in single-role deploys; see app/0003's comment).
 # All must be reachable from GitHub-hosted runners (Supabase egress is not a fixed
 # IP range; allowlist GH Actions or use a self-hosted runner if you restrict access).
 
@@ -41,6 +54,7 @@ on:
     branches: [main]
     paths:
       - "db/migrations/**"
+      - "apps/dashboard/lib/auth.ts"
       - ".github/workflows/migrate.yml"
   workflow_dispatch:
 
@@ -58,7 +72,7 @@ jobs:
   # Doubles as a real-database smoke test before prod.
   # ---------------------------------------------------------------------------
   dev:
-    name: Apply goose migrations to dev
+    name: Apply migrations to dev
     runs-on: ubuntu-latest
     # The `development` GitHub Environment scopes the DEV_* secrets to this job.
     # Leave its "Required reviewers" UNSET so dev keeps running automatically — an
@@ -99,12 +113,45 @@ jobs:
           goose -table goose_db_version_billing -dir db/migrations/billing postgres "$BILLING_DSN" up
           echo "✅ app + billing migrations applied to dev"
 
+      # Node toolchain for the Better Auth CLI: corepack pins pnpm from the root
+      # package.json's packageManager field, matching the other TS jobs in ci.yml.
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      # The CLI itself runs via dlx, but the config it loads (lib/auth.ts) imports
+      # better-auth/pg/etc. from the dashboard's node_modules, so the workspace
+      # must be installed first.
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: apply identity migrations (Better Auth)
+        working-directory: apps/dashboard
+        env:
+          # Same privileged owner DSN the goose step uses: Better Auth owns +
+          # CREATEs the identity tables. databaseUrl() prefers this var.
+          BETTER_AUTH_DATABASE_URL: ${{ secrets.DEV_DATABASE_OWNER_URL }}
+          # Load-time requirement only: lib/env.ts throws if unset when the CLI
+          # imports lib/auth.ts under jiti. Nothing is signed during a migrate,
+          # so a placeholder is safe here — never reuse the real secret for this.
+          BETTER_AUTH_SECRET: migrate-only-placeholder
+        # @latest, not a pin: the CLI versions SEPARATELY from the better-auth lib
+        # (apps/dashboard is on 1.6.19) and an old CLI won't create newer plugins'
+        # tables. Matches the e2e job in ci.yml + the compose/.env.example one-liner.
+        run: |
+          pnpm dlx @better-auth/cli@latest migrate --yes
+          echo "✅ identity migrations applied to dev"
+
   # ---------------------------------------------------------------------------
   # prod — runs only after dev succeeds, and pauses on the `production` environment
   # for a required reviewer to approve before any DDL touches prod.
   # ---------------------------------------------------------------------------
   prod:
-    name: Apply goose migrations to production
+    name: Apply migrations to production
     runs-on: ubuntu-latest
     needs: dev
     environment: production
@@ -138,3 +185,24 @@ jobs:
           echo "::endgroup::"
           goose -table goose_db_version_billing -dir db/migrations/billing postgres "$BILLING_DSN" up
           echo "✅ app + billing migrations applied to production"
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: apply identity migrations (Better Auth)
+        working-directory: apps/dashboard
+        env:
+          BETTER_AUTH_DATABASE_URL: ${{ secrets.PROD_DATABASE_OWNER_URL }}
+          # Load-time only (see the dev job's comment) — never the real secret.
+          BETTER_AUTH_SECRET: migrate-only-placeholder
+        run: |
+          pnpm dlx @better-auth/cli@latest migrate --yes
+          echo "✅ identity migrations applied to production"
