@@ -111,6 +111,21 @@ describe("buildVisitPayload", () => {
       },
     });
   });
+
+  it("ties the visit to the org group without minting a person", () => {
+    const payload = buildVisitPayload({
+      apiKey: "phc_test",
+      distinctId: "abc123",
+      host: "acme--docs.dropwaycontent.com",
+      path: "/guide/",
+      route: ROUTE,
+      environment: "production",
+      now: new Date("2026-06-21T10:00:00Z"),
+    });
+    const props = payload.properties as Record<string, unknown>;
+    expect(props.$groups).toEqual({ organization: ROUTE.org_id });
+    expect(props.$process_person_profile).toBe(false);
+  });
 });
 
 describe("captureSiteVisit", () => {
@@ -224,6 +239,8 @@ describe("buildServe404Payload", () => {
     expect(props.org_id).toBe(ROUTE.org_id);
     expect(props.site_id).toBe(ROUTE.site_id);
     expect(props.path).toBe("/");
+    expect(props.$groups).toEqual({ organization: ROUTE.org_id });
+    expect(props.$process_person_profile).toBe(false);
   });
 
   it("nulls org/site/version for an unknown-host 404 (no route)", () => {
@@ -237,6 +254,9 @@ describe("buildServe404Payload", () => {
     expect(props.org_id).toBeNull();
     expect(props.site_id).toBeNull();
     expect(props.version_id).toBeNull();
+    // No route → no org to group by; still never mints a person.
+    expect(props.$groups).toBeUndefined();
+    expect(props.$process_person_profile).toBe(false);
   });
 });
 

@@ -100,6 +100,24 @@ func eventNameForDirection(direction string) string {
 	return "plan_upgraded"
 }
 
+// tierMRRUSD is each self-serve tier's monthly price in USD, mirroring the
+// dashboard's display pricing (apps/dashboard/lib/billing.ts) the same way the
+// store mirrors cloud/quota's site caps. known=false for Enterprise (custom,
+// negotiated pricing — a wrong number is worse than none) and for any
+// unrecognized tier.
+func tierMRRUSD(t PlanTier) (usd float64, known bool) {
+	switch t {
+	case TierFree:
+		return 0, true
+	case TierPro:
+		return 25, true
+	case TierBusiness:
+		return 150, true
+	default: // enterprise (custom pricing) + anything unknown
+		return 0, false
+	}
+}
+
 // emitterPlanAnalytics adapts a vendor-neutral analytics.Emitter to PlanAnalytics:
 // it shapes a PlanChange into the product-analytics Event (event name, properties,
 // and the org group) and hands it to the emitter.
@@ -127,17 +145,30 @@ func (a emitterPlanAnalytics) CapturePlanChange(ctx context.Context, ev PlanChan
 	if ev.OrgID == "" || ev.Direction == directionNone {
 		return
 	}
+	props := map[string]any{
+		"from_tier":               string(ev.FromTier),
+		"to_tier":                 string(ev.ToTier),
+		"direction":               ev.Direction,
+		"reason":                  ev.Reason,
+		"organization":            ev.OrgID,
+		"$process_person_profile": false,
+	}
+	// Revenue tracking: stamp the monthly value of both tiers and the movement,
+	// so PostHog can sum `mrr_delta_usd` into an MRR-movement trend and read new
+	// MRR off upgrades directly. Omitted (not zeroed) when either side has custom
+	// pricing (Enterprise) — those deals are tracked manually, and a fake $0
+	// would corrupt the sums.
+	if fromUSD, ok := tierMRRUSD(ev.FromTier); ok {
+		if toUSD, ok := tierMRRUSD(ev.ToTier); ok {
+			props["from_tier_mrr_usd"] = fromUSD
+			props["to_tier_mrr_usd"] = toUSD
+			props["mrr_delta_usd"] = toUSD - fromUSD
+		}
+	}
 	a.em.Capture(ctx, analytics.Event{
 		DistinctID: ev.OrgID,
 		Event:      eventNameForDirection(ev.Direction),
-		Properties: map[string]any{
-			"from_tier":               string(ev.FromTier),
-			"to_tier":                 string(ev.ToTier),
-			"direction":               ev.Direction,
-			"reason":                  ev.Reason,
-			"organization":            ev.OrgID,
-			"$process_person_profile": false,
-		},
-		Groups: map[string]string{"organization": ev.OrgID},
+		Properties: props,
+		Groups:     map[string]string{"organization": ev.OrgID},
 	})
 }

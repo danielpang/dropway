@@ -158,6 +158,22 @@ export function captureSignUpFailed(input: {
   });
 }
 
+/** A new organization was created (onboarding, or an additional org later).
+ * The top of the org-level activation funnel: organization_created →
+ * site_created → site_visit, all carrying the same `organization` group. */
+export function captureOrganizationCreated(input: {
+  userId: string;
+  organization: string;
+  organizationName?: string | null;
+}): Promise<void> {
+  return captureServerEvent({
+    event: "organization_created",
+    distinctId: input.userId,
+    organization: input.organization,
+    organizationName: input.organizationName ?? null,
+  });
+}
+
 /** A site was created in the active org. */
 export function captureSiteCreated(input: {
   userId: string;
