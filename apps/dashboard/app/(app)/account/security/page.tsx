@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
+import { userHasPasswordCredential } from "@/lib/mfa-server";
 
 export const metadata: Metadata = { title: "Account security" };
 export const dynamic = "force-dynamic";
@@ -28,29 +29,26 @@ export const dynamic = "force-dynamic";
  */
 export default async function AccountSecurityPage() {
   const requestHeaders = await headers();
-  const session = await auth.api
-    .getSession({
-      headers: requestHeaders,
-      method: "GET",
-      query: { disableCookieCache: true },
-    })
-    .catch(() => null);
+  // Both reads only need the headers, so they run in parallel: the uncached
+  // session (live twoFactorEnabled) and whether a password credential exists
+  // (Google-only / magic-link users have none → the UI skips the password
+  // prompt, matching allowPasswordless on the server).
+  const [session, hasPassword] = await Promise.all([
+    auth.api
+      .getSession({
+        headers: requestHeaders,
+        method: "GET",
+        query: { disableCookieCache: true },
+      })
+      .catch(() => null),
+    userHasPasswordCredential(requestHeaders),
+  ]);
   if (!session) redirect("/sign-in");
 
   const user = session.user as {
     email: string;
     twoFactorEnabled?: boolean | null;
   };
-
-  // Whether a password credential exists: Google-only / magic-link users have
-  // none, and the two-factor endpoints skip the password check for them
-  // (allowPasswordless) — so the UI must skip the password prompt too.
-  const accounts = await auth.api
-    .listUserAccounts({ headers: requestHeaders })
-    .catch(() => []);
-  const hasPassword = accounts.some(
-    (a: { providerId: string }) => a.providerId === "credential",
-  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

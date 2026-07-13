@@ -5,6 +5,8 @@ import { createAuthMiddleware, isAPIError } from "better-auth/api";
 import { deleteSessionCookie, expireCookie } from "better-auth/cookies";
 import { generateRandomString } from "better-auth/crypto";
 
+import { safeNextPath } from "@/lib/authz-host";
+
 /**
  * Closes the 2FA bypass on REDIRECT sign-ins. Better Auth's twoFactor plugin only
  * challenges the JSON credential endpoints (/sign-in/email|username|phone-number):
@@ -64,13 +66,21 @@ export function nextPathFrom(returned: unknown): string {
     location = headers?.get?.("location") ?? null;
   }
   if (!location) return "/dashboard";
-  if (location.startsWith("/") && !location.startsWith("//")) return location;
-  try {
-    const url = new URL(location);
-    return url.pathname + url.search + url.hash;
-  } catch {
-    return "/dashboard";
+  // Reduce to a path candidate, then run it through the shared same-site
+  // validator (safeNextPath rejects "//", "/\" and control-char tricks — an
+  // absolute URL like https://app//evil.com has pathname "//evil.com", which
+  // would otherwise survive a naive startsWith check).
+  let candidate = location;
+  if (!candidate.startsWith("/")) {
+    try {
+      const url = new URL(candidate);
+      candidate = url.pathname + url.search + url.hash;
+    } catch {
+      return "/dashboard";
+    }
   }
+  const validated = safeNextPath(candidate);
+  return validated === "/" ? "/dashboard" : validated;
 }
 
 export function twoFactorRedirectGate(): BetterAuthPlugin {

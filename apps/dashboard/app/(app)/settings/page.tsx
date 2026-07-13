@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { MCP_URL } from "@/lib/env";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
@@ -46,36 +46,42 @@ export default async function OrgSettingsPage() {
   // Render the toggles in their LIVE state (H10), not hardcoded defaults. On a
   // transient API error fall back to the safe defaults (external sharing OFF; MCP
   // ON, its column default), the steady-state values show on the next load.
-  const policy = await api
-    .getOrgPolicy()
-    .catch(() => ({
+  // Three independent API reads, resolved in one parallel step. The AI builder
+  // card is shown ONLY on a paid plan (the builder requires one, so a free org
+  // has nothing to toggle). getBilling 404s on OSS/self-host, which is
+  // unlimited → treat as paid so a self-hoster still sees the toggle. We read
+  // the live ai_enabled state; a 503 (builder not configured) hides the card.
+  const [policy, billing, aiSettings] = await Promise.all([
+    api.getOrgPolicy().catch(() => ({
       allow_external_sharing: false,
       mcp_enabled: true,
       require_mfa: false,
-    }));
+    })),
+    api
+      .getBilling()
+      .then((b) => ({ tier: b.plan_tier ?? "free", selfHost: false }))
+      // A 404 is the OSS/self-host signature (no billing service → unlimited);
+      // any OTHER failure is a transient blip and must NOT be mistaken for
+      // self-host, or a free-tier cloud org would briefly see gated features
+      // unlocked.
+      .catch((err) => ({
+        tier: null,
+        selfHost: err instanceof ApiError && err.status === 404,
+      })),
+    api.getAIOrgSettings().catch(() => null),
+  ]);
   const allowExternalSharing = policy.allow_external_sharing;
   const mcpEnabled = policy.mcp_enabled;
   const requireMfa = policy.require_mfa;
-
-  // The AI builder card is shown ONLY on a paid plan (the builder requires one,
-  // so a free org has nothing to toggle). getBilling 404s on OSS/self-host, which
-  // is unlimited → treat as paid so a self-hoster still sees the toggle. We read
-  // the live ai_enabled state; a 503 (builder not configured) hides the card.
-  const billingTier = await api
-    .getBilling()
-    .then((b) => b.plan_tier ?? "free")
-    .catch(() => null); // OSS/self-host (404) or transient error
-  const planTier = billingTier ?? "pro"; // OSS/self-host: unlimited, show the toggle
-  const aiSettings = await api.getAIOrgSettings().catch(() => null);
+  const planTier = billing.tier ?? "pro"; // billing unavailable: show the AI toggle
   const showAiBuilder = planTier !== "free" && aiSettings !== null;
 
   // MFA enforcement is business/enterprise; self-host (no billing) is unlimited
-  // so the toggle shows there too. This gate is UI convenience — the Go API
-  // re-checks the tier on the write and answers 402.
+  // so the toggle shows there too. A transient billing error fails CLOSED to the
+  // upgrade CTA (the switch would only 402 anyway). This gate is UI convenience —
+  // the Go API re-checks the tier on the write.
   const mfaEnforceEligible =
-    billingTier === null ||
-    billingTier === "business" ||
-    billingTier === "enterprise";
+    billing.selfHost || billing.tier === "business" || billing.tier === "enterprise";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

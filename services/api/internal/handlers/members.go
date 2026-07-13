@@ -101,9 +101,32 @@ func (a *API) RecordMfaReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.recordAudit(r, t, audit.ActionMfaReset, "member:"+userID, map[string]any{
-		"user_id": userID,
-	})
+	// Anchor the trail row to a VERIFIED member of the caller's org: without
+	// this, any org admin could fabricate mfa_reset entries for arbitrary user
+	// ids (including other orgs' users), polluting the compliance trail. On a
+	// self-host without the Better Auth schema, record without the check rather
+	// than fail (mirroring RecordMemberJoin's degradation).
+	targetRole := ""
+	if role, err := a.Store.MemberRole(r.Context(), t.OrgID, userID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNoMembership):
+			httpx.WriteError(w, badRequest("target is not a member of the active org"))
+			return
+		case errors.Is(err, store.ErrAuthSchemaUnavailable):
+			// Degrade: the reset itself already happened in the dashboard.
+		default:
+			writeStoreError(w, err)
+			return
+		}
+	} else {
+		targetRole = role
+	}
+
+	meta := map[string]any{"user_id": userID}
+	if targetRole != "" {
+		meta["role"] = targetRole
+	}
+	a.recordAudit(r, t, audit.ActionMfaReset, "member:"+userID, meta)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"recorded": true})
 }
 

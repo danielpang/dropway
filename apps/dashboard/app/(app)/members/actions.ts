@@ -258,23 +258,34 @@ export async function resetMemberMfaAction(input: {
     return { ok: false, message: "Could not reset two-factor. Try again." };
   }
 
-  // Trail + tripwire, both best-effort: the reset already happened.
+  // Trail + tripwire, both best-effort and DEFERRED (next/server after), so a
+  // slow SMTP server or API blip can neither stall the admin's dialog nor fail
+  // a reset that already happened — same posture as the invite email.
+  const targetUserId = target.userId;
+  const targetEmail = target.email;
+  const orgName = org.name ?? "your organization";
   try {
-    await api.recordMfaReset({ user_id: target.userId });
+    const { after } = await import("next/server");
+    after(async () => {
+      try {
+        await api.recordMfaReset({ user_id: targetUserId });
+      } catch {
+        // Audit trail is best-effort.
+      }
+      if (!targetEmail) return;
+      try {
+        const { sendEmail } = await import("@/lib/email");
+        const { subject, html, text } = mfaResetEmail({
+          appUrl: betterAuthUrl(),
+          orgName,
+        });
+        await sendEmail({ to: targetEmail, subject, html, text });
+      } catch {
+        // Notification is best-effort; sendEmail never throws on SMTP errors.
+      }
+    });
   } catch {
-    // Audit trail is best-effort.
-  }
-  if (target.email) {
-    try {
-      const { sendEmail } = await import("@/lib/email");
-      const { subject, html, text } = mfaResetEmail({
-        appUrl: betterAuthUrl(),
-        orgName: org.name ?? "your organization",
-      });
-      await sendEmail({ to: target.email, subject, html, text });
-    } catch {
-      // Notification is best-effort; sendEmail itself never throws on SMTP errors.
-    }
+    // Deferral unavailable → skip the trail/notification rather than block.
   }
 
   revalidatePath("/members");

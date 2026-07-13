@@ -233,13 +233,18 @@ export function magicLinkEmail(p: { url: string; appUrl: string }): RenderedEmai
   };
 }
 
+/** The account-security deep link every MFA tripwire email points at. */
+function securityUrl(appUrl: string): string {
+  return `${appUrl.replace(/\/$/, "")}/account/security`;
+}
+
 /**
  * Two-factor authentication enabled: a compromise tripwire, not a CTA email. The
  * button just deep-links to the security page so the recipient can review (and,
  * if this wasn't them, disable + rotate credentials).
  */
 export function mfaEnabledEmail(p: { appUrl: string }): RenderedEmail {
-  const url = `${p.appUrl.replace(/\/$/, "")}/account/security`;
+  const url = securityUrl(p.appUrl);
   const security =
     "If you didn't enable two factor authentication, someone else may have access to your account. Review your security settings and change your password right away.";
   const body =
@@ -270,7 +275,7 @@ export function mfaEnabledEmail(p: { appUrl: string }): RenderedEmail {
 
 /** Two-factor authentication disabled: the matching tripwire for the off switch. */
 export function mfaDisabledEmail(p: { appUrl: string }): RenderedEmail {
-  const url = `${p.appUrl.replace(/\/$/, "")}/account/security`;
+  const url = securityUrl(p.appUrl);
   const security =
     "If you didn't disable two factor authentication, someone else may have access to your account. Re-enable it and change your password right away.";
   const body =
@@ -307,7 +312,7 @@ export function mfaResetEmail(p: {
   appUrl: string;
   orgName: string;
 }): RenderedEmail {
-  const url = `${p.appUrl.replace(/\/$/, "")}/account/security`;
+  const url = securityUrl(p.appUrl);
   const org = esc(p.orgName);
   const security =
     "If you weren't expecting this, contact your organization's admin. Your password was not changed.";

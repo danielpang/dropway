@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { TwoFactorForm } from "@/components/auth/two-factor-form";
+import { safeNextPath } from "@/lib/authz-host";
 
 export const metadata: Metadata = { title: "Two-factor verification" };
 
@@ -10,8 +11,9 @@ export const metadata: Metadata = { title: "Two-factor verification" };
  * magic-link — carrying the signed `two_factor` challenge cookie. Verifying a
  * TOTP or backup code completes the sign-in and continues to ?next=.
  *
- * `next` is reduced to a same-app path server-side so this page can never be
- * used as an open redirect.
+ * `next` is reduced to a same-app path server-side (safeNextPath: rejects
+ * protocol-relative, backslash, and control-char tricks) so this page can
+ * never be used as an open redirect.
  */
 export default async function TwoFactorPage({
   searchParams,
@@ -19,8 +21,8 @@ export default async function TwoFactorPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const { next } = await searchParams;
-  const safeNext =
-    next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  const validated = safeNextPath(next);
+  const safeNext = validated === "/" ? "/dashboard" : validated;
 
   return <TwoFactorForm next={safeNext} />;
 }

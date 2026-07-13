@@ -24,6 +24,19 @@ type OrgPolicy struct {
 	RequireMfa bool
 }
 
+// policyFromMeta maps the org_meta row to the API-facing policy view — the ONE
+// place a new policy column gets picked up, so the three read/write paths below
+// can't silently drift (a missed literal would compile fine and return a
+// zero-valued field).
+func policyFromMeta(meta db.GetOrgMetaRow) OrgPolicy {
+	return OrgPolicy{
+		OrgID:                meta.ID,
+		AllowExternalSharing: meta.AllowExternalSharing,
+		MCPEnabled:           meta.McpEnabled,
+		RequireMfa:           meta.RequireMfa,
+	}
+}
+
 // GetOrgPolicy returns the active org's sharing policy.
 func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 	var out OrgPolicy
@@ -35,12 +48,7 @@ func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 			}
 			return err
 		}
-		out = OrgPolicy{
-			OrgID:                meta.ID,
-			AllowExternalSharing: meta.AllowExternalSharing,
-			MCPEnabled:           meta.McpEnabled,
-			RequireMfa:           meta.RequireMfa,
-		}
+		out = policyFromMeta(meta)
 		return nil
 	})
 	return out, err
@@ -66,12 +74,7 @@ func (s *Store) SetMcpEnabled(ctx context.Context, t Tenant, enabled bool) (OrgP
 			}
 			return err
 		}
-		out = OrgPolicy{
-			OrgID:                meta.ID,
-			AllowExternalSharing: meta.AllowExternalSharing,
-			MCPEnabled:           meta.McpEnabled,
-			RequireMfa:           meta.RequireMfa,
-		}
+		out = policyFromMeta(meta)
 		return nil
 	})
 	return out, err
@@ -117,12 +120,7 @@ func (s *Store) SetRequireMfa(ctx context.Context, t Tenant, enabled bool) (OrgP
 			}
 			return err
 		}
-		out = OrgPolicy{
-			OrgID:                meta.ID,
-			AllowExternalSharing: meta.AllowExternalSharing,
-			MCPEnabled:           meta.McpEnabled,
-			RequireMfa:           meta.RequireMfa,
-		}
+		out = policyFromMeta(meta)
 		return nil
 	})
 	return out, err

@@ -11,8 +11,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { auth } from "@/lib/auth";
-import { userTwoFactorEnabled } from "@/lib/mfa-server";
+import {
+  userHasPasswordCredential,
+  userTwoFactorEnabled,
+} from "@/lib/mfa-server";
 import { getCurrentSession } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Set up two-factor authentication" };
@@ -32,14 +34,14 @@ export default async function TwoFactorSetupPage() {
   if (!session) redirect("/sign-in");
 
   const user = session.user as { id: string; email: string };
-  if (await userTwoFactorEnabled(user.id)) redirect("/dashboard");
-
-  const accounts = await auth.api
-    .listUserAccounts({ headers: await headers() })
-    .catch(() => []);
-  const hasPassword = accounts.some(
-    (a: { providerId: string }) => a.providerId === "credential",
-  );
+  // Independent reads, in parallel: the common case here is an unenrolled
+  // member who needs both anyway (the rare already-enrolled visitor wastes
+  // one cheap accounts read before bouncing).
+  const [enrolled, hasPassword] = await Promise.all([
+    userTwoFactorEnabled(user.id),
+    userHasPasswordCredential(await headers()),
+  ]);
+  if (enrolled) redirect("/dashboard");
 
   return (
     <div className="w-full">

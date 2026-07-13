@@ -3,6 +3,25 @@ import "server-only";
 import { auth } from "@/lib/auth";
 
 /**
+ * Whether the user behind these request headers has a PASSWORD credential.
+ * Google-only / magic-link users have none, and every two-factor endpoint
+ * skips the password check for them (allowPasswordless) — so the enroll UIs
+ * must skip the password prompt too. One helper so the rule can't drift
+ * between the security page and the mandatory setup page. Fails soft to
+ * false (no accounts listed → no password prompt; the server still enforces).
+ */
+export async function userHasPasswordCredential(
+  requestHeaders: Headers,
+): Promise<boolean> {
+  const accounts = await auth.api
+    .listUserAccounts({ headers: requestHeaders })
+    .catch(() => []);
+  return accounts.some(
+    (a: { providerId: string }) => a.providerId === "credential",
+  );
+}
+
+/**
  * Server-side reads/writes of two-factor enrollment state, through Better
  * Auth's own adapter (the identity schema's owner) rather than raw SQL — the
  * same data layer the twoFactor plugin uses, so model/table name mapping and

@@ -61,19 +61,15 @@ export default async function AppLayout({
 
   // MFA ENFORCEMENT GATE: an org with require_mfa serves unenrolled members
   // nothing but the mandatory setup flow (which lives OUTSIDE this layout, so
-  // there's no redirect loop). The session's twoFactorEnabled can be up to 5
-  // minutes stale (signed-cookie cache) — right after enrolling it still reads
-  // false — so before bouncing, confirm against the live user row; the fresh
-  // read only runs on the would-redirect path, so steady state costs nothing.
+  // there's no redirect loop). The enrollment check is ALWAYS a fresh read for
+  // enforced orgs, never the session's cookie-cached twoFactorEnabled: the
+  // cache is up to 5 minutes stale in BOTH directions — a just-enrolled member
+  // would bounce back to setup, and (worse) an admin-reset member would keep a
+  // cached `true` and sail past the gate for the cache lifetime. One extra
+  // adapter read per page load, paid only by orgs that opted into enforcement.
   if (policy?.require_mfa) {
-    const user = session.user as {
-      id: string;
-      twoFactorEnabled?: boolean | null;
-    };
-    if (
-      user.twoFactorEnabled !== true &&
-      !(await userTwoFactorEnabled(user.id))
-    ) {
+    const user = session.user as { id: string };
+    if (!(await userTwoFactorEnabled(user.id))) {
       redirect("/two-factor-setup");
     }
   }

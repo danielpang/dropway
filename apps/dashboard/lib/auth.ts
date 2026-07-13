@@ -224,28 +224,22 @@ export const auth = betterAuth({
         },
       },
       // MFA compromise tripwire: email the account owner whenever their second
-      // factor flips. The user row is only UPDATED with twoFactorEnabled by two
-      // endpoints — /two-factor/verify-totp completing ENROLLMENT (the sign-in
-      // challenge never writes the user) and /two-factor/disable — so keying on
-      // the driving endpoint's path is precise: no email on routine sign-ins.
-      // Admin resets bypass Better Auth (direct SQL) and send their own email.
-      // Delivery is deferred + self-swallowing like the invite email: a slow or
-      // broken SMTP can neither stall nor fail the security change itself.
+      // factor flips. Scoped to updates driven by ANY /two-factor/* endpoint —
+      // today that's verify-totp completing enrollment and disable (the sign-in
+      // challenge never writes the user), and the prefix keeps a future
+      // two-factor endpoint (e.g. OTP verify) on the same wire instead of
+      // silently losing the notification. The direction comes from the updated
+      // row's twoFactorEnabled, not the path. Admin resets bypass Better Auth
+      // (adapter writes) and send their own email. Delivery is deferred +
+      // self-swallowing like the invite email: a slow or broken SMTP can
+      // neither stall nor fail the security change itself.
       update: {
         after: async (user, ctx) => {
-          const path = ctx?.path;
-          if (
-            path !== "/two-factor/verify-totp" &&
-            path !== "/two-factor/disable"
-          ) {
-            return;
-          }
+          if (!ctx?.path?.startsWith("/two-factor/")) return;
           const u = user as { email?: string; twoFactorEnabled?: boolean | null };
           if (!u.email) return;
-          const enabled =
-            path === "/two-factor/verify-totp" && u.twoFactorEnabled === true;
-          const disabled =
-            path === "/two-factor/disable" && !u.twoFactorEnabled;
+          const enabled = u.twoFactorEnabled === true;
+          const disabled = u.twoFactorEnabled === false;
           if (!enabled && !disabled) return;
           try {
             const { after } = await import("next/server");

@@ -60,6 +60,7 @@ export function MemberList({
   organizationId,
   myUserId,
   canManage,
+  myRole,
   storageByUser = {},
   mfaByUser,
 }: {
@@ -67,6 +68,12 @@ export function MemberList({
   organizationId: string;
   myUserId: string | null;
   canManage: boolean;
+  /**
+   * The viewer's own role. Owner rows are immutable to admins, but an OWNER
+   * viewer may reset a co-owner's two-factor (the lockout recovery path) —
+   * without this the action's owner→owner rule would be unreachable from the UI.
+   */
+  myRole?: Role;
   /**
    * Logical storage (bytes) per user id, the sum of each member's sites'
    * current-version sizes. Missing users render as 0. NOT deduplicated across
@@ -177,6 +184,10 @@ export function MemberList({
           // and ownership transfer is a separate owner-only flow). Admins can
           // edit/remove only non-owner, non-self rows.
           const canEditThis = canManage && !isOwner && !isSelf;
+          // MFA reset follows the edit rules EXCEPT owner rows, which an owner
+          // viewer may recover (resetMemberMfaAction enforces the same rule).
+          const canResetMfaThis =
+            canManage && !isSelf && (!isOwner || myRole === "owner");
 
           return (
             <li
@@ -252,7 +263,7 @@ export function MemberList({
                   </Badge>
                 )}
 
-                {canEditThis && mfaByUser?.[member.userId] && (
+                {canResetMfaThis && mfaByUser?.[member.userId] && (
                   <Button
                     type="button"
                     variant="ghost"
