@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import { betterAuth } from "better-auth";
 import { createAuthMiddleware, isAPIError } from "better-auth/api";
-import { jwt, magicLink, organization } from "better-auth/plugins";
+import { jwt, magicLink, organization, twoFactor } from "better-auth/plugins";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { Pool } from "pg";
 
 import { logIfConnectionCapacity } from "@/lib/db-capacity";
 import { oauthRateLimitRules } from "@/lib/oauth-ratelimit";
+import { twoFactorRedirectGate } from "@/lib/two-factor-gate";
 import {
   betterAuthSecret,
   betterAuthUrl,
@@ -23,6 +24,8 @@ import {
 import {
   invitationEmail,
   magicLinkEmail,
+  mfaDisabledEmail,
+  mfaEnabledEmail,
   passwordResetEmail,
   verifyEmail,
 } from "@/lib/email-templates";
@@ -217,6 +220,44 @@ export const auth = betterAuth({
             });
           } catch {
             // Analytics must never block account creation.
+          }
+        },
+      },
+      // MFA compromise tripwire: email the account owner whenever their second
+      // factor flips. Scoped to updates driven by ANY /two-factor/* endpoint —
+      // today that's verify-totp completing enrollment and disable (the sign-in
+      // challenge never writes the user), and the prefix keeps a future
+      // two-factor endpoint (e.g. OTP verify) on the same wire instead of
+      // silently losing the notification. The direction comes from the updated
+      // row's twoFactorEnabled, not the path. Admin resets bypass Better Auth
+      // (adapter writes) and send their own email. Delivery is deferred +
+      // self-swallowing like the invite email: a slow or broken SMTP can
+      // neither stall nor fail the security change itself.
+      update: {
+        after: async (user, ctx) => {
+          if (!ctx?.path?.startsWith("/two-factor/")) return;
+          const u = user as { email?: string; twoFactorEnabled?: boolean | null };
+          if (!u.email) return;
+          const enabled = u.twoFactorEnabled === true;
+          const disabled = u.twoFactorEnabled === false;
+          if (!enabled && !disabled) return;
+          try {
+            const { after } = await import("next/server");
+            const to = u.email;
+            after(async () => {
+              try {
+                const { sendEmail } = await import("@/lib/email");
+                const { subject, html, text } = enabled
+                  ? mfaEnabledEmail({ appUrl: betterAuthUrl() })
+                  : mfaDisabledEmail({ appUrl: betterAuthUrl() });
+                await sendEmail({ to, subject, html, text });
+              } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error(`[mfa-email] failed to send to ${to}: ${String(err)}`);
+              }
+            });
+          } catch {
+            // Email must never block the security change.
           }
         },
       },
@@ -476,6 +517,31 @@ export const auth = betterAuth({
         });
       },
     }),
+
+    // TOTP two-factor authentication + one-time backup codes, available to every
+    // user on every tier (enrollment is never paywalled; org-level ENFORCEMENT is
+    // the business/enterprise lever, gated in the Go API). Email OTP is deliberately
+    // NOT configured: it would reduce the second factor to mailbox strength, which
+    // is what the magic-link method already represents.
+    twoFactor({
+      // The label shown in authenticator apps next to the account email.
+      issuer: "Dropway",
+      // Google-only and magic-link users have no password credential; without
+      // this they could never enroll (enable/disable REQUIRE a password by
+      // default). A password is still demanded whenever one exists.
+      allowPasswordless: true,
+      // Enrollment completes only after the user proves their authenticator
+      // works (verify-totp flips user.twoFactorEnabled) — the default, pinned
+      // here because the enforcement flow (two-factor-setup) depends on it.
+      skipVerificationOnEnable: false,
+    }),
+
+    // Applies the 2FA challenge to Google + magic-link sign-ins, which the
+    // twoFactor plugin does not cover (it only hooks the credential endpoints).
+    // Must come after twoFactor(): it reuses that plugin's challenge cookie and
+    // verify endpoints. Without this, enforced MFA would be bypassable by anyone
+    // with mailbox access via the magic link.
+    twoFactorRedirectGate(),
 
     // Passwordless magic-link sign-in as a secondary method on the auth screens.
     magicLink({

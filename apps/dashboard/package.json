@@ -30,6 +30,7 @@
     "pg": "8.13.1",
     "posthog-js": "^1.391.2",
     "posthog-node": "^5.38.2",
+    "qrcode.react": "4.2.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "simple-icons": "^16.25.0",

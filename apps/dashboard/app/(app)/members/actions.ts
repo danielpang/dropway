@@ -5,6 +5,10 @@ import { headers } from "next/headers";
 
 import { api, ApiError } from "@/lib/api";
 import { auth } from "@/lib/auth";
+import { betterAuthUrl } from "@/lib/env";
+import { mfaResetEmail } from "@/lib/email-templates";
+import { resetUserTwoFactor } from "@/lib/mfa-server";
+import { canManage, loadActiveOrg } from "@/lib/org";
 
 /**
  * Result of a hard-revocation ("sign out / revoke access everywhere") write.
@@ -202,6 +206,91 @@ export async function removeMemberAction(input: {
   }
 
   return { removed: true, revoke: await finalizeMemberRevocation(removedUserId) };
+}
+
+export type ResetMemberMfaResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/**
+ * Clear a member's two-factor enrollment (the LOCKOUT RECOVERY path: they lost
+ * their authenticator and their backup codes). Deletes their TOTP secret +
+ * backup codes, flips twoFactorEnabled off, and kills their sessions so they
+ * re-enroll on a fresh sign-in — under org enforcement they land directly in
+ * mandatory setup.
+ *
+ * Authorization mirrors the member-list edit rules and happens HERE (this
+ * action is the only entry point to the privileged reset): the caller must be
+ * an owner/admin of the active org, the target must be a member of that org,
+ * never the caller themselves (self-service lives on /account/security), and
+ * only an owner may reset an owner. The target's user id is resolved from the
+ * caller's own org membership list — never trusted from the client.
+ */
+export async function resetMemberMfaAction(input: {
+  memberId: string;
+}): Promise<ResetMemberMfaResult> {
+  if (!input.memberId) return { ok: false, message: "Missing member." };
+
+  const org = await loadActiveOrg();
+  if (!org || !canManage(org.myRole)) {
+    return {
+      ok: false,
+      message: "Only owners and admins can reset a member's two-factor.",
+    };
+  }
+  const target = org.members.find((m) => m.id === input.memberId);
+  if (!target) {
+    return { ok: false, message: "That person is not a member of this organization." };
+  }
+  if (org.myUserId !== null && target.userId === org.myUserId) {
+    return {
+      ok: false,
+      message: "Manage your own two-factor from Account security instead.",
+    };
+  }
+  if (target.role === "owner" && org.myRole !== "owner") {
+    return { ok: false, message: "Only an owner can reset an owner's two-factor." };
+  }
+
+  try {
+    await resetUserTwoFactor(target.userId);
+  } catch {
+    return { ok: false, message: "Could not reset two-factor. Try again." };
+  }
+
+  // Trail + tripwire, both best-effort and DEFERRED (next/server after), so a
+  // slow SMTP server or API blip can neither stall the admin's dialog nor fail
+  // a reset that already happened — same posture as the invite email.
+  const targetUserId = target.userId;
+  const targetEmail = target.email;
+  const orgName = org.name ?? "your organization";
+  try {
+    const { after } = await import("next/server");
+    after(async () => {
+      try {
+        await api.recordMfaReset({ user_id: targetUserId });
+      } catch {
+        // Audit trail is best-effort.
+      }
+      if (!targetEmail) return;
+      try {
+        const { sendEmail } = await import("@/lib/email");
+        const { subject, html, text } = mfaResetEmail({
+          appUrl: betterAuthUrl(),
+          orgName,
+        });
+        await sendEmail({ to: targetEmail, subject, html, text });
+      } catch {
+        // Notification is best-effort; sendEmail never throws on SMTP errors.
+      }
+    });
+  } catch {
+    // Deferral unavailable → skip the trail/notification rather than block.
+  }
+
+  revalidatePath("/members");
+  revalidatePath("/audit");
+  return { ok: true };
 }
 
 /**

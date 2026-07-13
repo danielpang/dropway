@@ -29,7 +29,7 @@ VALUES ($1)
 ON CONFLICT (org_id) DO NOTHING;
 
 -- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd, require_mfa
 FROM app.org_meta
 WHERE id = $1;
 
@@ -567,6 +567,14 @@ WHERE id = $1;
 -- request, so disabling takes effect immediately even for already-issued tokens.
 UPDATE app.org_meta
 SET mcp_enabled = $2
+WHERE id = $1;
+
+-- name: SetRequireMfa :exec
+-- Toggle org-wide MFA enforcement (owner/admin only AND business/enterprise
+-- only, both enforced in Go). Enforcement is next-request: the dashboard checks
+-- the flag per authenticated request and locks unenrolled members into setup.
+UPDATE app.org_meta
+SET require_mfa = $2
 WHERE id = $1;
 
 -- name: ListPublicSitesForOrg :many

@@ -188,6 +188,37 @@ func TestCustomDomains_PaidTiersUnlimited(t *testing.T) {
 	}
 }
 
+// MFA ENFORCEMENT is a business/enterprise feature: free AND pro are capped at 0,
+// so enabling it (current=0 → 0+1 > 0) is rejected with an upgrade-to-business body.
+func TestMfaEnforcement_FreeAndProRejected(t *testing.T) {
+	for _, tier := range []string{"free", "pro"} {
+		err := newProvider().Allow(tier, corequota.ResourceMfaEnforcement, 0)
+		ex, ok := corequota.AsExceeded(err)
+		if !ok {
+			t.Fatalf("tier %q: want ExceededError, got %v", tier, err)
+		}
+		if ex.Max != 0 || ex.Current != 0 {
+			t.Errorf("tier %q: max/current = %d/%d, want 0/0", tier, ex.Max, ex.Current)
+		}
+		if ex.PlanTier != tier || ex.NextTier != "business" {
+			t.Errorf("tiers = %q→%q, want %s→business", ex.PlanTier, ex.NextTier, tier)
+		}
+		if ex.UpgradeURL == "" {
+			t.Errorf("tier %q: should carry an upgrade_url", tier)
+		}
+	}
+}
+
+// Business and enterprise may always enable MFA enforcement.
+func TestMfaEnforcement_BusinessEnterpriseAllowed(t *testing.T) {
+	p := newProvider()
+	for _, tier := range []string{"business", "enterprise"} {
+		if err := p.Allow(tier, corequota.ResourceMfaEnforcement, 0); err != nil {
+			t.Errorf("Allow(%q, mfa_enforcement) = %v, want nil", tier, err)
+		}
+	}
+}
+
 // Seats are free: members are unlimited on EVERY plan. The cloud
 // provider must never 402 on the member resource, regardless of tier or count.
 func TestMembers_AlwaysUnlimited(t *testing.T) {

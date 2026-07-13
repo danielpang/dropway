@@ -375,6 +375,10 @@ type Querier interface {
 	// request, so disabling takes effect immediately even for already-issued tokens.
 	SetMcpEnabled(ctx context.Context, arg SetMcpEnabledParams) error
 	SetOrgSkillsSeeded(ctx context.Context, arg SetOrgSkillsSeededParams) error
+	// Toggle org-wide MFA enforcement (owner/admin only AND business/enterprise
+	// only, both enforced in Go). Enforcement is next-request: the dashboard checks
+	// the flag per authenticated request and locks unenrolled members into setup.
+	SetRequireMfa(ctx context.Context, arg SetRequireMfaParams) error
 	// ===========================================================================
 	// access policy (Phase 2) — per-site gating config
 	// ===========================================================================

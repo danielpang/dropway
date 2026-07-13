@@ -11,9 +11,11 @@ import { MainNav } from "@/components/main-nav";
 import { MobileNav } from "@/components/mobile-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { api } from "@/lib/api";
 import { auth } from "@/lib/auth";
 import { supportEmail } from "@/lib/env";
 import { loadOrgBillingState } from "@/lib/billing-server";
+import { userTwoFactorEnabled } from "@/lib/mfa-server";
 import { canManage, loadActiveRole } from "@/lib/org";
 import { getCurrentSession } from "@/lib/session";
 
@@ -45,13 +47,32 @@ export default async function AppLayout({
   // For the rare org-less user the billing/role reads are wasted work before the
   // onboarding redirect, but both fail soft, and the common case saves a full
   // round trip.
-  const [orgs, { orgStatus }, role] = await Promise.all([
+  const [orgs, { orgStatus }, role, policy] = await Promise.all([
     auth.api.listOrganizations({ headers: requestHeaders }).catch(() => []),
     loadOrgBillingState(),
     loadActiveRole(),
+    // Org MFA enforcement flag. Fails soft to null (no enforcement this
+    // render) — an API hiccup must not lock every member out of the dashboard;
+    // the flag is re-read on the next request.
+    api.getOrgPolicy().catch(() => null),
   ]);
   if (!orgs || orgs.length === 0) redirect("/onboarding");
   const isAdmin = canManage(role);
+
+  // MFA ENFORCEMENT GATE: an org with require_mfa serves unenrolled members
+  // nothing but the mandatory setup flow (which lives OUTSIDE this layout, so
+  // there's no redirect loop). The enrollment check is ALWAYS a fresh read for
+  // enforced orgs, never the session's cookie-cached twoFactorEnabled: the
+  // cache is up to 5 minutes stale in BOTH directions — a just-enrolled member
+  // would bounce back to setup, and (worse) an admin-reset member would keep a
+  // cached `true` and sail past the gate for the cache lifetime. One extra
+  // adapter read per page load, paid only by orgs that opted into enforcement.
+  if (policy?.require_mfa) {
+    const user = session.user as { id: string };
+    if (!(await userTwoFactorEnabled(user.id))) {
+      redirect("/two-factor-setup");
+    }
+  }
 
   // Attribute browser analytics to this user + their active org (client-side;
   // no-op when PostHog isn't configured).

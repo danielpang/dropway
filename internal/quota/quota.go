@@ -60,6 +60,14 @@ const (
 	// BEFORE the Cloudflare custom hostname is provisioned, so a free org never
 	// creates a provider-side hostname it isn't entitled to.
 	ResourceCustomDomainPerOrg Resource = "custom_domains_per_org"
+	// ResourceMfaEnforcement gates the org "require MFA for all members" policy as
+	// a BUSINESS/ENTERPRISE feature (0/unlimited band like custom domains): the
+	// cloud provider caps free AND pro at 0, so ENABLING enforcement returns 402
+	// {next_tier: business} there. MFA enrollment itself is never gated — only the
+	// org-wide enforcement toggle is the plan lever. Disabling enforcement is never
+	// gated either (a downgraded org must always be able to turn it off). OSS
+	// self-host is Unlimited.
+	ResourceMfaEnforcement Resource = "mfa_enforcement_per_org"
 )
 
 // ExceededError is returned by an enforcing Provider when an action would cross

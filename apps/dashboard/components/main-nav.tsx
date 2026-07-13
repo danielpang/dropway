@@ -18,6 +18,8 @@ export const NAV_LINKS: NavLink[] = [
   { href: "/audit", label: "Audit", match: "/audit", admin: true },
   { href: "/billing", label: "Billing", match: "/billing" },
   { href: "/settings", label: "Settings", match: "/settings" },
+  // Per-user (not org) settings: two-factor authentication lives here.
+  { href: "/account/security", label: "Security", match: "/account" },
 ];
 
 /**

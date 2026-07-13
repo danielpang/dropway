@@ -81,6 +81,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// here after the fact. invites = admin/owner only (the inviter); joined = any
 		// member recording their OWN join into the active org.
 		r.Post("/members/invites", api.RecordMemberInvite)
+		r.Post("/members/mfa-reset", api.RecordMfaReset)
 		r.Post("/members/joined", api.RecordMemberJoin)
 
 		// Hard revocation (Phase 4): admin/owner writes the edge denylist so a
@@ -103,6 +104,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// MCP access toggle (admin/owner only, re-checked in the handler). Default on;
 		// disabling immediately stops the Dropway MCP server from serving the org.
 		r.Patch("/orgs/mcp", api.SetMcpEnabled)
+		r.Patch("/orgs/require-mfa", api.SetRequireMfa)
 
 		// Generic hard-revoke (admin/owner only): {kind:user|site|org, id} → bump the
 		// denylist min_iat. The unified "sign-out-everywhere" affordance the dashboard

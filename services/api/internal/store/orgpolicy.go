@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/danielpang/dropway/internal/projection"
+	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
@@ -17,6 +18,23 @@ type OrgPolicy struct {
 	// MCPEnabled is whether the Dropway MCP server may serve this org. Default true
 	// (org_meta.mcp_enabled); an admin/owner can disable it (SetMcpEnabled).
 	MCPEnabled bool
+	// RequireMfa is whether every member must have two-factor authentication
+	// enrolled before the dashboard serves them (org_meta.require_mfa, default
+	// false). Admin/owner-set, business/enterprise only (SetRequireMfa).
+	RequireMfa bool
+}
+
+// policyFromMeta maps the org_meta row to the API-facing policy view — the ONE
+// place a new policy column gets picked up, so the three read/write paths below
+// can't silently drift (a missed literal would compile fine and return a
+// zero-valued field).
+func policyFromMeta(meta db.GetOrgMetaRow) OrgPolicy {
+	return OrgPolicy{
+		OrgID:                meta.ID,
+		AllowExternalSharing: meta.AllowExternalSharing,
+		MCPEnabled:           meta.McpEnabled,
+		RequireMfa:           meta.RequireMfa,
+	}
 }
 
 // GetOrgPolicy returns the active org's sharing policy.
@@ -30,11 +48,7 @@ func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 			}
 			return err
 		}
-		out = OrgPolicy{
-			OrgID:                meta.ID,
-			AllowExternalSharing: meta.AllowExternalSharing,
-			MCPEnabled:           meta.McpEnabled,
-		}
+		out = policyFromMeta(meta)
 		return nil
 	})
 	return out, err
@@ -60,11 +74,53 @@ func (s *Store) SetMcpEnabled(ctx context.Context, t Tenant, enabled bool) (OrgP
 			}
 			return err
 		}
-		out = OrgPolicy{
-			OrgID:                meta.ID,
-			AllowExternalSharing: meta.AllowExternalSharing,
-			MCPEnabled:           meta.McpEnabled,
+		out = policyFromMeta(meta)
+		return nil
+	})
+	return out, err
+}
+
+// SetRequireMfa toggles org-wide MFA enforcement (admin/owner only — the caller
+// re-checks the role against the member table) and returns the resulting policy.
+//
+// ENABLING is additionally gated on the org's plan tier via the quota provider
+// (ResourceMfaEnforcement: business/enterprise only in the cloud build, always
+// allowed on OSS) — same 0/unlimited entitlement shape as custom domains, checked
+// in the same transaction as the write so the tier read is consistent. DISABLING
+// is never gated: an org downgraded below business must always be able to turn
+// enforcement off.
+//
+// Enforcement is next-request: the dashboard checks the flag per authenticated
+// request and locks unenrolled members into the setup flow. No session
+// revocation happens here.
+func (s *Store) SetRequireMfa(ctx context.Context, t Tenant, enabled bool) (OrgPolicy, error) {
+	var out OrgPolicy
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if enabled {
+			planTier, err := q.GetPlanTier(ctx, t.OrgID)
+			if err != nil {
+				if isNoRows(err) {
+					return ErrNotFound
+				}
+				return err
+			}
+			if err := s.quota.Allow(planTier, quota.ResourceMfaEnforcement, 0); err != nil {
+				return err // *quota.ExceededError → handler renders HTTP 402
+			}
 		}
+		if err := q.SetRequireMfa(ctx, db.SetRequireMfaParams{
+			ID: t.OrgID, RequireMfa: enabled,
+		}); err != nil {
+			return err
+		}
+		meta, err := q.GetOrgMeta(ctx, t.OrgID)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = policyFromMeta(meta)
 		return nil
 	})
 	return out, err

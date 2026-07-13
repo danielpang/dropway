@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, CreditCard, Globe2, ShieldAlert, Sparkles, Users } from "lucide-react";
+import { Bot, CreditCard, Globe2, KeyRound, ShieldAlert, ShieldCheck, Sparkles, Users } from "lucide-react";
 
 import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { McpAccess } from "@/components/settings/mcp-access";
+import { RequireMfaToggle } from "@/components/settings/require-mfa-toggle";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { MCP_URL } from "@/lib/env";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
@@ -45,22 +46,42 @@ export default async function OrgSettingsPage() {
   // Render the toggles in their LIVE state (H10), not hardcoded defaults. On a
   // transient API error fall back to the safe defaults (external sharing OFF; MCP
   // ON, its column default), the steady-state values show on the next load.
-  const policy = await api
-    .getOrgPolicy()
-    .catch(() => ({ allow_external_sharing: false, mcp_enabled: true }));
+  // Three independent API reads, resolved in one parallel step. The AI builder
+  // card is shown ONLY on a paid plan (the builder requires one, so a free org
+  // has nothing to toggle). getBilling 404s on OSS/self-host, which is
+  // unlimited → treat as paid so a self-hoster still sees the toggle. We read
+  // the live ai_enabled state; a 503 (builder not configured) hides the card.
+  const [policy, billing, aiSettings] = await Promise.all([
+    api.getOrgPolicy().catch(() => ({
+      allow_external_sharing: false,
+      mcp_enabled: true,
+      require_mfa: false,
+    })),
+    api
+      .getBilling()
+      .then((b) => ({ tier: b.plan_tier ?? "free", selfHost: false }))
+      // A 404 is the OSS/self-host signature (no billing service → unlimited);
+      // any OTHER failure is a transient blip and must NOT be mistaken for
+      // self-host, or a free-tier cloud org would briefly see gated features
+      // unlocked.
+      .catch((err) => ({
+        tier: null,
+        selfHost: err instanceof ApiError && err.status === 404,
+      })),
+    api.getAIOrgSettings().catch(() => null),
+  ]);
   const allowExternalSharing = policy.allow_external_sharing;
   const mcpEnabled = policy.mcp_enabled;
-
-  // The AI builder card is shown ONLY on a paid plan (the builder requires one,
-  // so a free org has nothing to toggle). getBilling 404s on OSS/self-host, which
-  // is unlimited → treat as paid so a self-hoster still sees the toggle. We read
-  // the live ai_enabled state; a 503 (builder not configured) hides the card.
-  const planTier = await api
-    .getBilling()
-    .then((b) => b.plan_tier ?? "free")
-    .catch(() => "pro"); // OSS/self-host: unlimited, show the toggle
-  const aiSettings = await api.getAIOrgSettings().catch(() => null);
+  const requireMfa = policy.require_mfa;
+  const planTier = billing.tier ?? "pro"; // billing unavailable: show the AI toggle
   const showAiBuilder = planTier !== "free" && aiSettings !== null;
+
+  // MFA enforcement is business/enterprise; self-host (no billing) is unlimited
+  // so the toggle shows there too. A transient billing error fails CLOSED to the
+  // upgrade CTA (the switch would only 402 anyway). This gate is UI convenience —
+  // the Go API re-checks the tier on the write.
+  const mfaEnforceEligible =
+    billing.selfHost || billing.tier === "business" || billing.tier === "enterprise";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -152,6 +173,46 @@ export default async function OrgSettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Org MFA enforcement (business/enterprise) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="size-4 text-muted-foreground" aria-hidden />
+            Two-factor authentication
+          </CardTitle>
+          <CardDescription>
+            Anyone can turn on two-factor for their own account under Account
+            security. On Business and Enterprise plans, owners and admins can
+            make it mandatory for every member of this organization.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <RequireMfaToggle
+            initialEnabled={requireMfa}
+            canManage={manage}
+            eligible={mfaEnforceEligible}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Account security shortcut (per-user, not org policy) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <KeyRound className="size-4 text-muted-foreground" aria-hidden />
+            Your account security
+          </CardTitle>
+          <CardDescription>
+            Two-factor authentication and backup codes for your own account.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline">
+            <Link href="/account/security">Manage account security</Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Members shortcut */}
       <Card>

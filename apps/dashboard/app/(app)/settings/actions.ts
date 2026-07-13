@@ -72,6 +72,48 @@ export async function setMcpEnabledAction(input: {
   }
 }
 
+export type RequireMfaActionResult =
+  | { ok: true; requireMfa: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Toggle org-wide MFA enforcement (owner/admin only → the Go API re-checks the
+ * role and 403s otherwise; enabling is additionally tier-gated → 402 with the
+ * upgrade body). Enforcement is next-request: unenrolled members are locked
+ * into the two-factor setup flow the next time they load the dashboard.
+ */
+export async function setRequireMfaAction(input: {
+  enabled: boolean;
+}): Promise<RequireMfaActionResult> {
+  try {
+    const result = await api.setRequireMfa(input.enabled);
+    revalidatePath("/settings");
+    return { ok: true, requireMfa: result.require_mfa };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 402) {
+        const body = err.body as { next_tier?: string } | null;
+        return {
+          ok: false,
+          message: `Requiring two-factor is available on the ${
+            body?.next_tier === "business" ? "Business" : "Business and Enterprise"
+          } plan${body?.next_tier === "business" ? " and up" : "s"}. Upgrade to enable it.`,
+        };
+      }
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      if (apiMsg) return { ok: false, message: apiMsg };
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can change this requirement.",
+        };
+      }
+      return { ok: false, message: "Could not update the requirement. Try again." };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 export type AiBuilderActionResult =
   | { ok: true; aiEnabled: boolean }
   | { ok: false; message: string };

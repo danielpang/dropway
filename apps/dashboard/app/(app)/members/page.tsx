@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { mfaEnabledByUser } from "@/lib/mfa-server";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const metadata: Metadata = { title: "Members" };
@@ -45,12 +46,21 @@ export default async function MembersPage() {
 
   // Logical storage per user (each member's sites' current-version sizes), keyed by
   // user id for the member rows. Best-effort: a failure just renders everyone at 0.
-  const storageByUser = await api
-    .storageUsage()
-    .then((rows) =>
-      Object.fromEntries(rows.map((r) => [r.user_id ?? "", r.bytes ?? 0])),
-    )
-    .catch(() => ({}) as Record<string, number>);
+  // Two independent reads in parallel: per-member storage, and per-member
+  // two-factor status (admins only — it drives the 2FA badge + the reset
+  // control; plain members don't see other people's security posture). Both
+  // best-effort: a failure renders zeros / hides the column, never errors.
+  const [storageByUser, mfaByUser] = await Promise.all([
+    api
+      .storageUsage()
+      .then((rows) =>
+        Object.fromEntries(rows.map((r) => [r.user_id ?? "", r.bytes ?? 0])),
+      )
+      .catch(() => ({}) as Record<string, number>),
+    manage
+      ? mfaEnabledByUser(org.members.map((m) => m.userId)).catch(() => undefined)
+      : Promise.resolve(undefined),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -102,7 +112,9 @@ export default async function MembersPage() {
             organizationId={org.organizationId}
             myUserId={org.myUserId}
             canManage={manage}
+            myRole={org.myRole}
             storageByUser={storageByUser}
+            mfaByUser={mfaByUser}
           />
         </CardContent>
       </Card>

@@ -46,6 +46,7 @@ func mountAccess(a *API, c *auth.Claims) http.Handler {
 		r.Put("/v1/orgs/allow-external-sharing", a.SetAllowExternalSharing)
 		r.Get("/v1/orgs/policy", a.GetOrgPolicy)
 		r.Patch("/v1/orgs/mcp", a.SetMcpEnabled)
+		r.Patch("/v1/orgs/require-mfa", a.SetRequireMfa)
 		r.Put("/v1/sites/{id}/access", a.SetSiteAccess)
 		r.Post("/v1/sites/{id}/allowlist", a.AddAllowlistEntry)
 		r.Delete("/v1/sites/{id}/allowlist", a.RemoveAllowlistEntry)
@@ -424,6 +425,64 @@ func TestGetOrgPolicy_IncludesMcpEnabled(t *testing.T) {
 	// Default org → MCP enabled; any member may read it.
 	if got := rr.Body.String(); !strings.Contains(got, `"mcp_enabled":true`) {
 		t.Fatalf("policy body = %s, want mcp_enabled:true", got)
+	}
+}
+
+// --- MFA enforcement toggle (PATCH /v1/orgs/require-mfa) ---
+
+func TestSetRequireMfa_MemberForbidden(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleMember
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccess(a, claims("user_1", "org_1", "member"))
+	rr := patchJSON(h, "/v1/orgs/require-mfa", `{"enabled":true}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rr.Code)
+	}
+	if fs.p2().requireMfa {
+		t.Fatal("member was able to flip require_mfa")
+	}
+}
+
+func TestSetRequireMfa_AdminTogglesOnAndOff(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleAdmin
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccess(a, claims("user_1", "org_1", "admin"))
+
+	rr := patchJSON(h, "/v1/orgs/require-mfa", `{"enabled":true}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("enable status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Body.String(); !strings.Contains(got, `"require_mfa":true`) {
+		t.Fatalf("enable body = %s, want require_mfa:true", got)
+	}
+	if !fs.p2().requireMfa {
+		t.Fatal("enable did not persist")
+	}
+
+	rr = patchJSON(h, "/v1/orgs/require-mfa", `{"enabled":false}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("disable status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if fs.p2().requireMfa {
+		t.Fatal("disable did not persist")
+	}
+}
+
+func TestGetOrgPolicy_IncludesRequireMfa(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleMember
+	a := NewFull(quota.Unlimited{}, fs, nil, nil)
+	h := mountAccess(a, claims("user_1", "org_1", "member"))
+	rr := getReq(h, "/v1/orgs/policy")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	// Default org → enforcement off; any member may read it (the enforcement
+	// check runs for every member's dashboard requests, not just admins').
+	if got := rr.Body.String(); !strings.Contains(got, `"require_mfa":false`) {
+		t.Fatalf("policy body = %s, want require_mfa:false", got)
 	}
 }
 

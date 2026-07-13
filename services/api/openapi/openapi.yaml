@@ -242,6 +242,7 @@ paths:
                 properties:
                   allow_external_sharing: { type: boolean }
                   mcp_enabled: { type: boolean }
+                  require_mfa: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /v1/orgs/mcp:
@@ -272,6 +273,39 @@ paths:
                 properties:
                   mcp_enabled: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/orgs/require-mfa:
+    patch:
+      summary: Toggle org-wide MFA enforcement (admin/owner only; business/enterprise)
+      description: >
+        Owner/admin only (role re-checked against the member table). Flips
+        org_meta.require_mfa. Enabling is tier-gated (business/enterprise; a
+        free/pro org receives 402 with the standard upgrade body); disabling
+        always succeeds so a downgraded org can turn it off. Enforcement is
+        next-request in the dashboard: members without two-factor enrolled are
+        locked into the setup flow. Default disabled.
+      operationId: setRequireMfa
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new require_mfa value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  require_mfa: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/domains/{domainID}:

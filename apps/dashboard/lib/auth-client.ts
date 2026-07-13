@@ -4,15 +4,21 @@ import { createAuthClient } from "better-auth/react";
 import {
   magicLinkClient,
   organizationClient,
+  twoFactorClient,
 } from "better-auth/client/plugins";
 import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 
 /**
  * Better Auth React client. The client plugins must mirror the server plugins
- * (lib/auth.ts) that expose client-callable actions: organization, magic link, and
- * the OAuth provider (its `oauth2.consent` action backs the MCP "Authorize" page).
- * The jwt plugin has no client surface (tokens are minted server-side / fetched
- * from the session), so it is intentionally omitted here.
+ * (lib/auth.ts) that expose client-callable actions: organization, magic link,
+ * two-factor, and the OAuth provider (its `oauth2.consent` action backs the MCP
+ * "Authorize" page). The jwt plugin has no client surface (tokens are minted
+ * server-side / fetched from the session), so it is intentionally omitted here.
+ *
+ * twoFactorClient is configured WITHOUT onTwoFactorRedirect: the sign-in form
+ * (components/auth/auth-form.tsx) checks the response's twoFactorRedirect flag
+ * itself so it can carry its callbackURL to /two-factor as ?next=, which a
+ * global redirect callback has no way to know.
  */
 const baseURL =
   process.env.NEXT_PUBLIC_BETTER_AUTH_URL ??
@@ -21,7 +27,12 @@ const baseURL =
 
 export const authClient = createAuthClient({
   baseURL,
-  plugins: [organizationClient(), magicLinkClient(), oauthProviderClient()],
+  plugins: [
+    organizationClient(),
+    magicLinkClient(),
+    twoFactorClient(),
+    oauthProviderClient(),
+  ],
 });
 
 /**
