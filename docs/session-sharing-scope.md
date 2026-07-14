@@ -6,17 +6,25 @@ How "Share This Session" (PRD 2) is packaged across plan tiers, and what the
 free tier's caps are. This is the pricing/entitlement scope for the feature;
 the product shape is summarized only far enough to make the levers concrete.
 
-**Feature recap.** Every site carries an optional **append-only chat log**:
-the conversation that produced the artifact, pasted or uploaded from Claude
-Code, ChatGPT, Cursor, or plain text — via dashboard, MCP, or CLI. Viewers of
-the site see a collapsible **"How this was made"** panel rendering the log.
-There is no separate "session" object to create, attach, or manage: messages
-are appended to the site's one log, each message is stamped with the site's
-current deploy version at append time (so the panel can group the history by
-version), and the log inherits the site's access tier (public / password /
-allowlist / org) — a gated site's log is exactly as gated as the site itself.
-A log can also stand alone, with no deployed artifact at all: a **chat-only
-site** whose page *is* the transcript (see *Standalone chat logs* below).
+**Feature recap.** A **chat log** is a first-class org object: an append-only
+conversation history, pasted or uploaded from Claude Code, ChatGPT, Cursor,
+or plain text — via dashboard, MCP, or CLI. **Site attachment is optional and
+re-pointable.** A log can be:
+
+- **Attached to a site** — viewers of the site see a collapsible **"How this
+  was made"** panel rendering the log, served under the site's access tier
+  (public / password / allowlist / org). While attached, each appended
+  message is stamped with the site's current deploy version, so the panel
+  groups history by version. One attached log per site.
+- **Unattached** — an org-internal conversation in the dashboard's chat
+  library: browsable by the org, appendable, but with no viewer surface
+  until it's attached to a site or published standalone.
+- **Published standalone** — shared without any deployed artifact by
+  attaching it to a **chat-only site** whose page *is* the transcript (see
+  *Standalone publishing* below).
+
+Attach, detach, and move are metadata operations on the log; the messages
+never copy or migrate.
 
 ## Packaging principle: free gets the feature, paid gets the depth
 
@@ -33,7 +41,7 @@ Session sharing should **not** be paid-only. Two reasons:
    paid pitch ("full iteration history for client handoffs, with access
    control") is the professional layer on top.
 
-So: the lever is **log depth** — how much history a site's log holds. The
+So: the lever is **log depth** — how much history a chat log holds. The
 bands deliberately mirror the site-count bands (Free 10 → Pro 100 →
 Business/Enterprise unlimited), so the pricing story stays one sentence:
 "free keeps your last 10 messages, Pro holds 100, Business is uncapped."
@@ -42,11 +50,13 @@ Business/Enterprise unlimited), so the pricing story stays one sentence:
 
 | Lever | Free | Pro ($25) | Business ($150) | Enterprise |
 | --- | --- | --- | --- | --- |
-| Append to the log (dashboard, MCP, CLI) | ✅ | ✅ | ✅ | ✅ |
-| **Log depth per site** | **Rolling last 10** (older rows auto-pruned) | **100 hard cap** (402 past it) | Unlimited | Unlimited |
+| Create/append logs (dashboard, MCP, CLI) | ✅ | ✅ | ✅ | ✅ |
+| **Messages per chat log** | **Rolling last 10** (older rows auto-pruned) | **100 hard cap** (402 past it) | Unlimited | Unlimited |
+| Chat logs per org | Unlimited (dormant seam) | Unlimited | Unlimited | Unlimited |
+| Attach / detach / move between sites | ✅ | ✅ | ✅ | ✅ |
+| Standalone publishing (chat-only site) | ✅ (counts toward the 10-site cap) | ✅ (100-site cap) | Unlimited | Unlimited |
 | Message size (validation, all tiers) | 64 KiB | 64 KiB | 64 KiB | 64 KiB |
 | Per-version grouping in the panel | ✅ | ✅ | ✅ | ✅ |
-| Standalone chat-only sites | ✅ (counts toward the 10-site cap) | ✅ (100-site cap) | ✅ | ✅ |
 | "Shared via Dropway" attribution on panel | Always on | Removable | Removable | Removable |
 | Access-control inheritance | ✅ | ✅ | ✅ | ✅ |
 | Org kill switch (`chat_log_enabled`) | ✅ | ✅ | ✅ | ✅ |
@@ -55,7 +65,7 @@ Notes on each lever:
 
 - **Free is a rolling window, not a wall.** Appends on the free tier never
   fail: inserting past 10 deletes the oldest rows in the same transaction,
-  so the log always holds the newest 10 messages. This is deliberate
+  so a log always holds its newest 10 messages. This is deliberate
   first-run UX — a pasted 50-message conversation imports cleanly (newest 10
   kept) instead of erroring, and the trimmed remainder becomes the upgrade
   pitch ("keep your full history" → Pro). Pruning is disclosed, never
@@ -68,85 +78,102 @@ Notes on each lever:
   (`next_tier: business`) and chooses to delete or upgrade. Owners/admins
   can delete individual messages on any tier (mistakes, pasted secrets),
   which frees Pro cap slots.
+- **Logs per org is uncapped with a dormant seam.** `ResourceChatLogPerOrg`
+  exists but returns unlimited on every tier (the `ResourceSkillPerOrg`
+  pattern), because per-log content is already tightly bounded
+  (window/cap × 64 KiB) and the viewer-facing surfaces are bounded by the
+  site caps. The seam means abuse of the unattached library can be
+  tightened in the provider without a store or handler change.
 - **Message size is validation, not a tier lever.** 64 KiB per message on
-  every tier keeps any single append bounded (and the whole free/pro log
+  every tier keeps any single append bounded (and a whole free/pro log
   under ~640 KiB / 6.4 MiB worst-case) without introducing a second
   purchasable axis. Two overlapping paid levers on one feature muddy the
   upgrade story.
-- **Version stamping is universal.** Each message records the site's
-  `current_version_id` at append time. The panel groups messages by the
-  version they accompanied, and rolling back a site still shows an honest
-  history (the log narrates the whole journey rather than being pinned to
-  one deploy). This keeps the PRD's "context of how it was made" promise on
-  every tier — the paid tiers buy *depth*, not honesty.
+- **Version stamping happens while attached.** Each message appended while
+  the log is attached records the site's `current_version_id`; messages
+  appended unattached (or on a chat-only site) stamp NULL. The panel groups
+  by stamp, and rolling back a site still shows an honest history — the log
+  narrates the whole journey rather than being pinned to one deploy. Depth
+  is what paid tiers buy, not honesty.
 - **Attribution.** Reuses the `RouteValue.plan_tier` plumbing the free-tier
   site banner already uses; no new serving-side state.
-- **Not levers.** Access-control inheritance is inherent to serving the panel
-  under the site's existing authz — gating it per-tier would ship a *less*
-  safe free product, so it's universal. The org kill switch is governance,
-  and governance toggles (like `mcp_enabled`) are free on every tier. Ingest
-  surfaces (dashboard/MCP/CLI) are universal because the append contract is
-  shared; gating a surface would fork client code, not policy.
+- **Not levers.** Attach/detach/move is metadata, universal. Access-control
+  inheritance is inherent to serving the panel under the site's existing
+  authz — gating it per-tier would ship a *less* safe free product, so it's
+  universal. The org kill switch is governance, and governance toggles
+  (like `mcp_enabled`) are free on every tier. Ingest surfaces
+  (dashboard/MCP/CLI) are universal because the append contract is shared;
+  gating a surface would fork client code, not policy.
 
 ## Data & API shape (summary)
 
-One new RLS-scoped tenant table, `app.site_chat_messages` — append-heavy
-rows like `ai_messages`, not a content-addressed blob: `(id, org_id,
-site_id, seq, version_id, created_by, source_tool, role, content,
-created_at)` with `UNIQUE (site_id, seq)`. `seq` stays monotonic across
-pruning (it never reuses numbers), so clients can page stably and the panel
-can say "messages 41–50 of a longer conversation." The API is a plain
-append/list pair — `POST /v1/sites/{id}/chat` (single message or a batch
-import from a pasted export, parsed by an `internal/chatspec` normalizer),
-`GET /v1/sites/{id}/chat` (paginated), `DELETE /v1/sites/{id}/chat/{seq}` —
-plus an MCP `append_chat` tool (OAuth-forwarding, like `deploy_site`) and
-`dropway chat append` in the CLI. Viewers never touch the Go API: the
-serving Worker exposes the log at a reserved path on the site's own host
-(`/__dropway/chat`), resolved through the same KV-rebuildable-from-Postgres
-route projection and the same authz as every other asset — which is what
-makes "no Claude account needed to view" true.
+Two new RLS-scoped tenant tables:
 
-## Standalone chat logs — a chat is just a site
+- **`app.chat_logs`** — the aggregate: `(id, org_id, site_id NULLABLE →
+  app.sites, title, source_tool, created_by, created_at)`, with a partial
+  unique index on `site_id` (one attached log per site). Attach/detach/move
+  is an UPDATE of `site_id`; nothing else moves.
+- **`app.chat_messages`** — **one message per row**, append-heavy like
+  `ai_messages`: `(id, org_id, chat_log_id, seq, version_id NULLABLE,
+  created_by, role, content, created_at)` with `UNIQUE (chat_log_id, seq)`.
+  `seq` stays monotonic across pruning (numbers are never reused), so
+  clients page stably and the panel can say "messages 41–50 of a longer
+  conversation."
+
+API — logs are the primary resource, with a site-scoped convenience:
+
+- `POST /v1/chats` — create a log, optionally with `site_id` and an inline
+  batch import (a pasted export, parsed by the `internal/chatspec`
+  normalizer, which flattens tool-call noise so raw JSONL events don't burn
+  message slots).
+- `POST /v1/chats/{id}/messages` (single or batch append), `GET
+  /v1/chats/{id}` + `/messages` (paginated), `DELETE
+  /v1/chats/{id}/messages/{seq}`, `DELETE /v1/chats/{id}`.
+- `PUT /v1/chats/{id}/site` `{site_id | null}` — attach / detach / move
+  (audit-logged; rejects a site that already has a log attached).
+- `GET /v1/sites/{id}/chat` — convenience read of the attached log;
+  `POST /v1/sites/{id}/chat` appends to it (creating one if absent), which
+  keeps the deploy-then-attach flow one call for agents.
+- **MCP** `share_chat` (create/import, optional site binding) and
+  `append_chat`, both OAuth-forwarding like `deploy_site`; **CLI**
+  `dropway chat share <file> [--site <name>]`, `chat append`, `chat attach
+  --site <name>`, `chat detach`.
+
+Viewers never touch the Go API: the serving Worker exposes the attached
+log at a reserved path on the site's own host (`/__dropway/chat`), resolved
+through the same KV-rebuildable-from-Postgres route projection and the same
+authz as every other asset — which is what makes "no Claude account needed
+to view" true. An unattached log has no viewer surface at all; it is
+dashboard/API-only until attached or published.
+
+## Standalone publishing — a published chat is just a site
 
 Sharing a conversation that isn't attached to any deployed artifact does NOT
-introduce a second shareable object. It reuses the site: `app.sites` gains a
-`kind` column (`'site'` default, `'chat'`), and a chat-only site is an
-ordinary site row with zero deploys whose serving path renders the log as the
-whole page. Concretely:
-
-- **Creation:** `dropway chat share <export-file>` (CLI) and a `share_chat`
-  MCP tool do create-site(kind=chat) + batch append in one step and return
-  the live URL; the dashboard offers "Share a conversation" alongside "New
-  site." The same `chatspec` normalizer parses the export.
-- **Serving:** the Worker already special-cases the log at
-  `/__dropway/chat`; for `kind='chat'` sites it serves a built-in transcript
-  page at `/` (no user deploy exists, so there is nothing else to route).
-  Messages' `version_id` stamps are simply NULL — there are no versions.
-- **Everything inherited, nothing duplicated:** the four access tiers,
-  edge authz + instant revocation, custom domains, the org feed
-  (votes/comments — chat posts render like site posts with a kind badge),
-  audit logging, and the org kill switch all apply because a chat *is* a
-  site. Building a separate "shared transcript" object would have meant
-  re-implementing each of those surfaces.
-- **Quota needs zero new resources:** a chat-only site counts toward the
-  existing `sites_per_org` bands (free 10 / pro 100 / business+
-  unlimited), and its log obeys the same per-site message bands above
-  (free rolling-10 / pro 100 / unlimited). The two levers compose: a free
-  org gets up to 10 shares total — artifacts or conversations — each
-  carrying its last 10 messages. Later attachment is trivial: deploying
-  files to a chat site just flips it into a normal site with its history
-  already in place.
+introduce a second serving/access surface. `app.sites` gains a `kind` column
+(`'site'` default, `'chat'`): publishing a standalone log creates a site row
+with zero deploys, attaches the log to it, and the Worker serves a built-in
+transcript page at `/` (there is no user deploy to route). Everything is
+inherited — the four access tiers, edge authz + instant revocation, custom
+domains, the org feed (chat posts render like site posts with a kind badge),
+audit, and the kill switch — because a published chat *is* a site. It counts
+toward the existing `sites_per_org` bands (free 10 / pro 100 / business+
+unlimited), so quota composes with zero new resources: a free org gets up to
+10 shares total — artifacts or conversations — each carrying its last 10
+messages. Deploying files to a chat-only site later flips it into a normal
+site with its history already attached, and detaching the log from any site
+returns it to the unattached library with its messages intact.
 
 ## Enforcement mechanics (small seam extension + existing patterns)
 
-- **One new resource in `internal/quota`:** `ResourceChatMessagePerSite`
-  (discrete). Bands live in `cloud/quota` behind the `cloud` build tag; the
-  FSL core never sees them.
+- **Resources in `internal/quota`:** `ResourceChatMessagePerLog` (discrete,
+  the active lever) and `ResourceChatLogPerOrg` (dormant, unlimited on every
+  tier). Bands live in `cloud/quota` behind the `cloud` build tag; the FSL
+  core never sees them.
 - **The seam gains one method** for window semantics: alongside
   `Allow`/`AllowN`, the provider exposes `RetentionWindow(planTier, res)
   (n int64, ok bool)`. Cloud returns `(10, true)` for free; every paid tier
   and the core `Unlimited` provider return `ok=false`. The store's append
-  transaction, under the per-site advisory lock, does: window set → INSERT
+  transaction, under a per-log advisory lock, does: window set → INSERT
   then DELETE rows beyond the newest `n`; no window → COUNT →
   `AllowN(current, n)` → INSERT (the standard 402 path, which is how Pro's
   100-cap fires). Policy stays pure and unit-testable; the DB mechanics stay
@@ -162,9 +189,9 @@ whole page. Concretely:
 - **Downgrade prunes lazily, not retroactively.** Dropping from a paid tier
   with a >10-message log does NOT delete anything at downgrade time — links
   a client was already sent keep working. The window applies on the *next
-  append*, which prunes to the newest 10 like any free append. Same "binds
-  on next action" posture as the site-count downgrade.
-- **Storage accounting:** message rows live in Postgres (bounded by
+  append* to that log, which prunes to the newest 10 like any free append.
+  Same "binds on next action" posture as the site-count downgrade.
+- **Storage accounting:** message rows live in Postgres (bounded per log by
   window/cap × 64 KiB); no blob-store or storage-meter involvement.
 
 ## Upgrade moments
@@ -183,9 +210,9 @@ whole page. Concretely:
 Per-viewer log analytics ("who read the history") as a Business upsell —
 plumbing exists via the access audit log but the panel should earn usage
 first; per-org message pools or storage metering for chat rows (bounded and
-too cheap to meter); pinning logs to a single deploy version (the append
-log narrates all versions; per-message version stamps cover grouping);
-recovering pruned free-tier rows after an upgrade (pruned means deleted —
-the importer said so at trim time); and any self-host restriction — OSS
-builds use the core `Unlimited` provider and get everything, uncapped, per
-the open-core boundary.
+too cheap to meter); multiple logs attached to one site (one panel, one
+story — the library holds the rest); pinning logs to a single deploy version
+(per-message version stamps cover grouping); recovering pruned free-tier
+rows after an upgrade (pruned means deleted — the importer said so at trim
+time); and any self-host restriction — OSS builds use the core `Unlimited`
+provider and get everything, uncapped, per the open-core boundary.
