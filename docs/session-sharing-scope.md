@@ -163,6 +163,55 @@ messages. Deploying files to a chat-only site later flips it into a normal
 site with its history already attached, and detaching the log from any site
 returns it to the unattached library with its messages intact.
 
+## Viewer UI — one renderer, two surfaces
+
+The transcript viewer is a single self-contained page the Worker serves at
+`/__dropway/chat`, and both viewing surfaces are that page:
+
+- **On a deployed site**, the Worker (HTMLRewriter, only for `text/html`
+  responses of sites with an attached log) injects one small deferred
+  script before `</body>`. It renders a floating **"✨ How this was made"**
+  pill in the corner; clicking it slides in a right-side drawer (bottom
+  sheet on mobile) whose body is an `<iframe>` of `/__dropway/chat` on the
+  same host — so the site's authz token/cookie applies to the transcript
+  automatically and the artifact's own DOM/CSS is never touched beyond the
+  pill. `Esc` or a backdrop click closes it; the pill honors
+  `prefers-reduced-motion`. Site owners can switch the panel off per site
+  (`chat_panel_enabled`) without detaching the log.
+- **On a chat-only site**, the same page *is* `/` — no pill, no drawer,
+  just the full-width transcript.
+
+The transcript page itself:
+
+- **Conversation layout, not a log dump.** Role-distinct bubbles (user
+  right-aligned on an accent tint, assistant left on neutral; the
+  `source_tool` shows once as a header badge — "Claude Code", "ChatGPT",
+  "Cursor" — not per message), relative timestamps, and a sticky header
+  with the log title and message count.
+- **Version dividers.** Where consecutive messages' `version_id` stamps
+  differ, a divider line reads "↑ deployed as v3" — the iteration story the
+  PRD is about, visible at a glance. NULL stamps (unattached/chat-only
+  appends) simply omit dividers.
+- **Markdown, safely.** Message content renders through the same
+  dependency-free, escape-first renderer pattern as `lib/markdown.ts` —
+  this page is served on the untrusted-content domain under its strict
+  CSP, so it must be fully self-contained: inline CSS, no external fonts,
+  scripts, or fetches, light/dark via `prefers-color-scheme`. Code blocks
+  get a monospace treatment with a copy button; long messages and bulky
+  tool output collapse behind "show more."
+- **Shareable positions.** Each message anchors as `#msg-<seq>`, so "look
+  at message 41" is a link; the header offers "copy as Markdown" for the
+  whole visible transcript.
+- **Tier surface, unchanged from the matrix:** the only tier-dependent UI
+  is the footer — free shows the "Shared via Dropway" attribution and the
+  "showing the last 10 messages" note; paid shows neither. The viewer is
+  otherwise identical on every plan: polish is not a lever, depth is.
+
+The dashboard's chat library reuses the same rendering component inside the
+app (where it can be richer — search, delete-message affordances, attach/
+detach controls) but the served viewer stays the minimal, dependency-free
+build above.
+
 ## Enforcement mechanics (small seam extension + existing patterns)
 
 - **Resources in `internal/quota`:** `ResourceChatMessagePerLog` (discrete,
