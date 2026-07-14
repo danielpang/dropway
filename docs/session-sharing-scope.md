@@ -31,17 +31,17 @@ Session sharing should **not** be paid-only. Two reasons:
    paid pitch ("full iteration history for client handoffs, with access
    control") is the professional layer on top.
 
-So: the lever is **log depth** — how many messages a site's log may hold.
-The bands deliberately mirror the site-count bands (Free 10 → Pro 100 →
+So: the lever is **log depth** — how much history a site's log holds. The
+bands deliberately mirror the site-count bands (Free 10 → Pro 100 →
 Business/Enterprise unlimited), so the pricing story stays one sentence:
-"free is for trying it, Pro is for working, Business is uncapped."
+"free keeps your last 10 messages, Pro holds 100, Business is uncapped."
 
 ## Tier matrix
 
 | Lever | Free | Pro ($25) | Business ($150) | Enterprise |
 | --- | --- | --- | --- | --- |
 | Append to the log (dashboard, MCP, CLI) | ✅ | ✅ | ✅ | ✅ |
-| **Messages per site log** | **10** | **100** | Unlimited | Unlimited |
+| **Log depth per site** | **Rolling last 10** (older rows auto-pruned) | **100 hard cap** (402 past it) | Unlimited | Unlimited |
 | Message size (validation, all tiers) | 64 KiB | 64 KiB | 64 KiB | 64 KiB |
 | Per-version grouping in the panel | ✅ | ✅ | ✅ | ✅ |
 | "Shared via Dropway" attribution on panel | Always on | Removable | Removable | Removable |
@@ -50,14 +50,21 @@ Business/Enterprise unlimited), so the pricing story stays one sentence:
 
 Notes on each lever:
 
-- **Messages per site (the one countable lever).** The cap counts the rows
-  currently in the site's log; owners/admins may delete individual messages
-  (mistakes, pasted secrets), and deletion frees slots. 10 messages is enough
-  for a hand-written "here's roughly how I made this" summary; a real
-  multi-hour agent transcript needs Pro's 100; agencies narrating every
-  client iteration go Business. Same graduated shape as the site cap, so the
-  402s escalate the same way: free → `next_tier: pro`, pro →
-  `next_tier: business`.
+- **Free is a rolling window, not a wall.** Appends on the free tier never
+  fail: inserting past 10 deletes the oldest rows in the same transaction,
+  so the log always holds the newest 10 messages. This is deliberate
+  first-run UX — a pasted 50-message conversation imports cleanly (newest 10
+  kept) instead of erroring, and the trimmed remainder becomes the upgrade
+  pitch ("keep your full history" → Pro). Pruning is disclosed, never
+  silent: the importer reports what was trimmed, and the free panel footer
+  notes "showing the last 10 messages."
+- **Paid tiers never auto-delete — that's why Pro is a hard cap.** The
+  asymmetry is intentional: silently pruning a *paying* customer's shipped
+  history is worse than a wall. Free trades disclosure-based pruning for a
+  frictionless feature; Pro gets an explicit 402 at the 101st message
+  (`next_tier: business`) and chooses to delete or upgrade. Owners/admins
+  can delete individual messages on any tier (mistakes, pasted secrets),
+  which frees Pro cap slots.
 - **Message size is validation, not a tier lever.** 64 KiB per message on
   every tier keeps any single append bounded (and the whole free/pro log
   under ~640 KiB / 6.4 MiB worst-case) without introducing a second
@@ -66,9 +73,9 @@ Notes on each lever:
 - **Version stamping is universal.** Each message records the site's
   `current_version_id` at append time. The panel groups messages by the
   version they accompanied, and rolling back a site still shows an honest
-  history (the log is append-only; it narrates the whole journey rather than
-  being pinned to one deploy). This keeps the PRD's "context of how it was
-  made" promise on every tier — the paid tiers buy *depth*, not honesty.
+  history (the log narrates the whole journey rather than being pinned to
+  one deploy). This keeps the PRD's "context of how it was made" promise on
+  every tier — the paid tiers buy *depth*, not honesty.
 - **Attribution.** Reuses the `RouteValue.plan_tier` plumbing the free-tier
   site banner already uses; no new serving-side state.
 - **Not levers.** Access-control inheritance is inherent to serving the panel
@@ -83,67 +90,68 @@ Notes on each lever:
 One new RLS-scoped tenant table, `app.site_chat_messages` — append-heavy
 rows like `ai_messages`, not a content-addressed blob: `(id, org_id,
 site_id, seq, version_id, created_by, source_tool, role, content,
-created_at)` with `UNIQUE (site_id, seq)`. The API is a plain append/list
-pair — `POST /v1/sites/{id}/chat` (single message or a batch import from a
-pasted export, parsed by an `internal/chatspec` normalizer), `GET
-/v1/sites/{id}/chat` (paginated), `DELETE /v1/sites/{id}/chat/{seq}` — plus
-an MCP `append_chat` tool (OAuth-forwarding, like `deploy_site`) and
+created_at)` with `UNIQUE (site_id, seq)`. `seq` stays monotonic across
+pruning (it never reuses numbers), so clients can page stably and the panel
+can say "messages 41–50 of a longer conversation." The API is a plain
+append/list pair — `POST /v1/sites/{id}/chat` (single message or a batch
+import from a pasted export, parsed by an `internal/chatspec` normalizer),
+`GET /v1/sites/{id}/chat` (paginated), `DELETE /v1/sites/{id}/chat/{seq}` —
+plus an MCP `append_chat` tool (OAuth-forwarding, like `deploy_site`) and
 `dropway chat append` in the CLI. Viewers never touch the Go API: the
 serving Worker exposes the log at a reserved path on the site's own host
 (`/__dropway/chat`), resolved through the same KV-rebuildable-from-Postgres
 route projection and the same authz as every other asset — which is what
 makes "no Claude account needed to view" true.
 
-## Enforcement mechanics (all existing patterns)
+## Enforcement mechanics (small seam extension + existing patterns)
 
 - **One new resource in `internal/quota`:** `ResourceChatMessagePerSite`
-  (discrete). Bands live in `cloud/quota` behind the `cloud` build tag —
-  free 10, pro 100, business/enterprise unlimited — and the FSL core never
-  sees them.
-- **Race-safe check in the store:** per-site advisory lock across
-  COUNT(messages) → `AllowN(current, n)` → INSERT inside the append
-  transaction — byte-for-byte the site/skill cap pattern. Batch imports pass
-  `n` = messages in the batch, so a paste either fits entirely or 402s
-  before any row lands (no partially-imported conversations).
-- **Standard 402:** crossing a cap returns the existing `ExceededError`
-  body (`{limit, current, max, plan_tier, next_tier, upgrade_url}`), which
-  the dashboard's upgrade modal, the CLI's upgrade message, and MCP error
-  mapping already understand. Zero new client error-handling.
-- **Downgrade never breaks shipped links.** Dropping to a tier whose cap the
-  log already exceeds leaves every existing message viewable — we never
-  truncate an artifact a client was sent. The cap binds only on the *next
-  append*: new messages are 402'd until deletions bring the log under the
-  band. Same posture as the site-count downgrade.
-- **Storage accounting:** message rows live in Postgres (they are small and
-  bounded by cap × 64 KiB); no blob-store or storage-meter involvement.
+  (discrete). Bands live in `cloud/quota` behind the `cloud` build tag; the
+  FSL core never sees them.
+- **The seam gains one method** for window semantics: alongside
+  `Allow`/`AllowN`, the provider exposes `RetentionWindow(planTier, res)
+  (n int64, ok bool)`. Cloud returns `(10, true)` for free; every paid tier
+  and the core `Unlimited` provider return `ok=false`. The store's append
+  transaction, under the per-site advisory lock, does: window set → INSERT
+  then DELETE rows beyond the newest `n`; no window → COUNT →
+  `AllowN(current, n)` → INSERT (the standard 402 path, which is how Pro's
+  100-cap fires). Policy stays pure and unit-testable; the DB mechanics stay
+  in the store.
+- **Batch imports** pass `n` = messages in the batch. On free the whole
+  batch lands and pruning keeps the newest 10; on Pro the batch either fits
+  entirely or 402s before any row lands (no partially-imported
+  conversations).
+- **Standard 402** (Pro only now): the existing `ExceededError` body
+  (`{limit, current, max, plan_tier, next_tier: "business", upgrade_url}`),
+  which the dashboard's upgrade modal, the CLI, and MCP error mapping
+  already understand.
+- **Downgrade prunes lazily, not retroactively.** Dropping from a paid tier
+  with a >10-message log does NOT delete anything at downgrade time — links
+  a client was already sent keep working. The window applies on the *next
+  append*, which prunes to the newest 10 like any free append. Same "binds
+  on next action" posture as the site-count downgrade.
+- **Storage accounting:** message rows live in Postgres (bounded by
+  window/cap × 64 KiB); no blob-store or storage-meter involvement.
 
-## The import-trim problem (free tier, flagged)
+## Upgrade moments
 
-A real exported conversation is almost always longer than 10 messages, so a
-free user's *first* paste will 402. The importer must handle this as UX, not
-as a dead end: on a free org, the dashboard import flow shows the parsed
-message list and lets the user pick/trim to 10 (defaulting to the user
-prompts, which carry the "what was asked" story), with the 402's upgrade CTA
-alongside — "keep the full history" links to Pro. CLI/MCP importers surface
-the same choice via a `--last N` / truncation flag rather than failing dry.
-This is the feature's highest-intent upgrade surface; it must feel like a
-choice, not a wall.
-
-## Upgrade moments (where the 402 actually fires)
-
-1. **11th message** on a free site's log → 402 `next_tier: pro` (via the
-   trim UX above when it's an import).
-2. **101st message** on a Pro site's log → 402 `next_tier: business`.
-3. **Soft prompt:** the free-tier panel footer's "Shared via Dropway"
-   attribution links to the product; removing it is part of the Pro pitch.
+1. **Import trim on free:** pasting a conversation longer than 10 messages
+   succeeds, and the importer's "kept the last 10 of 47 — keep your full
+   history with Pro" notice is the feature's highest-intent CTA. The same
+   notice appears in the free panel footer.
+2. **101st message on Pro** → 402 `next_tier: business` (upgrade modal /
+   CLI upgrade message).
+3. **Soft prompt:** the free-tier panel's "Shared via Dropway" attribution
+   links to the product; removing it is part of the Pro pitch.
 
 ## Deliberate non-goals for v1 packaging
 
 Per-viewer log analytics ("who read the history") as a Business upsell —
 plumbing exists via the access audit log but the panel should earn usage
-first; per-org message pools or storage metering for chat rows (bounded by
-cap × 64 KiB, too cheap to meter); pinning logs to a single deploy version
-(the append log narrates all versions; per-message version stamps cover
-grouping); and any self-host restriction — OSS builds use the core
-`Unlimited` provider and get everything, uncapped, per the open-core
-boundary.
+first; per-org message pools or storage metering for chat rows (bounded and
+too cheap to meter); pinning logs to a single deploy version (the append
+log narrates all versions; per-message version stamps cover grouping);
+recovering pruned free-tier rows after an upgrade (pruned means deleted —
+the importer said so at trim time); and any self-host restriction — OSS
+builds use the core `Unlimited` provider and get everything, uncapped, per
+the open-core boundary.
