@@ -33,7 +33,14 @@ import (
 // "Deployed with Dropway" attribution banner. Absent → tier unknown → no banner.
 // The parse stays backward compatible (v1/v2 values are still accepted); the Go
 // API now writes v3.
-const SchemaVersion = 3
+//
+// v3 → v4: adds the optional `chat_id` field — the site's attached, panel-
+// enabled chat log (Share This Session). When present, the Worker injects the
+// "How this was made" pill into served HTML and serves the transcript page at
+// the reserved /__dropway/chat path (reading the compiled transcript JSON from
+// the chat-transcripts/<org>/<chat_id>.json object). Absent → no chat surface.
+// The parse stays backward compatible (v1–v3 values are still accepted).
+const SchemaVersion = 4
 
 // MinSchemaVersion is the oldest contract shape the parser still accepts. v1
 // values (written by a Phase-1 Go API) carry no expires_at and are read as
@@ -65,6 +72,11 @@ const (
 // to gate the free-tier "Deployed with Dropway" attribution banner. Empty → tier
 // unknown → no banner. It is `omitempty` so a paid/unknown route serializes
 // compactly and a value without it round-trips cleanly.
+// ChatID (v4) is the OPTIONAL id of the site's attached, panel-enabled chat
+// log. The Worker uses it to inject the "How this was made" pill and to
+// resolve the compiled transcript object at the reserved /__dropway/chat
+// path. Empty → no chat surface. It is `omitempty` so a chat-less route
+// serializes compactly and older values round-trip cleanly.
 type RouteValue struct {
 	OrgID         string `json:"org_id"`
 	SiteID        string `json:"site_id"`
@@ -73,6 +85,7 @@ type RouteValue struct {
 	SchemaVersion int    `json:"schema_version"`
 	ExpiresAt     string `json:"expires_at,omitempty"`
 	PlanTier      string `json:"plan_tier,omitempty"`
+	ChatID        string `json:"chat_id,omitempty"`
 }
 
 // Validate checks the value is well-formed before it can be written, mirroring

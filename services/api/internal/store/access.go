@@ -150,6 +150,13 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 			if err != nil {
 				return err
 			}
+			// Carry the attached chat log (v4 chat_id) through the rewrite —
+			// an access flip must not strip the "How this was made" panel.
+			// Preview routes stay chat-less (parity with publish/rebuild).
+			chatID, err := chatIDForSiteTx(ctx, q, p.SiteID)
+			if err != nil {
+				return err
+			}
 			for _, hr := range hostRoutes {
 				var rv projection.RouteValue
 				switch {
@@ -174,6 +181,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 						AccessMode:    p.Mode,
 						SchemaVersion: projection.SchemaVersion,
 						ExpiresAt:     expiresAt,
+						ChatID:        chatID,
 					}
 				default:
 					continue // no live version and not a preview → no route to rewrite
@@ -195,6 +203,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 					AccessMode:    p.Mode,
 					SchemaVersion: projection.SchemaVersion,
 					ExpiresAt:     expiresAt,
+					ChatID:        chatID,
 				}
 			}
 		}

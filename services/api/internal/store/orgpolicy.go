@@ -149,6 +149,12 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 			if err != nil {
 				return err
 			}
+			// The downgrade must not strip the attached chat log (v4 chat_id)
+			// from the live routes; previews stay chat-less (publish parity).
+			chatID, err := chatIDForSiteTx(ctx, q, site.ID)
+			if err != nil {
+				return err
+			}
 			for _, hr := range hostRoutes {
 				var rv projection.RouteValue
 				switch {
@@ -172,6 +178,7 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 						VersionID:     *site.CurrentVersionID,
 						AccessMode:    projection.AccessOrgOnly,
 						SchemaVersion: projection.SchemaVersion,
+						ChatID:        chatID,
 					}
 				default:
 					continue // no live version and not a preview → no route to rewrite

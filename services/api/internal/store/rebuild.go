@@ -18,7 +18,7 @@ import (
 // contract field (e.g. a future v4 field) can't be populated in one and silently
 // dropped in the other — the exact "rebuild un-sets expires_at / plan_tier" class of
 // drift this consolidates away.
-func routeValue(orgID, siteID, versionID, accessMode, expiresAt, planTier string) projection.RouteValue {
+func routeValue(orgID, siteID, versionID, accessMode, expiresAt, planTier, chatID string) projection.RouteValue {
 	return projection.RouteValue{
 		OrgID:         orgID,
 		SiteID:        siteID,
@@ -27,6 +27,7 @@ func routeValue(orgID, siteID, versionID, accessMode, expiresAt, planTier string
 		SchemaVersion: projection.SchemaVersion,
 		ExpiresAt:     expiresAt,
 		PlanTier:      planTier,
+		ChatID:        chatID,
 	}
 }
 
@@ -82,13 +83,20 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			} else if !isNoRows(perr) {
 				return perr
 			}
+			// The attached, panel-enabled chat log (v4 chat_id) must survive a
+			// rebuild exactly like expiry/plan_tier — omitting it would silently
+			// strip the "How this was made" panel from every rebuilt route.
+			chatID, err := chatIDForSiteTx(ctx, q, r.SiteID)
+			if err != nil {
+				return err
+			}
 			for _, hr := range hostRoutes {
 				// Preview rows pin their own version + deadline; they are
 				// re-projected below, NOT at the live version.
 				if hr.Kind == RouteKindPreview {
 					continue
 				}
-				routes[hr.Host] = routeValue(r.OrgID, r.SiteID, *r.VersionID, r.AccessMode, expiresAt, planTier)
+				routes[hr.Host] = routeValue(r.OrgID, r.SiteID, *r.VersionID, r.AccessMode, expiresAt, planTier, chatID)
 			}
 		}
 
@@ -113,8 +121,10 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			if p.ExpiresAt.Valid {
 				deadline = p.ExpiresAt.Time
 			}
+			// Preview hosts stay chat-less: a preview reviews a DRAFT version,
+			// and the panel narrates the live site.
 			routes[p.Host] = routeValue(p.OrgID, p.SiteID, *p.VersionID, p.AccessMode,
-				earliestExpiry(policyExpiry, deadline), planTier)
+				earliestExpiry(policyExpiry, deadline), planTier, "")
 		}
 		return nil
 	})

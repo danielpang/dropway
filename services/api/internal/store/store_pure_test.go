@@ -535,7 +535,7 @@ func TestStoreSentinelsAreDistinct(t *testing.T) {
 // where publish and rebuild/reprojection drift (e.g. rebuild silently dropping
 // expires_at or plan_tier). Both call sites go through this one builder.
 func TestRouteValue_BuildsCurrentContract(t *testing.T) {
-	rv := routeValue("org-1", "site-1", "ver-1", projection.AccessPublic, "2026-12-31T23:59:59Z", "free")
+	rv := routeValue("org-1", "site-1", "ver-1", projection.AccessPublic, "2026-12-31T23:59:59Z", "free", "")
 	want := projection.RouteValue{
 		OrgID:         "org-1",
 		SiteID:        "site-1",
@@ -552,7 +552,7 @@ func TestRouteValue_BuildsCurrentContract(t *testing.T) {
 		t.Fatalf("built route value failed Validate: %v", err)
 	}
 	// A paid org with no link-expiry still round-trips with the tier set and no expiry.
-	paid := routeValue("o", "s", "v", projection.AccessPublic, "", "pro")
+	paid := routeValue("o", "s", "v", projection.AccessPublic, "", "pro", "")
 	if paid.PlanTier != "pro" || paid.ExpiresAt != "" || paid.SchemaVersion != projection.SchemaVersion {
 		t.Fatalf("paid route value wrong: %+v", paid)
 	}
@@ -586,9 +586,9 @@ func (f *fakeRouteWriter) RebuildFromDB(context.Context, map[string]projection.R
 func TestWriteRoutes_ContinueOnError(t *testing.T) {
 	w := &fakeRouteWriter{failHost: "b.example.com"}
 	routes := map[string]projection.RouteValue{
-		"a.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro"),
-		"b.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro"),
-		"c.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro"),
+		"a.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro", ""),
+		"b.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro", ""),
+		"c.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "pro", ""),
 	}
 	err := writeRoutes(context.Background(), w, routes)
 	if err == nil {
@@ -613,8 +613,8 @@ func TestWriteRoutes_ContinueOnError(t *testing.T) {
 func TestWriteRoutes_AllSucceed(t *testing.T) {
 	w := &fakeRouteWriter{}
 	routes := map[string]projection.RouteValue{
-		"a.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "free"),
-		"b.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "free"),
+		"a.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "free", ""),
+		"b.example.com": routeValue("o", "s", "v", projection.AccessPublic, "", "free", ""),
 	}
 	if err := writeRoutes(context.Background(), w, routes); err != nil {
 		t.Fatalf("unexpected error: %v", err)

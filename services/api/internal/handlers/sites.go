@@ -328,6 +328,9 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		// another org/site — a cross-tenant collision. 409 Conflict, not 400:
 		// the request is well-formed, the resource just isn't available.
 		httpx.WriteError(w, fmt.Errorf("%w: site slug/host already in use", httpx.ErrConflict))
+	case errors.Is(err, store.ErrSiteHasChatLog):
+		// One attached chat log per site: detach/move the existing one first.
+		httpx.WriteError(w, fmt.Errorf("%w: site already has an attached chat log", httpx.ErrConflict))
 	case errors.Is(err, store.ErrExternalSharingDisabled):
 		// The org's allow_external_sharing policy forbids a public site.
 		httpx.WriteError(w, fmt.Errorf("%w: external sharing is disabled for this org; an admin must enable it", httpx.ErrForbidden))

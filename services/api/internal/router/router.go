@@ -157,6 +157,12 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 			r.Post("/{id}/domains", api.AddDomain)
 			r.Get("/{id}/domains", api.ListDomains)
+
+			// Site-scoped chat-log convenience: read the attached "How this
+			// was made" log, or append to it (creating one if absent) — the
+			// one-call agent flow after a deploy.
+			r.Get("/{id}/chat", api.GetSiteChat)
+			r.Post("/{id}/chat", api.AppendSiteChat)
 		})
 
 		// AI website builder: chat sessions whose LLM (via OpenRouter) edits the
@@ -175,6 +181,29 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// Org AI settings: the kill switch + spend cap + current-period spend.
 		r.Get("/orgs/ai", api.GetAIOrgSettings)
 		r.Patch("/orgs/ai", api.PatchAIOrgSettings)
+
+		// Shared chat logs (Share This Session): append-only conversation
+		// histories with optional site attachment. The attached log serves as
+		// the site's "How this was made" panel under the site's own access
+		// tier; unattached logs are an org-internal library. Depth policy:
+		// free = rolling last-10 window (prune, never 402), pro = 100 hard
+		// cap, business+ unlimited.
+		r.Route("/chats", func(r chi.Router) {
+			r.Post("/", api.CreateChatLog)
+			r.Get("/", api.ListChatLogs)
+			r.Get("/{id}", api.GetChatLog)
+			// Owner-or-admin (re-checked in the handlers).
+			r.Delete("/{id}", api.DeleteChatLog)
+			r.Post("/{id}/messages", api.AppendChatMessages)
+			r.Get("/{id}/messages", api.ListChatMessages)
+			r.Delete("/{id}/messages/{seq}", api.DeleteChatMessage)
+			r.Put("/{id}/site", api.SetChatLogSite)
+			r.Put("/{id}/panel", api.SetChatLogPanel)
+		})
+
+		// Org chat-log settings: the kill switch (mirrors /orgs/ai).
+		r.Get("/orgs/chat-logs", api.GetChatSettings)
+		r.Patch("/orgs/chat-logs", api.PatchChatSettings)
 
 		// Org-wide skill sharing: content-addressed skill uploads (latest-only
 		// versions; finalize = publish) organized into admin-curated folders.

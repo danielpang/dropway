@@ -62,6 +62,16 @@ const (
 	freeSkillsPerFolderCap = 10
 )
 
+// Chat-log depth bands. Free is a ROLLING WINDOW (RetentionWindow): appends
+// never 402, the store keeps the newest 10 rows per log and prunes the rest.
+// Pro is a HARD CAP (a paying customer's history is never auto-deleted, so the
+// 101st message 402s {next_tier: business}); business/enterprise are
+// unlimited. Chat logs per org are uncapped on every tier (dormant seam).
+const (
+	freeChatMessagesWindow = 10
+	proChatMessagesCap     = 100
+)
+
 // Per-org storage caps in BYTES. gib is binary (1<<30) to
 // match how the byte counter + infra tooling measure; the values are tunable.
 const (
@@ -153,6 +163,22 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 			return nil
 		}
 		capMax, next = freeSkillsPerFolderCap, TierPro
+	case corequota.ResourceChatMessagePerLog:
+		// Free is window-pruned (RetentionWindow), so the store never routes a
+		// free append through this hard-cap path; the free band here is a
+		// defense-in-depth mirror of the window size. Pro is the real hard cap;
+		// business/enterprise are unlimited.
+		switch tier {
+		case TierPro:
+			capMax, next = proChatMessagesCap, TierBusiness
+		case TierBusiness, TierEnterprise:
+			return nil
+		default: // free
+			capMax, next = freeChatMessagesWindow, TierPro
+		}
+	case corequota.ResourceChatLogPerOrg:
+		// Unlimited on every tier today (dormant seam — see internal/quota).
+		return nil
 	case corequota.ResourceCustomDomainPerOrg:
 		// Custom domains are a PAID feature modeled as a 0/unlimited band: the free
 		// tier may register NONE (cap 0 → the first add is current+1 > 0 → 402
@@ -173,6 +199,25 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 	}
 	return nil
 }
+
+// RetentionWindow implements corequota.Windower: the FREE tier's chat-log
+// depth is a rolling last-10 window (keep the newest, prune the rest) rather
+// than a hard cap, so a free import/append never fails — the trimmed history
+// is the upgrade pitch, not a wall. No other (tier, resource) pair has window
+// semantics: paid tiers never auto-delete (pro's 100 is a hard cap above).
+func (p *Provider) RetentionWindow(planTier string, res corequota.Resource) (int64, bool) {
+	tier := PlanTier(planTier)
+	if tier == "" {
+		tier = TierFree
+	}
+	if res == corequota.ResourceChatMessagePerLog && tier == TierFree {
+		return freeChatMessagesWindow, true
+	}
+	return 0, false
+}
+
+// Ensure the cloud provider also offers window semantics.
+var _ corequota.Windower = (*Provider)(nil)
 
 // exceeded builds the rich 402 payload: the next tier + the matching CTA URL
 // (upgrade for self-serve tiers, sales at the contact-sales boundary).

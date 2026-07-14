@@ -219,12 +219,19 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, t Tenant, id, verifyStat
 			res.Host = row.Hostname
 			res.Registered = true
 			if site.CurrentVersionID != nil {
+				// A newly-verified custom host serves the same chat surface as
+				// the canonical one (v4 chat_id).
+				chatID, err := chatIDForSiteTx(ctx, q, row.SiteID)
+				if err != nil {
+					return err
+				}
 				res.Route = projection.RouteValue{
 					OrgID:         t.OrgID,
 					SiteID:        row.SiteID,
 					VersionID:     *site.CurrentVersionID,
 					AccessMode:    site.AccessMode,
 					SchemaVersion: projection.SchemaVersion,
+					ChatID:        chatID,
 				}
 			}
 		}

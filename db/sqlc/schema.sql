@@ -31,7 +31,9 @@ CREATE TABLE app.org_meta (
     -- AI builder kill switch (mirrors mcp_enabled) + owner-adjustable monthly
     -- AI spend cap in USD (migration 0010).
     ai_enabled             boolean NOT NULL DEFAULT true,
-    ai_monthly_cap_usd     numeric(10,2) NOT NULL DEFAULT 20.00
+    ai_monthly_cap_usd     numeric(10,2) NOT NULL DEFAULT 20.00,
+    -- Chat-log (Share This Session) kill switch (migration 0013).
+    chat_logs_enabled      boolean NOT NULL DEFAULT true
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -378,3 +380,39 @@ BEGIN
     RETURN QUERY SELECT om.id FROM app.org_meta om ORDER BY om.created_at;
 END;
 $$;
+
+-- chat_logs: a shared chat log (Share This Session, migration 0013) — an
+-- append-only conversation history with OPTIONAL, re-pointable site
+-- attachment (one attached log per site via the partial unique index).
+-- next_seq keeps message seq monotonic across window pruning.
+CREATE TABLE app.chat_logs (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    site_id       uuid REFERENCES app.sites (id) ON DELETE SET NULL,
+    title         text NOT NULL DEFAULT '',
+    source_tool   text NOT NULL DEFAULT 'other',
+    panel_enabled boolean NOT NULL DEFAULT true,
+    next_seq      integer NOT NULL DEFAULT 1,
+    created_by    uuid NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX chat_logs_site_key ON app.chat_logs (site_id) WHERE site_id IS NOT NULL;
+
+-- chat_messages: one message per row. kind 'chat' = conversation turn;
+-- 'action' = LLM-authored annotation about work performed (meta jsonb
+-- {action, tool, paths}). version_id stamps the site's current deploy at
+-- append time (NULL when unattached).
+CREATE TABLE app.chat_messages (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    chat_log_id uuid NOT NULL REFERENCES app.chat_logs (id) ON DELETE CASCADE,
+    seq         integer NOT NULL,
+    version_id  uuid REFERENCES app.site_versions (id) ON DELETE SET NULL,
+    created_by  uuid NOT NULL,
+    role        text NOT NULL CHECK (role IN ('user', 'assistant')),
+    kind        text NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'action')),
+    content     text NOT NULL,
+    meta        jsonb,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT chat_messages_log_seq_key UNIQUE (chat_log_id, seq)
+);

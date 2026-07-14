@@ -1143,3 +1143,124 @@ UPDATE app.org_meta
 SET ai_monthly_cap_usd = $2::float8
 WHERE id = $1;
 
+
+-- ===========================================================================
+-- chat logs (Share This Session) — append-only conversation histories with
+-- optional site attachment (migration 0013)
+-- ===========================================================================
+
+-- name: LockOrgChatLogQuota :exec
+-- Serialize concurrent chat-log creates for the SAME org (the same COUNT →
+-- policy → INSERT critical section the site/skill caps use).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':chat_logs'));
+
+-- name: LockChatLogAppend :exec
+-- Serialize appends/prunes/deletes on ONE log: the append tx holds this across
+-- COUNT → policy (hard cap) or INSERT → prune (window), so two concurrent
+-- appends can't both slip past the cap or over-prune.
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':chat_append'));
+
+-- name: CountChatLogsForOrg :one
+SELECT count(*)::bigint AS n
+FROM app.chat_logs
+WHERE org_id = $1;
+
+-- name: CreateChatLog :one
+INSERT INTO app.chat_logs (org_id, site_id, title, source_tool, created_by)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at;
+
+-- name: GetChatLog :one
+SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+FROM app.chat_logs
+WHERE id = $1;
+
+-- name: GetChatLogBySite :one
+SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+FROM app.chat_logs
+WHERE site_id = $1;
+
+-- name: ListChatLogs :many
+-- The org's chat library, newest first, with a live message count per log.
+SELECT cl.id, cl.org_id, cl.site_id, cl.title, cl.source_tool, cl.panel_enabled,
+       cl.next_seq, cl.created_by, cl.created_at,
+       (SELECT count(*) FROM app.chat_messages m WHERE m.chat_log_id = cl.id)::bigint AS message_count
+FROM app.chat_logs cl
+WHERE cl.org_id = $1
+ORDER BY cl.created_at DESC;
+
+-- name: SetChatLogSite :one
+-- Attach ($2 = site id), detach ($2 = NULL), or move a log. The partial unique
+-- index chat_logs_site_key rejects attaching to a site that already has one.
+UPDATE app.chat_logs
+SET site_id = $2
+WHERE id = $1
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at;
+
+-- name: SetChatLogPanelEnabled :one
+UPDATE app.chat_logs
+SET panel_enabled = $2
+WHERE id = $1
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at;
+
+-- name: DeleteChatLog :execrows
+DELETE FROM app.chat_logs WHERE id = $1;
+
+-- name: CountChatMessages :one
+SELECT count(*)::bigint AS n
+FROM app.chat_messages
+WHERE chat_log_id = $1;
+
+-- name: AllocateChatSeq :one
+-- Reserve $2 consecutive seq numbers; returns the FIRST reserved number. seq
+-- stays monotonic across pruning because the allocator never rewinds.
+UPDATE app.chat_logs
+SET next_seq = next_seq + $2::int
+WHERE id = $1
+RETURNING (next_seq - $2::int)::int AS base_seq;
+
+-- name: InsertChatMessage :one
+INSERT INTO app.chat_messages (org_id, chat_log_id, seq, version_id, created_by, role, kind, content, meta)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, chat_log_id, seq, version_id, created_by, role, kind, content, meta, created_at;
+
+-- name: ListChatMessages :many
+-- Ascending seq page: seq > $2, LIMIT $3 (the panel and API both page forward).
+SELECT id, org_id, chat_log_id, seq, version_id, created_by, role, kind, content, meta, created_at
+FROM app.chat_messages
+WHERE chat_log_id = $1 AND seq > $2
+ORDER BY seq ASC
+LIMIT $3;
+
+-- name: DeleteChatMessage :execrows
+DELETE FROM app.chat_messages WHERE chat_log_id = $1 AND seq = $2;
+
+-- name: PruneChatMessages :execrows
+-- Free-tier rolling window: keep the NEWEST $2 rows of the log, delete the
+-- rest. Runs under LockChatLogAppend in the same tx as the INSERT.
+DELETE FROM app.chat_messages m
+WHERE m.chat_log_id = $1
+  AND m.seq NOT IN (
+      SELECT keep.seq FROM app.chat_messages keep
+      WHERE keep.chat_log_id = $1
+      ORDER BY keep.seq DESC
+      LIMIT $2
+  );
+
+-- name: GetChatLogsEnabled :one
+-- The org chat-log kill switch; fail-soft true (like GetPlanTier's default).
+SELECT COALESCE(
+    (SELECT chat_logs_enabled FROM app.org_meta WHERE id = $1),
+    true
+)::boolean AS chat_logs_enabled;
+
+-- name: SetChatLogsEnabled :exec
+UPDATE app.org_meta
+SET chat_logs_enabled = $2
+WHERE id = $1;
+
+-- name: GetSiteCurrentVersionID :one
+-- The version stamp for an append while attached (NULL before first publish).
+SELECT current_version_id
+FROM app.sites
+WHERE id = $1;

@@ -104,6 +104,25 @@ const (
 	// ActionSkillFeedMeta records a change to a skill's feed title/description
 	// (PUT /v1/skills/{id}/feed-meta).
 	ActionSkillFeedMeta Action = "skill.feed_meta"
+	// ActionChatLogCreate records a new shared chat log (POST /v1/chats).
+	ActionChatLogCreate Action = "chatlog.create"
+	// ActionChatLogDelete records a chat log removed (DELETE /v1/chats/{id}).
+	ActionChatLogDelete Action = "chatlog.delete"
+	// ActionChatLogAppend records messages appended/imported to a chat log
+	// (POST /v1/chats/{id}/messages or /v1/sites/{id}/chat).
+	ActionChatLogAppend Action = "chatlog.append"
+	// ActionChatLogMessageDelete records one message removed by seq
+	// (DELETE /v1/chats/{id}/messages/{seq}) — the pasted-secret escape hatch.
+	ActionChatLogMessageDelete Action = "chatlog.message_delete"
+	// ActionChatLogAttach records an attach/detach/move of a log's site binding
+	// (PUT /v1/chats/{id}/site).
+	ActionChatLogAttach Action = "chatlog.attach"
+	// ActionChatLogPanel records the served-panel flag flip
+	// (PUT /v1/chats/{id}/panel).
+	ActionChatLogPanel Action = "chatlog.panel"
+	// ActionChatLogSettings records the org chat-log kill switch flip
+	// (PATCH /v1/orgs/chat-logs).
+	ActionChatLogSettings Action = "chatlog.settings"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/danielpang/dropway/internal/chatspec"
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgerevoke"
 	"github.com/danielpang/dropway/internal/edgetoken"
@@ -140,6 +141,26 @@ type SiteStore interface {
 	SetSkillFolderItemPreset(ctx context.Context, t store.Tenant, folderID, skillID string, isPreset bool) error
 	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
 	SkillsSeeded(ctx context.Context, t store.Tenant) (bool, error)
+
+	// Shared chat logs (Share This Session): append-only conversation
+	// histories with optional, re-pointable site attachment. Appends run the
+	// window-or-hard-cap depth policy inside the store tx; the handler then
+	// re-compiles the served transcript object and refreshes RouteValue.chat_id
+	// on the affected sites' routes.
+	CreateChatLog(ctx context.Context, t store.Tenant, title, sourceTool string, siteID *string) (store.ChatLog, error)
+	GetChatLog(ctx context.Context, t store.Tenant, id string) (store.ChatLog, error)
+	GetChatLogForSite(ctx context.Context, t store.Tenant, siteID string) (store.ChatLog, error)
+	ListChatLogs(ctx context.Context, t store.Tenant) ([]store.ChatLog, error)
+	DeleteChatLog(ctx context.Context, t store.Tenant, id string) error
+	SetChatLogSite(ctx context.Context, t store.Tenant, id string, siteID *string) (store.ChatLog, error)
+	SetChatLogPanel(ctx context.Context, t store.Tenant, id string, enabled bool) (store.ChatLog, error)
+	AppendChatMessages(ctx context.Context, t store.Tenant, logID string, msgs []chatspec.Message) (store.AppendChatResult, error)
+	ListChatMessages(ctx context.Context, t store.Tenant, logID string, afterSeq, limit int32) ([]store.ChatMessage, error)
+	DeleteChatMessage(ctx context.Context, t store.Tenant, logID string, seq int32) error
+	ChatLogsEnabled(ctx context.Context, t store.Tenant) (bool, error)
+	SetChatLogsEnabled(ctx context.Context, t store.Tenant, enabled bool) error
+	CompileChatTranscript(ctx context.Context, t store.Tenant, logID string) ([]byte, error)
+	SiteChatRoutes(ctx context.Context, t store.Tenant, siteID string) ([]store.RouteUpdate, error)
 	// Lazy preset seeding, split so manifests are written between staging and
 	// publishing (GC-safe): stage materializes rows without flipping live
 	// pointers, publish flips them + marks the org seeded.
