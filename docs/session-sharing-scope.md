@@ -15,6 +15,8 @@ are appended to the site's one log, each message is stamped with the site's
 current deploy version at append time (so the panel can group the history by
 version), and the log inherits the site's access tier (public / password /
 allowlist / org) — a gated site's log is exactly as gated as the site itself.
+A log can also stand alone, with no deployed artifact at all: a **chat-only
+site** whose page *is* the transcript (see *Standalone chat logs* below).
 
 ## Packaging principle: free gets the feature, paid gets the depth
 
@@ -44,6 +46,7 @@ Business/Enterprise unlimited), so the pricing story stays one sentence:
 | **Log depth per site** | **Rolling last 10** (older rows auto-pruned) | **100 hard cap** (402 past it) | Unlimited | Unlimited |
 | Message size (validation, all tiers) | 64 KiB | 64 KiB | 64 KiB | 64 KiB |
 | Per-version grouping in the panel | ✅ | ✅ | ✅ | ✅ |
+| Standalone chat-only sites | ✅ (counts toward the 10-site cap) | ✅ (100-site cap) | ✅ | ✅ |
 | "Shared via Dropway" attribution on panel | Always on | Removable | Removable | Removable |
 | Access-control inheritance | ✅ | ✅ | ✅ | ✅ |
 | Org kill switch (`chat_log_enabled`) | ✅ | ✅ | ✅ | ✅ |
@@ -102,6 +105,37 @@ serving Worker exposes the log at a reserved path on the site's own host
 (`/__dropway/chat`), resolved through the same KV-rebuildable-from-Postgres
 route projection and the same authz as every other asset — which is what
 makes "no Claude account needed to view" true.
+
+## Standalone chat logs — a chat is just a site
+
+Sharing a conversation that isn't attached to any deployed artifact does NOT
+introduce a second shareable object. It reuses the site: `app.sites` gains a
+`kind` column (`'site'` default, `'chat'`), and a chat-only site is an
+ordinary site row with zero deploys whose serving path renders the log as the
+whole page. Concretely:
+
+- **Creation:** `dropway chat share <export-file>` (CLI) and a `share_chat`
+  MCP tool do create-site(kind=chat) + batch append in one step and return
+  the live URL; the dashboard offers "Share a conversation" alongside "New
+  site." The same `chatspec` normalizer parses the export.
+- **Serving:** the Worker already special-cases the log at
+  `/__dropway/chat`; for `kind='chat'` sites it serves a built-in transcript
+  page at `/` (no user deploy exists, so there is nothing else to route).
+  Messages' `version_id` stamps are simply NULL — there are no versions.
+- **Everything inherited, nothing duplicated:** the four access tiers,
+  edge authz + instant revocation, custom domains, the org feed
+  (votes/comments — chat posts render like site posts with a kind badge),
+  audit logging, and the org kill switch all apply because a chat *is* a
+  site. Building a separate "shared transcript" object would have meant
+  re-implementing each of those surfaces.
+- **Quota needs zero new resources:** a chat-only site counts toward the
+  existing `sites_per_org` bands (free 10 / pro 100 / business+
+  unlimited), and its log obeys the same per-site message bands above
+  (free rolling-10 / pro 100 / unlimited). The two levers compose: a free
+  org gets up to 10 shares total — artifacts or conversations — each
+  carrying its last 10 messages. Later attachment is trivial: deploying
+  files to a chat site just flips it into a normal site with its history
+  already in place.
 
 ## Enforcement mechanics (small seam extension + existing patterns)
 
