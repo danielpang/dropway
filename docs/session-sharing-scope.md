@@ -8,8 +8,11 @@ the product shape is summarized only far enough to make the levers concrete.
 
 **Feature recap.** A **chat log** is a first-class org object: an append-only
 conversation history, pasted or uploaded from Claude Code, ChatGPT, Cursor,
-or plain text — via dashboard, MCP, or CLI. **Site attachment is optional and
-re-pointable.** A log can be:
+or plain text — via dashboard, MCP, or CLI. Entries are either conversation
+turns or **LLM-authored action annotations** — the model commenting on a tool
+run or file edit it just performed ("Inlined the font to satisfy the CSP"),
+so the log tells what was *done*, not only what was said. **Site attachment
+is optional and re-pointable.** A log can be:
 
 - **Attached to a site** — viewers of the site see a collapsible **"How this
   was made"** panel rendering the log, served under the site's access tier
@@ -115,17 +118,36 @@ Two new RLS-scoped tenant tables:
   is an UPDATE of `site_id`; nothing else moves.
 - **`app.chat_messages`** — **one message per row**, append-heavy like
   `ai_messages`: `(id, org_id, chat_log_id, seq, version_id NULLABLE,
-  created_by, role, content, created_at)` with `UNIQUE (chat_log_id, seq)`.
-  `seq` stays monotonic across pruning (numbers are never reused), so
-  clients page stably and the panel can say "messages 41–50 of a longer
-  conversation."
+  created_by, role, kind, content, meta jsonb NULLABLE, created_at)` with
+  `UNIQUE (chat_log_id, seq)`. `seq` stays monotonic across pruning
+  (numbers are never reused), so clients page stably and the panel can say
+  "messages 41–50 of a longer conversation."
+
+  **Two message kinds.** `kind = 'chat'` (default) is a conversation turn.
+  `kind = 'action'` is an **LLM-authored annotation about work performed** —
+  a tool invocation or file edit — where `content` is the model's
+  commentary ("Switched the chart to a log scale per the feedback in the
+  previous message") and `meta` carries the structured facts the UI renders:
+  `{action: 'tool_use' | 'file_edit', tool?: string, paths?: string[]}`
+  (validated by `chatspec`: known action enum, ≤ 20 paths, clean relative
+  paths only). Annotations are ordinary rows in every mechanical respect —
+  they count toward the tier bands and are pruned by the free window like
+  any other message. One band, no kind carve-outs: exempting annotations
+  would invite smuggling conversation past the cap by labeling it an
+  action, and an agent that narrates verbosely should feel the same
+  pressure to be selective on free that a human does.
 
 API — logs are the primary resource, with a site-scoped convenience:
 
 - `POST /v1/chats` — create a log, optionally with `site_id` and an inline
   batch import (a pasted export, parsed by the `internal/chatspec`
-  normalizer, which flattens tool-call noise so raw JSONL events don't burn
-  message slots).
+  normalizer). The normalizer flattens raw tool-call/tool-result JSONL
+  noise rather than giving every event a row, but can (opt-in,
+  `derive_actions`) condense runs of tool events from an export into
+  `kind='action'` rows — e.g. "Edited `src/app.tsx`, `styles.css`" — so
+  even an after-the-fact import carries the activity trail. Commentary on
+  those derived rows is whatever the export contained; the *good* comments
+  come from the live path below.
 - `POST /v1/chats/{id}/messages` (single or batch append), `GET
   /v1/chats/{id}` + `/messages` (paginated), `DELETE
   /v1/chats/{id}/messages/{seq}`, `DELETE /v1/chats/{id}`.
@@ -135,9 +157,14 @@ API — logs are the primary resource, with a site-scoped convenience:
   `POST /v1/sites/{id}/chat` appends to it (creating one if absent), which
   keeps the deploy-then-attach flow one call for agents.
 - **MCP** `share_chat` (create/import, optional site binding) and
-  `append_chat`, both OAuth-forwarding like `deploy_site`; **CLI**
-  `dropway chat share <file> [--site <name>]`, `chat append`, `chat attach
-  --site <name>`, `chat detach`.
+  `append_chat`, both OAuth-forwarding like `deploy_site`. `append_chat`
+  accepts either kind, so a *working agent narrates as it goes*: after an
+  edit or tool run it appends
+  `{kind: 'action', action: 'file_edit', paths: ['index.html'],
+  content: 'Inlined the font to satisfy the CSP'}` — the tool description
+  tells the agent to comment on *why*, not to restate the diff. **CLI**
+  `dropway chat share <file> [--site <name>]`, `chat append [--action
+  file_edit --path <p> ...]`, `chat attach --site <name>`, `chat detach`.
 
 Viewers never touch the Go API: the serving Worker exposes the attached
 log at a reserved path on the site's own host (`/__dropway/chat`), resolved
@@ -192,6 +219,13 @@ The transcript page itself:
   differ, a divider line reads "↑ deployed as v3" — the iteration story the
   PRD is about, visible at a glance. NULL stamps (unattached/chat-only
   appends) simply omit dividers.
+- **Action annotations render as activity rows, not bubbles.** A
+  `kind='action'` message is a compact full-width row between bubbles: an
+  icon (✏️ file edit, 🔧 tool use), the targets as code chips
+  (`index.html`, `npm test`), and the LLM's commentary in one line,
+  expanding on click if longer. Consecutive action rows collapse into a
+  group ("3 edits · 1 command" → expandable), so a burst of agent activity
+  reads as one beat of the story instead of drowning the conversation.
 - **Markdown, safely.** Message content renders through the same
   dependency-free, escape-first renderer pattern as `lib/markdown.ts` —
   this page is served on the untrusted-content domain under its strict
