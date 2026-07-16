@@ -44,6 +44,7 @@ import {
   renderMarkdownPage,
 } from "./markdown";
 import {
+  CONTENT_CSP,
   applyHeaders,
   isServiceWorkerRequest,
   isServiceWorkerScript,
@@ -79,6 +80,14 @@ import {
   isInjectableContentType,
   shouldInjectBanner,
 } from "./banner";
+import {
+  CHAT_PILL_BYTE_LENGTH,
+  CHAT_RESERVED_PATH,
+  chatTranscriptKey,
+  injectChatPill,
+  renderChatPage,
+  shouldInjectChatPill,
+} from "./chat";
 
 // --- Binding interfaces -----------------------------------------------------
 // Narrow structural types over the R2/KV bindings, so the serving logic can be
@@ -527,6 +536,12 @@ async function servePublic(
   url: URL,
   opts: ServeOptions,
 ): Promise<Response> {
+  // Reserved transcript path (Share This Session). Checked BEFORE the Cache API:
+  // the transcript mutates independently of deploys, so it is served no-store and
+  // must never populate (or be satisfied from) the PoP cache.
+  const chat = await serveChatIfRequested(env, route, url);
+  if (chat !== null) return bodyFor(request, chat);
+
   const cache = opts.cache !== undefined ? opts.cache : defaultCache();
 
   // Cache hit? Serve straight from the PoP (HEAD reuses the GET-keyed entry,
@@ -583,6 +598,13 @@ async function servePublicBody(
   url: URL,
   opts: ServeOptions,
 ): Promise<Response> {
+  // Reserved transcript path (Share This Session) for GATED sites. This function
+  // only runs AFTER serveGated's authz passed, so the transcript is exactly as
+  // gated as the site — the pre-auth hooks never serve it. (The gated wrapper
+  // then forces Cache-Control to private/no-store on top.)
+  const chat = await serveChatIfRequested(env, route, url);
+  if (chat !== null) return bodyFor(request, chat);
+
   const resolved = await resolveBlob(request, env, route, url, opts);
   if (resolved.kind === "not-found") return resolved.response;
 
@@ -627,18 +649,71 @@ interface ServeBody {
 }
 
 /**
- * Apply the free-tier "Deployed with Dropway" attribution banner to a resolved
- * blob when the org is free-tier, the feature is enabled, and the document is
- * injectable HTML. Only HTML is buffered into memory; every other asset (and every
- * paid/unknown-tier response, and any non-UTF-8 page) streams through untouched.
+ * Serve the reserved /__dropway/chat transcript page (Share This Session), or
+ * return null when the request isn't for it / the route has no chat attached.
  *
- * When injecting we buffer the body to text, insert the banner, recompute
+ * ONLY called from inside the access-controlled serving paths (servePublic and
+ * servePublicBody — the latter runs after the gated authz), so a gated site's
+ * transcript is exactly as gated as the site itself; the pre-auth handleLLMMeta
+ * hook never touches this path.
+ *
+ * The compiled transcript JSON is read from the SAME bucket as the content
+ * blobs (chat-transcripts/<org>/<chat_id>.json). It is MUTABLE — the Go API
+ * rewrites it on every append/delete, independent of deploys — so the response
+ * is `no-store` and never enters the Cache API. A missing or malformed object
+ * renders the minimal "conversation unavailable" page (never a throw).
+ */
+async function serveChatIfRequested(
+  env: Env,
+  route: RouteValue,
+  url: URL,
+): Promise<Response | null> {
+  if (!route.chat_id) return null;
+  if (cleanPath(url.pathname) !== CHAT_RESERVED_PATH) return null;
+
+  let transcript: unknown = null;
+  const object = await env.BUCKET.get(chatTranscriptKey(route.org_id, route.chat_id));
+  if (object !== null) {
+    try {
+      transcript = object.json ? await object.json() : await readBodyJson(object);
+    } catch {
+      transcript = null; // malformed JSON → the "unavailable" page below
+    }
+  }
+
+  const html = renderChatPage(transcript, url.host, route.plan_tier);
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    ...securityHeaders(),
+  });
+  // The pill's drawer embeds this page in a SAME-ORIGIN iframe, but the shared
+  // content header set forbids ALL framing (X-Frame-Options: DENY + CSP
+  // frame-ancestors 'none'). Relax exactly that pair to same-origin here —
+  // cross-origin embedding stays blocked; every other header is unchanged.
+  headers.set("X-Frame-Options", "SAMEORIGIN");
+  headers.set(
+    "Content-Security-Policy",
+    CONTENT_CSP.replace("frame-ancestors 'none'", "frame-ancestors 'self'"),
+  );
+  return new Response(html, { status: 200, headers });
+}
+
+/**
+ * Apply the HTML injections to a resolved blob: the free-tier "Deployed with
+ * Dropway" attribution banner (org is free-tier + the feature flag is on) and
+ * the "How this was made" chat pill (route carries a chat_id) — both only on
+ * injectable (UTF-8) HTML. Only HTML is buffered into memory; every other asset
+ * (and every no-injection response, and any non-UTF-8 page) streams through
+ * untouched.
+ *
+ * When injecting we buffer the body to text, insert the markup, recompute
  * Content-Length, and DROP the blob's ETag/Last-Modified — they describe the
- * original (un-bannered) bytes and would otherwise mislabel the transformed body.
+ * original (un-injected) bytes and would otherwise mislabel the transformed body.
  *
  * HEAD never returns a body (bodyFor strips it), so we skip the buffer entirely and
  * derive the length arithmetically — the injected length is exactly the original
- * length plus the (fixed, UTF-8-stable) banner, so a HEAD reports the same
+ * length plus the (fixed, UTF-8-stable) markup, so a HEAD reports the same
  * Content-Length a GET would without reading the whole document.
  */
 async function bannerize(
@@ -654,29 +729,34 @@ async function bannerize(
     lastModified: resolved.lastModified,
     contentLength: resolved.contentLength,
   };
-  if (
-    !shouldInjectBanner(env, route, resolved.servedPath) ||
-    !isInjectableContentType(resolved.contentType)
-  ) {
+  const wantBanner =
+    shouldInjectBanner(env, route, resolved.servedPath) &&
+    isInjectableContentType(resolved.contentType);
+  const wantPill = shouldInjectChatPill(route, resolved.servedPath, resolved.contentType);
+  if (!wantBanner && !wantPill) {
     return passthrough;
   }
 
+  const addedBytes =
+    (wantBanner ? BANNER_BYTE_LENGTH : 0) + (wantPill ? CHAT_PILL_BYTE_LENGTH : 0);
+
   if (isHead) {
-    // No body will be sent. Avoid buffering: injected length = original + banner
-    // (injectBanner only inserts, and the inject path is UTF-8 so the round-trip is
-    // byte-stable). Omit Content-Length only when the original size is unknown.
+    // No body will be sent. Avoid buffering: injected length = original + markup
+    // (both injections only insert, and the inject path is UTF-8 so the round-trip
+    // is byte-stable). Omit Content-Length only when the original size is unknown.
     return {
       contentType: resolved.contentType,
       body: null,
       contentLength:
         resolved.contentLength === undefined
           ? undefined
-          : resolved.contentLength + BANNER_BYTE_LENGTH,
+          : resolved.contentLength + addedBytes,
     };
   }
 
-  const original = resolved.body ? await new Response(resolved.body).text() : "";
-  const injected = injectBanner(original);
+  let injected = resolved.body ? await new Response(resolved.body).text() : "";
+  if (wantBanner) injected = injectBanner(injected);
+  if (wantPill) injected = injectChatPill(injected);
   return {
     contentType: resolved.contentType,
     body: injected,

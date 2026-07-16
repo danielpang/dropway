@@ -132,9 +132,20 @@ export function isInjectableContentType(contentType: string | undefined): boolea
  * Pure + synchronous so it is trivially unit-testable.
  */
 export function injectBanner(html: string): string {
+  return injectAfterBodyOpen(html, BANNER_MARKUP);
+}
+
+/**
+ * Insert arbitrary markup immediately after the opening <body> tag (prepending
+ * when there is none) — the shared insertion mechanics behind injectBanner and
+ * the chat pill (src/chat.ts injectChatPill). Pure + synchronous. Only ever
+ * INSERTS bytes, so callers can derive injected Content-Length arithmetically
+ * (original + the markup's UTF-8 byte length) on the UTF-8-only inject path.
+ */
+export function injectAfterBodyOpen(html: string, markup: string): string {
   const at = bodyOpenEnd(html);
-  if (at === -1) return BANNER_MARKUP + html;
-  return html.slice(0, at) + BANNER_MARKUP + html.slice(at);
+  if (at === -1) return markup + html;
+  return html.slice(0, at) + markup + html.slice(at);
 }
 
 /**

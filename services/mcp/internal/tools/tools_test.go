@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
@@ -132,6 +133,21 @@ type fakeAPI struct {
 	setFoldersIDs                      []string
 	setFoldersCalls                    int
 	setFoldersErr                      error
+
+	chatCreateToken, chatCreateTitle, chatCreateSource, chatCreateSiteID string
+	chatCreateImport                                                     apiclient.ChatImport
+	chatCreateResp                                                       apiclient.ChatCreateResult
+	chatCreateErr                                                        error
+
+	chatAppendToken, chatAppendID string
+	chatAppendImport              apiclient.ChatImport
+	chatAppendResp                apiclient.ChatAppendResult
+	chatAppendErr                 error
+
+	siteChatToken, siteChatSiteID string
+	siteChatImport                apiclient.ChatImport
+	siteChatResp                  apiclient.ChatAppendResult
+	siteChatErr                   error
 }
 
 func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
@@ -170,6 +186,45 @@ func (f *fakeAPI) SetSkillFolders(_ context.Context, token, skillID string, fold
 	f.setFoldersToken, f.setFoldersSkillID, f.setFoldersIDs = token, skillID, folderIDs
 	f.setFoldersCalls++
 	return f.setFoldersErr
+}
+func (f *fakeAPI) CreateChatLog(_ context.Context, token, title, sourceTool, siteID string, imp apiclient.ChatImport) (apiclient.ChatCreateResult, error) {
+	f.chatCreateToken, f.chatCreateTitle, f.chatCreateSource, f.chatCreateSiteID = token, title, sourceTool, siteID
+	f.chatCreateImport = imp
+	if f.chatCreateErr != nil {
+		return apiclient.ChatCreateResult{}, f.chatCreateErr
+	}
+	return f.chatCreateResp, nil
+}
+func (f *fakeAPI) AppendChatMessages(_ context.Context, token, chatID string, imp apiclient.ChatImport) (apiclient.ChatAppendResult, error) {
+	f.chatAppendToken, f.chatAppendID, f.chatAppendImport = token, chatID, imp
+	if f.chatAppendErr != nil {
+		return apiclient.ChatAppendResult{}, f.chatAppendErr
+	}
+	return f.chatAppendResp, nil
+}
+func (f *fakeAPI) AppendSiteChat(_ context.Context, token, siteID string, imp apiclient.ChatImport) (apiclient.ChatAppendResult, error) {
+	f.siteChatToken, f.siteChatSiteID, f.siteChatImport = token, siteID, imp
+	if f.siteChatErr != nil {
+		return apiclient.ChatAppendResult{}, f.siteChatErr
+	}
+	return f.siteChatResp, nil
+}
+
+// fakeChats satisfies ChatStore for the get_site_chat read path.
+type fakeChats struct {
+	bySite map[string]store.ChatLog       // site id → attached log
+	msgs   map[string][]store.ChatMessage // chat log id → messages
+}
+
+func (f *fakeChats) ChatLogBySite(_ context.Context, _ store.Tenant, siteID string) (store.ChatLog, error) {
+	l, ok := f.bySite[siteID]
+	if !ok {
+		return store.ChatLog{}, store.ErrNotFound
+	}
+	return l, nil
+}
+func (f *fakeChats) ListChatMessages(_ context.Context, _ store.Tenant, chatLogID string) ([]store.ChatMessage, error) {
+	return f.msgs[chatLogID], nil
 }
 
 const manifestJSON = `{"schema_version":1,"files":{
@@ -987,6 +1042,291 @@ func TestUploadSkill_UnsafePathRejected(t *testing.T) {
 	}
 	if api.uploadSkillID != "" {
 		t.Error("API must not be called for an unsafe path")
+	}
+}
+
+// --- share_chat -----------------------------------------------------------------
+
+func TestShareChat_ResolvesSiteAndMaps(t *testing.T) {
+	api := &fakeAPI{chatCreateResp: apiclient.ChatCreateResult{
+		ChatLog:  apiclient.ChatLogInfo{ID: "chat-1", Title: "Build log"},
+		Appended: 3, Pruned: 1, Window: 50, Dropped: 2,
+	}}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{
+			"docs": {ID: "site-1", Slug: "docs", Host: ptr("acme--docs.dropwaycontent.com")},
+		}},
+		API: api,
+	}
+	in := shareChatIn{
+		Site:       "docs",
+		Title:      "Build log",
+		SourceTool: "claude_code",
+		Transcript: "User: hi\nAssistant: hello",
+		Format:     "text",
+		Messages: []chatMessageIn{
+			{Content: "done", Role: "assistant"},
+			{Kind: "action", Content: "wired the nav", Meta: &chatActionMeta{Action: "file_edit", Paths: []string{"index.html"}}},
+		},
+	}
+	out, err := svc.ShareChat(context.Background(), tnt, "tok-3", in)
+	if err != nil {
+		t.Fatalf("ShareChat: %v", err)
+	}
+	// Slug resolved to id; token + metadata forwarded.
+	if api.chatCreateToken != "tok-3" || api.chatCreateSiteID != "site-1" ||
+		api.chatCreateTitle != "Build log" || api.chatCreateSource != "claude_code" {
+		t.Errorf("create args wrong: %+v", api)
+	}
+	// Import payload carried through, incl. the action meta conversion.
+	if api.chatCreateImport.Transcript == "" || api.chatCreateImport.Format != "text" {
+		t.Errorf("transcript not forwarded: %+v", api.chatCreateImport)
+	}
+	if len(api.chatCreateImport.Messages) != 2 {
+		t.Fatalf("want 2 messages, got %d", len(api.chatCreateImport.Messages))
+	}
+	if m := api.chatCreateImport.Messages[1]; m.Kind != "action" || m.Meta == nil ||
+		m.Meta.Action != "file_edit" || len(m.Meta.Paths) != 1 || m.Meta.Paths[0] != "index.html" {
+		t.Errorf("action meta not converted: %+v", m)
+	}
+	// Result mapped, with a viewer hint pointing at the site.
+	if out.ChatID != "chat-1" || out.Site != "docs" || out.Appended != 3 || out.Pruned != 1 || out.Window != 50 || out.Dropped != 2 {
+		t.Errorf("result not mapped: %+v", out)
+	}
+	if !strings.Contains(out.ViewerHint, "How this was made") || !strings.Contains(out.ViewerHint, "acme--docs.dropwaycontent.com") {
+		t.Errorf("viewer hint should name the panel and the site URL: %q", out.ViewerHint)
+	}
+}
+
+func TestShareChat_UnattachedSkipsSiteLookup(t *testing.T) {
+	api := &fakeAPI{chatCreateResp: apiclient.ChatCreateResult{ChatLog: apiclient.ChatLogInfo{ID: "chat-2"}}}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	out, err := svc.ShareChat(context.Background(), tnt, "tok", shareChatIn{Transcript: "hi"})
+	if err != nil {
+		t.Fatalf("ShareChat: %v", err)
+	}
+	if api.chatCreateSiteID != "" {
+		t.Errorf("unattached share must pass no site_id, got %q", api.chatCreateSiteID)
+	}
+	if out.ChatID != "chat-2" || out.Site != "" {
+		t.Errorf("result wrong: %+v", out)
+	}
+	if !strings.Contains(out.ViewerHint, "attach") {
+		t.Errorf("unattached hint should point at attaching: %q", out.ViewerHint)
+	}
+}
+
+func TestShareChat_UnknownSiteDoesNotCallAPI(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	if _, err := svc.ShareChat(context.Background(), tnt, "tok", shareChatIn{Site: "ghost"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
+	}
+	if api.chatCreateToken != "" {
+		t.Error("API must not be called when the slug doesn't resolve")
+	}
+}
+
+func TestShareChat_APIErrorPropagates(t *testing.T) {
+	api := &fakeAPI{chatCreateErr: &apiclient.Error{Status: 402, Message: "chat log limit reached"}}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	if _, err := svc.ShareChat(context.Background(), tnt, "tok", shareChatIn{Transcript: "hi"}); err == nil {
+		t.Fatal("expected the API error to propagate")
+	}
+}
+
+// share_chat's input schema must publish `messages` (and the nested `paths`) as
+// plain arrays (see the deploy_site regression guard).
+func TestShareChat_SchemaHasPlainTypes(t *testing.T) {
+	s := inputSchema[shareChatIn]()
+	msgs := s.Properties["messages"]
+	if msgs == nil || msgs.Type != "array" || len(msgs.Types) != 0 {
+		t.Fatalf("messages type = %q / %v, want plain \"array\"", msgs.Type, msgs.Types)
+	}
+	if msgs.Items == nil || msgs.Items.Type != "object" {
+		t.Fatalf("messages.items should be an object schema, got %+v", msgs.Items)
+	}
+}
+
+// --- append_chat ------------------------------------------------------------------
+
+func TestAppendChat_BySiteResolvesSlug(t *testing.T) {
+	api := &fakeAPI{siteChatResp: apiclient.ChatAppendResult{Appended: 2, Pruned: 1, Window: 50}}
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
+		API:   api,
+	}
+	in := appendChatIn{
+		Site: "docs",
+		Messages: []chatMessageIn{
+			{Content: "adding a pricing section", Role: "assistant"},
+			{Kind: "action", Content: "kept the hero copy short on purpose", Meta: &chatActionMeta{Action: "tool_use", Tool: "deploy_site"}},
+		},
+	}
+	out, err := svc.AppendChat(context.Background(), tnt, "tok-4", in)
+	if err != nil {
+		t.Fatalf("AppendChat: %v", err)
+	}
+	if api.siteChatToken != "tok-4" || api.siteChatSiteID != "site-1" {
+		t.Errorf("site append args wrong: %+v", api)
+	}
+	if api.chatAppendID != "" {
+		t.Error("the chat_id endpoint must not be called for a site append")
+	}
+	if m := api.siteChatImport.Messages[1]; m.Meta == nil || m.Meta.Action != "tool_use" || m.Meta.Tool != "deploy_site" {
+		t.Errorf("action meta not converted: %+v", m)
+	}
+	if out.Site != "docs" || out.ChatID != "" || out.Appended != 2 || out.Pruned != 1 || out.Window != 50 {
+		t.Errorf("result wrong: %+v", out)
+	}
+}
+
+func TestAppendChat_ByChatID(t *testing.T) {
+	api := &fakeAPI{chatAppendResp: apiclient.ChatAppendResult{Appended: 1}}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	out, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{
+		ChatID:   "chat-7",
+		Messages: []chatMessageIn{{Content: "hi", Role: "user"}},
+	})
+	if err != nil {
+		t.Fatalf("AppendChat: %v", err)
+	}
+	if api.chatAppendID != "chat-7" || api.chatAppendToken != "tok" {
+		t.Errorf("chat append args wrong: %+v", api)
+	}
+	if api.siteChatSiteID != "" {
+		t.Error("the site endpoint must not be called for a chat_id append")
+	}
+	if out.ChatID != "chat-7" || out.Appended != 1 {
+		t.Errorf("result wrong: %+v", out)
+	}
+}
+
+func TestAppendChat_ExactlyOneTarget(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}}, API: api}
+	msgs := []chatMessageIn{{Content: "x", Role: "user"}}
+	if _, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{Messages: msgs}); err == nil {
+		t.Fatal("expected an error when neither site nor chat_id is set")
+	}
+	if _, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{Site: "docs", ChatID: "c1", Messages: msgs}); err == nil {
+		t.Fatal("expected an error when both site and chat_id are set")
+	}
+	if api.chatAppendID != "" || api.siteChatSiteID != "" {
+		t.Error("API must not be called for an ambiguous target")
+	}
+}
+
+func TestAppendChat_RequiresPayload(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}}, API: api}
+	if _, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{Site: "docs"}); err == nil {
+		t.Fatal("expected an error for an append with no messages and no transcript")
+	}
+	if api.siteChatSiteID != "" {
+		t.Error("API must not be called for an empty payload")
+	}
+}
+
+func TestAppendChat_UnknownSiteDoesNotCallAPI(t *testing.T) {
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
+	_, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{
+		Site: "ghost", Messages: []chatMessageIn{{Content: "x", Role: "user"}},
+	})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
+	}
+	if api.siteChatSiteID != "" {
+		t.Error("API must not be called when the slug doesn't resolve")
+	}
+}
+
+// --- get_site_chat ----------------------------------------------------------------
+
+func siteChatFixture() (*fakeStore, *fakeChats) {
+	st := &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}}
+	chats := &fakeChats{
+		bySite: map[string]store.ChatLog{"site-1": {
+			ID: "chat-1", SiteID: ptr("site-1"), Title: "Build log", SourceTool: "claude_code",
+			PanelEnabled: true, MessageCount: 3, CreatedBy: "user-1",
+			CreatedAt: time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC),
+		}},
+		msgs: map[string][]store.ChatMessage{"chat-1": {
+			{Seq: 1, Role: "user", Kind: "chat", Content: "build me a docs site",
+				CreatedAt: time.Date(2026, 7, 14, 10, 1, 0, 0, time.UTC)},
+			{Seq: 2, Role: "assistant", Kind: "action", Content: "scaffolded the layout",
+				Meta:      []byte(`{"action":"file_edit","paths":["index.html","style.css"]}`),
+				CreatedAt: time.Date(2026, 7, 14, 10, 2, 0, 0, time.UTC)},
+			{Seq: 3, Role: "assistant", Kind: "chat", Content: "done!",
+				CreatedAt: time.Date(2026, 7, 14, 10, 3, 0, 0, time.UTC)},
+		}},
+	}
+	return st, chats
+}
+
+func TestGetSiteChat_MapsLogAndMessages(t *testing.T) {
+	st, chats := siteChatFixture()
+	svc := &Service{Store: st, Chats: chats}
+
+	out, err := svc.GetSiteChat(context.Background(), tnt, "docs")
+	if err != nil {
+		t.Fatalf("GetSiteChat: %v", err)
+	}
+	if out.Site != "docs" || out.Truncated {
+		t.Fatalf("out wrong: %+v", out)
+	}
+	l := out.ChatLog
+	if l.ChatID != "chat-1" || l.Title != "Build log" || l.SourceTool != "claude_code" ||
+		!l.PanelEnabled || l.MessageCount != 3 || l.CreatedAt != "2026-07-14T10:00:00Z" {
+		t.Errorf("chat log wrong: %+v", l)
+	}
+	if len(out.Messages) != 3 {
+		t.Fatalf("want 3 messages, got %d", len(out.Messages))
+	}
+	if m := out.Messages[0]; m.Seq != 1 || m.Role != "user" || m.Kind != "chat" || m.Meta != nil {
+		t.Errorf("message[0] wrong: %+v", m)
+	}
+	// The action row's jsonb meta decodes into the structured shape.
+	if m := out.Messages[1]; m.Kind != "action" || m.Meta == nil ||
+		m.Meta.Action != "file_edit" || len(m.Meta.Paths) != 2 || m.Meta.Paths[1] != "style.css" {
+		t.Errorf("action meta not decoded: %+v", m)
+	}
+}
+
+func TestGetSiteChat_UnknownSite(t *testing.T) {
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, Chats: &fakeChats{}}
+	if _, err := svc.GetSiteChat(context.Background(), tnt, "ghost"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
+	}
+}
+
+func TestGetSiteChat_NoAttachedLog(t *testing.T) {
+	svc := &Service{
+		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
+		Chats: &fakeChats{bySite: map[string]store.ChatLog{}},
+	}
+	if _, err := svc.GetSiteChat(context.Background(), tnt, "docs"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for a site with no attached log, got %v", err)
+	}
+}
+
+func TestGetSiteChat_TruncatedPastCap(t *testing.T) {
+	orig := maxChatBytes
+	maxChatBytes = 25 // fits the first message (20 bytes) but not also the second
+	defer func() { maxChatBytes = orig }()
+
+	st, chats := siteChatFixture()
+	svc := &Service{Store: st, Chats: chats}
+	out, err := svc.GetSiteChat(context.Background(), tnt, "docs")
+	if err != nil {
+		t.Fatalf("GetSiteChat: %v", err)
+	}
+	if !out.Truncated {
+		t.Fatal("expected Truncated=true past the size cap")
+	}
+	if len(out.Messages) != 1 || out.Messages[0].Seq != 1 {
+		t.Errorf("expected only the first message under the cap, got %+v", out.Messages)
 	}
 }
 

@@ -1891,6 +1891,384 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # ===========================================================================
+  # Shared chat logs ("Share This Session").
+  #
+  # An org library of shared AI conversations: append-only logs of chat turns
+  # plus kind="action" annotations (tool runs / file edits), optionally attached
+  # to a site (at most one log per site) so the served site can surface a "How
+  # this was made" panel. Every /v1/chats and /v1/sites/{id}/chat route is gated
+  # on the org kill switch (403 "chat logs are disabled" when off); mutations
+  # require the log's creator or an org admin/owner. On the cloud build the
+  # per-log message cap returns 402 (limit "chat_messages_per_log"); the free
+  # tier keeps a sliding window of the NEWEST messages and discloses pruning.
+  # ===========================================================================
+
+  /v1/chats:
+    post:
+      summary: Create a chat log (optionally attached to a site, optionally seeded)
+      description: >
+        Creates a log and, when the body carries an inline import (a raw
+        `transcript` export and/or explicit `messages`), appends it in the same
+        gesture — a failed import rolls the create back. `transcript` accepts
+        Claude Code JSONL, a ChatGPT JSON export, or plain text (`format` hints
+        the parser; "auto" default); `derive_actions` condenses tool activity
+        into kind="action" rows instead of dropping it. Imports keep the NEWEST
+        messages: `dropped` counts messages past the 1000-message import bound,
+        `pruned` counts messages pruned to the tier window (both disclosed).
+        `site_id` attaches the log to a site — 409 when that site already has one.
+      operationId: createChatLog
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, description: Human title (max 200 chars; empty allowed). }
+                source_tool: { type: string, description: The tool the conversation came from (claude_code / chatgpt / cursor / other — display metadata, not a closed enum). }
+                site_id: { type: string, format: uuid, description: Attach to this site (at most one log per site). }
+                transcript: { type: string, description: Raw export to normalize server-side. }
+                format: { type: string, description: Transcript parser hint (auto default). }
+                derive_actions: { type: boolean, description: Condense tool activity into kind="action" rows. }
+                messages:
+                  type: array
+                  items: { $ref: "#/components/schemas/ChatMessageInput" }
+      responses:
+        "201":
+          description: Chat log created (import results disclosed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_log: { $ref: "#/components/schemas/ChatLog" }
+                  appended: { type: integer, description: Messages stored by the inline import. }
+                  pruned: { type: integer, format: int64, description: Oldest messages pruned to the tier window. }
+                  window: { type: integer, format: int64, description: The tier's message window (0 = unlimited). }
+                  dropped: { type: integer, description: Transcript messages past the import bound. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      summary: List the org's chat logs (the chat library)
+      operationId: listChatLogs
+      tags: [chats]
+      responses:
+        "200":
+          description: The org's chat logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_logs:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChatLog" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/chats/{id}:
+    get:
+      summary: Get one chat log
+      operationId: getChatLog
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+      responses:
+        "200":
+          description: The chat log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_log: { $ref: "#/components/schemas/ChatLog" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a chat log and its messages (creator or admin)
+      operationId: deleteChatLog
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/chats/{id}/messages:
+    post:
+      summary: Append turns / action annotations to a log (creator or admin)
+      description: >
+        The same ingest shape as create: a raw `transcript` (normalized
+        server-side) and/or explicit `messages`, appended in that order.
+        `kind` defaults to "chat"; kind="action" defaults role to assistant and
+        REQUIRES `meta`. Free-tier logs keep a sliding window of the newest
+        messages (`pruned`/`window` disclose it); the pro cap returns 402.
+      operationId: appendChatMessages
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transcript: { type: string, description: Raw export to normalize server-side. }
+                format: { type: string, description: Transcript parser hint (auto default). }
+                derive_actions: { type: boolean, description: Condense tool activity into kind="action" rows. }
+                messages:
+                  type: array
+                  items: { $ref: "#/components/schemas/ChatMessageInput" }
+      responses:
+        "201":
+          description: Messages appended (pruning disclosed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChatMessage" }
+                  pruned: { type: integer, format: int64, description: Oldest messages pruned to the tier window. }
+                  window: { type: integer, format: int64, description: The tier's message window (0 = unlimited). }
+                  dropped: { type: integer, description: Transcript messages past the import bound. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: Page a log's messages forward (seq order)
+      operationId: listChatMessages
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+        - { name: after_seq, in: query, required: false, schema: { type: integer }, description: Return messages with seq strictly greater than this. }
+        - { name: limit, in: query, required: false, schema: { type: integer }, description: Max messages to return (0 = server default). }
+      responses:
+        "200":
+          description: The log's messages, seq ascending
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChatMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/chats/{id}/messages/{seq}:
+    delete:
+      summary: Delete one message by seq (creator or admin — mistakes, pasted secrets)
+      operationId: deleteChatMessage
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+        - { name: seq, in: path, required: true, schema: { type: integer }, description: The message's per-log sequence number. }
+      responses:
+        "204": { description: Deleted }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/chats/{id}/site:
+    put:
+      summary: Attach, detach, or move a log's site binding (creator or admin)
+      description: >
+        site_id = a site id attaches (or moves) the log to that site; null
+        detaches it back to the unattached library. At most one log per site —
+        attaching to a site that already has one returns 409. The served "How
+        this was made" panel follows the binding immediately.
+      operationId: setChatLogSite
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site_id]
+              properties:
+                site_id: { type: string, format: uuid, nullable: true, description: The site to attach to, or null to detach. }
+      responses:
+        "200":
+          description: The updated chat log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_log: { $ref: "#/components/schemas/ChatLog" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/chats/{id}/panel:
+    put:
+      summary: Toggle the served "How this was made" panel (creator or admin)
+      description: >
+        Flips whether the attached site serves the transcript panel to viewers.
+        Off hides the panel at the edge without detaching the log.
+      operationId: setChatLogPanel
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The updated chat log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_log: { $ref: "#/components/schemas/ChatLog" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/chat:
+    get:
+      summary: Get a site's attached chat log + messages
+      description: >
+        The dashboard's site-page read: the log attached to this site plus its
+        full message list. 404 when the site has no attached log.
+      operationId: getSiteChat
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The attached log + its messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_log: { $ref: "#/components/schemas/ChatLog" }
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChatMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Append to a site's attached log, creating it if absent
+      description: >
+        The one-call agent flow (deploy, then narrate): appends the same ingest
+        payload as POST /v1/chats/{id}/messages to the site's attached log,
+        creating an untitled log bound to the site first when none exists.
+      operationId: appendSiteChat
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transcript: { type: string, description: Raw export to normalize server-side. }
+                format: { type: string, description: Transcript parser hint (auto default). }
+                derive_actions: { type: boolean, description: Condense tool activity into kind="action" rows. }
+                messages:
+                  type: array
+                  items: { $ref: "#/components/schemas/ChatMessageInput" }
+      responses:
+        "201":
+          description: Messages appended (pruning disclosed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChatMessage" }
+                  pruned: { type: integer, format: int64 }
+                  window: { type: integer, format: int64 }
+                  dropped: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/QuotaExceeded" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/orgs/chat-logs:
+    get:
+      summary: Read the org chat-logs kill switch
+      description: Any member may read it (it drives the org's own settings UI). Default enabled.
+      operationId: getChatSettings
+      tags: [chats]
+      responses:
+        "200":
+          description: The current setting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      summary: Flip the org chat-logs kill switch (admin/owner only)
+      description: >
+        Owner/admin only (role re-checked against the member table). Disabling
+        blocks every /v1/chats and site-chat route for the org immediately (403
+        "chat logs are disabled"); existing logs are kept, not deleted.
+      operationId: patchChatSettings
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new setting
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1918,6 +2296,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: app.skill_folders.id
+    ChatLogID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: app.chat_logs.id
 
   schemas:
     Me:
@@ -2226,6 +2610,72 @@ components:
               content: { type: string }
               encoding: { type: string, enum: [utf8, base64] }
 
+    ChatLog:
+      type: object
+      description: >
+        One shared chat log ("Share This Session"): an append-only record of an
+        AI conversation, optionally attached to a site (at most one log per
+        site) whose served pages can surface it as a "How this was made" panel.
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        site_id:
+          type: string
+          format: uuid
+          description: The attached site (absent = unattached library entry).
+        title: { type: string, description: Human title (empty when unset — clients fall back to "Untitled session"). }
+        source_tool: { type: string, description: The tool the conversation came from (claude_code / chatgpt / cursor / other; free-form). }
+        panel_enabled:
+          type: boolean
+          description: Whether the attached site serves the transcript panel to viewers.
+        message_count: { type: integer, format: int64 }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    ChatMessage:
+      type: object
+      description: >
+        One stored chat-log entry: a conversation turn (kind "chat") or an
+        LLM-authored annotation about work performed (kind "action") whose
+        content is the model's commentary and whose meta carries the facts.
+      properties:
+        seq: { type: integer, description: Per-log sequence number (append order; the delete handle). }
+        role: { type: string, enum: [user, assistant] }
+        kind: { type: string, enum: [chat, action] }
+        content: { type: string, description: Markdown text (a turn) or the action's commentary. }
+        meta: { $ref: "#/components/schemas/ChatActionMeta" }
+        version_id:
+          type: string
+          format: uuid
+          description: The deploy version current at append time (viewers render version dividers where it changes).
+        created_at: { type: string, format: date-time }
+
+    ChatMessageInput:
+      type: object
+      description: >
+        One explicit message in a create/append request. kind defaults to
+        "chat"; kind "action" defaults role to assistant and REQUIRES meta.
+      required: [content]
+      properties:
+        kind: { type: string, enum: [chat, action], description: Defaults to "chat". }
+        role: { type: string, enum: [user, assistant], description: Defaults to assistant for kind "action". }
+        content: { type: string, description: "Message text (≤ 64 KiB; may be empty for kind \"action\")." }
+        meta: { $ref: "#/components/schemas/ChatActionMeta" }
+
+    ChatActionMeta:
+      type: object
+      description: >
+        The structured half of a kind="action" message, rendered by viewers as
+        icon + target chips. Only valid on kind "action" (required there).
+      required: [action]
+      properties:
+        action: { type: string, enum: [tool_use, file_edit] }
+        tool: { type: string, description: The tool invoked (required for tool_use; max 128 chars). }
+        paths:
+          type: array
+          items: { type: string }
+          description: "Files touched (clean relative paths, ≤ 20)."
+
     Error:
       type: object
       properties:
@@ -2245,7 +2695,7 @@ components:
       type: object
       description: 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal.
       properties:
-        limit: { type: string, enum: [sites_per_user, members_per_org, custom_domains_per_org] }
+        limit: { type: string, enum: [sites_per_user, members_per_org, custom_domains_per_org, skills_per_folder, chat_messages_per_log] }
         current: { type: integer, format: int64 }
         max: { type: integer, format: int64 }
         plan_tier: { type: string }

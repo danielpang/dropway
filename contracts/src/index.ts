@@ -27,18 +27,22 @@ export type AccessMode = (typeof ACCESS_MODES)[number];
  *
  * v1 → v2 (Phase 2): added the optional `expires_at` field.
  * v2 → v3: added the optional `plan_tier` field (the owning org's plan, used to
- * gate the free-tier "Deployed with Dropway" attribution banner). The parser stays
- * backward compatible — it accepts any version in [MIN_SCHEMA_VERSION,
- * SCHEMA_VERSION] — so a stored v1 value (no expires_at) is read as "never
- * expires" and a v2 value (no plan_tier) as "tier unknown"; the Go API only ever
- * writes SCHEMA_VERSION.
+ * gate the free-tier "Deployed with Dropway" attribution banner).
+ * v3 → v4: added the optional `chat_id` field — the id of the site's attached,
+ * panel-enabled chat log (Share This Session). When present, the Worker injects
+ * the "How this was made" pill into served HTML and serves the transcript page
+ * at the reserved /__dropway/chat path. The parser stays backward compatible —
+ * it accepts any version in [MIN_SCHEMA_VERSION, SCHEMA_VERSION] — so a stored
+ * v1 value (no expires_at) is read as "never expires", a v2 value (no
+ * plan_tier) as "tier unknown", and a v3 value (no chat_id) as "no chat
+ * surface"; the Go API only ever writes SCHEMA_VERSION.
  */
-export const SCHEMA_VERSION = 3 as const;
+export const SCHEMA_VERSION = 4 as const;
 
 /**
  * The oldest contract shape the parser still accepts. A v1 value carries no
  * `expires_at` (treated as non-expiring); a v2 value carries no `plan_tier`
- * (treated as tier unknown).
+ * (treated as tier unknown); a v3 value carries no `chat_id` (no chat surface).
  */
 export const MIN_SCHEMA_VERSION = 1 as const;
 
@@ -69,6 +73,14 @@ export interface KVRouteValue {
    * Dropway" attribution banner. Absent → tier unknown → no banner.
    */
   plan_tier?: string;
+  /**
+   * OPTIONAL (v4+). The id (UUID) of the site's attached, panel-enabled chat
+   * log (Share This Session). When present, the Worker injects the "How this
+   * was made" pill into served HTML and serves the compiled transcript at the
+   * reserved /__dropway/chat path (from chat-transcripts/<org_id>/<chat_id>.json
+   * in the content bucket). Absent → no chat surface.
+   */
+  chat_id?: string;
 }
 
 const UUID_RE =
@@ -111,6 +123,7 @@ export function parseKVRouteValue(input: unknown): KVRouteValue {
     "schema_version",
     "expires_at",
     "plan_tier",
+    "chat_id",
   ]);
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) {
@@ -175,6 +188,18 @@ export function parseKVRouteValue(input: unknown): KVRouteValue {
     }
   }
 
+  // chat_id is optional (v4+). Unlike plan_tier (a free-form tier string) it is
+  // an identifier used to build an R2 object key, so — like org_id — it must be
+  // a UUID string when present; anything else is rejected (fail closed rather
+  // than let a malformed projection shape a bucket key).
+  let chatId: string | undefined;
+  if (obj.chat_id !== undefined && obj.chat_id !== null) {
+    if (typeof obj.chat_id !== "string" || !UUID_RE.test(obj.chat_id)) {
+      throw new KVRouteValidationError("chat_id must be a UUID string");
+    }
+    chatId = obj.chat_id;
+  }
+
   const out: KVRouteValue = {
     org_id: obj.org_id as string,
     site_id: obj.site_id as string,
@@ -187,6 +212,9 @@ export function parseKVRouteValue(input: unknown): KVRouteValue {
   }
   if (planTier !== undefined) {
     out.plan_tier = planTier;
+  }
+  if (chatId !== undefined) {
+    out.chat_id = chatId;
   }
   return out;
 }
@@ -242,6 +270,9 @@ export function serializeKVRouteValue(value: KVRouteValue): string {
   }
   if (validated.plan_tier !== undefined) {
     out.plan_tier = validated.plan_tier;
+  }
+  if (validated.chat_id !== undefined) {
+    out.chat_id = validated.chat_id;
   }
   return JSON.stringify(out);
 }

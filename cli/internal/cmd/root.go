@@ -24,6 +24,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newSitesCmd(defaultReadClientFactory))
 	root.AddCommand(newReadCmd(defaultReadClientFactory))
 	root.AddCommand(newSkillsCmd(defaultSkillsClientFactory))
+	root.AddCommand(newChatCmd(defaultChatClientFactory))
 	// Phase-4 operator jobs (direct DB/R2 access, not the deploy-token API path).
 	root.AddCommand(newGCCmd(defaultOpsFactory))
 	root.AddCommand(newDRCmd(defaultOpsFactory))
