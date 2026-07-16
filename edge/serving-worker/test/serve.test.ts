@@ -42,6 +42,7 @@ import {
 const ORG_ID = "11111111-1111-1111-1111-111111111111";
 const SITE_ID = "22222222-2222-2222-2222-222222222222";
 const VERSION_ID = "33333333-3333-3333-3333-333333333333";
+const CHAT_ID = "55555555-5555-5555-5555-555555555555";
 
 const PUBLIC_ROUTE: RouteValue = {
   org_id: ORG_ID,
@@ -196,7 +197,7 @@ describe("parseRouteValue", () => {
     expect(parseRouteValue({ ...PUBLIC_ROUTE })).toEqual(PUBLIC_ROUTE);
   });
 
-  it("accepts schema_version 1, 2 and 3 (v2 added expires_at, v3 added plan_tier)", () => {
+  it("accepts schema_version 1–4 (v2 added expires_at, v3 plan_tier, v4 chat_id)", () => {
     // v1: no expires_at (read as non-expiring).
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 1 })).not.toBeNull();
     // v2: optional expires_at allowed.
@@ -213,11 +214,16 @@ describe("parseRouteValue", () => {
     expect(
       parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3, plan_tier: "free" }),
     ).toEqual({ ...PUBLIC_ROUTE, schema_version: 3, plan_tier: "free" });
+    // v4: optional chat_id (a UUID) allowed.
+    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4 })).not.toBeNull();
+    expect(
+      parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4, chat_id: CHAT_ID }),
+    ).toEqual({ ...PUBLIC_ROUTE, schema_version: 4, chat_id: CHAT_ID });
   });
 
   it("rejects an out-of-range / mistyped schema_version", () => {
-    // 4 is newer than this build understands; "1" is a string, not a number.
-    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4 })).toBeNull();
+    // 5 is newer than this build understands; "1" is a string, not a number.
+    expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 5 })).toBeNull();
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 0 })).toBeNull();
     expect(parseRouteValue({ ...PUBLIC_ROUTE, schema_version: "1" })).toBeNull();
   });
@@ -225,6 +231,18 @@ describe("parseRouteValue", () => {
   it("rejects a non-string plan_tier", () => {
     expect(
       parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 3, plan_tier: 7 }),
+    ).toBeNull();
+  });
+
+  it("rejects a non-UUID / mistyped chat_id (unlike free-form plan_tier)", () => {
+    expect(
+      parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4, chat_id: "chat_1" }),
+    ).toBeNull();
+    expect(
+      parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4, chat_id: "" }),
+    ).toBeNull();
+    expect(
+      parseRouteValue({ ...PUBLIC_ROUTE, schema_version: 4, chat_id: 7 }),
     ).toBeNull();
   });
 

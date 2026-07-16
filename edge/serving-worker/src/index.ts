@@ -1017,14 +1017,19 @@ function cacheKey(route: RouteValue, url: URL): Request {
   const raw = isRawRequested(url);
   const keyUrl = new URL(url.toString());
   keyUrl.search = ""; // static content does not vary by query string (except ?raw)
-  // Fold access_mode + version + plan_tier into the key path so neither an access
-  // change, a publish/rollback, nor a plan change can ever serve a stale or
-  // cross-mode/cross-tier cache entry. plan_tier is optional (older projections) →
-  // "_" stands in for "absent". The `raw` segment partitions ?raw from the rendered
-  // page (see resolveBlob's Markdown branch).
+  // Fold access_mode + version + plan_tier + chat_id into the key path so neither
+  // an access change, a publish/rollback, a plan change, nor a chat attach/detach
+  // can ever serve a stale or cross-mode/cross-tier cache entry. plan_tier and
+  // chat_id are optional (older projections) → "_" stands in for "absent"; folding
+  // chat_id means attaching a chat (which reprojects the route but keeps the same
+  // version_id) flips the "How this was made" pill IMMEDIATELY — cached HTML
+  // without the pill can't persist after an attach (nor with it after a detach).
+  // The `raw` segment partitions ?raw from the rendered page (see resolveBlob's
+  // Markdown branch).
   const tier = route.plan_tier ?? "_";
+  const chat = route.chat_id ?? "_";
   const rawSeg = raw ? "/raw" : "";
-  keyUrl.pathname = `/${route.access_mode}/${route.version_id}/${tier}${rawSeg}${keyUrl.pathname}`;
+  keyUrl.pathname = `/${route.access_mode}/${route.version_id}/${tier}/${chat}${rawSeg}${keyUrl.pathname}`;
   return new Request(keyUrl.toString(), { method: "GET" });
 }
 
