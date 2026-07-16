@@ -303,3 +303,33 @@ export async function setPresetFlagAction(input: {
     return { ok: false, message: apiErrorMessage(err, "Could not update the preset flag.") };
   }
 }
+
+/**
+ * Flip the skill's collaboration toggle (`allow_member_edits`) — whether
+ * non-creators may modify its content (uploads/metadata/folders). The Go API
+ * re-checks creator-or-admin and 403s otherwise; deletion stays
+ * creator-or-admin regardless.
+ */
+export async function setSkillCollabAction(input: {
+  id: string;
+  allowMemberEdits: boolean;
+}): Promise<
+  { ok: true; allowMemberEdits: boolean } | { ok: false; message: string }
+> {
+  try {
+    const skill = await api.setSkillCollab(input.id, input.allowMemberEdits);
+    revalidatePath("/skills");
+    revalidatePath(`/skills/${input.id}`);
+    return {
+      ok: true,
+      allowMemberEdits: skill.allow_member_edits ?? input.allowMemberEdits,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: apiErrorMessage(err, "Could not update the collaboration setting.", {
+        403: "Only the creator or an admin can change this.",
+      }),
+    };
+  }
+}

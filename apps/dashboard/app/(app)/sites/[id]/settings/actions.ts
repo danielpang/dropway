@@ -196,3 +196,33 @@ export async function removeAllowlistAction(input: {
     return { ok: false, message: "Could not reach the API. Try again." };
   }
 }
+
+/**
+ * Flip the site's collaboration toggle (`allow_member_edits`) — whether
+ * non-creators may modify its content (deploys/publish/previews). The Go API
+ * re-checks creator-or-admin and 403s otherwise; deletion and access settings
+ * are governed separately.
+ */
+export async function setSiteCollabAction(input: {
+  id: string;
+  allowMemberEdits: boolean;
+}): Promise<
+  { ok: true; allowMemberEdits: boolean } | { ok: false; message: string }
+> {
+  try {
+    const site = await api.setSiteCollab(input.id, input.allowMemberEdits);
+    revalidatePath(`/sites/${input.id}`);
+    revalidatePath(`/sites/${input.id}/settings`);
+    return {
+      ok: true,
+      allowMemberEdits: site.allow_member_edits ?? input.allowMemberEdits,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: apiErrorMessage(err, "Could not update the collaboration setting.", {
+        403: "Only the creator or an admin can change this.",
+      }),
+    };
+  }
+}

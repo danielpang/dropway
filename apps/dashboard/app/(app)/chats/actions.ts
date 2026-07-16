@@ -160,3 +160,33 @@ export async function setChatPanelAction(input: {
     };
   }
 }
+
+/**
+ * Flip the chat log's collaboration toggle (`allow_member_edits`) — whether
+ * non-creators may modify its content (appends/curation/site binding/panel).
+ * The Go API re-checks creator-or-admin and 403s otherwise; deletion stays
+ * creator-or-admin regardless.
+ */
+export async function setChatCollabAction(input: {
+  id: string;
+  allowMemberEdits: boolean;
+}): Promise<
+  { ok: true; allowMemberEdits: boolean } | { ok: false; message: string }
+> {
+  try {
+    const chatLog = await api.setChatCollab(input.id, input.allowMemberEdits);
+    revalidatePath(`/chats/${input.id}`);
+    return {
+      ok: true,
+      allowMemberEdits: chatLog.allow_member_edits ?? input.allowMemberEdits,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: apiErrorMessage(err, "Could not update the collaboration setting.", {
+        403: "Only the creator or an admin can change this.",
+        404: "This chat log no longer exists.",
+      }),
+    };
+  }
+}
