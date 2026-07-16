@@ -10,6 +10,7 @@ import { ChatSiteSelect } from "@/components/chats/chat-site-select";
 import type { AttachableSite } from "@/components/chats/chat-import-form";
 import { sourceToolLabel } from "@/components/chats/source-tools";
 import { TranscriptView } from "@/components/chats/transcript-view";
+import { CollabToggle } from "@/components/collab-toggle";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -147,6 +148,14 @@ export default async function ChatDetailPage(props: {
                 initialEnabled={chat.panel_enabled ?? false}
                 disabled={false}
                 hasSite={!!chat.site_id}
+              />
+            </div>
+            <div className="border-t border-border pt-4">
+              <CollabToggle
+                resourceId={chat.id ?? id}
+                initialAllow={chat.allow_member_edits ?? true}
+                disabled={false}
+                action={setChatCollabAction}
               />
             </div>
           </CardContent>
