@@ -2282,6 +2282,252 @@ describe("attribution banner", () => {
   });
 });
 
+// --- Share This Session: chat pill + reserved /__dropway/chat ----------------
+
+const CHAT_ROUTE: RouteValue = {
+  ...PUBLIC_ROUTE,
+  schema_version: 4,
+  chat_id: CHAT_ID,
+};
+
+const TRANSCRIPT_KEY = `chat-transcripts/${ORG_ID}/${CHAT_ID}.json`;
+
+/** A minimal, well-formed compiled transcript (what the Go API writes). */
+function transcriptJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    chat_id: CHAT_ID,
+    title: "Build my landing page",
+    source_tool: "claude_code",
+    total_appended: 2,
+    messages: [
+      {
+        seq: 1,
+        role: "user",
+        kind: "chat",
+        content: "Make me a landing page",
+        created_at: "2026-07-01T00:00:00Z",
+      },
+      {
+        seq: 2,
+        role: "assistant",
+        kind: "chat",
+        content: "Done — deployed!",
+        version_id: VERSION_ID,
+        created_at: "2026-07-01T00:01:00Z",
+      },
+    ],
+    ...overrides,
+  });
+}
+
+describe("chat pill injection (route.chat_id)", () => {
+  it("injects the pill into HTML when the route carries a chat_id", async () => {
+    const { objects } = deploy({
+      "index.html": {
+        body: "<html><body><h1>home</h1></body></html>",
+        content_type: "text/html; charset=utf-8",
+      },
+    });
+    const res = await serveNoCache(get(HOST, "/"), envFor(CHAT_ROUTE, HOST, objects));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('id="dropway-chat-pill"');
+    expect(body).toContain("How this was made");
+    // The drawer iframe targets the same-host reserved path.
+    expect(body).toContain("/__dropway/chat");
+    // Original content preserved; pill sits after <body>, before tenant content.
+    expect(body).toContain("<h1>home</h1>");
+    expect(body.indexOf("dropway-chat-pill")).toBeLessThan(body.indexOf("<h1>home</h1>"));
+    // Content-Length reflects the (larger) injected body.
+    expect(Number(res.headers.get("Content-Length"))).toBe(
+      new TextEncoder().encode(body).length,
+    );
+  });
+
+  it("does NOT inject when the route has no chat_id", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    const res = await serveNoCache(get(HOST, "/"), envFor(PUBLIC_ROUTE, HOST, objects));
+    const body = await res.text();
+    expect(body).not.toContain("dropway-chat");
+    expect(body).toBe("<body><h1>home</h1></body>");
+  });
+
+  it("leaves non-HTML assets byte-identical", async () => {
+    const css = "body{color:red}";
+    const { objects } = deploy({
+      "index.html": { body: "<body></body>", content_type: "text/html" },
+      "style.css": { body: css, content_type: "text/css" },
+    });
+    const res = await serveNoCache(get(HOST, "/style.css"), envFor(CHAT_ROUTE, HOST, objects));
+    expect(await res.text()).toBe(css);
+  });
+
+  it("composes with the free-tier attribution banner (both injected)", async () => {
+    const { objects } = deploy({
+      "index.html": {
+        body: "<html><body><h1>home</h1></body></html>",
+        content_type: "text/html; charset=utf-8",
+      },
+    });
+    const route: RouteValue = { ...CHAT_ROUTE, plan_tier: "free" };
+    const env: Env = { ...envFor(route, HOST, objects), ATTRIBUTION_BANNER: "true" };
+    const res = await serveNoCache(get(HOST, "/"), env);
+    const body = await res.text();
+    expect(body).toContain('id="dropway-banner"');
+    expect(body).toContain('id="dropway-chat-pill"');
+    expect(Number(res.headers.get("Content-Length"))).toBe(
+      new TextEncoder().encode(body).length,
+    );
+  });
+
+  it("a HEAD reports the injected Content-Length arithmetically (no body)", async () => {
+    const { objects } = deploy({
+      "index.html": {
+        body: "<html><body><h1>home</h1></body></html>",
+        content_type: "text/html; charset=utf-8",
+      },
+    });
+    const env = envFor(CHAT_ROUTE, HOST, objects);
+    const getRes = await serveNoCache(get(HOST, "/"), env);
+    const getLen = Number(getRes.headers.get("Content-Length"));
+    const headRes = await serveNoCache(
+      new Request(`https://${HOST}/`, { method: "HEAD" }),
+      env,
+    );
+    expect(Number(headRes.headers.get("Content-Length"))).toBe(getLen);
+    expect(await headRes.text()).toBe("");
+  });
+
+  it("flips the pill immediately on attach (chat_id is in the cache key)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body><h1>home</h1></body>", content_type: "text/html" },
+    });
+    const cache = mockCache();
+    // No chat attached yet: cached body has no pill.
+    const before = await serve(get(HOST, "/"), envFor(PUBLIC_ROUTE, HOST, objects), { cache });
+    expect(await before.text()).not.toContain("dropway-chat-pill");
+
+    // The owner attaches a chat (reprojected chat_id, SAME version_id). Because
+    // chat_id is part of the cache key, this MISSES the pill-less entry and
+    // serves a fresh, pill-injected body immediately.
+    const after = await serve(get(HOST, "/"), envFor(CHAT_ROUTE, HOST, objects), { cache });
+    expect(await after.text()).toContain("dropway-chat-pill");
+  });
+});
+
+describe("serve() /__dropway/chat — the shared-session transcript page", () => {
+  it("serves the transcript for a PUBLIC route (no-store, same-origin-frameable HTML)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body>home</body>", content_type: "text/html" },
+    });
+    objects[TRANSCRIPT_KEY] = transcriptJson();
+    const res = await serveNoCache(get(HOST, "/__dropway/chat"), envFor(CHAT_ROUTE, HOST, objects));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    // The transcript mutates independently of deploys → never cached.
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    // Frameable by the pill's SAME-ORIGIN drawer iframe only.
+    expect(res.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    expect(res.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'self'");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+
+    const body = await res.text();
+    expect(body).toContain("Build my landing page");
+    expect(body).toContain("Claude Code"); // source-tool badge
+    expect(body).toContain("2 messages");
+    expect(body).toContain("Make me a landing page");
+    expect(body).toContain('id="msg-1"');
+    expect(body).toContain('id="msg-2"');
+  });
+
+  it("is NOT cached by the Cache API (mutable transcript)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body>home</body>", content_type: "text/html" },
+    });
+    objects[TRANSCRIPT_KEY] = transcriptJson();
+    const cache = mockCache();
+    const res = await serve(get(HOST, "/__dropway/chat"), envFor(CHAT_ROUTE, HOST, objects), {
+      cache,
+    });
+    expect(res.status).toBe(200);
+    expect(cache.store.size).toBe(0);
+  });
+
+  it("renders the 'conversation unavailable' page when the transcript object is missing", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body>home</body>", content_type: "text/html" },
+    });
+    // No TRANSCRIPT_KEY object seeded.
+    const res = await serveNoCache(get(HOST, "/__dropway/chat"), envFor(CHAT_ROUTE, HOST, objects));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Conversation unavailable");
+  });
+
+  it("renders 'conversation unavailable' for malformed transcript JSON (never throws)", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body>home</body>", content_type: "text/html" },
+    });
+    objects[TRANSCRIPT_KEY] = "{not json";
+    const res = await serveNoCache(get(HOST, "/__dropway/chat"), envFor(CHAT_ROUTE, HOST, objects));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Conversation unavailable");
+  });
+
+  it("treats /__dropway/chat as ordinary content when the route has NO chat_id", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<body>home</body>", content_type: "text/html" },
+    });
+    objects[TRANSCRIPT_KEY] = transcriptJson(); // present, but not routed to
+    const res = await serveNoCache(get(HOST, "/__dropway/chat"), envFor(PUBLIC_ROUTE, HOST, objects));
+    // Falls through to manifest resolution → no such file → 404 (no transcript leak).
+    expect(res.status).toBe(404);
+  });
+
+  it("GATED route: the transcript is NOT served pre-auth — 302 to /authz without a token", async () => {
+    const route: RouteValue = { ...CHAT_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<body>secret</body>", content_type: "text/html" },
+    });
+    objects[TRANSCRIPT_KEY] = transcriptJson();
+    const signer = await makeEdgeSigner();
+    const env = gatedEnv(route, GATED_HOST, objects);
+
+    const res = await serve(get(GATED_HOST, "/__dropway/chat"), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe(AUTHZ_URL);
+    expect(loc.searchParams.get("next")).toBe("/__dropway/chat");
+  });
+
+  it("GATED route: serves the transcript AFTER a valid token (private, no-store)", async () => {
+    const route: RouteValue = { ...CHAT_ROUTE, access_mode: "org_only" };
+    const { objects } = deploy({
+      "index.html": { body: "<body>secret</body>", content_type: "text/html" },
+    });
+    objects[TRANSCRIPT_KEY] = transcriptJson();
+    const signer = await makeEdgeSigner();
+    const env = gatedEnv(route, GATED_HOST, objects);
+    const token = await signer.mint({ mode: "org_only", host: GATED_HOST, siteId: SITE_ID });
+
+    const res = await serve(getWithCookie(GATED_HOST, "/__dropway/chat", token), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+    expect(res.status).toBe(200);
+    // The gated wrapper forces private/no-store on top of the chat page headers.
+    expect(res.headers.get("Cache-Control")).toBe(
+      "private, no-store, max-age=0, must-revalidate",
+    );
+    expect(await res.text()).toContain("Build my landing page");
+  });
+});
+
 // --- serve_404 PostHog emission (the "why can't a user reach the site?" event) --
 
 describe("serve_404 emission", () => {
