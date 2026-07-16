@@ -31,7 +31,12 @@ type ChatLog struct {
 	SourceTool string
 	// PanelEnabled gates the served pill/panel without detaching the log.
 	PanelEnabled bool
-	CreatedBy    string
+	// AllowMemberEdits is the collaboration toggle (mirrors Site.AllowMemberEdits):
+	// true (default) lets any org member append/curate messages; false restricts
+	// edits to creator-or-admin. Deletion of the log stays creator-or-admin
+	// regardless.
+	AllowMemberEdits bool
+	CreatedBy        string
 	// MessageCount is the live row count (populated by the read paths).
 	MessageCount int64
 	CreatedAt    time.Time
@@ -175,7 +180,8 @@ func (s *Store) ListChatLogs(ctx context.Context, t Tenant) ([]ChatLog, error) {
 			out[i] = ChatLog{
 				ID: r.ID, OrgID: r.OrgID, SiteID: r.SiteID, Title: r.Title,
 				SourceTool: r.SourceTool, PanelEnabled: r.PanelEnabled,
-				CreatedBy: r.CreatedBy, MessageCount: r.MessageCount, CreatedAt: r.CreatedAt,
+				AllowMemberEdits: r.AllowMemberEdits,
+				CreatedBy:        r.CreatedBy, MessageCount: r.MessageCount, CreatedAt: r.CreatedAt,
 			}
 		}
 		return nil
@@ -578,7 +584,8 @@ func chatLogFromDB(r db.AppChatLog) ChatLog {
 	return ChatLog{
 		ID: r.ID, OrgID: r.OrgID, SiteID: r.SiteID, Title: r.Title,
 		SourceTool: r.SourceTool, PanelEnabled: r.PanelEnabled,
-		CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt,
+		AllowMemberEdits: r.AllowMemberEdits,
+		CreatedBy:        r.CreatedBy, CreatedAt: r.CreatedAt,
 	}
 }
 

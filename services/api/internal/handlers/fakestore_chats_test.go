@@ -74,7 +74,7 @@ func (f *fakeStore) CreateChatLog(_ context.Context, t store.Tenant, title, sour
 	}
 	l := store.ChatLog{
 		ID: ch.id(), OrgID: t.OrgID, SiteID: siteID, Title: title,
-		SourceTool: sourceTool, PanelEnabled: true, CreatedBy: t.UserID,
+		SourceTool: sourceTool, PanelEnabled: true, AllowMemberEdits: true, CreatedBy: t.UserID,
 	}
 	ch.logs[l.ID] = l
 	ch.nextSeq[l.ID] = 1

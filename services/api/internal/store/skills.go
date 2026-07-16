@@ -37,6 +37,11 @@ type Skill struct {
 	// FeedVisible shares the skill to the org feed (default true); the owner/admin
 	// can make it private to pull it off the feed (mirrors Site.FeedVisible).
 	FeedVisible bool
+	// AllowMemberEdits is the collaboration toggle (mirrors Site.AllowMemberEdits):
+	// true (default) lets any org member upload versions / edit metadata; false
+	// restricts content edits to creator-or-admin. Deletion stays creator-or-admin
+	// regardless.
+	AllowMemberEdits bool
 	// Folders are the skill's folder memberships (with preset flags), populated
 	// by the read paths so listings render chips without an N+1.
 	Folders   []SkillFolderRef
@@ -600,6 +605,7 @@ func skillFromDB(r db.AppSkill) Skill {
 		CreatedAt:        r.CreatedAt,
 	}
 	s.FeedVisible = r.FeedVisible
+	s.AllowMemberEdits = r.AllowMemberEdits
 	if r.Title.Valid {
 		s.Title = r.Title.String
 	}

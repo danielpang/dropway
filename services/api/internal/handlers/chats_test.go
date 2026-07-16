@@ -31,6 +31,7 @@ func chatsRouterFor(a *API, orgID, userID string) http.Handler {
 			r.Delete("/{id}/messages/{seq}", a.DeleteChatMessage)
 			r.Put("/{id}/site", a.SetChatLogSite)
 			r.Put("/{id}/panel", a.SetChatLogPanel)
+			r.Put("/{id}/collab", a.SetChatLogCollab)
 		})
 		r.Route("/sites", func(r chi.Router) {
 			r.Get("/{id}/chat", a.GetSiteChat)
@@ -366,9 +367,11 @@ func TestChatKillSwitch(t *testing.T) {
 	}
 }
 
-// TestChatOwnerOrAdminGate: a non-owner member can't mutate someone else's
-// log; an org admin can.
-func TestChatOwnerOrAdminGate(t *testing.T) {
+// TestChatCollabGate: collaboration is on by default — any org member may
+// append to someone else's log. Flipping the toggle off restricts content
+// edits to creator-or-admin, deletion is creator-or-admin regardless, and
+// only the creator/admin may flip the toggle.
+func TestChatCollabGate(t *testing.T) {
 	fs := newFakeStore()
 	fs.p2().members["owner_1"] = "member"
 	fs.p2().members["other_1"] = "member"
@@ -382,15 +385,43 @@ func TestChatOwnerOrAdminGate(t *testing.T) {
 	var created chatLogEnvelope
 	mustJSON(t, rr, &created)
 	id := created.ChatLog.ID
+	if !created.ChatLog.AllowMemberEdits {
+		t.Fatal("collaboration must default ON")
+	}
 
+	// Default: another member may append (collaborate, don't lock down)…
+	rr = do(t, other, http.MethodPost, "/v1/chats/"+id+"/messages",
+		`{"messages":[{"role":"user","content":"hi from a teammate"}]}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("other member append with collab on = %d, want 201", rr.Code)
+	}
+	// …but deletion of the log stays creator-or-admin regardless.
 	rr = do(t, other, http.MethodDelete, "/v1/chats/"+id, "")
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("other member delete = %d, want 403", rr.Code)
 	}
-	rr = do(t, other, http.MethodPost, "/v1/chats/"+id+"/messages",
-		`{"messages":[{"role":"user","content":"hi"}]}`)
+
+	// Only creator/admin may flip the toggle.
+	rr = do(t, other, http.MethodPut, "/v1/chats/"+id+"/collab", `{"allow_member_edits":false}`)
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("other member append = %d, want 403", rr.Code)
+		t.Fatalf("other member toggle = %d, want 403", rr.Code)
+	}
+	rr = do(t, owner, http.MethodPut, "/v1/chats/"+id+"/collab", `{"allow_member_edits":false}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("owner toggle: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Toggle off: the other member is locked out of content edits…
+	rr = do(t, other, http.MethodPost, "/v1/chats/"+id+"/messages",
+		`{"messages":[{"role":"user","content":"blocked"}]}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("other member append with collab off = %d, want 403", rr.Code)
+	}
+	// …while the creator and an admin still edit and delete.
+	rr = do(t, owner, http.MethodPost, "/v1/chats/"+id+"/messages",
+		`{"messages":[{"role":"user","content":"still mine"}]}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("owner append with collab off = %d, want 201", rr.Code)
 	}
 	rr = do(t, admin, http.MethodDelete, "/v1/chats/"+id, "")
 	if rr.Code != http.StatusNoContent {

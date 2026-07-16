@@ -94,7 +94,7 @@ func (f *fakeStore) CreateSkill(_ context.Context, t store.Tenant, slug, title s
 	}
 	s := store.Skill{
 		ID: sk.id("skill"), OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, Title: title,
-		FeedVisible: true, // mirror the DB default (auto-shared to the org feed)
+		FeedVisible: true, AllowMemberEdits: true, // mirror the DB defaults
 	}
 	sk.skills[s.ID] = s
 	for _, folderID := range folderIDs {

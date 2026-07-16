@@ -151,10 +151,10 @@ WHERE app.org_usage.org_id = $1;
 -- name: CreateSite :one
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
 
 -- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
 WHERE id = $1;
 
@@ -183,7 +183,7 @@ LEFT JOIN app.site_versions v ON v.id = s.current_version_id
 ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
 ORDER BY created_at DESC;
 
@@ -261,7 +261,7 @@ WHERE subject_type = $1 AND subject_id = $2;
 UPDATE app.sites
 SET feed_visible = $2
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
 
 -- name: SetSiteFeedMeta :one
 -- Set a site's human feed metadata (title + description). Empty strings are passed
@@ -271,7 +271,7 @@ UPDATE app.sites
 SET title       = $2,
     description  = $3
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
 
 -- name: SetCurrentVersion :exec
 -- Flip the live-version pointer (publish / rollback). RLS guarantees we can only
@@ -572,7 +572,7 @@ WHERE id = $1;
 -- name: ListPublicSitesForOrg :many
 -- Every site in the active org whose access_mode = 'public' (used by the reconcile
 -- on disabling external sharing: these are downgraded to org_only).
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at;
@@ -655,7 +655,7 @@ WHERE org_id = $1;
 -- name: CreateSkill :one
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: CreateSeedSkill :one
 -- Insert a preset seed skill, or DO NOTHING if the org already has that slug
@@ -666,7 +666,7 @@ RETURNING id, org_id, slug, owner_user_id, title, description, current_version_i
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (org_id, slug) DO NOTHING
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: GetSkill :one
 -- Embeds the full skill row plus its current version's size (0 when unset), so
@@ -732,7 +732,7 @@ UPDATE app.skills
 SET title = $2,
     description = $3
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: SetSkillFeedVisible :one
 -- Share a skill to the org feed (true) or make it private/off-feed (false). RLS
@@ -741,7 +741,7 @@ RETURNING id, org_id, slug, owner_user_id, title, description, current_version_i
 UPDATE app.skills
 SET feed_visible = $2
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at;
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: SetSkillCurrentVersion :exec
 -- Flip the live pointer (finalize = publish in the latest-only v1 model).
@@ -1168,22 +1168,22 @@ WHERE org_id = $1;
 -- name: CreateChatLog :one
 INSERT INTO app.chat_logs (org_id, site_id, title, source_tool, created_by)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at;
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;
 
 -- name: GetChatLog :one
-SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 FROM app.chat_logs
 WHERE id = $1;
 
 -- name: GetChatLogBySite :one
-SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 FROM app.chat_logs
 WHERE site_id = $1;
 
 -- name: ListChatLogs :many
 -- The org's chat library, newest first, with a live message count per log.
 SELECT cl.id, cl.org_id, cl.site_id, cl.title, cl.source_tool, cl.panel_enabled,
-       cl.next_seq, cl.created_by, cl.created_at,
+       cl.next_seq, cl.created_by, cl.created_at, cl.allow_member_edits,
        (SELECT count(*) FROM app.chat_messages m WHERE m.chat_log_id = cl.id)::bigint AS message_count
 FROM app.chat_logs cl
 WHERE cl.org_id = $1
@@ -1195,13 +1195,13 @@ ORDER BY cl.created_at DESC;
 UPDATE app.chat_logs
 SET site_id = $2
 WHERE id = $1
-RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at;
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;
 
 -- name: SetChatLogPanelEnabled :one
 UPDATE app.chat_logs
 SET panel_enabled = $2
 WHERE id = $1
-RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at;
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;
 
 -- name: DeleteChatLog :execrows
 DELETE FROM app.chat_logs WHERE id = $1;
@@ -1264,3 +1264,25 @@ WHERE id = $1;
 SELECT current_version_id
 FROM app.sites
 WHERE id = $1;
+
+-- ===========================================================================
+-- collaboration toggles (migration 0014): "allow non-creators to modify"
+-- ===========================================================================
+
+-- name: SetSiteAllowMemberEdits :one
+UPDATE app.sites
+SET allow_member_edits = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
+
+-- name: SetSkillAllowMemberEdits :one
+UPDATE app.skills
+SET allow_member_edits = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
+
+-- name: SetChatLogAllowMemberEdits :one
+UPDATE app.chat_logs
+SET allow_member_edits = $2
+WHERE id = $1
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;

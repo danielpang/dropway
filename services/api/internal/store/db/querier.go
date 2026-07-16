@@ -400,6 +400,7 @@ type Querier interface {
 	// ===========================================================================
 	// Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
 	SetAllowExternalSharing(ctx context.Context, arg SetAllowExternalSharingParams) error
+	SetChatLogAllowMemberEdits(ctx context.Context, arg SetChatLogAllowMemberEditsParams) (AppChatLog, error)
 	SetChatLogPanelEnabled(ctx context.Context, arg SetChatLogPanelEnabledParams) (AppChatLog, error)
 	// Attach ($2 = site id), detach ($2 = NULL), or move a log. The partial unique
 	// index chat_logs_site_key rejects attaching to a site that already has one.
@@ -420,6 +421,10 @@ type Querier interface {
 	// UPDATE to the active org; the external-sharing trigger (0004) rejects 'public'
 	// under a false org policy.
 	SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModeParams) error
+	// ===========================================================================
+	// collaboration toggles (migration 0014): "allow non-creators to modify"
+	// ===========================================================================
+	SetSiteAllowMemberEdits(ctx context.Context, arg SetSiteAllowMemberEditsParams) (AppSite, error)
 	// Set a site's human feed metadata (title + description). Empty strings are passed
 	// as NULL by the caller so "clear it" round-trips to a null column. RLS scopes the
 	// UPDATE to the active org; the handler restricts it to the owner or an org admin.
@@ -429,6 +434,7 @@ type Querier interface {
 	// owner or an org admin/owner. Does NOT touch access_mode, so the edge projection
 	// is unaffected (feed visibility is the discovery axis, not the access axis).
 	SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisibleParams) (AppSite, error)
+	SetSkillAllowMemberEdits(ctx context.Context, arg SetSkillAllowMemberEditsParams) (AppSkill, error)
 	// Flip the live pointer (finalize = publish in the latest-only v1 model).
 	SetSkillCurrentVersion(ctx context.Context, arg SetSkillCurrentVersionParams) error
 	// Share a skill to the org feed (true) or make it private/off-feed (false). RLS

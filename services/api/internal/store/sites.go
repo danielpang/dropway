@@ -159,7 +159,11 @@ type Site struct {
 	// the feed falls back to the slug for the title).
 	Title       string
 	Description string
-	CreatedAt   time.Time
+	// AllowMemberEdits is the collaboration toggle: true (default) lets any org
+	// member modify content (deploy/publish/previews); false restricts content
+	// edits to creator-or-admin. Security changes stay admin-gated regardless.
+	AllowMemberEdits bool
+	CreatedAt        time.Time
 }
 
 // SiteVersion is an immutable, content-addressed deploy.
@@ -533,6 +537,7 @@ func siteFromDB(r db.AppSite) Site {
 		AccessMode:       r.AccessMode,
 		CurrentVersionID: r.CurrentVersionID,
 		FeedVisible:      r.FeedVisible,
+		AllowMemberEdits: r.AllowMemberEdits,
 		CreatedAt:        r.CreatedAt,
 	}
 	if r.Title.Valid {

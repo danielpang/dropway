@@ -24,20 +24,24 @@ type chatLogResponse struct {
 	ID    string `json:"id"`
 	OrgID string `json:"org_id"`
 	// SiteID is the attached site (absent = unattached library entry).
-	SiteID       *string   `json:"site_id,omitempty"`
-	Title        string    `json:"title"`
-	SourceTool   string    `json:"source_tool"`
-	PanelEnabled bool      `json:"panel_enabled"`
-	MessageCount int64     `json:"message_count"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
+	SiteID       *string `json:"site_id,omitempty"`
+	Title        string  `json:"title"`
+	SourceTool   string  `json:"source_tool"`
+	PanelEnabled bool    `json:"panel_enabled"`
+	// AllowMemberEdits is the collaboration toggle (default true): false
+	// restricts content edits to creator-or-admin.
+	AllowMemberEdits bool      `json:"allow_member_edits"`
+	MessageCount     int64     `json:"message_count"`
+	CreatedBy        string    `json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 func toChatLogResponse(l store.ChatLog) chatLogResponse {
 	return chatLogResponse{
 		ID: l.ID, OrgID: l.OrgID, SiteID: l.SiteID, Title: l.Title,
 		SourceTool: l.SourceTool, PanelEnabled: l.PanelEnabled,
-		MessageCount: l.MessageCount, CreatedBy: l.CreatedBy, CreatedAt: l.CreatedAt,
+		AllowMemberEdits: l.AllowMemberEdits,
+		MessageCount:     l.MessageCount, CreatedBy: l.CreatedBy, CreatedAt: l.CreatedAt,
 	}
 }
 
@@ -358,7 +362,7 @@ func (a *API) AppendChatMessages(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireChatLogOwnerOrAdmin(w, r, t, log) {
+	if !a.requireChatLogEditor(w, r, t, log) {
 		return
 	}
 	a.appendToLog(w, r, t, log)
@@ -454,7 +458,7 @@ func (a *API) DeleteChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireChatLogOwnerOrAdmin(w, r, t, log) {
+	if !a.requireChatLogEditor(w, r, t, log) {
 		return
 	}
 	if err := a.Store.DeleteChatMessage(r.Context(), t, id, int32(seq)); err != nil {
@@ -493,7 +497,7 @@ func (a *API) SetChatLogSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireChatLogOwnerOrAdmin(w, r, t, before) {
+	if !a.requireChatLogEditor(w, r, t, before) {
 		return
 	}
 	log, err := a.Store.SetChatLogSite(r.Context(), t, id, req.SiteID)
@@ -536,7 +540,7 @@ func (a *API) SetChatLogPanel(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireChatLogOwnerOrAdmin(w, r, t, before) {
+	if !a.requireChatLogEditor(w, r, t, before) {
 		return
 	}
 	log, err := a.Store.SetChatLogPanel(r.Context(), t, id, req.Enabled)
@@ -609,7 +613,7 @@ func (a *API) AppendSiteChat(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireChatLogOwnerOrAdmin(w, r, t, log) {
+	if !a.requireChatLogEditor(w, r, t, log) {
 		return
 	}
 	a.appendToLog(w, r, t, log)

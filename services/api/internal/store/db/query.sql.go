@@ -244,7 +244,7 @@ func (q *Queries) CreateAISession(ctx context.Context, arg CreateAISessionParams
 const createChatLog = `-- name: CreateChatLog :one
 INSERT INTO app.chat_logs (org_id, site_id, title, source_tool, created_by)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 `
 
 type CreateChatLogParams struct {
@@ -274,6 +274,7 @@ func (q *Queries) CreateChatLog(ctx context.Context, arg CreateChatLogParams) (A
 		&i.NextSeq,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -328,7 +329,7 @@ const createSeedSkill = `-- name: CreateSeedSkill :one
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (org_id, slug) DO NOTHING
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits
 `
 
 type CreateSeedSkillParams struct {
@@ -363,6 +364,7 @@ func (q *Queries) CreateSeedSkill(ctx context.Context, arg CreateSeedSkillParams
 		&i.CurrentVersionID,
 		&i.FeedVisible,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -371,7 +373,7 @@ const createSite = `-- name: CreateSite :one
 
 INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
 VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 `
 
 type CreateSiteParams struct {
@@ -403,6 +405,7 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 		&i.Title,
 		&i.Description,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -460,7 +463,7 @@ func (q *Queries) CreateSiteVersion(ctx context.Context, arg CreateSiteVersionPa
 const createSkill = `-- name: CreateSkill :one
 INSERT INTO app.skills (org_id, slug, owner_user_id, title, description)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits
 `
 
 type CreateSkillParams struct {
@@ -490,6 +493,7 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (AppSk
 		&i.CurrentVersionID,
 		&i.FeedVisible,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -973,7 +977,7 @@ func (q *Queries) GetAllowlistEntryByEmail(ctx context.Context, arg GetAllowlist
 }
 
 const getChatLog = `-- name: GetChatLog :one
-SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 FROM app.chat_logs
 WHERE id = $1
 `
@@ -991,12 +995,13 @@ func (q *Queries) GetChatLog(ctx context.Context, id string) (AppChatLog, error)
 		&i.NextSeq,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
 
 const getChatLogBySite = `-- name: GetChatLogBySite :one
-SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 FROM app.chat_logs
 WHERE site_id = $1
 `
@@ -1014,6 +1019,7 @@ func (q *Queries) GetChatLogBySite(ctx context.Context, siteID *string) (AppChat
 		&i.NextSeq,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -1238,7 +1244,7 @@ func (q *Queries) GetPostVoteScore(ctx context.Context, arg GetPostVoteScorePara
 }
 
 const getSite = `-- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
 WHERE id = $1
 `
@@ -1257,6 +1263,7 @@ func (q *Queries) GetSite(ctx context.Context, id string) (AppSite, error) {
 		&i.Title,
 		&i.Description,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -1375,7 +1382,7 @@ func (q *Queries) GetSiteVersionByContentHash(ctx context.Context, arg GetSiteVe
 }
 
 const getSkill = `-- name: GetSkill :one
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at, sk.allow_member_edits,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
@@ -1404,6 +1411,7 @@ func (q *Queries) GetSkill(ctx context.Context, id string) (GetSkillRow, error) 
 		&i.AppSkill.CurrentVersionID,
 		&i.AppSkill.FeedVisible,
 		&i.AppSkill.CreatedAt,
+		&i.AppSkill.AllowMemberEdits,
 		&i.SizeBytes,
 		&i.Version,
 	)
@@ -1411,7 +1419,7 @@ func (q *Queries) GetSkill(ctx context.Context, id string) (GetSkillRow, error) 
 }
 
 const getSkillBySlug = `-- name: GetSkillBySlug :one
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at, sk.allow_member_edits,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
@@ -1438,6 +1446,7 @@ func (q *Queries) GetSkillBySlug(ctx context.Context, slug string) (GetSkillBySl
 		&i.AppSkill.CurrentVersionID,
 		&i.AppSkill.FeedVisible,
 		&i.AppSkill.CreatedAt,
+		&i.AppSkill.AllowMemberEdits,
 		&i.SizeBytes,
 		&i.Version,
 	)
@@ -1994,7 +2003,7 @@ func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]A
 
 const listChatLogs = `-- name: ListChatLogs :many
 SELECT cl.id, cl.org_id, cl.site_id, cl.title, cl.source_tool, cl.panel_enabled,
-       cl.next_seq, cl.created_by, cl.created_at,
+       cl.next_seq, cl.created_by, cl.created_at, cl.allow_member_edits,
        (SELECT count(*) FROM app.chat_messages m WHERE m.chat_log_id = cl.id)::bigint AS message_count
 FROM app.chat_logs cl
 WHERE cl.org_id = $1
@@ -2002,16 +2011,17 @@ ORDER BY cl.created_at DESC
 `
 
 type ListChatLogsRow struct {
-	ID           string
-	OrgID        string
-	SiteID       *string
-	Title        string
-	SourceTool   string
-	PanelEnabled bool
-	NextSeq      int32
-	CreatedBy    string
-	CreatedAt    time.Time
-	MessageCount int64
+	ID               string
+	OrgID            string
+	SiteID           *string
+	Title            string
+	SourceTool       string
+	PanelEnabled     bool
+	NextSeq          int32
+	CreatedBy        string
+	CreatedAt        time.Time
+	AllowMemberEdits bool
+	MessageCount     int64
 }
 
 // The org's chat library, newest first, with a live message count per log.
@@ -2034,6 +2044,7 @@ func (q *Queries) ListChatLogs(ctx context.Context, orgID string) ([]ListChatLog
 			&i.NextSeq,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.AllowMemberEdits,
 			&i.MessageCount,
 		); err != nil {
 			return nil, err
@@ -2174,7 +2185,7 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, siteID string) ([]AppD
 
 const listFeedSites = `-- name: ListFeedSites :many
 SELECT
-    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at,
+    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at, s.allow_member_edits,
     COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'site' AND v.subject_id = s.id), 0)::bigint AS score,
     COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'site' AND mv.subject_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'site' AND c.subject_id = s.id), 0)::bigint AS comment_count
@@ -2216,6 +2227,7 @@ func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedS
 			&i.AppSite.Title,
 			&i.AppSite.Description,
 			&i.AppSite.CreatedAt,
+			&i.AppSite.AllowMemberEdits,
 			&i.Score,
 			&i.MyVote,
 			&i.CommentCount,
@@ -2232,7 +2244,7 @@ func (q *Queries) ListFeedSites(ctx context.Context, userID string) ([]ListFeedS
 
 const listFeedSkills = `-- name: ListFeedSkills :many
 SELECT
-    sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
+    sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at, sk.allow_member_edits,
     COALESCE(ver.size_bytes, 0)::bigint AS size_bytes,
     COALESCE(ver.version_no, 0)::int AS version,
     COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'skill' AND v.subject_id = sk.id), 0)::bigint AS score,
@@ -2278,6 +2290,7 @@ func (q *Queries) ListFeedSkills(ctx context.Context, userID string) ([]ListFeed
 			&i.AppSkill.CurrentVersionID,
 			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
+			&i.AppSkill.AllowMemberEdits,
 			&i.SizeBytes,
 			&i.Version,
 			&i.Score,
@@ -2295,7 +2308,7 @@ func (q *Queries) ListFeedSkills(ctx context.Context, userID string) ([]ListFeed
 }
 
 const listFolderSkills = `-- name: ListFolderSkills :many
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at, sk.allow_member_edits,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skill_folder_items fi
@@ -2332,6 +2345,7 @@ func (q *Queries) ListFolderSkills(ctx context.Context, folderID string) ([]List
 			&i.AppSkill.CurrentVersionID,
 			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
+			&i.AppSkill.AllowMemberEdits,
 			&i.SizeBytes,
 			&i.Version,
 		); err != nil {
@@ -2575,7 +2589,7 @@ func (q *Queries) ListPreviewRoutesForVersion(ctx context.Context, versionID *st
 }
 
 const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
 WHERE access_mode = 'public'
 ORDER BY created_at
@@ -2603,6 +2617,7 @@ func (q *Queries) ListPublicSitesForOrg(ctx context.Context) ([]AppSite, error) 
 			&i.Title,
 			&i.Description,
 			&i.CreatedAt,
+			&i.AllowMemberEdits,
 		); err != nil {
 			return nil, err
 		}
@@ -2748,7 +2763,7 @@ func (q *Queries) ListSiteVersions(ctx context.Context, siteID string) ([]AppSit
 }
 
 const listSites = `-- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
 ORDER BY created_at DESC
 `
@@ -2773,6 +2788,7 @@ func (q *Queries) ListSites(ctx context.Context) ([]AppSite, error) {
 			&i.Title,
 			&i.Description,
 			&i.CreatedAt,
+			&i.AllowMemberEdits,
 		); err != nil {
 			return nil, err
 		}
@@ -2830,7 +2846,7 @@ func (q *Queries) ListSkillFolders(ctx context.Context) ([]ListSkillFoldersRow, 
 }
 
 const listSkills = `-- name: ListSkills :many
-SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at,
+SELECT sk.id, sk.org_id, sk.slug, sk.owner_user_id, sk.title, sk.description, sk.current_version_id, sk.feed_visible, sk.created_at, sk.allow_member_edits,
        COALESCE(v.size_bytes, 0)::bigint AS size_bytes,
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
@@ -2899,6 +2915,7 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListS
 			&i.AppSkill.CurrentVersionID,
 			&i.AppSkill.FeedVisible,
 			&i.AppSkill.CreatedAt,
+			&i.AppSkill.AllowMemberEdits,
 			&i.SizeBytes,
 			&i.Version,
 		); err != nil {
@@ -3417,11 +3434,41 @@ func (q *Queries) SetAllowExternalSharing(ctx context.Context, arg SetAllowExter
 	return err
 }
 
+const setChatLogAllowMemberEdits = `-- name: SetChatLogAllowMemberEdits :one
+UPDATE app.chat_logs
+SET allow_member_edits = $2
+WHERE id = $1
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
+`
+
+type SetChatLogAllowMemberEditsParams struct {
+	ID               string
+	AllowMemberEdits bool
+}
+
+func (q *Queries) SetChatLogAllowMemberEdits(ctx context.Context, arg SetChatLogAllowMemberEditsParams) (AppChatLog, error) {
+	row := q.db.QueryRow(ctx, setChatLogAllowMemberEdits, arg.ID, arg.AllowMemberEdits)
+	var i AppChatLog
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.SiteID,
+		&i.Title,
+		&i.SourceTool,
+		&i.PanelEnabled,
+		&i.NextSeq,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.AllowMemberEdits,
+	)
+	return i, err
+}
+
 const setChatLogPanelEnabled = `-- name: SetChatLogPanelEnabled :one
 UPDATE app.chat_logs
 SET panel_enabled = $2
 WHERE id = $1
-RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 `
 
 type SetChatLogPanelEnabledParams struct {
@@ -3442,6 +3489,7 @@ func (q *Queries) SetChatLogPanelEnabled(ctx context.Context, arg SetChatLogPane
 		&i.NextSeq,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -3450,7 +3498,7 @@ const setChatLogSite = `-- name: SetChatLogSite :one
 UPDATE app.chat_logs
 SET site_id = $2
 WHERE id = $1
-RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at
+RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 `
 
 type SetChatLogSiteParams struct {
@@ -3473,6 +3521,7 @@ func (q *Queries) SetChatLogSite(ctx context.Context, arg SetChatLogSiteParams) 
 		&i.NextSeq,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -3569,12 +3618,47 @@ func (q *Queries) SetSiteAccessMode(ctx context.Context, arg SetSiteAccessModePa
 	return err
 }
 
+const setSiteAllowMemberEdits = `-- name: SetSiteAllowMemberEdits :one
+
+UPDATE app.sites
+SET allow_member_edits = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+`
+
+type SetSiteAllowMemberEditsParams struct {
+	ID               string
+	AllowMemberEdits bool
+}
+
+// ===========================================================================
+// collaboration toggles (migration 0014): "allow non-creators to modify"
+// ===========================================================================
+func (q *Queries) SetSiteAllowMemberEdits(ctx context.Context, arg SetSiteAllowMemberEditsParams) (AppSite, error) {
+	row := q.db.QueryRow(ctx, setSiteAllowMemberEdits, arg.ID, arg.AllowMemberEdits)
+	var i AppSite
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.AccessMode,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.Title,
+		&i.Description,
+		&i.CreatedAt,
+		&i.AllowMemberEdits,
+	)
+	return i, err
+}
+
 const setSiteFeedMeta = `-- name: SetSiteFeedMeta :one
 UPDATE app.sites
 SET title       = $2,
     description  = $3
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 `
 
 type SetSiteFeedMetaParams struct {
@@ -3600,6 +3684,7 @@ func (q *Queries) SetSiteFeedMeta(ctx context.Context, arg SetSiteFeedMetaParams
 		&i.Title,
 		&i.Description,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -3608,7 +3693,7 @@ const setSiteFeedVisible = `-- name: SetSiteFeedVisible :one
 UPDATE app.sites
 SET feed_visible = $2
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 `
 
 type SetSiteFeedVisibleParams struct {
@@ -3634,6 +3719,37 @@ func (q *Queries) SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisible
 		&i.Title,
 		&i.Description,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
+	)
+	return i, err
+}
+
+const setSkillAllowMemberEdits = `-- name: SetSkillAllowMemberEdits :one
+UPDATE app.skills
+SET allow_member_edits = $2
+WHERE id = $1
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits
+`
+
+type SetSkillAllowMemberEditsParams struct {
+	ID               string
+	AllowMemberEdits bool
+}
+
+func (q *Queries) SetSkillAllowMemberEdits(ctx context.Context, arg SetSkillAllowMemberEditsParams) (AppSkill, error) {
+	row := q.db.QueryRow(ctx, setSkillAllowMemberEdits, arg.ID, arg.AllowMemberEdits)
+	var i AppSkill
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Description,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -3659,7 +3775,7 @@ const setSkillFeedVisible = `-- name: SetSkillFeedVisible :one
 UPDATE app.skills
 SET feed_visible = $2
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits
 `
 
 type SetSkillFeedVisibleParams struct {
@@ -3683,6 +3799,7 @@ func (q *Queries) SetSkillFeedVisible(ctx context.Context, arg SetSkillFeedVisib
 		&i.CurrentVersionID,
 		&i.FeedVisible,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }
@@ -3718,7 +3835,7 @@ UPDATE app.skills
 SET title = $2,
     description = $3
 WHERE id = $1
-RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at
+RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits
 `
 
 type SetSkillMetaParams struct {
@@ -3742,6 +3859,7 @@ func (q *Queries) SetSkillMeta(ctx context.Context, arg SetSkillMetaParams) (App
 		&i.CurrentVersionID,
 		&i.FeedVisible,
 		&i.CreatedAt,
+		&i.AllowMemberEdits,
 	)
 	return i, err
 }

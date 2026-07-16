@@ -72,6 +72,9 @@ CREATE TABLE app.sites (
     title              text,
     description        text,
     created_at         timestamptz NOT NULL DEFAULT now(),
+    -- Collaboration toggle (migration 0014): true (default) lets any org member
+    -- modify content; false restricts content edits to creator-or-admin.
+    allow_member_edits boolean NOT NULL DEFAULT true,
     CONSTRAINT sites_org_slug_key UNIQUE (org_id, slug)
 );
 
@@ -119,6 +122,8 @@ CREATE TABLE app.skills (
     -- unless the owner/admin makes it private (mirrors sites.feed_visible).
     feed_visible       boolean NOT NULL DEFAULT true,
     created_at         timestamptz NOT NULL DEFAULT now(),
+    -- Collaboration toggle (migration 0014, mirrors sites.allow_member_edits).
+    allow_member_edits boolean NOT NULL DEFAULT true,
     CONSTRAINT skills_org_slug_key UNIQUE (org_id, slug)
 );
 
@@ -394,7 +399,9 @@ CREATE TABLE app.chat_logs (
     panel_enabled boolean NOT NULL DEFAULT true,
     next_seq      integer NOT NULL DEFAULT 1,
     created_by    uuid NOT NULL,
-    created_at    timestamptz NOT NULL DEFAULT now()
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    -- Collaboration toggle (migration 0014, mirrors sites.allow_member_edits).
+    allow_member_edits boolean NOT NULL DEFAULT true
 );
 CREATE UNIQUE INDEX chat_logs_site_key ON app.chat_logs (site_id) WHERE site_id IS NOT NULL;
 

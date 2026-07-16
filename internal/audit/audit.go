@@ -123,6 +123,12 @@ const (
 	// ActionChatLogSettings records the org chat-log kill switch flip
 	// (PATCH /v1/orgs/chat-logs).
 	ActionChatLogSettings Action = "chatlog.settings"
+	// ActionSiteCollab / ActionSkillCollab / ActionChatLogCollab record a flip
+	// of a resource's "allow non-creators to modify" collaboration toggle
+	// (PUT /v1/{sites|skills|chats}/{id}/collab).
+	ActionSiteCollab    Action = "site.collab"
+	ActionSkillCollab   Action = "skill.collab"
+	ActionChatLogCollab Action = "chatlog.collab"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

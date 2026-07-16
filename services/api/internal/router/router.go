@@ -163,6 +163,10 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			// one-call agent flow after a deploy.
 			r.Get("/{id}/chat", api.GetSiteChat)
 			r.Post("/{id}/chat", api.AppendSiteChat)
+
+			// Collaboration toggle: "allow non-creators to modify" (default
+			// on). Creator-or-admin only (re-checked in the handler).
+			r.Put("/{id}/collab", api.SetSiteCollab)
 		})
 
 		// AI website builder: chat sessions whose LLM (via OpenRouter) edits the
@@ -199,6 +203,8 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Delete("/{id}/messages/{seq}", api.DeleteChatMessage)
 			r.Put("/{id}/site", api.SetChatLogSite)
 			r.Put("/{id}/panel", api.SetChatLogPanel)
+			// Collaboration toggle (creator-or-admin, re-checked in the handler).
+			r.Put("/{id}/collab", api.SetChatLogCollab)
 		})
 
 		// Org chat-log settings: the kill switch (mirrors /orgs/ai).
@@ -227,6 +233,8 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Put("/{id}/vote", api.SetSkillVote)
 			r.Get("/{id}/comments", api.ListSkillComments)
 			r.Post("/{id}/comments", api.AddSkillComment)
+			// Collaboration toggle (creator-or-admin, re-checked in the handler).
+			r.Put("/{id}/collab", api.SetSkillCollab)
 		})
 
 		// Skill folders: reads for every member; curation (create/rename/delete,

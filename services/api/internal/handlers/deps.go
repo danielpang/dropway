@@ -161,6 +161,13 @@ type SiteStore interface {
 	SetChatLogsEnabled(ctx context.Context, t store.Tenant, enabled bool) error
 	CompileChatTranscript(ctx context.Context, t store.Tenant, logID string) ([]byte, error)
 	SiteChatRoutes(ctx context.Context, t store.Tenant, siteID string) ([]store.RouteUpdate, error)
+
+	// Collaboration toggles ("allow non-creators to modify", default true).
+	// Content-edit gates read the flag off the resource; these flip it
+	// (creator-or-admin, checked in the handler).
+	SetSiteAllowMemberEdits(ctx context.Context, t store.Tenant, siteID string, allow bool) (store.Site, error)
+	SetSkillAllowMemberEdits(ctx context.Context, t store.Tenant, skillID string, allow bool) (store.Skill, error)
+	SetChatLogAllowMemberEdits(ctx context.Context, t store.Tenant, logID string, allow bool) (store.ChatLog, error)
 	// Lazy preset seeding, split so manifests are written between staging and
 	// publishing (GC-safe): stage materializes rows without flipping live
 	// pointers, publish flips them + marks the org seeded.

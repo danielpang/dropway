@@ -75,15 +75,16 @@ type AppAuditLog struct {
 }
 
 type AppChatLog struct {
-	ID           string
-	OrgID        string
-	SiteID       *string
-	Title        string
-	SourceTool   string
-	PanelEnabled bool
-	NextSeq      int32
-	CreatedBy    string
-	CreatedAt    time.Time
+	ID               string
+	OrgID            string
+	SiteID           *string
+	Title            string
+	SourceTool       string
+	PanelEnabled     bool
+	NextSeq          int32
+	CreatedBy        string
+	CreatedAt        time.Time
+	AllowMemberEdits bool
 }
 
 type AppChatMessage struct {
@@ -193,6 +194,7 @@ type AppSite struct {
 	Title            pgtype.Text
 	Description      pgtype.Text
 	CreatedAt        time.Time
+	AllowMemberEdits bool
 }
 
 type AppSiteAccessPolicy struct {
@@ -230,6 +232,7 @@ type AppSkill struct {
 	CurrentVersionID *string
 	FeedVisible      bool
 	CreatedAt        time.Time
+	AllowMemberEdits bool
 }
 
 type AppSkillFolder struct {
