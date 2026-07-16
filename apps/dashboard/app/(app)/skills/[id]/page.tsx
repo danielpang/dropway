@@ -6,6 +6,8 @@ import { ArrowLeft, FileText, Pencil, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { setSkillCollabAction } from "@/app/(app)/skills/actions";
+import { CollabToggle } from "@/components/collab-toggle";
 import { api, ApiError, type Skill, type SkillDownload } from "@/lib/api";
 import { canManage, loadActiveOrg } from "@/lib/org";
 import { isSafeSkillPath } from "@/lib/skills-shared";
@@ -158,15 +160,24 @@ export default async function SkillDetailPage(props: {
         </div>
       )}
 
-      {/* Feed sharing lives below the content — a skill auto-joins the feed on
-          publish; the owner/admin can pull it off here. */}
+      {/* Feed sharing + collaboration live below the content — a skill
+          auto-joins the feed on publish; the owner/admin can pull it off or
+          restrict who may edit it here. */}
       {manage || mine ? (
-        <Card className="p-4">
+        <Card className="space-y-4 p-4">
           <SkillFeedToggle
             skillId={skill.id ?? ""}
             initialVisible={skill.feed_visible ?? true}
             disabled={false}
           />
+          <div className="border-t border-border pt-4">
+            <CollabToggle
+              resourceId={skill.id ?? ""}
+              initialAllow={skill.allow_member_edits ?? true}
+              disabled={false}
+              action={setSkillCollabAction}
+            />
+          </div>
         </Card>
       ) : null}
     </div>

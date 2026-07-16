@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Globe } from "lucide-react";
 
+import { setChatCollabAction } from "@/app/(app)/chats/actions";
 import { ChatDeleteButton } from "@/components/chats/chat-delete-button";
 import { ChatPanelToggle } from "@/components/chats/chat-panel-toggle";
 import { ChatSiteSelect } from "@/components/chats/chat-site-select";
