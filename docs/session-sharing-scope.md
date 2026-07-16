@@ -288,6 +288,21 @@ build above.
 3. **Soft prompt:** the free-tier panel's "Shared via Dropway" attribution
    links to the product; removing it is part of the Pro pitch.
 
+## Implementation notes (v1 as shipped)
+
+The shipped implementation follows this scope with two simplifications:
+
+- **No `sites.kind` column.** The panel flag lives on the log
+  (`chat_logs.panel_enabled`), and the serving contract is
+  `RouteValue.chat_id` (projection schema v4) + a compiled transcript object
+  at `chat-transcripts/<org>/<chat_id>.json`, so `app.sites` is untouched.
+- **Standalone publishing composes from existing primitives** rather than a
+  dedicated chat-site kind: create a site, deploy any minimal page, and
+  attach the log (`share_chat --site` / `dropway chat share --site`); the
+  pill + `/__dropway/chat` then serve on that host under its access tier. A
+  one-step "publish this conversation" wrapper is a later convenience, not a
+  new capability.
+
 ## Deliberate non-goals for v1 packaging
 
 Per-viewer log analytics ("who read the history") as a Business upsell —
