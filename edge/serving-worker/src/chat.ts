@@ -355,8 +355,9 @@ export function renderChatPage(
     if (!first && m.versionId !== "" && m.versionId !== prevVersion) {
       parts.push(VERSION_DIVIDER);
     }
+    // Carry the last NON-EMPTY version forward so a chat-only message between two
+    // messages on the same version never fabricates a "deployed" divider.
     if (m.versionId !== "") prevVersion = m.versionId;
-    else if (first) prevVersion = "";
     parts.push(m.kind === "action" ? renderActionRow(m) : renderChatBubble(m));
     first = false;
   }
