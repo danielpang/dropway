@@ -571,6 +571,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/collab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a site's collaboration toggle (creator or admin)
+         * @description Flips allow_member_edits — whether non-creators may modify the site's CONTENT (deploys, publish/rollback, previews). Dropway is collaborative by default (true); the site's creator or an org admin/owner can turn it off to restrict content edits to creator-or-admin. Deletion and security-sensitive settings (access mode, allowlist, domains) are unaffected. Flipping the toggle is itself creator-or-admin (never toggle-gated) → 403 otherwise.
+         */
+        put: operations["setSiteCollab"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{id}/vote": {
         parameters: {
             query?: never;
@@ -917,6 +937,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills/{id}/collab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a skill's collaboration toggle (creator or admin)
+         * @description Flips allow_member_edits — whether non-creators may modify the skill's CONTENT (uploads, metadata, folder memberships). Collaborative by default (true); the skill's creator or an org admin/owner can turn it off to restrict edits to creator-or-admin. Deletion stays creator-or-admin regardless. Flipping the toggle is itself creator-or-admin → 403 otherwise.
+         */
+        put: operations["setSkillCollab"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills/{id}/vote": {
         parameters: {
             query?: never;
@@ -1172,6 +1212,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats/{id}/collab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a chat log's collaboration toggle (creator or admin)
+         * @description Flips allow_member_edits — whether non-creators may modify the log's CONTENT (appends, message curation, site binding, panel flag). Collaborative by default (true); the log's creator or an org admin/owner can turn it off to restrict edits to creator-or-admin. Deletion stays creator-or-admin regardless. Flipping the toggle is itself creator-or-admin → 403 otherwise.
+         */
+        put: operations["setChatLogCollab"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{id}/chat": {
         parameters: {
             query?: never;
@@ -1322,6 +1382,8 @@ export interface components {
             storage_bytes?: number;
             /** @description Whether the site appears in the org feed (the cross-user discovery surface). Defaults to true: a site is auto-shared to the feed on create and publish. The owner (or an admin) sets it false to keep the site private — off the feed. Orthogonal to access_mode (this never changes who can load the served bytes). */
             feed_visible?: boolean;
+            /** @description The collaboration toggle (default true): whether non-creators may modify the site's CONTENT (deploys, publish, previews). False restricts content edits to creator-or-admin. Deletion and security-sensitive settings are governed separately. */
+            allow_member_edits?: boolean;
             /** @description Owner-set human title shown in the org feed (empty when unset — the feed falls back to the slug). */
             title?: string;
             /** @description Owner-set description shown in the org feed (empty when unset). */
@@ -1471,6 +1533,8 @@ export interface components {
             version?: number;
             /** @description Whether the skill is shared to the org feed (default true on publish). The owner/admin can make it private to pull it off the feed. */
             feed_visible?: boolean;
+            /** @description The collaboration toggle (default true): whether non-creators may modify the skill's CONTENT (uploads, metadata, folders). False restricts content edits to creator-or-admin; deletion is creator-or-admin regardless. */
+            allow_member_edits?: boolean;
             folders?: components["schemas"]["SkillFolderRef"][];
             /** Format: date-time */
             created_at?: string;
@@ -1535,6 +1599,8 @@ export interface components {
             source_tool?: string;
             /** @description Whether the attached site serves the transcript panel to viewers. */
             panel_enabled?: boolean;
+            /** @description The collaboration toggle (default true): whether non-creators may modify the log's CONTENT (appends, curation, site binding, panel). False restricts content edits to creator-or-admin; deletion is creator-or-admin regardless. */
+            allow_member_edits?: boolean;
             /** Format: int64 */
             message_count?: number;
             /** Format: uuid */
@@ -2741,6 +2807,39 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    setSiteCollab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow_member_edits: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated site */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Site"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     setSiteVote: {
         parameters: {
             query?: never;
@@ -3512,6 +3611,41 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    setSkillCollab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow_member_edits: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated skill */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        skill?: components["schemas"]["Skill"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     setSkillVote: {
         parameters: {
             query?: never;
@@ -4175,6 +4309,41 @@ export interface operations {
             content: {
                 "application/json": {
                     enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated chat log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setChatLogCollab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow_member_edits: boolean;
                 };
             };
         };

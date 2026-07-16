@@ -891,6 +891,40 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/sites/{id}/collab:
+    put:
+      summary: Set a site's collaboration toggle (creator or admin)
+      description: >
+        Flips allow_member_edits — whether non-creators may modify the site's
+        CONTENT (deploys, publish/rollback, previews). Dropway is collaborative
+        by default (true); the site's creator or an org admin/owner can turn it
+        off to restrict content edits to creator-or-admin. Deletion and
+        security-sensitive settings (access mode, allowlist, domains) are
+        unaffected. Flipping the toggle is itself creator-or-admin (never
+        toggle-gated) → 403 otherwise.
+      operationId: setSiteCollab
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allow_member_edits]
+              properties:
+                allow_member_edits: { type: boolean }
+      responses:
+        "200":
+          description: The updated site
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Site" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/sites/{id}/vote:
     put:
       summary: Up/down vote a feed post (any org member)
@@ -1588,6 +1622,43 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/skills/{id}/collab:
+    put:
+      summary: Set a skill's collaboration toggle (creator or admin)
+      description: >
+        Flips allow_member_edits — whether non-creators may modify the skill's
+        CONTENT (uploads, metadata, folder memberships). Collaborative by
+        default (true); the skill's creator or an org admin/owner can turn it
+        off to restrict edits to creator-or-admin. Deletion stays
+        creator-or-admin regardless. Flipping the toggle is itself
+        creator-or-admin → 403 otherwise.
+      operationId: setSkillCollab
+      tags: [skills]
+      parameters:
+        - { $ref: "#/components/parameters/SkillID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allow_member_edits]
+              properties:
+                allow_member_edits: { type: boolean }
+      responses:
+        "200":
+          description: The updated skill
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  skill: { $ref: "#/components/schemas/Skill" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/skills/{id}/vote:
     put:
       summary: Up/down vote a skill feed post (any org member)
@@ -2155,6 +2226,43 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/chats/{id}/collab:
+    put:
+      summary: Set a chat log's collaboration toggle (creator or admin)
+      description: >
+        Flips allow_member_edits — whether non-creators may modify the log's
+        CONTENT (appends, message curation, site binding, panel flag).
+        Collaborative by default (true); the log's creator or an org
+        admin/owner can turn it off to restrict edits to creator-or-admin.
+        Deletion stays creator-or-admin regardless. Flipping the toggle is
+        itself creator-or-admin → 403 otherwise.
+      operationId: setChatLogCollab
+      tags: [chats]
+      parameters:
+        - { $ref: "#/components/parameters/ChatLogID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [allow_member_edits]
+              properties:
+                allow_member_edits: { type: boolean }
+      responses:
+        "200":
+          description: The updated chat log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chat_log: { $ref: "#/components/schemas/ChatLog" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/sites/{id}/chat:
     get:
       summary: Get a site's attached chat log + messages
@@ -2407,6 +2515,13 @@ components:
             and publish. The owner (or an admin) sets it false to keep the site
             private — off the feed. Orthogonal to access_mode (this never changes
             who can load the served bytes).
+        allow_member_edits:
+          type: boolean
+          description: >
+            The collaboration toggle (default true): whether non-creators may
+            modify the site's CONTENT (deploys, publish, previews). False
+            restricts content edits to creator-or-admin. Deletion and
+            security-sensitive settings are governed separately.
         title:
           type: string
           description: >
@@ -2557,6 +2672,13 @@ components:
           description: >
             Whether the skill is shared to the org feed (default true on publish).
             The owner/admin can make it private to pull it off the feed.
+        allow_member_edits:
+          type: boolean
+          description: >
+            The collaboration toggle (default true): whether non-creators may
+            modify the skill's CONTENT (uploads, metadata, folders). False
+            restricts content edits to creator-or-admin; deletion is
+            creator-or-admin regardless.
         folders:
           type: array
           items: { $ref: "#/components/schemas/SkillFolderRef" }
@@ -2628,6 +2750,13 @@ components:
         panel_enabled:
           type: boolean
           description: Whether the attached site serves the transcript panel to viewers.
+        allow_member_edits:
+          type: boolean
+          description: >
+            The collaboration toggle (default true): whether non-creators may
+            modify the log's CONTENT (appends, curation, site binding, panel).
+            False restricts content edits to creator-or-admin; deletion is
+            creator-or-admin regardless.
         message_count: { type: integer, format: int64 }
         created_by: { type: string, format: uuid }
         created_at: { type: string, format: date-time }

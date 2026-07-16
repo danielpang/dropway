@@ -546,6 +546,18 @@ export const api = {
     );
   },
 
+  /**
+   * Set a site's collaboration toggle (`allow_member_edits`): whether
+   * non-creators may modify its content (deploys/publish/previews). Flipping it
+   * is creator-or-admin → 403 otherwise. Returns the updated site.
+   */
+  setSiteCollab(siteId: string, allowMemberEdits: boolean): Promise<Site> {
+    return apiFetch<Site>(`/v1/sites/${siteId}/collab`, {
+      method: "PUT",
+      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
+    });
+  },
+
   /** A site's comment thread, oldest first (any org member). */
   async listComments(siteId: string): Promise<SiteComment[]> {
     return this.listPostComments("site", siteId);
@@ -1016,6 +1028,19 @@ export const api = {
     return body.skill ?? {};
   },
 
+  /**
+   * Set a skill's collaboration toggle (`allow_member_edits`): whether
+   * non-creators may modify its content (uploads/metadata/folders). Flipping it
+   * is creator-or-admin → 403 otherwise.
+   */
+  async setSkillCollab(id: string, allowMemberEdits: boolean): Promise<Skill> {
+    const body = await apiFetch<{ skill?: Skill }>(`/v1/skills/${id}/collab`, {
+      method: "PUT",
+      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
+    });
+    return body.skill ?? {};
+  },
+
   /** Skill upload step 1: validate + missing blobs + presigned PUT URLs. */
   prepareSkillUpload(id: string, manifest: ManifestFile[]): Promise<PrepareDeploymentResult> {
     return apiFetch<PrepareDeploymentResult>(`/v1/skills/${id}/uploads/prepare`, {
@@ -1187,6 +1212,19 @@ export const api = {
     const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/panel`, {
       method: "PUT",
       body: JSON.stringify({ enabled }),
+    });
+    return body.chat_log ?? {};
+  },
+
+  /**
+   * Set a chat log's collaboration toggle (`allow_member_edits`): whether
+   * non-creators may modify its content (appends/curation/binding/panel).
+   * Flipping it is creator-or-admin → 403 otherwise.
+   */
+  async setChatCollab(id: string, allowMemberEdits: boolean): Promise<ChatLog> {
+    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/collab`, {
+      method: "PUT",
+      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
     });
     return body.chat_log ?? {};
   },
