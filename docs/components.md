@@ -14,7 +14,12 @@ are the source of truth.
 
 ## System diagram
 
-![Components](./diagrams/components.png)
+The runtime components are identical across topologies; only the infrastructure
+differs. The self-host diagram is below; the hosted-SaaS variant (Cloudflare Worker
++ Workers KV + R2, Supabase Postgres, and the `cloud/` Stripe billing module) is in
+[`docs/diagrams/`](./diagrams/README.md#1-components--directional-requests).
+
+![Components — self-host](./diagrams/components-selfhost.png)
 
 ## Request sequences (sign-up, sign-in, deploy, gated view, MCP)
 
@@ -28,7 +33,7 @@ are the source of truth.
 The control-plane UI and the **identity authority**.
 
 **Main use cases**
-- Web UI to manage organizations, sites, deploys, members, domains, and the org's shared **skills** (author in a Markdown editor or drag-and-drop upload, edit a skill into a new version, search by folder/preset, download as zip, admin folder curation). Sites and skills also surface in the cross-user **feed** (vote, comment, share/unshare).
+- Web UI to manage organizations, sites, deploys, members, domains, the org's shared **skills** (author in a Markdown editor or drag-and-drop upload, edit a skill into a new version, search by folder/preset, download as zip, admin folder curation), and shared **chat logs** (browse the org library, view a transcript, toggle a site's "How this was made" panel). Sites and skills also surface in the cross-user **feed** (vote, comment, share/unshare).
 - **Authentication** via Better Auth: email/password, magic link, and (optional) Google SSO.
 - The **OAuth 2.1 authorization server** for the CLI (`dropway login`) and MCP clients — DCR, authorize, consent (`/oauth/consent`), token.
 - The **`/authz` edge-token exchange**: a gated-content viewer with a dashboard session is redirected here, and the dashboard asks the API to mint a host-scoped edge token.
@@ -48,11 +53,12 @@ The control-plane UI and the **identity authority**.
 The **system of record and the authorization boundary**. Every mutation goes through here.
 
 **Main use cases**
-- Owns + migrates the **`app` schema** (sites, versions, domains, allowlist, skills, skill_versions, skill_folders, skill_folder_items, post_votes, post_comments, org_meta, org_usage, audit_log) — accessed as the non-superuser, non-BYPASSRLS **`dropway_app`** role with per-request RLS tenant context.
+- Owns + migrates the **`app` schema** (sites, versions, domains, allowlist, skills, skill_versions, skill_folders, skill_folder_items, chat_logs, chat_messages, post_votes, post_comments, org_meta, org_usage, audit_log) — accessed as the non-superuser, non-BYPASSRLS **`dropway_app`** role with per-request RLS tenant context.
 - **Verifies every JWT** against the dashboard JWKS (pins EdDSA + iss + aud).
 - The **deploy pipeline**: `prepare` (manifest → missing blobs + presigned PUT URLs) → client uploads → `finalize` (write manifest, insert version) → `publish` (flip `current_version_id`, write the route projection).
 - **Org-wide skill sharing** (`/v1/skills`, `/v1/skill-folders`): the same prepare → presign → finalize upload contract (finalize publishes — skills are latest-only, each version carrying a monotonic number surfaced as the skill's `version` for update detection), admin-curated folders with preset flags, bulk folder download, and lazy per-org seeding of the default folders + starter presets (guarded by `org_meta.skills_seeded`).
 - **Org feed** (`/v1/feed`): a unified newest-first list of shared sites **and** skills, each tagged by `kind`, with polymorphic votes + comments (`app.post_votes`/`app.post_comments` over a `subject_type` of `'site'`/`'skill'`) and per-post feed-visibility.
+- **Chat-log sharing** (`/v1/chats`): publish an agent session transcript (Claude Code JSONL, ChatGPT export, or plain text, normalized server-side) as a chat log, standalone in the org library or attached to a site. Attaching compiles the transcript to a JSON object in the object store and stamps `chat_id` (route projection v4) onto the site's routes, so the edge injects a "How this was made" panel served under the site's own access mode. `append_chat` adds conversation turns and action annotations as work continues.
 - **Mints host-scoped edge tokens** (`/v1/authz/mint`) for gated viewers, after checking membership/allowlist + revocation. Signs them with `EDGE_SIGNING_KEY` (stable Ed25519 seed) and publishes the edge JWKS at `/.well-known/edge-jwks`.
 - Writes the **route projection** (`route:<host>`) and **revocation denylist** to the edge store.
 - **ensure-org-provisioned**: lazily creates `app.org_meta` + `org_usage` for a tenant on first authenticated call.
@@ -72,8 +78,8 @@ The **OAuth-protected MCP server** that lets an LLM agent work with a tenant's d
 
 **Main use cases**
 - Speaks **Streamable-HTTP MCP**; unauthenticated requests get a 401 + RFC 9728 pointer that starts the OAuth flow against the dashboard.
-- **Read tools** (`list_sites`, `list_files`, `read_file`, `download_site`, `list_skills`, `download_skill`, `download_skill_folder`, `check_skill_updates`) — served directly from Postgres + the object store under RLS (no API hop).
-- **Write tools** (`create_site`, `set_site_access`, `deploy_site`, `upload_skill`) — performed by **forwarding the user's OAuth token to the api** (which accepts the MCP audience), so writes reuse the API's authz, quota, projection, and audit. Requires `API_URL`; without it the server is read-only.
+- **Read tools** (`list_sites`, `list_files`, `read_file`, `download_site`, `list_skills`, `download_skill`, `download_skill_folder`, `check_skill_updates`, `get_site_chat`) — served directly from Postgres + the object store under RLS (no API hop).
+- **Write tools** (`create_site`, `set_site_access`, `deploy_site`, `upload_skill`, `share_chat`, `append_chat`) — performed by **forwarding the user's OAuth token to the api** (which accepts the MCP audience), so writes reuse the API's authz, quota, projection, and audit. `share_chat` / `append_chat` publish the session transcript as a chat log (to the org library, or attached to a site as its "How this was made" panel). Requires `API_URL`; without it the server is read-only.
 - Per-request **`org_meta.mcp_enabled`** kill-switch.
 
 **Calls**
@@ -96,10 +102,11 @@ The **content edge** for self-host: serves published sites and enforces access a
 - Enforce **access modes**: `public`, `password`, `allowlist`, `org_only`.
 - For gated content with no/invalid edge cookie → **302 to the dashboard `/authz`**; on callback, verify the host-scoped `__Host-edge` token (against the API's edge JWKS, with revocation) and set the cookie.
 - Serve **`llms.txt`** so LLM crawlers can discover public content.
+- Inject the **"How this was made" chat panel** when the resolved route carries a `chat_id` (route projection v4): a pill plus a transcript page read from the compiled chat JSON in the object store, served under the site's own access mode (a gated site's chat stays gated).
 
 **Calls**
-- **Postgres** — `resolve_host` lookups.
-- **Object store** (MinIO) — read blobs + manifests.
+- **Postgres** — `resolve_host` lookups (returns the route value, incl. `chat_id`).
+- **Object store** (MinIO) — read blobs + manifests + chat transcripts.
 - **Edge store** (Redis/Valkey) — read revocation.
 - **api edge JWKS** (`/.well-known/edge-jwks`) — verify edge tokens.
 
@@ -126,7 +133,7 @@ The terminal client for deploys.
 - **`app`** schema — the api owns + migrates it (goose, run as the owner role); read/written as **`dropway_app`** (non-BYPASSRLS) under per-request RLS by both **api** and **mcp**.
 
 ### Object store — MinIO (`S3_*`)
-Content-addressed **blobs** (`blobs/<org>/<sha256>`) + per-deploy **manifests** (`manifests/<org>/<site>/<version>.json`). Written by the **api** (and the **mcp** deploy bridge via the api); read by **api**, **mcp**, and **serve**. Note the internal vs browser-facing endpoint split (`S3_ENDPOINT` vs `S3_PUBLIC_ENDPOINT`) so presigned URLs resolve from both inside the compose network and the browser.
+Content-addressed **blobs** (`blobs/<org>/<sha256>`) + per-deploy **manifests** (`manifests/<org>/<site>/<version>.json`), plus **skill files** and compiled **chat transcripts** (the "How this was made" panel). Written by the **api** (and the **mcp** deploy/share bridges via the api); read by **api**, **mcp**, and **serve**. Note the internal vs browser-facing endpoint split (`S3_ENDPOINT` vs `S3_PUBLIC_ENDPOINT`) so presigned URLs resolve from both inside the compose network and the browser.
 
 ### Route / revocation store — Redis/Valkey
 `route:<host>` projection, the revocation denylist (`revoked:*`), and per-org status (`org_status:<org>`). **api** writes; **serve** reads.
