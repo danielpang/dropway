@@ -11,7 +11,7 @@ import { MCP_URL } from "@/lib/env";
 export const metadata: Metadata = {
   title: "MCP reference",
   description:
-    "Connect the Dropway MCP server to Claude, Cursor, or Codex. Let an AI assistant browse, create, deploy, and re-share your sites, scoped to your org with OAuth.",
+    "Connect the Dropway MCP server to Claude, Cursor, or Codex. Let an AI assistant browse, create, deploy, and re-share your sites, and share the chat behind a build, scoped to your org with OAuth.",
 };
 
 /**
@@ -96,8 +96,51 @@ export default function McpReferencePage() {
               <Code key="t">upload_skill</Code>,
               "Share a skill (SKILL.md + files) with your org, optionally into folders.",
             ],
+            [
+              <Code key="t">share_chat</Code>,
+              "Share the session transcript as a chat log: to your org's library, or attached to a site as its “How this was made” panel.",
+            ],
+            [
+              <Code key="t">append_chat</Code>,
+              "Add follow-up turns or action annotations to a shared chat as the work continues.",
+            ],
+            [
+              <Code key="t">get_site_chat</Code>,
+              "Read the shared chat log attached to a site (the transcript behind its “How this was made” panel).",
+            ],
           ]}
         />
+      </Section>
+
+      <Section
+        id="chat"
+        title="Share the story behind a site"
+        lead="When an assistant builds and deploys a site, it can publish the conversation that produced it alongside the artifact."
+      >
+        <p>
+          Call <Code>share_chat</Code> to save the session transcript as a Dropway
+          chat log. Attach it to a site (by slug) and it renders as that
+          site&rsquo;s &ldquo;How this was made&rdquo; panel, the story behind the
+          artifact, served under the site&rsquo;s own access control. Leave it
+          unattached and it goes to your organization&rsquo;s chat library instead.
+        </p>
+        <p>
+          As the work continues, <Code>append_chat</Code> adds follow-up turns and
+          short action annotations (a file edit, a tool run) so the log stays
+          current. <Code>get_site_chat</Code> reads a site&rsquo;s attached log
+          back. One log attaches per site, and a gated site keeps its chat as
+          private as its files.
+        </p>
+        <Callout>
+          Prefer the terminal? The same logs are managed with{" "}
+          <Link
+            href="/cli#chat"
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            <Code>dropway chat</Code>
+          </Link>
+          .
+        </Callout>
       </Section>
 
       <Section

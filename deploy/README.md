@@ -127,8 +127,9 @@ across services or token verification fails:
 | `API_URL` (on `mcp`) | the Go API the write tools call (forwarding the user's token) | `http://api:8080` | your internal api URL |
 
 **Read vs write tools.** The read tools (`list_sites`, `list_files`, `read_file`,
-`download_site`) run off the RLS-scoped store. The write tools (`create_site`,
-`set_site_access`, `deploy_site`, which upload files + publish) call the Go API over HTTP with
+`download_site`, `get_site_chat`) run off the RLS-scoped store. The write tools (`create_site`,
+`set_site_access`, `deploy_site`, `share_chat`, `append_chat`, which upload files + publish or
+record a shared chat log) call the Go API over HTTP with
 the forwarded token, so they reuse the API's quota, admin re-check (`set_site_access` is
 owner/admin only), deploy verification, edge-route projection, revocation, and audit. The
 API stays the only projection writer. For the

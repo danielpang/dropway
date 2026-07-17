@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 export const metadata: Metadata = {
   title: "CLI reference",
   description:
-    "The Dropway CLI: deploy a folder of static files to a live, access-controlled URL from your terminal. Install, authenticate, create a site, upload a folder, list or read your sites, and share, pull, or update your org's skills.",
+    "The Dropway CLI: deploy a folder of static files to a live, access-controlled URL from your terminal. Install, authenticate, create a site, upload a folder, list or read your sites, share the agent chat behind a deploy, and share, pull, or update your org's skills.",
 };
 
 /** The Go module path users `go install` to build the CLI from source. */
@@ -116,6 +116,10 @@ export default function CliReferencePage() {
             [
               <Code key="c">read &lt;url-or-slug&gt;</Code>,
               "Fetch a site's served content over HTTP and print it to stdout.",
+            ],
+            [
+              <Code key="c">chat share &lt;file&gt;</Code>,
+              "Share an agent session transcript as an org chat log, and attach it to a site with --site.",
             ],
             [
               <Code key="c">skills push &lt;dir&gt;</Code>,
@@ -311,6 +315,90 @@ dropway skills check --update   # re-pull the outdated ones`}
           You can also write a skill in a Markdown editor, or edit an existing
           one into a new version, from the Skills page in the dashboard, no local
           folder needed.
+        </Callout>
+      </Section>
+
+      <Section
+        id="chat"
+        title="dropway chat"
+        lead="Share the agent session behind a deploy as an org chat log, and attach it to a site so viewers see the story behind the artifact."
+      >
+        <p>
+          <Code>dropway chat share</Code> reads a conversation export (Claude Code
+          JSONL, a ChatGPT JSON export, or plain text) and publishes it to your
+          organization&rsquo;s chat library. Add <Code>--site</Code> to attach it
+          to a site, where it becomes that site&rsquo;s &ldquo;How this was
+          made&rdquo; panel under the site&rsquo;s own access control.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`# share a Claude Code session, attached to a site
+dropway chat share ./session.jsonl --site my-docs --source claude_code
+
+# condense the transcript's tool activity into action annotations
+dropway chat share ./session.jsonl --site my-docs --derive-actions`}
+        />
+        <p className="pt-2 text-foreground">Append as the work continues</p>
+        <p>
+          <Code>dropway chat append</Code> adds a follow-up message, an action
+          annotation, or another export to an existing log, by chat id or by{" "}
+          <Code>--site</Code>. Action annotations record a file edit or a tool run
+          with a one-line note on why.
+        </p>
+        <CodeBlock
+          label="terminal"
+          code={`dropway chat append --site my-docs --message "Reworked the hero copy"
+dropway chat append --site my-docs --action file_edit --path index.html --comment "Tightened the headline"`}
+        />
+        <DocTable
+          head={["Command", "What it does"]}
+          rows={[
+            [
+              <Code key="c">share &lt;file&gt;</Code>,
+              "Publish a session export as a chat log (optionally --site to attach it).",
+            ],
+            [<Code key="c">list</Code>, "List your org's shared chat logs."],
+            [
+              <Code key="c">show &lt;chat-id&gt;</Code>,
+              "Print a shared chat's messages.",
+            ],
+            [
+              <Code key="c">append [&lt;chat-id&gt;]</Code>,
+              "Add a message, action annotation, or export to a log (by id or --site).",
+            ],
+            [
+              <Code key="c">attach &lt;chat-id&gt;</Code>,
+              "Attach a chat log to one of your sites.",
+            ],
+            [
+              <Code key="c">detach &lt;chat-id&gt;</Code>,
+              "Detach a chat log from its site.",
+            ],
+            [
+              <Code key="c">panel &lt;chat-id&gt;</Code>,
+              "Turn the served “How this was made” panel on or off for the attached site.",
+            ],
+            [
+              <Code key="c">delete &lt;chat-id&gt;</Code>,
+              "Delete a chat log and all its messages.",
+            ],
+            [
+              <Code key="c">delete-message &lt;chat-id&gt; &lt;seq&gt;</Code>,
+              "Delete one message from a log (mistakes, pasted secrets).",
+            ],
+          ]}
+        />
+        <Callout title="Do the same from an AI tool">
+          The{" "}
+          <Link
+            href="/mcp#chat"
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Dropway MCP server
+          </Link>{" "}
+          exposes <Code>share_chat</Code>, <Code>append_chat</Code>, and{" "}
+          <Code>get_site_chat</Code> so an assistant can record and read these logs
+          directly from a conversation.
         </Callout>
       </Section>
 
