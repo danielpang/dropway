@@ -1,12 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Send, Sparkles } from "lucide-react";
+import {
+  ExternalLink,
+  Loader2,
+  Monitor,
+  RefreshCw,
+  Send,
+  Smartphone,
+  Sparkles,
+  Tablet,
+} from "lucide-react";
 
 import { ModelPicker } from "@/components/ai/model-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AiModel } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 /**
  * The AI builder chat + live preview. It talks to the Go API through the
@@ -197,55 +207,161 @@ export function BuilderChat({
       </div>
 
       {/* Preview column */}
-      <div className="flex h-[70vh] flex-col rounded-lg border bg-card">
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-          <span className="text-sm font-medium">Preview</span>
-          {draft && (
-            <Button size="sm" onClick={() => void publish()} disabled={publishing}>
-              {publishing ? "Publishing..." : "Publish this version"}
-            </Button>
-          )}
-        </div>
-        <div className="flex-1 overflow-hidden">
-          {draft ? (
-            (draft.accessMode ?? "public") === "public" ? (
-              <iframe
-                title="Preview"
-                src={draft.previewUrl}
-                className="h-full w-full border-0"
-              />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-                <p className="max-w-xs text-sm text-muted-foreground">
-                  This site is private, so its preview opens in a new tab where
-                  you can sign in. It can&rsquo;t display inside this panel.
-                </p>
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    window.open(
-                      draft.previewUrl,
-                      "_blank",
-                      "noopener,noreferrer",
-                    )
-                  }
-                >
-                  Open preview
-                </Button>
-              </div>
-            )
-          ) : (
-            <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
-              Your preview appears here after the builder makes a change.
+      <PreviewPanel draft={draft} publishing={publishing} onPublish={publish} />
+    </div>
+  );
+}
+
+// The device presets the preview can be sized to. Widths match common breakpoints;
+// "desktop" fills the panel. Height always fills the panel (the iframe scrolls).
+const PREVIEW_DEVICES = [
+  { id: "desktop", label: "Desktop", icon: Monitor, width: "100%" },
+  { id: "tablet", label: "Tablet", icon: Tablet, width: "768px" },
+  { id: "mobile", label: "Mobile", icon: Smartphone, width: "375px" },
+] as const;
+
+type PreviewDeviceId = (typeof PREVIEW_DEVICES)[number]["id"];
+
+/**
+ * The preview column: a toolbar (device-size toggle, refresh, open-in-new-tab, and
+ * the Publish action) over the draft iframe. A PUBLIC draft renders inline; a GATED
+ * one can't (its cross-site auth cookie is blocked in a cross-origin iframe, looping
+ * on /authz), so it shows an open-in-new-tab fallback. Empty state before the first
+ * draft. The device toggle restyles the iframe width without reloading it; Refresh
+ * remounts the iframe (via a bumped key) to reload the same URL.
+ */
+function PreviewPanel({
+  draft,
+  publishing,
+  onPublish,
+}: {
+  draft: DraftInfo | null;
+  publishing: boolean;
+  onPublish: () => void | Promise<void>;
+}) {
+  const [device, setDevice] = useState<PreviewDeviceId>("desktop");
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const isPublic = (draft?.accessMode ?? "public") === "public";
+  const canInline = Boolean(draft) && isPublic;
+  const selected = PREVIEW_DEVICES.find((d) => d.id === device) ?? PREVIEW_DEVICES[0];
+
+  const openInNewTab = useCallback(() => {
+    if (draft) window.open(draft.previewUrl, "_blank", "noopener,noreferrer");
+  }, [draft]);
+
+  return (
+    <div className="flex h-[70vh] flex-col rounded-lg border bg-card">
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <span className="pl-1 text-sm font-medium">Preview</span>
+          {/* Device-size toggle: only meaningful for an inline (public) draft. */}
+          {canInline && (
+            <div
+              role="group"
+              aria-label="Preview size"
+              className="flex items-center gap-0.5 rounded-md border bg-muted/40 p-0.5"
+            >
+              {PREVIEW_DEVICES.map((d) => {
+                const Icon = d.icon;
+                const active = d.id === device;
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => setDevice(d.id)}
+                    aria-pressed={active}
+                    aria-label={d.label}
+                    title={d.label}
+                    className={cn(
+                      "grid size-7 place-items-center rounded transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="size-4" aria-hidden />
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
-        {draft && (
-          <div className="border-t px-4 py-2 text-xs text-muted-foreground">
-            {previewLifetimeCopy(draft.expiresAt)} Publishing removes it.
+
+        <div className="flex items-center gap-1.5">
+          {draft && (
+            <>
+              {canInline && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                  aria-label="Refresh preview"
+                  title="Refresh preview"
+                >
+                  <RefreshCw className="size-4" aria-hidden />
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={openInNewTab}
+                aria-label="Open preview in a new tab"
+                title="Open in a new tab"
+              >
+                <ExternalLink className="size-4" aria-hidden />
+              </Button>
+              <Button size="sm" onClick={() => void onPublish()} disabled={publishing}>
+                {publishing ? "Publishing..." : "Publish this version"}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-hidden">
+        {!draft ? (
+          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            Your preview appears here after the builder makes a change.
+          </div>
+        ) : canInline ? (
+          <div className="flex h-full justify-center overflow-auto bg-muted/20">
+            <iframe
+              key={reloadKey}
+              title="Preview"
+              src={draft.previewUrl}
+              style={{ width: selected.width }}
+              className={cn(
+                "h-full border-0 bg-white",
+                // A constrained device sits as a centered "device" with a frame;
+                // desktop fills the panel edge to edge.
+                device !== "desktop" && "my-3 max-w-full rounded-md border shadow-sm",
+              )}
+            />
+          </div>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="max-w-xs text-sm text-muted-foreground">
+              This site is private, so its preview opens in a new tab where you can
+              sign in. It can&rsquo;t display inside this panel.
+            </p>
+            <Button size="sm" onClick={openInNewTab}>
+              Open preview
+            </Button>
           </div>
         )}
       </div>
+
+      {draft && (
+        <div className="border-t px-4 py-2 text-xs text-muted-foreground">
+          {previewLifetimeCopy(draft.expiresAt)} Publishing removes it.
+        </div>
+      )}
     </div>
   );
 }
