@@ -54,10 +54,12 @@ func New(ctx context.Context, url string, defaultMaxConns int32) (*pgxpool.Pool,
 
 // monitorSaturation samples the pool on a ticker and logs when callers had to WAIT for
 // a free connection (the pool hit its cap), or when acquires were CANCELED while waiting
-// (timeouts / context expiry — actual request failures, the Go-side equivalent of the
-// dashboard's EMAXCONNSESSION). It only logs on a non-zero delta, so a healthy pool stays
-// silent; the message names the cap so the fix (raise DB_MAX_CONNS, or move to the
-// transaction pooler) is obvious from the log line. Exits when ctx is cancelled.
+// (actual request failures). A canceled acquire does NOT by itself prove the pool was
+// exhausted: the wait may be a slow/hung dial to the database, or the REQUEST may have
+// died for an unrelated reason (client disconnect, server timeout) while briefly
+// waiting — read acquired_conns vs max_conns to tell the cases apart before touching
+// DB_MAX_CONNS. It only logs on a non-zero delta, so a healthy pool stays silent.
+// Exits when ctx is cancelled.
 func monitorSaturation(ctx context.Context, pool *pgxpool.Pool) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -82,7 +84,7 @@ func monitorSaturation(ctx context.Context, pool *pgxpool.Pool) {
 				"max_conns", s.MaxConns(),
 			}
 			if dCanceled > 0 {
-				slog.Error("postgres pool exhausted: acquisitions timed out waiting for a connection (raise DB_MAX_CONNS or use the transaction pooler)", attrs...)
+				slog.Error("postgres acquires canceled while waiting for a connection (pool at cap, slow dials, or the waiting requests were themselves canceled — compare acquired_conns to max_conns)", attrs...)
 			} else {
 				slog.Warn("postgres pool saturated: acquisitions waited for a free connection", attrs...)
 			}

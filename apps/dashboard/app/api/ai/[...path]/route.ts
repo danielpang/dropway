@@ -18,6 +18,13 @@ import { API_URL } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
+// A builder turn streams SSE through this route for minutes. Without an explicit
+// maxDuration, Vercel's default function limit can cut the stream short the same
+// way the Go server's WriteTimeout used to. 300s is the Fluid Compute ceiling on
+// the Hobby plan; on Pro this can go up to 800 to cover the API's full 10-minute
+// turn deadline.
+export const maxDuration = 300;
+
 async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const token = await mintApiToken();
   if (!token) {

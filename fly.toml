@@ -25,9 +25,10 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   ENVIRONMENT = "production"
   POSTHOG_HOST = "https://us.i.posthog.com"
   # Postgres pool ceiling (internal/pgpool; default 8 in the API). Raise together
-  # with the pooler's capacity if error tracking shows "postgres pool exhausted:
-  # acquisitions timed out". DATABASE_URL should point at the TRANSACTION-mode
-  # pooler (Supabase port 6543) so these connections multiplex onto few backends.
+  # with the pooler's capacity if error tracking shows "postgres pool saturated" /
+  # canceled acquires WITH acquired_conns pinned at max_conns. DATABASE_URL should
+  # point at the TRANSACTION-mode pooler (Supabase port 6543) so these connections
+  # multiplex onto few backends.
   # DB_MAX_CONNS = "8"
 
 [http_service]

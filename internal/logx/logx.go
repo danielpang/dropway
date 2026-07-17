@@ -155,3 +155,11 @@ func (s *statusRecorder) Flush() {
 		f.Flush()
 	}
 }
+
+// Unwrap exposes the wrapped writer to http.ResponseController, which needs it
+// to reach the underlying connection for per-response deadline control. Without
+// it, the SSE handlers' SetWriteDeadline is ErrNotSupported and streams die at
+// the server's global WriteTimeout.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
