@@ -46,6 +46,21 @@ func contextWithTimeout(parent context.Context, d time.Duration) (context.Contex
 	return context.WithTimeout(parent, d)
 }
 
+// clearWriteDeadline removes the server's global WriteTimeout for THIS response
+// only. That timeout is an absolute deadline for the whole response body, and a
+// builder turn streams SSE for minutes — without clearing it the server closes
+// the connection ~30s in ("connection closed before message completed" at the
+// proxy) and the request context cancels mid-turn. Normal JSON routes keep the
+// global timeout; slowloris protection stays with ReadHeaderTimeout. Every
+// ResponseWriter wrapper in the middleware chain must expose Unwrap for the
+// ResponseController to reach the connection; a failure here means the global
+// timeout still applies, so it is logged loudly rather than swallowed.
+func clearWriteDeadline(w http.ResponseWriter, r *http.Request) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		logger(r).Error("ai: clear write deadline failed; stream will die at the server WriteTimeout", "err", err)
+	}
+}
+
 func parseInt32(s string) (int32, error) {
 	n, err := strconv.ParseInt(s, 10, 32)
 	return int32(n), err

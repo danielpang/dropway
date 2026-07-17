@@ -3,7 +3,9 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -309,6 +311,7 @@ func (a *API) PostAIMessage(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorBody{Error: "internal_error", Message: "streaming unsupported"})
 		return
 	}
+	clearWriteDeadline(w, r)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -335,9 +338,12 @@ func (a *API) PostAIMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		// Log the REAL error server-side (the client only sees the shaped message).
 		// Without this the turn failure is invisible in logs and error tracking, so
-		// "the AI builder hit an error and stopped" is undiagnosable. Cap-hit and
-		// concurrency are expected control flow (Info); everything else is an Error.
-		if _, expected := quota.AsExceeded(err); expected {
+		// "the AI builder hit an error and stopped" is undiagnosable. Cap-hit,
+		// concurrency, and a canceled request (the client tab closed or the proxy
+		// dropped the stream) are expected control flow (Info); everything else is
+		// an Error.
+		_, expected := quota.AsExceeded(err)
+		if expected || errors.Is(err, context.Canceled) {
 			logger(r).Info("ai turn stopped", "session_id", id, "org_id", t.OrgID, "reason", err)
 		} else {
 			logger(r).Error("ai turn failed", "session_id", id, "org_id", t.OrgID, "err", err)
@@ -383,6 +389,7 @@ func (a *API) GetAIEvents(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorBody{Error: "internal_error", Message: "streaming unsupported"})
 		return
 	}
+	clearWriteDeadline(w, r)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
