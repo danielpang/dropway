@@ -49,9 +49,12 @@ type skillResponse struct {
 	Version int32 `json:"version"`
 	// FeedVisible shares the skill to the org feed (default true); the owner/admin
 	// can make it private to pull it off the feed.
-	FeedVisible bool                     `json:"feed_visible"`
-	Folders     []skillFolderRefResponse `json:"folders"`
-	CreatedAt   time.Time                `json:"created_at"`
+	FeedVisible bool `json:"feed_visible"`
+	// AllowMemberEdits is the collaboration toggle (default true): false
+	// restricts content edits (uploads/metadata/folders) to creator-or-admin.
+	AllowMemberEdits bool                     `json:"allow_member_edits"`
+	Folders          []skillFolderRefResponse `json:"folders"`
+	CreatedAt        time.Time                `json:"created_at"`
 }
 
 func toSkillResponse(s store.Skill) skillResponse {
@@ -71,6 +74,7 @@ func toSkillResponse(s store.Skill) skillResponse {
 		SizeBytes:        s.SizeBytes,
 		Version:          s.Version,
 		FeedVisible:      s.FeedVisible,
+		AllowMemberEdits: s.AllowMemberEdits,
 		Folders:          folders,
 		CreatedAt:        s.CreatedAt,
 	}
@@ -338,7 +342,7 @@ func (a *API) SetSkillFolders(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireSkillOwnerOrAdmin(w, r, t, skill) {
+	if !a.requireSkillEditor(w, r, t, skill) {
 		return
 	}
 

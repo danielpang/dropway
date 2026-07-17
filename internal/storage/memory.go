@@ -141,6 +141,33 @@ func (f *Fake) GetSkillManifest(_ context.Context, orgID, skillID, versionID str
 	return append([]byte(nil), b...), nil
 }
 
+// PutChatTranscript stores a chat log's compiled transcript (mutable).
+func (f *Fake) PutChatTranscript(_ context.Context, orgID, chatID string, transcript []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.manifests[ChatTranscriptKey(orgID, chatID)] = append([]byte(nil), transcript...)
+	return nil
+}
+
+// GetChatTranscript reads a stored transcript.
+func (f *Fake) GetChatTranscript(_ context.Context, orgID, chatID string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.manifests[ChatTranscriptKey(orgID, chatID)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return append([]byte(nil), b...), nil
+}
+
+// DeleteChatTranscript removes a stored transcript (idempotent).
+func (f *Fake) DeleteChatTranscript(_ context.Context, orgID, chatID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.manifests, ChatTranscriptKey(orgID, chatID))
+	return nil
+}
+
 // ListBlobInfos returns every blob under the org's prefix as a {SHA, LastModified}
 // pair (the GC age-guard input).
 func (f *Fake) ListBlobInfos(_ context.Context, orgID string) ([]BlobInfo, error) {

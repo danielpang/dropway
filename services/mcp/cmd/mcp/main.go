@@ -103,7 +103,7 @@ func main() {
 	verifier := coreauth.NewVerifier(jwksURL, issuer, publicURL,
 		coreauth.WithExtraAudiences(coreauth.MCPResourceAudiences(publicURL)...))
 	st := store.New(pool)
-	svc := &tools.Service{Store: st, Skills: st, Blobs: objStore}
+	svc := &tools.Service{Store: st, Skills: st, Chats: st, Blobs: objStore}
 
 	// Control-plane WRITE tools (create_site, set_site_access) call the Go API,
 	// forwarding the user's token (the API accepts the MCP audience). Without an

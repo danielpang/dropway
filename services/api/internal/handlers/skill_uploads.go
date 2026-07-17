@@ -51,7 +51,7 @@ func (a *API) PrepareSkillUpload(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireSkillOwnerOrAdmin(w, r, t, skill) {
+	if !a.requireSkillEditor(w, r, t, skill) {
 		return
 	}
 
@@ -124,7 +124,7 @@ func (a *API) FinalizeSkillUpload(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireSkillOwnerOrAdmin(w, r, t, skill) {
+	if !a.requireSkillEditor(w, r, t, skill) {
 		return
 	}
 

@@ -88,6 +88,30 @@ export type SkillUploadResult =
 export type SkillFolderDownload =
   operations["downloadSkillFolder"]["responses"]["200"]["content"]["application/json"];
 
+// ---- Shared chat logs ("Share This Session") -------------------------------
+
+/** One shared chat log (optionally attached to a site as its "How this was made" panel). */
+export type ChatLog = components["schemas"]["ChatLog"];
+/** One stored chat-log entry (a turn, or a kind="action" annotation). */
+export type ChatMessage = components["schemas"]["ChatMessage"];
+/** One explicit message in a create/append request. */
+export type ChatMessageInput = components["schemas"]["ChatMessageInput"];
+/** Body of `POST /v1/chats` (title/source/site + the inline import payload). */
+export type CreateChatInput =
+  operations["createChatLog"]["requestBody"]["content"]["application/json"];
+/** Successful body of `POST /v1/chats` (the log + disclosed import results). */
+export type CreateChatResult =
+  operations["createChatLog"]["responses"]["201"]["content"]["application/json"];
+/** Body of `POST /v1/chats/{id}/messages` (transcript and/or explicit messages). */
+export type ChatAppendInput =
+  operations["appendChatMessages"]["requestBody"]["content"]["application/json"];
+/** Successful append body (stored messages + disclosed pruning). */
+export type ChatAppendResult =
+  operations["appendChatMessages"]["responses"]["201"]["content"]["application/json"];
+/** Successful body of `GET /v1/sites/{id}/chat` (the attached log + messages). */
+export type SiteChat =
+  operations["getSiteChat"]["responses"]["200"]["content"]["application/json"];
+
 // ---- Phase 4: audit log + hard revocation --------------------------------
 //
 // NOTE: as of this writing the Go API's /v1/audit and /v1/orgs/revoke-access
@@ -520,6 +544,18 @@ export const api = {
       `/v1/sites/${siteId}/feed-meta`,
       { method: "PUT", body: JSON.stringify(input) },
     );
+  },
+
+  /**
+   * Set a site's collaboration toggle (`allow_member_edits`): whether
+   * non-creators may modify its content (deploys/publish/previews). Flipping it
+   * is creator-or-admin → 403 otherwise. Returns the updated site.
+   */
+  setSiteCollab(siteId: string, allowMemberEdits: boolean): Promise<Site> {
+    return apiFetch<Site>(`/v1/sites/${siteId}/collab`, {
+      method: "PUT",
+      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
+    });
   },
 
   /** A site's comment thread, oldest first (any org member). */
@@ -992,6 +1028,19 @@ export const api = {
     return body.skill ?? {};
   },
 
+  /**
+   * Set a skill's collaboration toggle (`allow_member_edits`): whether
+   * non-creators may modify its content (uploads/metadata/folders). Flipping it
+   * is creator-or-admin → 403 otherwise.
+   */
+  async setSkillCollab(id: string, allowMemberEdits: boolean): Promise<Skill> {
+    const body = await apiFetch<{ skill?: Skill }>(`/v1/skills/${id}/collab`, {
+      method: "PUT",
+      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
+    });
+    return body.skill ?? {};
+  },
+
   /** Skill upload step 1: validate + missing blobs + presigned PUT URLs. */
   prepareSkillUpload(id: string, manifest: ManifestFile[]): Promise<PrepareDeploymentResult> {
     return apiFetch<PrepareDeploymentResult>(`/v1/skills/${id}/uploads/prepare`, {
@@ -1078,6 +1127,134 @@ export const api = {
     return apiFetch<{ is_preset?: boolean }>(`/v1/skill-folders/${folderId}/items/${skillId}`, {
       method: "PATCH",
       body: JSON.stringify({ is_preset: isPreset }),
+    });
+  },
+
+  // ---- Shared chat logs ("Share This Session") -----------------------------
+  //
+  // Every route is gated on the org kill switch (403 "chat logs are disabled"
+  // when off); mutations are creator-or-admin. Appends may 402 with the quota
+  // body (limit "chat_messages_per_log") on the cloud build.
+
+  /** The org's chat library (every shared session, attached or not). */
+  async listChats(): Promise<ChatLog[]> {
+    const body = (await apiGet("/v1/chats")) as { chat_logs?: ChatLog[] };
+    return body.chat_logs ?? [];
+  },
+
+  /** Get one chat log by id (404 → ApiError with status 404). */
+  async getChat(id: string): Promise<ChatLog> {
+    const body = (await apiGet(`/v1/chats/${id}`)) as { chat_log?: ChatLog };
+    return body.chat_log ?? {};
+  },
+
+  /**
+   * Create a chat log, optionally attached to a site and optionally seeded with
+   * an inline import (raw transcript and/or explicit messages). The response
+   * discloses pruning: `pruned`/`window` (tier sliding window) and `dropped`
+   * (past the import bound). 409 when the target site already has a log; 402
+   * when a hard message cap blocks the import.
+   */
+  createChat(input: CreateChatInput): Promise<CreateChatResult> {
+    return apiFetch<CreateChatResult>("/v1/chats", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Delete a chat log and its messages (creator or admin). 204 on success. */
+  async deleteChat(id: string): Promise<void> {
+    await apiFetch<void>(`/v1/chats/${id}`, { method: "DELETE" });
+  },
+
+  /** Append turns / action annotations (or a normalized import) to a log. */
+  appendChat(id: string, input: ChatAppendInput): Promise<ChatAppendResult> {
+    return apiFetch<ChatAppendResult>(`/v1/chats/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** A log's messages, seq ascending (optionally paged forward from after_seq). */
+  async listChatMessages(
+    id: string,
+    opts: { afterSeq?: number; limit?: number } = {},
+  ): Promise<ChatMessage[]> {
+    const params = new URLSearchParams();
+    if (opts.afterSeq != null) params.set("after_seq", String(opts.afterSeq));
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    const body = (await apiGet(`/v1/chats/${id}/messages${qs ? `?${qs}` : ""}`)) as {
+      messages?: ChatMessage[];
+    };
+    return body.messages ?? [];
+  },
+
+  /** Delete one message by seq (mistakes, pasted secrets). 204 on success. */
+  async deleteChatMessage(id: string, seq: number): Promise<void> {
+    await apiFetch<void>(`/v1/chats/${id}/messages/${seq}`, { method: "DELETE" });
+  },
+
+  /**
+   * Attach, detach (siteId=null), or move a log's site binding. At most one log
+   * per site — attaching to an occupied site returns 409.
+   */
+  async setChatSite(id: string, siteId: string | null): Promise<ChatLog> {
+    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/site`, {
+      method: "PUT",
+      body: JSON.stringify({ site_id: siteId }),
+    });
+    return body.chat_log ?? {};
+  },
+
+  /** Toggle whether the attached site serves the "How this was made" panel. */
+  async setChatPanel(id: string, enabled: boolean): Promise<ChatLog> {
+    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/panel`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+    return body.chat_log ?? {};
+  },
+
+  /**
+   * Set a chat log's collaboration toggle (`allow_member_edits`): whether
+   * non-creators may modify its content (appends/curation/binding/panel).
+   * Flipping it is creator-or-admin → 403 otherwise.
+   */
+  async setChatCollab(id: string, allowMemberEdits: boolean): Promise<ChatLog> {
+    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/collab`, {
+      method: "PUT",
+      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
+    });
+    return body.chat_log ?? {};
+  },
+
+  /** A site's attached log + messages. 404 (ApiError) when none is attached. */
+  getSiteChat(siteId: string): Promise<SiteChat> {
+    return apiGet(`/v1/sites/${siteId}/chat`) as Promise<SiteChat>;
+  },
+
+  /** Append to a site's attached log, creating one bound to the site if absent. */
+  appendSiteChat(siteId: string, input: ChatAppendInput): Promise<ChatAppendResult> {
+    return apiFetch<ChatAppendResult>(`/v1/sites/${siteId}/chat`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  /** Read the org chat-logs kill switch (any member; drives the settings UI). */
+  getChatSettings(): Promise<{ enabled: boolean }> {
+    return apiGet("/v1/orgs/chat-logs") as Promise<{ enabled: boolean }>;
+  },
+
+  /**
+   * Flip the org chat-logs kill switch (owner/admin only → 403). Disabling
+   * blocks every chat route for the org immediately; logs are kept, not deleted.
+   */
+  setChatSettings(enabled: boolean): Promise<{ enabled: boolean }> {
+    return apiFetch<{ enabled: boolean }>("/v1/orgs/chat-logs", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
     });
   },
 };

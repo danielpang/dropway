@@ -20,7 +20,7 @@ type RouteValue = projection.RouteValue
 // schema range, reusing the projection constants so the pin stays in lock-step
 // with the Go API writer + the Worker.
 const (
-	SupportedSchemaVersion    = projection.SchemaVersion    // 3
+	SupportedSchemaVersion    = projection.SchemaVersion    // 4
 	MinSupportedSchemaVersion = projection.MinSchemaVersion // 1
 )
 
@@ -35,6 +35,7 @@ var allowedRouteKeys = map[string]struct{}{
 	"schema_version": {},
 	"expires_at":     {},
 	"plan_tier":      {},
+	"chat_id":        {},
 }
 
 // ParseRouteValue validates an untrusted JSON route value into a RouteValue,
@@ -148,6 +149,20 @@ func ParseRouteValue(raw []byte) (RouteValue, bool) {
 				return RouteValue{}, false
 			}
 			out.PlanTier = pt
+		}
+	}
+
+	// chat_id: optional UUID string (v4+; null/absent → empty) — the site's
+	// attached "How this was made" chat log. The serve service does not act on
+	// it (the panel is an edge-Worker feature), but it is parsed (and rejected
+	// if malformed) so this stays a faithful port of the contract.
+	if ciRaw, present := generic["chat_id"]; present {
+		if string(ciRaw) != "null" {
+			var ci string
+			if err := json.Unmarshal(ciRaw, &ci); err != nil || !uuidRE.MatchString(ci) {
+				return RouteValue{}, false
+			}
+			out.ChatID = ci
 		}
 	}
 

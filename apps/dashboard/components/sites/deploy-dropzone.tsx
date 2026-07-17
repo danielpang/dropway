@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -92,7 +91,6 @@ export function DeployDropzone({
   siteId: string;
   isLive: boolean;
 }) {
-  const router = useRouter();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = React.useState(false);
   const [state, setState] = React.useState<State>({ status: "idle" });
@@ -125,14 +123,17 @@ export function DeployDropzone({
           ),
       });
       if (outcome.ok) {
+        // No router.refresh() here: the publish server action already
+        // revalidates this page, so its response carries the fresh tree (Live
+        // badge, Live URL + Current version cards). Firing refresh() on top
+        // races that in-flight revalidation and Next can drop BOTH updates,
+        // leaving the page stale (flaky "Live" e2e failure on slow runners).
         setState({ status: "done", liveUrl: outcome.liveUrl });
-        // Refresh the server component so the Live URL + Current version cards update.
-        router.refresh();
       } else {
         setState({ status: "error", message: outcome.message });
       }
     },
-    [siteId, router],
+    [siteId],
   );
 
   const start = React.useCallback(

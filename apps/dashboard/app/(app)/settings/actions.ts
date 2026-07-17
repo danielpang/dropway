@@ -106,3 +106,40 @@ export async function setAiBuilderEnabledAction(input: {
     return { ok: false, message: "Could not reach the API. Try again." };
   }
 }
+
+export type ChatLogsActionResult =
+  | { ok: true; enabled: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Flip the org-wide chat-logs kill switch (owner/admin only → the Go API
+ * re-checks the role and 403s otherwise). Every /v1/chats and site-chat route
+ * is gated on the flag, so disabling blocks the feature for the whole org
+ * immediately; existing logs are kept, not deleted.
+ */
+export async function setChatLogsEnabledAction(input: {
+  enabled: boolean;
+}): Promise<ChatLogsActionResult> {
+  try {
+    const result = await api.setChatSettings(input.enabled);
+    revalidatePath("/settings");
+    revalidatePath("/chats");
+    return { ok: true, enabled: result.enabled };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      if (apiMsg) return { ok: false, message: apiMsg };
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can change chat-log sharing.",
+        };
+      }
+      return {
+        ok: false,
+        message: "Could not update the chat-logs setting. Try again.",
+      };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}

@@ -1,9 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, Globe, Link2, Settings, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Globe,
+  Link2,
+  MessageSquareText,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
+import { ChatPanelToggle } from "@/components/chats/chat-panel-toggle";
+import { sourceToolLabel } from "@/components/chats/source-tools";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployTabs } from "@/components/sites/deploy-tabs";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
@@ -21,7 +31,7 @@ import {
 import { api, ApiError, type PlanTier, type Site, type SiteComment } from "@/lib/api";
 import { customDomainsEntitled } from "@/lib/billing";
 import { MCP_URL } from "@/lib/env";
-import { loadActiveOrg } from "@/lib/org";
+import { canManage, loadActiveOrg } from "@/lib/org";
 import { formatBytes } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -79,6 +89,9 @@ export default async function SiteDetailPage({
   // the tag picker). Both best-effort so a hiccup never blocks the page.
   const commentsPromise = api.listComments(id).catch((): SiteComment[] => []);
   const orgPromise = loadActiveOrg().catch(() => null);
+  // The attached chat log ("How this was made"), if any. Best-effort: a 404
+  // (nothing attached) or 403 (org kill switch off) simply hides the card.
+  const siteChatPromise = api.getSiteChat(id).catch(() => null);
 
   let site: Site;
   try {
@@ -89,13 +102,14 @@ export default async function SiteDetailPage({
     throw err;
   }
 
-  const [customDomainsEnabled, domainsEntitled, versions, comments, org] =
+  const [customDomainsEnabled, domainsEntitled, versions, comments, org, siteChat] =
     await Promise.all([
       customDomainsPromise,
       domainsEntitledPromise,
       versionsPromise,
       commentsPromise,
       orgPromise,
+      siteChatPromise,
     ]);
   // Free-tier orgs see the Domains button but it routes to the upgrade page; paid
   // (and self-host/unlimited) orgs go straight to the domains manager. The server
@@ -244,6 +258,46 @@ export default async function SiteDetailPage({
         slug={site.slug ?? id}
         mcpConnectorUrl={`${MCP_URL.replace(/\/$/, "")}/mcp`}
       />
+
+      {/* How this was made: the site's attached chat log, when one exists. */}
+      {siteChat?.chat_log?.id ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <MessageSquareText className="size-4 text-muted-foreground" aria-hidden />
+              How this was made
+            </CardTitle>
+            <CardDescription>
+              The AI conversation behind this site —{" "}
+              {siteChat.chat_log.message_count ?? siteChat.messages?.length ?? 0}{" "}
+              {(siteChat.chat_log.message_count ?? siteChat.messages?.length ?? 0) === 1
+                ? "message"
+                : "messages"}{" "}
+              from {sourceToolLabel(siteChat.chat_log.source_tool)}.{" "}
+              <Link
+                href={`/chats/${siteChat.chat_log.id}`}
+                className="font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                Read the transcript
+              </Link>
+              .
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChatPanelToggle
+              chatId={siteChat.chat_log.id}
+              initialEnabled={siteChat.chat_log.panel_enabled ?? false}
+              disabled={
+                !(
+                  (org && canManage(org.myRole)) ||
+                  (!!org?.myUserId && siteChat.chat_log.created_by === org.myUserId)
+                )
+              }
+              hasSite
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Comments: org-internal discussion, with @mentions of teammates. */}
       <Card>

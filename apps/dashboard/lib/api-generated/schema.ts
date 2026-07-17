@@ -571,6 +571,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/collab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a site's collaboration toggle (creator or admin)
+         * @description Flips allow_member_edits — whether non-creators may modify the site's CONTENT (deploys, publish/rollback, previews). Dropway is collaborative by default (true); the site's creator or an org admin/owner can turn it off to restrict content edits to creator-or-admin. Deletion and security-sensitive settings (access mode, allowlist, domains) are unaffected. Flipping the toggle is itself creator-or-admin (never toggle-gated) → 403 otherwise.
+         */
+        put: operations["setSiteCollab"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{id}/vote": {
         parameters: {
             query?: never;
@@ -917,6 +937,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills/{id}/collab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a skill's collaboration toggle (creator or admin)
+         * @description Flips allow_member_edits — whether non-creators may modify the skill's CONTENT (uploads, metadata, folder memberships). Collaborative by default (true); the skill's creator or an org admin/owner can turn it off to restrict edits to creator-or-admin. Deletion stays creator-or-admin regardless. Flipping the toggle is itself creator-or-admin → 403 otherwise.
+         */
+        put: operations["setSkillCollab"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills/{id}/vote": {
         parameters: {
             query?: never;
@@ -1055,6 +1095,191 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the org's chat logs (the chat library) */
+        get: operations["listChatLogs"];
+        put?: never;
+        /**
+         * Create a chat log (optionally attached to a site, optionally seeded)
+         * @description Creates a log and, when the body carries an inline import (a raw `transcript` export and/or explicit `messages`), appends it in the same gesture — a failed import rolls the create back. `transcript` accepts Claude Code JSONL, a ChatGPT JSON export, or plain text (`format` hints the parser; "auto" default); `derive_actions` condenses tool activity into kind="action" rows instead of dropping it. Imports keep the NEWEST messages: `dropped` counts messages past the 1000-message import bound, `pruned` counts messages pruned to the tier window (both disclosed). `site_id` attaches the log to a site — 409 when that site already has one.
+         */
+        post: operations["createChatLog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one chat log */
+        get: operations["getChatLog"];
+        put?: never;
+        post?: never;
+        /** Delete a chat log and its messages (creator or admin) */
+        delete: operations["deleteChatLog"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page a log's messages forward (seq order) */
+        get: operations["listChatMessages"];
+        put?: never;
+        /**
+         * Append turns / action annotations to a log (creator or admin)
+         * @description The same ingest shape as create: a raw `transcript` (normalized server-side) and/or explicit `messages`, appended in that order. `kind` defaults to "chat"; kind="action" defaults role to assistant and REQUIRES `meta`. Free-tier logs keep a sliding window of the newest messages (`pruned`/`window` disclose it); the pro cap returns 402.
+         */
+        post: operations["appendChatMessages"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/messages/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one message by seq (creator or admin — mistakes, pasted secrets) */
+        delete: operations["deleteChatMessage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/site": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Attach, detach, or move a log's site binding (creator or admin)
+         * @description site_id = a site id attaches (or moves) the log to that site; null detaches it back to the unattached library. At most one log per site — attaching to a site that already has one returns 409. The served "How this was made" panel follows the binding immediately.
+         */
+        put: operations["setChatLogSite"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/panel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Toggle the served "How this was made" panel (creator or admin)
+         * @description Flips whether the attached site serves the transcript panel to viewers. Off hides the panel at the edge without detaching the log.
+         */
+        put: operations["setChatLogPanel"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chats/{id}/collab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a chat log's collaboration toggle (creator or admin)
+         * @description Flips allow_member_edits — whether non-creators may modify the log's CONTENT (appends, message curation, site binding, panel flag). Collaborative by default (true); the log's creator or an org admin/owner can turn it off to restrict edits to creator-or-admin. Deletion stays creator-or-admin regardless. Flipping the toggle is itself creator-or-admin → 403 otherwise.
+         */
+        put: operations["setChatLogCollab"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a site's attached chat log + messages
+         * @description The dashboard's site-page read: the log attached to this site plus its full message list. 404 when the site has no attached log.
+         */
+        get: operations["getSiteChat"];
+        put?: never;
+        /**
+         * Append to a site's attached log, creating it if absent
+         * @description The one-call agent flow (deploy, then narrate): appends the same ingest payload as POST /v1/chats/{id}/messages to the site's attached log, creating an untitled log bound to the site first when none exists.
+         */
+        post: operations["appendSiteChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/chat-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the org chat-logs kill switch
+         * @description Any member may read it (it drives the org's own settings UI). Default enabled.
+         */
+        get: operations["getChatSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Flip the org chat-logs kill switch (admin/owner only)
+         * @description Owner/admin only (role re-checked against the member table). Disabling blocks every /v1/chats and site-chat route for the org immediately (403 "chat logs are disabled"); existing logs are kept, not deleted.
+         */
+        patch: operations["patchChatSettings"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1157,6 +1382,8 @@ export interface components {
             storage_bytes?: number;
             /** @description Whether the site appears in the org feed (the cross-user discovery surface). Defaults to true: a site is auto-shared to the feed on create and publish. The owner (or an admin) sets it false to keep the site private — off the feed. Orthogonal to access_mode (this never changes who can load the served bytes). */
             feed_visible?: boolean;
+            /** @description The collaboration toggle (default true): whether non-creators may modify the site's CONTENT (deploys, publish, previews). False restricts content edits to creator-or-admin. Deletion and security-sensitive settings are governed separately. */
+            allow_member_edits?: boolean;
             /** @description Owner-set human title shown in the org feed (empty when unset — the feed falls back to the slug). */
             title?: string;
             /** @description Owner-set description shown in the org feed (empty when unset). */
@@ -1306,6 +1533,8 @@ export interface components {
             version?: number;
             /** @description Whether the skill is shared to the org feed (default true on publish). The owner/admin can make it private to pull it off the feed. */
             feed_visible?: boolean;
+            /** @description The collaboration toggle (default true): whether non-creators may modify the skill's CONTENT (uploads, metadata, folders). False restricts content edits to creator-or-admin; deletion is creator-or-admin regardless. */
+            allow_member_edits?: boolean;
             folders?: components["schemas"]["SkillFolderRef"][];
             /** Format: date-time */
             created_at?: string;
@@ -1353,6 +1582,76 @@ export interface components {
                 encoding?: "utf8" | "base64";
             }[];
         };
+        /** @description One shared chat log ("Share This Session"): an append-only record of an AI conversation, optionally attached to a site (at most one log per site) whose served pages can surface it as a "How this was made" panel. */
+        ChatLog: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            org_id?: string;
+            /**
+             * Format: uuid
+             * @description The attached site (absent = unattached library entry).
+             */
+            site_id?: string;
+            /** @description Human title (empty when unset — clients fall back to "Untitled session"). */
+            title?: string;
+            /** @description The tool the conversation came from (claude_code / chatgpt / cursor / other; free-form). */
+            source_tool?: string;
+            /** @description Whether the attached site serves the transcript panel to viewers. */
+            panel_enabled?: boolean;
+            /** @description The collaboration toggle (default true): whether non-creators may modify the log's CONTENT (appends, curation, site binding, panel). False restricts content edits to creator-or-admin; deletion is creator-or-admin regardless. */
+            allow_member_edits?: boolean;
+            /** Format: int64 */
+            message_count?: number;
+            /** Format: uuid */
+            created_by?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description One stored chat-log entry: a conversation turn (kind "chat") or an LLM-authored annotation about work performed (kind "action") whose content is the model's commentary and whose meta carries the facts. */
+        ChatMessage: {
+            /** @description Per-log sequence number (append order; the delete handle). */
+            seq?: number;
+            /** @enum {string} */
+            role?: "user" | "assistant";
+            /** @enum {string} */
+            kind?: "chat" | "action";
+            /** @description Markdown text (a turn) or the action's commentary. */
+            content?: string;
+            meta?: components["schemas"]["ChatActionMeta"];
+            /**
+             * Format: uuid
+             * @description The deploy version current at append time (viewers render version dividers where it changes).
+             */
+            version_id?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
+        /** @description One explicit message in a create/append request. kind defaults to "chat"; kind "action" defaults role to assistant and REQUIRES meta. */
+        ChatMessageInput: {
+            /**
+             * @description Defaults to "chat".
+             * @enum {string}
+             */
+            kind?: "chat" | "action";
+            /**
+             * @description Defaults to assistant for kind "action".
+             * @enum {string}
+             */
+            role?: "user" | "assistant";
+            /** @description Message text (≤ 64 KiB; may be empty for kind "action"). */
+            content: string;
+            meta?: components["schemas"]["ChatActionMeta"];
+        };
+        /** @description The structured half of a kind="action" message, rendered by viewers as icon + target chips. Only valid on kind "action" (required there). */
+        ChatActionMeta: {
+            /** @enum {string} */
+            action: "tool_use" | "file_edit";
+            /** @description The tool invoked (required for tool_use; max 128 chars). */
+            tool?: string;
+            /** @description Files touched (clean relative paths, ≤ 20). */
+            paths?: string[];
+        };
         Error: {
             /** @description Stable machine-readable code */
             error?: string;
@@ -1378,7 +1677,7 @@ export interface components {
         /** @description 402 body (see internal/quota.ExceededError); the dashboard opens the upgrade/sales modal. */
         QuotaExceeded: {
             /** @enum {string} */
-            limit?: "sites_per_user" | "members_per_org" | "custom_domains_per_org";
+            limit?: "sites_per_user" | "members_per_org" | "custom_domains_per_org" | "skills_per_folder" | "chat_messages_per_log";
             /** Format: int64 */
             current?: number;
             /** Format: int64 */
@@ -1481,6 +1780,8 @@ export interface components {
         SkillID: string;
         /** @description app.skill_folders.id */
         SkillFolderID: string;
+        /** @description app.chat_logs.id */
+        ChatLogID: string;
     };
     requestBodies: never;
     headers: never;
@@ -2506,6 +2807,39 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    setSiteCollab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow_member_edits: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated site */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Site"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     setSiteVote: {
         parameters: {
             query?: never;
@@ -3277,6 +3611,41 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    setSkillCollab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.skills.id */
+                id: components["parameters"]["SkillID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow_member_edits: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated skill */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        skill?: components["schemas"]["Skill"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     setSkillVote: {
         parameters: {
             query?: never;
@@ -3631,6 +4000,499 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listChatLogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's chat logs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_logs?: components["schemas"]["ChatLog"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createChatLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human title (max 200 chars; empty allowed). */
+                    title?: string;
+                    /** @description The tool the conversation came from (claude_code / chatgpt / cursor / other — display metadata */
+                    source_tool?: string;
+                    /**
+                     * Format: uuid
+                     * @description Attach to this site (at most one log per site).
+                     */
+                    site_id?: string;
+                    /** @description Raw export to normalize server-side. */
+                    transcript?: string;
+                    /** @description Transcript parser hint (auto default). */
+                    format?: string;
+                    /** @description Condense tool activity into kind="action" rows. */
+                    derive_actions?: boolean;
+                    messages?: components["schemas"]["ChatMessageInput"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Chat log created (import results disclosed) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                        /** @description Messages stored by the inline import. */
+                        appended?: number;
+                        /**
+                         * Format: int64
+                         * @description Oldest messages pruned to the tier window.
+                         */
+                        pruned?: number;
+                        /**
+                         * Format: int64
+                         * @description The tier's message window (0 = unlimited).
+                         */
+                        window?: number;
+                        /** @description Transcript messages past the import bound. */
+                        dropped?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getChatLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The chat log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteChatLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listChatMessages: {
+        parameters: {
+            query?: {
+                /** @description Return messages with seq strictly greater than this. */
+                after_seq?: number;
+                /** @description Max messages to return (0 = server default). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The log's messages, seq ascending */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        messages?: components["schemas"]["ChatMessage"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    appendChatMessages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Raw export to normalize server-side. */
+                    transcript?: string;
+                    /** @description Transcript parser hint (auto default). */
+                    format?: string;
+                    /** @description Condense tool activity into kind="action" rows. */
+                    derive_actions?: boolean;
+                    messages?: components["schemas"]["ChatMessageInput"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Messages appended (pruning disclosed) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        messages?: components["schemas"]["ChatMessage"][];
+                        /**
+                         * Format: int64
+                         * @description Oldest messages pruned to the tier window.
+                         */
+                        pruned?: number;
+                        /**
+                         * Format: int64
+                         * @description The tier's message window (0 = unlimited).
+                         */
+                        window?: number;
+                        /** @description Transcript messages past the import bound. */
+                        dropped?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteChatMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+                /** @description The message's per-log sequence number. */
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setChatLogSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uuid
+                     * @description The site to attach to
+                     */
+                    site_id: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated chat log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    setChatLogPanel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated chat log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setChatLogCollab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.chat_logs.id */
+                id: components["parameters"]["ChatLogID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allow_member_edits: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The updated chat log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSiteChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attached log + its messages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chat_log?: components["schemas"]["ChatLog"];
+                        messages?: components["schemas"]["ChatMessage"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    appendSiteChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Raw export to normalize server-side. */
+                    transcript?: string;
+                    /** @description Transcript parser hint (auto default). */
+                    format?: string;
+                    /** @description Condense tool activity into kind="action" rows. */
+                    derive_actions?: boolean;
+                    messages?: components["schemas"]["ChatMessageInput"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Messages appended (pruning disclosed) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        messages?: components["schemas"]["ChatMessage"][];
+                        /** Format: int64 */
+                        pruned?: number;
+                        /** Format: int64 */
+                        window?: number;
+                        dropped?: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["QuotaExceeded"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getChatSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    patchChatSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The new setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }

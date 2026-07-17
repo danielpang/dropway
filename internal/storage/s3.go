@@ -275,6 +275,38 @@ func (s *S3Store) GetSkillManifest(ctx context.Context, orgID, skillID, versionI
 	return s.getManifestKey(ctx, SkillManifestKey(orgID, skillID, versionID))
 }
 
+// PutChatTranscript writes (or rewrites) a chat log's compiled transcript.
+func (s *S3Store) PutChatTranscript(ctx context.Context, orgID, chatID string, transcript []byte) error {
+	key := ChatTranscriptKey(orgID, chatID)
+	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(transcript),
+		ContentType:   aws.String("application/json"),
+		ContentLength: aws.Int64(int64(len(transcript))),
+	}); err != nil {
+		return fmt.Errorf("storage: put chat transcript %s: %w", key, err)
+	}
+	return nil
+}
+
+// GetChatTranscript reads a compiled transcript back.
+func (s *S3Store) GetChatTranscript(ctx context.Context, orgID, chatID string) ([]byte, error) {
+	return s.getManifestKey(ctx, ChatTranscriptKey(orgID, chatID))
+}
+
+// DeleteChatTranscript removes a compiled transcript (idempotent).
+func (s *S3Store) DeleteChatTranscript(ctx context.Context, orgID, chatID string) error {
+	key := ChatTranscriptKey(orgID, chatID)
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}); err != nil {
+		return fmt.Errorf("storage: delete chat transcript %s: %w", key, err)
+	}
+	return nil
+}
+
 func (s *S3Store) getManifestKey(ctx context.Context, key string) ([]byte, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),

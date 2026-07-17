@@ -41,6 +41,17 @@ func (a *API) CreatePreview(w http.ResponseWriter, r *http.Request) {
 	siteID := chi.URLParam(r, "id")
 	versionID := chi.URLParam(r, "versionID")
 
+	// Previews expose draft content on a live host: collaboration-toggle gated
+	// like every other content edit.
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !a.requireSiteEditor(w, r, t, site) {
+		return
+	}
+
 	prev, err := a.Store.CreatePreviewRoute(r.Context(), t, siteID, versionID, a.previewTTL())
 	if err != nil {
 		writeStoreError(w, err)
@@ -82,6 +93,15 @@ func (a *API) DeletePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	siteID := chi.URLParam(r, "id")
 	versionID := chi.URLParam(r, "versionID")
+
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !a.requireSiteEditor(w, r, t, site) {
+		return
+	}
 
 	hosts, err := a.Store.DeletePreviewRoutes(r.Context(), t, siteID, versionID)
 	if err != nil {

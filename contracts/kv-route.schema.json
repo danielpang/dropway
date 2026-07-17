@@ -32,9 +32,9 @@
     },
     "schema_version": {
       "type": "integer",
-      "description": "Version of THIS contract shape. Lets the Worker reject/upgrade projections written by an older/newer Go API. Bump on any breaking change to this schema. v2 (Phase 2) added the optional expires_at field; v3 added the optional plan_tier field. The parser accepts v1, v2, and v3.",
+      "description": "Version of THIS contract shape. Lets the Worker reject/upgrade projections written by an older/newer Go API. Bump on any breaking change to this schema. v2 (Phase 2) added the optional expires_at field; v3 added the optional plan_tier field; v4 added the optional chat_id field. The parser accepts v1 through v4.",
       "minimum": 1,
-      "maximum": 3
+      "maximum": 4
     },
     "expires_at": {
       "type": "string",
@@ -44,6 +44,12 @@
     "plan_tier": {
       "type": "string",
       "description": "OPTIONAL (v3+). The owning org's plan tier (app.org_meta.plan_tier, e.g. \"free\"/\"pro\"). The Worker uses it to decide whether to inject the free-tier \"Deployed with Dropway\" attribution banner. Absent → tier unknown → no banner."
+    },
+    "chat_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "OPTIONAL (v4+). The id of the site's attached, panel-enabled chat log (Share This Session). When present, the Worker injects the \"How this was made\" pill into served HTML and serves the compiled transcript at the reserved /__dropway/chat path (chat-transcripts/<org_id>/<chat_id>.json in the content bucket). Absent → no chat surface.",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     }
   }
 }

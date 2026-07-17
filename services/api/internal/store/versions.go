@@ -415,8 +415,15 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 			return err
 		}
 
+		// The attached, panel-enabled chat log rides on every published route
+		// (v4 chat_id) so the Worker can inject the "How this was made" pill.
+		chatID, err := chatIDForSiteTx(ctx, q, siteID)
+		if err != nil {
+			return err
+		}
+
 		newRoute := func() projection.RouteValue {
-			return routeValue(t.OrgID, siteID, versionID, site.AccessMode, expiresAt, planTier)
+			return routeValue(t.OrgID, siteID, versionID, site.AccessMode, expiresAt, planTier, chatID)
 		}
 
 		// Keep the canonical Host/Route populated for back-compat (the single-route

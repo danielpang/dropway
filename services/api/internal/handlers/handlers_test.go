@@ -97,7 +97,7 @@ func (f *fakeStore) CreateSite(_ context.Context, t store.Tenant, slug, mode str
 		mode = "org_only"
 	}
 	// Mirror the DB default: a new site is feed-visible (auto-shared to the org feed).
-	s := store.Site{ID: "site_" + slug, OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, AccessMode: mode, FeedVisible: true}
+	s := store.Site{ID: "site_" + slug, OrgID: t.OrgID, Slug: slug, OwnerUserID: t.UserID, AccessMode: mode, FeedVisible: true, AllowMemberEdits: true}
 	f.sites[s.ID] = s
 	return s, nil
 }

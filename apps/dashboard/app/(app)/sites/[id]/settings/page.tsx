@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, ShieldAlert } from "lucide-react";
 
+import { setSiteCollabAction } from "@/app/(app)/sites/[id]/settings/actions";
+import { CollabToggle } from "@/components/collab-toggle";
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { AccessSettingsForm } from "@/components/sites/access-settings-form";
 import { AllowlistManager } from "@/components/sites/allowlist-manager";
@@ -169,6 +171,26 @@ export default async function SiteAccessSettingsPage({
               disabled={!canToggleFeed}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Collaboration: who may modify the site's content. Creator-or-admin
+          flips it; everyone else sees the live state read-only. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Collaboration</CardTitle>
+          <CardDescription>
+            Who can deploy, publish, and preview this site&rsquo;s content.
+            Sites are collaborative by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CollabToggle
+            resourceId={id}
+            initialAllow={site.allow_member_edits ?? true}
+            disabled={!canToggleFeed}
+            action={setSiteCollabAction}
+          />
         </CardContent>
       </Card>
 

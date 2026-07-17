@@ -60,6 +60,18 @@ const (
 	// BEFORE the Cloudflare custom hostname is provisioned, so a free org never
 	// creates a provider-side hostname it isn't entitled to.
 	ResourceCustomDomainPerOrg Resource = "custom_domains_per_org"
+	// ResourceChatMessagePerLog caps how many messages one shared chat log holds.
+	// The free tier is a ROLLING WINDOW (see Windower), not a hard cap: appends
+	// never 402, the store prunes the oldest rows past the window instead. Paid
+	// tiers never auto-delete, so pro is a hard cap (100 → 402 {next_tier:
+	// business}) and business/enterprise are unlimited. Checked/pruned under a
+	// per-log advisory lock inside the append tx.
+	ResourceChatMessagePerLog Resource = "chat_messages_per_log"
+	// ResourceChatLogPerOrg caps the number of chat logs in an org. Unlimited on
+	// every tier today (per-log content is bounded by window/cap × message size,
+	// and every viewer-facing surface is bounded by the site caps); the seam
+	// exists so the cloud provider can tighten it without a store/handler change.
+	ResourceChatLogPerOrg Resource = "chat_logs_per_org"
 )
 
 // ExceededError is returned by an enforcing Provider when an action would cross
@@ -106,6 +118,30 @@ type Provider interface {
 	// for a CONTINUOUS resource (storage bytes) n is the size delta. The store passes
 	// the live `current` read under the per-org advisory lock so it stays race-safe.
 	AllowN(planTier string, res Resource, current, n int64) error
+}
+
+// Windower is the OPTIONAL window-semantics side of a Provider: instead of a
+// hard cap (Allow → 402), some (tier, resource) bands keep the NEWEST n items
+// and silently prune older ones — the free tier's rolling last-10 chat-log
+// window. The store type-asserts its Provider to Windower inside the append
+// tx: window set → INSERT then DELETE rows beyond the newest n; no window (or
+// the Provider doesn't implement Windower) → the standard COUNT → AllowN →
+// 402 path. Kept as a separate interface so existing Provider implementations
+// (Unlimited, test fakes) stay valid without a window concept.
+type Windower interface {
+	// RetentionWindow returns the rolling-retention window for (planTier, res):
+	// keep the newest n, prune the rest. ok=false means no window applies and
+	// the caller should use the Allow/AllowN hard-cap path instead.
+	RetentionWindow(planTier string, res Resource) (n int64, ok bool)
+}
+
+// RetentionWindow resolves the rolling window for (planTier, res) if p also
+// implements Windower; otherwise no window applies.
+func RetentionWindow(p Provider, planTier string, res Resource) (int64, bool) {
+	if w, ok := p.(Windower); ok {
+		return w.RetentionWindow(planTier, res)
+	}
+	return 0, false
 }
 
 // Unlimited is the core/self-host Provider: every action is allowed regardless of

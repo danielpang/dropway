@@ -208,7 +208,7 @@ func TestMCPServer_Endpoints(t *testing.T) {
 	verifier := coreauth.NewVerifier(jwks.URL, itIssuer, itResource,
 		coreauth.WithExtraAudiences(itResource+"/"))
 	st := store.New(appPool)
-	svc := &tools.Service{Store: st, Skills: st, Blobs: stubBlobs{}}
+	svc := &tools.Service{Store: st, Skills: st, Chats: st, Blobs: stubBlobs{}}
 
 	ts := httptest.NewServer(newMux(verifier, st, svc, itResource, itIssuer))
 	defer ts.Close()

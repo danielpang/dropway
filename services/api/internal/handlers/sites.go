@@ -38,9 +38,12 @@ type siteResponse struct {
 	FeedVisible bool `json:"feed_visible"`
 	// Title / Description are the owner-set human feed metadata (empty when unset;
 	// the feed UI falls back to the slug for the title).
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	// AllowMemberEdits is the collaboration toggle (default true): false
+	// restricts content edits (deploy/publish/previews) to creator-or-admin.
+	AllowMemberEdits bool      `json:"allow_member_edits"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // toSiteResponse renders a site for the API. orgSlug is the org half of the
@@ -61,6 +64,7 @@ func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) s
 		FeedVisible:      s.FeedVisible,
 		Title:            s.Title,
 		Description:      s.Description,
+		AllowMemberEdits: s.AllowMemberEdits,
 		CreatedAt:        s.CreatedAt,
 	}
 }
@@ -328,6 +332,9 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		// another org/site — a cross-tenant collision. 409 Conflict, not 400:
 		// the request is well-formed, the resource just isn't available.
 		httpx.WriteError(w, fmt.Errorf("%w: site slug/host already in use", httpx.ErrConflict))
+	case errors.Is(err, store.ErrSiteHasChatLog):
+		// One attached chat log per site: detach/move the existing one first.
+		httpx.WriteError(w, fmt.Errorf("%w: site already has an attached chat log", httpx.ErrConflict))
 	case errors.Is(err, store.ErrExternalSharingDisabled):
 		// The org's allow_external_sharing policy forbids a public site.
 		httpx.WriteError(w, fmt.Errorf("%w: external sharing is disabled for this org; an admin must enable it", httpx.ErrForbidden))

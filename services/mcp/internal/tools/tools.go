@@ -37,6 +37,11 @@ import (
 // A var (not const) so tests can lower it without staging megabytes of fixtures.
 var maxDownloadBytes = 10 << 20 // 10 MiB
 
+// maxChatBytes caps the total message content get_site_chat returns inline (a
+// long log's trailing messages are omitted, disclosed via Truncated). A var so
+// tests can lower it.
+var maxChatBytes = 1 << 20 // 1 MiB
+
 // SiteStore is the site data the tools read (RLS-scoped).
 type SiteStore interface {
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
@@ -60,10 +65,16 @@ type Blobs interface {
 	GetBlob(ctx context.Context, orgID, sha256 string) (io.ReadCloser, error)
 }
 
+// ChatStore is the shared-chat-log data get_site_chat reads (RLS-scoped).
+type ChatStore interface {
+	ChatLogBySite(ctx context.Context, t store.Tenant, siteID string) (store.ChatLog, error)
+	ListChatMessages(ctx context.Context, t store.Tenant, chatLogID string) ([]store.ChatMessage, error)
+}
+
 // ControlPlane performs WRITES through the Go API (create site / change access /
-// upload skill), forwarding the user's OAuth token. nil when the MCP server has no
-// API_URL configured → the write tools are not registered. Satisfied by
-// *apiclient.Client.
+// upload skill / share chat logs), forwarding the user's OAuth token. nil when the
+// MCP server has no API_URL configured → the write tools are not registered.
+// Satisfied by *apiclient.Client.
 type ControlPlane interface {
 	CreateSite(ctx context.Context, token, slug, accessMode string) (apiclient.Site, error)
 	SetAccess(ctx context.Context, token, siteID, mode, password string) error
@@ -71,16 +82,20 @@ type ControlPlane interface {
 	CreateSkill(ctx context.Context, token, slug, title string, folders []string) (apiclient.SkillInfo, error)
 	UploadSkill(ctx context.Context, token, skillID string, files []apiclient.FileUpload) (apiclient.UploadResult, error)
 	SetSkillFolders(ctx context.Context, token, skillID string, folderIDs []string) error
+	CreateChatLog(ctx context.Context, token, title, sourceTool, siteID string, imp apiclient.ChatImport) (apiclient.ChatCreateResult, error)
+	AppendChatMessages(ctx context.Context, token, chatID string, imp apiclient.ChatImport) (apiclient.ChatAppendResult, error)
+	AppendSiteChat(ctx context.Context, token, siteID string, imp apiclient.ChatImport) (apiclient.ChatAppendResult, error)
 }
 
 // Service holds the tool dependencies.
 type Service struct {
 	Store  SiteStore
 	Skills SkillStore
+	Chats  ChatStore
 	Blobs  Blobs
 	// API is the control-plane write client. Optional: when nil the read tools still
 	// work but the write tools (create_site, set_site_access, deploy_site,
-	// upload_skill) are not registered.
+	// upload_skill, share_chat, append_chat) are not registered.
 	API ControlPlane
 }
 
@@ -283,6 +298,88 @@ type uploadSkillOut struct {
 	SkillID   string   `json:"skill_id"`
 	VersionNo int32    `json:"version_no"`
 	Warnings  []string `json:"warnings,omitempty"`
+}
+
+// chatActionMeta is the structured half of a kind="action" chat message, both
+// on input (share_chat/append_chat) and output (get_site_chat).
+type chatActionMeta struct {
+	Action string   `json:"action" jsonschema:"'tool_use' (a tool was invoked) or 'file_edit' (files were changed)"`
+	Tool   string   `json:"tool,omitempty" jsonschema:"the tool that was invoked (required for action='tool_use')"`
+	Paths  []string `json:"paths,omitempty" jsonschema:"clean relative paths of the files touched (required for action='file_edit'; max 20)"`
+}
+
+// chatMessageIn is one explicit message in a share_chat/append_chat call.
+type chatMessageIn struct {
+	Kind    string          `json:"kind,omitempty" jsonschema:"'chat' (a conversation turn, default) or 'action' (an annotation about work you performed)"`
+	Role    string          `json:"role,omitempty" jsonschema:"'user' or 'assistant'; kind='action' defaults to assistant"`
+	Content string          `json:"content" jsonschema:"the message text. For kind='action': a one-line comment on WHY the change was made, not a restatement of the diff"`
+	Meta    *chatActionMeta `json:"meta,omitempty" jsonschema:"the structured action facts; required exactly when kind='action'"`
+}
+
+type shareChatIn struct {
+	Site          string          `json:"site,omitempty" jsonschema:"optional site slug (from list_sites) to attach the log to; attached, it renders as the site's 'How this was made' panel. One attached log per site"`
+	Title         string          `json:"title,omitempty" jsonschema:"optional human title for the log"`
+	SourceTool    string          `json:"source_tool,omitempty" jsonschema:"the tool the conversation came from: 'claude_code', 'chatgpt', 'cursor', or 'other'"`
+	Transcript    string          `json:"transcript,omitempty" jsonschema:"a raw conversation export (Claude Code JSONL, ChatGPT JSON export, or plain text), normalized server-side"`
+	Format        string          `json:"format,omitempty" jsonschema:"transcript format hint: 'auto' (default), 'claude_code', 'chatgpt', or 'text'"`
+	DeriveActions bool            `json:"derive_actions,omitempty" jsonschema:"condense the transcript's tool activity into kind='action' rows instead of dropping it"`
+	Messages      []chatMessageIn `json:"messages,omitempty" jsonschema:"explicit canonical messages, appended after the transcript import"`
+}
+type shareChatOut struct {
+	ChatID     string `json:"chat_id" jsonschema:"the new log's id — pass it to append_chat to add more messages later"`
+	Site       string `json:"site,omitempty" jsonschema:"the site slug the log was attached to, if any"`
+	Appended   int    `json:"appended" jsonschema:"messages stored"`
+	Pruned     int    `json:"pruned" jsonschema:"oldest messages removed by the plan's rolling window"`
+	Window     int    `json:"window" jsonschema:"the rolling-window size that pruned (0 = unbounded)"`
+	Dropped    int    `json:"dropped" jsonschema:"transcript messages discarded by the import bound"`
+	ViewerHint string `json:"viewer_hint,omitempty" jsonschema:"where viewers will see the shared chat"`
+}
+
+type appendChatIn struct {
+	Site          string          `json:"site,omitempty" jsonschema:"site slug whose attached log to append to (the log is created if the site has none). Set site OR chat_id, not both"`
+	ChatID        string          `json:"chat_id,omitempty" jsonschema:"an existing log's id (from share_chat). Set site OR chat_id, not both"`
+	Transcript    string          `json:"transcript,omitempty" jsonschema:"a raw conversation export to normalize and append"`
+	Format        string          `json:"format,omitempty" jsonschema:"transcript format hint: 'auto' (default), 'claude_code', 'chatgpt', or 'text'"`
+	DeriveActions bool            `json:"derive_actions,omitempty" jsonschema:"condense the transcript's tool activity into kind='action' rows instead of dropping it"`
+	Messages      []chatMessageIn `json:"messages,omitempty" jsonschema:"messages to append: conversation turns and/or kind='action' annotations"`
+}
+type appendChatOut struct {
+	ChatID   string `json:"chat_id,omitempty" jsonschema:"echoed when the append targeted a chat_id"`
+	Site     string `json:"site,omitempty" jsonschema:"echoed when the append targeted a site's log"`
+	Appended int    `json:"appended"`
+	Pruned   int    `json:"pruned" jsonschema:"oldest messages removed by the plan's rolling window"`
+	Window   int    `json:"window" jsonschema:"the rolling-window size that pruned (0 = unbounded)"`
+	Dropped  int    `json:"dropped" jsonschema:"transcript messages discarded by the import bound"`
+}
+
+type getSiteChatIn struct {
+	Site string `json:"site" jsonschema:"the site slug (from list_sites)"`
+}
+
+// siteChatLogInfo is the log metadata get_site_chat returns.
+type siteChatLogInfo struct {
+	ChatID       string `json:"chat_id"`
+	Title        string `json:"title,omitempty"`
+	SourceTool   string `json:"source_tool"`
+	PanelEnabled bool   `json:"panel_enabled" jsonschema:"whether the 'How this was made' panel is shown on the published site"`
+	MessageCount int64  `json:"message_count"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// siteChatMessage is one returned chat-log entry.
+type siteChatMessage struct {
+	Seq       int32           `json:"seq"`
+	Role      string          `json:"role"`
+	Kind      string          `json:"kind" jsonschema:"'chat' (a conversation turn) or 'action' (an annotation about work performed)"`
+	Content   string          `json:"content"`
+	Meta      *chatActionMeta `json:"meta,omitempty" jsonschema:"the action facts of a kind='action' row"`
+	CreatedAt string          `json:"created_at"`
+}
+type getSiteChatOut struct {
+	Site      string            `json:"site"`
+	ChatLog   siteChatLogInfo   `json:"chat_log"`
+	Messages  []siteChatMessage `json:"messages"`
+	Truncated bool              `json:"truncated,omitempty" jsonschema:"true if trailing messages were omitted to stay under the size cap"`
 }
 
 // --- Exported (testable) logic ----------------------------------------------
@@ -706,6 +803,150 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 	return uploadSkillOut{Name: name, SkillID: skillID, VersionNo: res.VersionNo, Warnings: res.Warnings}, nil
 }
 
+// toChatImport maps the tool-level payload onto the API client's ingest shape.
+func toChatImport(transcript, format string, deriveActions bool, msgs []chatMessageIn) apiclient.ChatImport {
+	imp := apiclient.ChatImport{Transcript: transcript, Format: format, DeriveActions: deriveActions}
+	for _, m := range msgs {
+		cm := apiclient.ChatMessage{Kind: m.Kind, Role: m.Role, Content: m.Content}
+		if m.Meta != nil {
+			cm.Meta = &apiclient.ChatActionMeta{Action: m.Meta.Action, Tool: m.Meta.Tool, Paths: m.Meta.Paths}
+		}
+		imp.Messages = append(imp.Messages, cm)
+	}
+	return imp
+}
+
+// ShareChat creates a shared chat log via the Go API (which enforces the org
+// kill switch + plan quota), optionally seeded with a transcript import and/or
+// explicit messages, and optionally attached to a site. The site SLUG is
+// resolved to its id under RLS first (confirming the site is in the caller's
+// org — the API takes a site_id).
+func (svc *Service) ShareChat(ctx context.Context, t store.Tenant, token string, in shareChatIn) (shareChatOut, error) {
+	siteID := ""
+	var site store.Site
+	if in.Site != "" {
+		s, err := svc.Store.SiteBySlug(ctx, t, in.Site)
+		if err != nil {
+			return shareChatOut{}, err
+		}
+		site, siteID = s, s.ID
+	}
+	res, err := svc.API.CreateChatLog(ctx, token, in.Title, in.SourceTool, siteID,
+		toChatImport(in.Transcript, in.Format, in.DeriveActions, in.Messages))
+	if err != nil {
+		return shareChatOut{}, err
+	}
+	out := shareChatOut{
+		ChatID:   res.ChatLog.ID,
+		Site:     in.Site,
+		Appended: res.Appended,
+		Pruned:   res.Pruned,
+		Window:   res.Window,
+		Dropped:  res.Dropped,
+	}
+	if in.Site != "" {
+		hint := "Once the site is published, viewers can open this chat under \"How this was made\" on the site"
+		if site.Host != nil {
+			hint += " at https://" + *site.Host
+		}
+		out.ViewerHint = hint + "."
+	} else {
+		out.ViewerHint = "The log is an org-library entry with no viewer surface; attach it to a site to show it as that site's \"How this was made\" panel."
+	}
+	return out, nil
+}
+
+// AppendChat appends messages (turns, action annotations, or a normalized
+// transcript import) to a shared chat log — addressed either by an existing
+// chat_id or by a site slug, whose attached log the API creates when absent.
+// Exactly one addressing mode must be set; the slug is resolved to its id
+// under RLS first.
+func (svc *Service) AppendChat(ctx context.Context, t store.Tenant, token string, in appendChatIn) (appendChatOut, error) {
+	if (in.Site == "") == (in.ChatID == "") {
+		return appendChatOut{}, errors.New("mcp/tools: append_chat takes exactly one of 'site' or 'chat_id'")
+	}
+	if in.Transcript == "" && len(in.Messages) == 0 {
+		return appendChatOut{}, errors.New("mcp/tools: append_chat requires 'messages' and/or a 'transcript'")
+	}
+	imp := toChatImport(in.Transcript, in.Format, in.DeriveActions, in.Messages)
+
+	var res apiclient.ChatAppendResult
+	var err error
+	if in.Site != "" {
+		site, serr := svc.Store.SiteBySlug(ctx, t, in.Site)
+		if serr != nil {
+			return appendChatOut{}, serr
+		}
+		res, err = svc.API.AppendSiteChat(ctx, token, site.ID, imp)
+	} else {
+		res, err = svc.API.AppendChatMessages(ctx, token, in.ChatID, imp)
+	}
+	if err != nil {
+		return appendChatOut{}, err
+	}
+	return appendChatOut{
+		ChatID:   in.ChatID,
+		Site:     in.Site,
+		Appended: res.Appended,
+		Pruned:   res.Pruned,
+		Window:   res.Window,
+		Dropped:  res.Dropped,
+	}, nil
+}
+
+// GetSiteChat reads a site's attached chat log + messages under RLS. Total
+// inline content is capped at maxChatBytes: trailing messages past the cap are
+// omitted and disclosed via Truncated.
+func (svc *Service) GetSiteChat(ctx context.Context, t store.Tenant, slug string) (getSiteChatOut, error) {
+	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+	if err != nil {
+		return getSiteChatOut{}, err
+	}
+	log, err := svc.Chats.ChatLogBySite(ctx, t, site.ID)
+	if err != nil {
+		return getSiteChatOut{}, err
+	}
+	msgs, err := svc.Chats.ListChatMessages(ctx, t, log.ID)
+	if err != nil {
+		return getSiteChatOut{}, err
+	}
+	out := getSiteChatOut{
+		Site: slug,
+		ChatLog: siteChatLogInfo{
+			ChatID:       log.ID,
+			Title:        log.Title,
+			SourceTool:   log.SourceTool,
+			PanelEnabled: log.PanelEnabled,
+			MessageCount: log.MessageCount,
+			CreatedAt:    log.CreatedAt.UTC().Format(time.RFC3339),
+		},
+		Messages: []siteChatMessage{},
+	}
+	total := 0
+	for _, m := range msgs {
+		if total+len(m.Content) > maxChatBytes {
+			out.Truncated = true
+			break
+		}
+		total += len(m.Content)
+		sm := siteChatMessage{
+			Seq:       m.Seq,
+			Role:      m.Role,
+			Kind:      m.Kind,
+			Content:   m.Content,
+			CreatedAt: m.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if len(m.Meta) > 0 {
+			var meta chatActionMeta
+			if json.Unmarshal(m.Meta, &meta) == nil {
+				sm.Meta = &meta
+			}
+		}
+		out.Messages = append(out.Messages, sm)
+	}
+	return out, nil
+}
+
 // downloadSkillFiles reads a skill's files under a byte budget. Returns
 // (nil, 0, nil) when the skill's manifest-declared total wouldn't fit — the
 // caller renders that as a truncated entry instead of a partial skill (half a
@@ -852,8 +1093,9 @@ func dropNullUnions(s *jsonschema.Schema) {
 }
 
 // Register wires the tools onto the MCP server. The read tools are always present;
-// the WRITE tools (create_site, set_site_access) are registered only when a control-
-// plane client is configured (the MCP server has an API_URL).
+// the WRITE tools (create_site, set_site_access, deploy_site, upload_skill,
+// share_chat, append_chat) are registered only when a control-plane client is
+// configured (the MCP server has an API_URL).
 func Register(server *mcpsdk.Server, svc *Service) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "list_sites",
@@ -888,6 +1130,10 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		Description: "Check whether locally-held skills are out of date. Args: installed ([{name, version}] — the skills you have and the version each was downloaded at, e.g. from each .claude/skills/<name>/.dropway.json). Returns, per skill, installed_version, latest_version, and outdated. Update an outdated skill by calling download_skill for it.",
 		InputSchema: inputSchema[checkSkillUpdatesIn](),
 	}, svc.checkSkillUpdatesHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "get_site_chat",
+		Description: "Read the shared chat log attached to a site (the transcript behind its \"How this was made\" panel): log metadata plus every message in order. Args: site (slug). Errors if the site has no attached log — start one with share_chat or append_chat.",
+	}, svc.getSiteChatHandler)
 
 	if svc.API == nil {
 		return // no control-plane client → read-only deployment, no write tools
@@ -913,6 +1159,19 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		// Explicit schema so `files`/`folders` are plain arrays (see deploy_site).
 		InputSchema: inputSchema[uploadSkillIn](),
 	}, svc.uploadSkillHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "share_chat",
+		Description: "Share this session's conversation as a Dropway chat log. Attached to a site (site slug), it renders as the published site's \"How this was made\" panel — the story behind the artifact, under the site's own access control; unattached, it goes to the org's chat library. Args (all optional): site (slug — one attached log per site), title, source_tool ('claude_code'|'chatgpt'|'cursor'|'other'), transcript (a raw export: Claude Code JSONL, ChatGPT JSON, or plain text — normalized server-side), format ('auto' default), derive_actions (condense the transcript's tool activity into action rows), messages ([{kind, role, content, meta}] explicit turns/annotations). Returns chat_id — use append_chat to add to the log as work continues.",
+		// Explicit schema so `messages` (and nested `paths`) are plain arrays
+		// (see deploy_site).
+		InputSchema: inputSchema[shareChatIn](),
+	}, svc.shareChatHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "append_chat",
+		Description: "Append to a shared chat log. Args: exactly ONE of site (slug — appends to the site's attached log, creating it if absent) or chat_id (from share_chat), plus messages and/or transcript. Use this to narrate your work as you go: after a meaningful step, append a kind='action' message whose meta is {action:'file_edit', paths:[…]} or {action:'tool_use', tool:'…'} and whose content is a one-line comment on WHY you did it (not a restatement of the diff), alongside kind='chat' rows for the actual conversation turns.",
+		// Explicit schema so `messages` (and nested `paths`) are plain arrays.
+		InputSchema: inputSchema[appendChatIn](),
+	}, svc.appendChatHandler)
 }
 
 // logTool emits a structured record of a tool invocation — the authenticated
@@ -1057,5 +1316,45 @@ func (svc *Service) deploySiteHandler(ctx context.Context, _ *mcpsdk.CallToolReq
 		publish = *in.Publish
 	}
 	out, err := svc.DeploySite(ctx, t, token, in.Site, in.Files, publish)
+	return nil, out, err
+}
+
+func (svc *Service) getSiteChatHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in getSiteChatIn) (*mcpsdk.CallToolResult, getSiteChatOut, error) {
+	logTool(ctx, "get_site_chat", "site", in.Site)
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, getSiteChatOut{}, ErrNoTenant
+	}
+	out, err := svc.GetSiteChat(ctx, t, in.Site)
+	return nil, out, err
+}
+
+func (svc *Service) shareChatHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in shareChatIn) (*mcpsdk.CallToolResult, shareChatOut, error) {
+	logTool(ctx, "share_chat", "site", in.Site, "source_tool", in.SourceTool,
+		"messages", len(in.Messages), "transcript_bytes", len(in.Transcript))
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, shareChatOut{}, ErrNoTenant
+	}
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, shareChatOut{}, ErrNoToken
+	}
+	out, err := svc.ShareChat(ctx, t, token, in)
+	return nil, out, err
+}
+
+func (svc *Service) appendChatHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in appendChatIn) (*mcpsdk.CallToolResult, appendChatOut, error) {
+	logTool(ctx, "append_chat", "site", in.Site, "chat_id", in.ChatID,
+		"messages", len(in.Messages), "transcript_bytes", len(in.Transcript))
+	t, ok := auth.TenantFromContext(ctx)
+	if !ok {
+		return nil, appendChatOut{}, ErrNoTenant
+	}
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, appendChatOut{}, ErrNoToken
+	}
+	out, err := svc.AppendChat(ctx, t, token, in)
 	return nil, out, err
 }

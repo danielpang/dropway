@@ -49,7 +49,8 @@ func mountDeploy(a *API, c *auth.Claims) http.Handler {
 
 func TestPrepareDeployment_NoObjects_503(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, nil, nil) // no Objects
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	rr := postJSON(h, "/v1/sites/s1/deployments/prepare", `{"manifest":[]}`)
@@ -60,7 +61,8 @@ func TestPrepareDeployment_NoObjects_503(t *testing.T) {
 
 func TestPublish_NoProjection_503(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), nil) // no Projection
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	rr := postJSON(h, "/v1/sites/s1/publish", `{"version_id":"v1"}`)
@@ -85,7 +87,8 @@ func TestPrepareDeployment_SiteNotFound_404(t *testing.T) {
 
 func TestPrepareDeployment_EmptyManifest_400(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), projection.NewLocal())
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	rr := postJSON(h, "/v1/sites/s1/deployments/prepare", `{"manifest":[]}`)
@@ -96,7 +99,8 @@ func TestPrepareDeployment_EmptyManifest_400(t *testing.T) {
 
 func TestPrepareDeployment_BadSHA_400(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), projection.NewLocal())
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	// A too-short / non-hex sha256.
@@ -108,7 +112,8 @@ func TestPrepareDeployment_BadSHA_400(t *testing.T) {
 
 func TestPrepareDeployment_DedupsRepeatedSHA(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	obj := storage.NewFake()
 	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
@@ -136,7 +141,8 @@ func TestPrepareDeployment_DedupsRepeatedSHA(t *testing.T) {
 
 func TestFinalizeDeployment_MissingDigest_400(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), projection.NewLocal())
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	// Manifest present but no digest.
@@ -149,7 +155,8 @@ func TestFinalizeDeployment_MissingDigest_400(t *testing.T) {
 
 func TestFinalizeDeployment_BadDigest_400(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), projection.NewLocal())
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	rr := postJSON(h, "/v1/sites/s1/deployments",
@@ -176,7 +183,8 @@ func TestFinalizeDeployment_SiteNotFound_404(t *testing.T) {
 
 func TestPublish_MissingVersionID_400(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), projection.NewLocal())
 	h := mountDeploy(a, claims("u", "org_1", "owner"))
 	rr := postJSON(h, "/v1/sites/s1/publish", `{}`)
@@ -187,7 +195,8 @@ func TestPublish_MissingVersionID_400(t *testing.T) {
 
 func TestPublish_VersionMismatch_400(t *testing.T) {
 	fs := newFakeStore()
-	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s"}
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "s", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
 	// A version that belongs to a DIFFERENT site → ErrVersionMismatch → 400.
 	fs.versions["v_other"] = store.SiteVersion{ID: "v_other", SiteID: "other", OrgID: "org_1"}
 	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), projection.NewLocal())

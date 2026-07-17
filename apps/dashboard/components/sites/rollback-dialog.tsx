@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { Check, History, Loader2 } from "lucide-react";
 
 import { publishVersionAction } from "@/app/(app)/sites/[id]/actions";
@@ -31,8 +30,6 @@ export function RollbackDialog({
   siteId: string;
   versions: SiteVersion[];
 }) {
-  const router = useRouter();
-
   const [open, setOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
@@ -55,9 +52,11 @@ export function RollbackDialog({
       versionId: selectedVersion.id,
     });
     if (result.ok) {
+      // No router.refresh(): the publish action's revalidatePath already
+      // re-renders this page in its response; a refresh on top races that
+      // apply and Next can drop both, leaving the page stale.
       setOpen(false);
       reset();
-      router.refresh();
       return;
     }
     setError(result.message);

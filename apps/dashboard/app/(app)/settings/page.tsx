@@ -1,8 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, CreditCard, Globe2, ShieldAlert, Sparkles, Users } from "lucide-react";
+import {
+  Bot,
+  CreditCard,
+  Globe2,
+  MessageSquareText,
+  ShieldAlert,
+  Sparkles,
+  Users,
+} from "lucide-react";
 
 import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
+import { ChatLogsAccess } from "@/components/settings/chat-logs-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { McpAccess } from "@/components/settings/mcp-access";
 import { Button } from "@/components/ui/button";
@@ -61,6 +70,13 @@ export default async function OrgSettingsPage() {
     .catch(() => "pro"); // OSS/self-host: unlimited, show the toggle
   const aiSettings = await api.getAIOrgSettings().catch(() => null);
   const showAiBuilder = planTier !== "free" && aiSettings !== null;
+
+  // Chat logs default ON (the column default), so a transient read error falls
+  // back to enabled; the steady-state value shows on the next load.
+  const chatLogsEnabled = await api
+    .getChatSettings()
+    .then((s) => s.enabled)
+    .catch(() => true);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -152,6 +168,24 @@ export default async function OrgSettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Shared chat logs */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <MessageSquareText className="size-4 text-muted-foreground" aria-hidden />
+            Shared chat logs
+          </CardTitle>
+          <CardDescription>
+            Let members share the AI conversations behind their sites — to the
+            org&rsquo;s chat library and, per site, to viewers as a &ldquo;How
+            this was made&rdquo; panel.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ChatLogsAccess initialEnabled={chatLogsEnabled} canManage={manage} />
+        </CardContent>
+      </Card>
 
       {/* Members shortcut */}
       <Card>

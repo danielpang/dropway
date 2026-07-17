@@ -182,7 +182,7 @@ func (a *API) AddSkillFolderItem(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r, t) {
 			return
 		}
-	} else if !a.requireSkillOwnerOrAdmin(w, r, t, skill) {
+	} else if !a.requireSkillEditor(w, r, t, skill) {
 		return
 	}
 
@@ -214,7 +214,7 @@ func (a *API) RemoveSkillFolderItem(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireSkillOwnerOrAdmin(w, r, t, skill) {
+	if !a.requireSkillEditor(w, r, t, skill) {
 		return
 	}
 	if err := a.Store.RemoveSkillFromFolder(r.Context(), t, folderID, skillID); err != nil {

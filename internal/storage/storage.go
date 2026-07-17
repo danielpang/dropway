@@ -74,6 +74,22 @@ type Store interface {
 	// referenced-blob collection). Returns ErrNotFound if absent.
 	GetSkillManifest(ctx context.Context, orgID, skillID, versionID string) ([]byte, error)
 
+	// PutChatTranscript writes the compiled transcript JSON of one shared chat
+	// log (chat-transcripts/<org>/<chat_id>.json). Unlike deploy/skill
+	// manifests it is MUTABLE — rewritten after every append/delete — and a
+	// pure projection of Postgres (rebuildable, never authoritative). The
+	// serving Worker reads it directly from the bucket at the reserved
+	// /__dropway/chat path.
+	PutChatTranscript(ctx context.Context, orgID, chatID string, transcript []byte) error
+
+	// GetChatTranscript reads a compiled transcript back. Returns ErrNotFound
+	// if absent.
+	GetChatTranscript(ctx context.Context, orgID, chatID string) ([]byte, error)
+
+	// DeleteChatTranscript removes a log's compiled transcript (log deletion /
+	// panel teardown). Deleting an absent key is a no-op.
+	DeleteChatTranscript(ctx context.Context, orgID, chatID string) error
+
 	// ListBlobInfos returns every blob stored under the org's prefix
 	// (blobs/<org_id>/) as a {SHA, LastModified} pair. It is the input to the R2
 	// version GC: blobs no longer referenced by any retained deploy manifest are
@@ -106,4 +122,11 @@ func ManifestKey(orgID, siteID, versionID string) string {
 // (dedup applies across both); only the manifest namespace is separate.
 func SkillManifestKey(orgID, skillID, versionID string) string {
 	return fmt.Sprintf("skill-manifests/%s/%s/%s.json", orgID, skillID, versionID)
+}
+
+// ChatTranscriptKey returns the canonical key for a shared chat log's
+// compiled transcript. The serving Worker derives the same key from a
+// RouteValue's org_id + chat_id, so the layout is a cross-service contract.
+func ChatTranscriptKey(orgID, chatID string) string {
+	return fmt.Sprintf("chat-transcripts/%s/%s.json", orgID, chatID)
 }

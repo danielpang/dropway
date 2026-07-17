@@ -125,6 +125,76 @@ func (s *Store) SiteBySlug(ctx context.Context, t Tenant, slug string) (Site, er
 	return st, err
 }
 
+// --- chat logs ------------------------------------------------------------------
+
+// ChatLog is a shared chat log ("Share This Session") — here always one attached
+// to a site (the MCP read path resolves logs via their site).
+type ChatLog struct {
+	ID           string
+	SiteID       *string
+	Title        string
+	SourceTool   string
+	PanelEnabled bool
+	MessageCount int64
+	CreatedBy    string
+	CreatedAt    time.Time
+}
+
+// ChatMessage is one chat-log entry: a conversation turn (kind "chat") or an
+// LLM action annotation (kind "action", Meta carries the raw jsonb).
+type ChatMessage struct {
+	Seq       int32
+	Role      string
+	Kind      string
+	Content   string
+	Meta      []byte  // raw jsonb of a kind="action" row; nil otherwise
+	VersionID *string // the site deploy version current at append time, if any
+	CreatedAt time.Time
+}
+
+// ChatLogBySite resolves the site's attached chat log under the tenant, or
+// ErrNotFound (site has no attached log — or no such site in this org).
+func (s *Store) ChatLogBySite(ctx context.Context, t Tenant, siteID string) (ChatLog, error) {
+	var l ChatLog
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT l.id, l.site_id, l.title, l.source_tool, l.panel_enabled,
+			        (SELECT COUNT(*) FROM app.chat_messages m WHERE m.chat_log_id = l.id),
+			        l.created_by, l.created_at
+			 FROM app.chat_logs l WHERE l.site_id = $1`, siteID).
+			Scan(&l.ID, &l.SiteID, &l.Title, &l.SourceTool, &l.PanelEnabled,
+				&l.MessageCount, &l.CreatedBy, &l.CreatedAt)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ChatLog{}, ErrNotFound
+	}
+	return l, err
+}
+
+// ListChatMessages returns a chat log's messages in seq order (RLS-filtered to
+// the tenant).
+func (s *Store) ListChatMessages(ctx context.Context, t Tenant, chatLogID string) ([]ChatMessage, error) {
+	var msgs []ChatMessage
+	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT m.seq, m.role, m.kind, m.content, m.meta, m.version_id, m.created_at
+			 FROM app.chat_messages m WHERE m.chat_log_id = $1 ORDER BY m.seq`, chatLogID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var m ChatMessage
+			if err := rows.Scan(&m.Seq, &m.Role, &m.Kind, &m.Content, &m.Meta, &m.VersionID, &m.CreatedAt); err != nil {
+				return err
+			}
+			msgs = append(msgs, m)
+		}
+		return rows.Err()
+	})
+	return msgs, err
+}
+
 // --- skills -------------------------------------------------------------------
 
 // Skill is one of the org's shared Claude skills.

@@ -332,6 +332,113 @@ func (c *Client) UploadSkill(ctx context.Context, token, skillID string, files [
 	return UploadResult{VersionID: fin.VersionID, VersionNo: fin.VersionNo, Warnings: fin.Warnings}, nil
 }
 
+// --- chats --------------------------------------------------------------------
+
+// ChatActionMeta is the structured half of a kind="action" chat message
+// (mirrors chatspec.ActionMeta; the API validates it).
+type ChatActionMeta struct {
+	Action string   `json:"action"`
+	Tool   string   `json:"tool,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+}
+
+// ChatMessage is one explicit message in a chat create/append payload.
+type ChatMessage struct {
+	Kind    string          `json:"kind,omitempty"`
+	Role    string          `json:"role,omitempty"`
+	Content string          `json:"content"`
+	Meta    *ChatActionMeta `json:"meta,omitempty"`
+}
+
+// ChatImport is the API's shared ingest payload: a raw transcript export
+// (normalized server-side) and/or explicit canonical messages.
+type ChatImport struct {
+	Transcript    string        `json:"transcript,omitempty"`
+	Format        string        `json:"format,omitempty"`
+	DeriveActions bool          `json:"derive_actions,omitempty"`
+	Messages      []ChatMessage `json:"messages,omitempty"`
+}
+
+// ChatLogInfo is the subset of the API's chat_log response the MCP tools surface.
+type ChatLogInfo struct {
+	ID           string  `json:"id"`
+	SiteID       *string `json:"site_id,omitempty"`
+	Title        string  `json:"title"`
+	SourceTool   string  `json:"source_tool"`
+	PanelEnabled bool    `json:"panel_enabled"`
+	MessageCount int64   `json:"message_count"`
+}
+
+// ChatCreateResult summarizes a created chat log (+ its inline import, if any).
+type ChatCreateResult struct {
+	ChatLog  ChatLogInfo
+	Appended int // messages stored by the inline import
+	Pruned   int // oldest messages removed by the tier's rolling window
+	Window   int // the window size that pruned (0 = unbounded)
+	Dropped  int // transcript messages discarded by the import bound
+}
+
+// ChatAppendResult summarizes an append to an existing (or site-implied) log.
+type ChatAppendResult struct {
+	Appended int
+	Pruned   int
+	Window   int
+	Dropped  int
+}
+
+// chatAppendResponse is the API's shared append response body.
+type chatAppendResponse struct {
+	Messages []json.RawMessage `json:"messages"`
+	Pruned   int               `json:"pruned"`
+	Window   int               `json:"window"`
+	Dropped  int               `json:"dropped"`
+}
+
+// CreateChatLog calls POST /v1/chats: create a log — optionally attached to a
+// site (siteID "" = unattached library entry) — seeded with the inline import.
+func (c *Client) CreateChatLog(ctx context.Context, token, title, sourceTool, siteID string, imp ChatImport) (ChatCreateResult, error) {
+	body := struct {
+		Title      string `json:"title,omitempty"`
+		SourceTool string `json:"source_tool,omitempty"`
+		SiteID     string `json:"site_id,omitempty"`
+		ChatImport
+	}{Title: title, SourceTool: sourceTool, SiteID: siteID, ChatImport: imp}
+	var resp struct {
+		ChatLog  ChatLogInfo `json:"chat_log"`
+		Appended int         `json:"appended"`
+		Pruned   int         `json:"pruned"`
+		Window   int         `json:"window"`
+		Dropped  int         `json:"dropped"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/chats", token, body, &resp); err != nil {
+		return ChatCreateResult{}, err
+	}
+	return ChatCreateResult{ChatLog: resp.ChatLog, Appended: resp.Appended,
+		Pruned: resp.Pruned, Window: resp.Window, Dropped: resp.Dropped}, nil
+}
+
+// AppendChatMessages calls POST /v1/chats/{id}/messages, appending turns /
+// action annotations (or a normalized transcript import) to an existing log.
+func (c *Client) AppendChatMessages(ctx context.Context, token, chatID string, imp ChatImport) (ChatAppendResult, error) {
+	var resp chatAppendResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/chats/"+chatID+"/messages", token, imp, &resp); err != nil {
+		return ChatAppendResult{}, err
+	}
+	return ChatAppendResult{Appended: len(resp.Messages), Pruned: resp.Pruned,
+		Window: resp.Window, Dropped: resp.Dropped}, nil
+}
+
+// AppendSiteChat calls POST /v1/sites/{siteID}/chat — the one-call agent flow
+// that appends to the site's attached log, creating it first when absent.
+func (c *Client) AppendSiteChat(ctx context.Context, token, siteID string, imp ChatImport) (ChatAppendResult, error) {
+	var resp chatAppendResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/sites/"+siteID+"/chat", token, imp, &resp); err != nil {
+		return ChatAppendResult{}, err
+	}
+	return ChatAppendResult{Appended: len(resp.Messages), Pruned: resp.Pruned,
+		Window: resp.Window, Dropped: resp.Dropped}, nil
+}
+
 // uploadBlob PUTs raw bytes to a presigned URL. No Authorization (the URL is the
 // credential) and no Content-Type (it's not part of the SigV4 signature) — matching
 // the dashboard's browser upload.

@@ -75,6 +75,7 @@ func do(t *testing.T, h http.Handler, method, path, body string) *httptest.Respo
 // RouteValue is exactly what the contract expects.
 func TestDeployFlow_PrepareFinalizePublish(t *testing.T) {
 	fs := newFakeStore()
+	fs.p2().members["user_1"] = "member"
 	obj := storage.NewFake()
 	proj := projection.NewLocal()
 	a := NewFull(quota.Unlimited{}, fs, obj, proj)
@@ -187,6 +188,7 @@ func TestDeployFlow_PrepareFinalizePublish(t *testing.T) {
 // bytes' hash and rejects content that doesn't match the claimed sha256.
 func TestFinalize_RejectsTamperedBlob(t *testing.T) {
 	fs := newFakeStore()
+	fs.p2().members["user_1"] = "member"
 	obj := storage.NewFake()
 	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
 	h := routerFor(a, "org_1", "user_1")
@@ -218,6 +220,7 @@ func TestFinalize_RejectsTamperedBlob(t *testing.T) {
 // the content_hash idempotency key can't be forged (FIX 2).
 func TestFinalize_RejectsTamperedDigest(t *testing.T) {
 	fs := newFakeStore()
+	fs.p2().members["user_1"] = "member"
 	obj := storage.NewFake()
 	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
 	h := routerFor(a, "org_1", "user_1")
@@ -270,6 +273,7 @@ func TestFinalize_RejectsTamperedDigest(t *testing.T) {
 // length and rejects a client-claimed size that disagrees (FIX 3).
 func TestFinalize_RejectsSizeMismatch(t *testing.T) {
 	fs := newFakeStore()
+	fs.p2().members["user_1"] = "member"
 	obj := storage.NewFake()
 	a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
 	h := routerFor(a, "org_1", "user_1")
@@ -296,6 +300,7 @@ func TestFinalize_RejectsSizeMismatch(t *testing.T) {
 // pointer back (rollback == publish an earlier version_id).
 func TestRollback_PublishOlderVersion(t *testing.T) {
 	fs := newFakeStore()
+	fs.p2().members["user_1"] = "member"
 	obj := storage.NewFake()
 	proj := projection.NewLocal()
 	a := NewFull(quota.Unlimited{}, fs, obj, proj)

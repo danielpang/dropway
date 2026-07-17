@@ -73,9 +73,14 @@ func (a *API) PrepareDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	siteID := chi.URLParam(r, "id")
 
-	// Confused-deputy guard: the site must belong to the active tenant.
-	if _, err := a.Store.GetSite(r.Context(), t, siteID); err != nil {
+	// Confused-deputy guard: the site must belong to the active tenant — and
+	// the caller must be allowed to edit it (collaboration toggle).
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if !a.requireSiteEditor(w, r, t, site) {
 		return
 	}
 
@@ -164,10 +169,14 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	siteID := chi.URLParam(r, "id")
 
-	// Confused-deputy guard: the site must belong to the active tenant.
+	// Confused-deputy guard: the site must belong to the active tenant — and
+	// the caller must be allowed to edit it (collaboration toggle).
 	site, err := a.Store.GetSite(r.Context(), t, siteID)
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if !a.requireSiteEditor(w, r, t, site) {
 		return
 	}
 
@@ -337,6 +346,16 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.VersionID == "" {
 		httpx.WriteError(w, fmt.Errorf("%w: version_id is required", httpx.ErrBadRequest))
+		return
+	}
+
+	// Publishing (or rolling back) is a content edit: collaboration-toggle gated.
+	site, err := a.Store.GetSite(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !a.requireSiteEditor(w, r, t, site) {
 		return
 	}
 

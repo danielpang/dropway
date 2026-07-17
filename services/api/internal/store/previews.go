@@ -123,8 +123,10 @@ func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versio
 
 		res.Host = host
 		res.ExpiresAt = expiresAt
+		// Preview hosts stay chat-less: the panel narrates the live site, not
+		// a draft under review.
 		res.Route = routeValue(t.OrgID, siteID, versionID, site.AccessMode,
-			earliestExpiry(policyExpiry, expiresAt), planTier)
+			earliestExpiry(policyExpiry, expiresAt), planTier, "")
 		return nil
 	})
 	return res, err
