@@ -160,7 +160,10 @@ Dropway ships an **OAuth-protected MCP server** (the `mcp` service, `http://loca
 locally) so an LLM agent can browse and read your sites: list sites, read or download a
 site's files. You can also use the MCP server to create a site, deploy +
 publish files to it, and change a site's sharing settings (owner/admin only, same rules
-as the dashboard). Public sites
+as the dashboard). An assistant can also **share the chat behind a build** (`share_chat` /
+`append_chat`): publish the session transcript to your org's chat library, or attach it to a
+site as its "How this was made" panel (`get_site_chat` reads it back), under that site's own
+access control. Public sites
 are also readable by crawlers via an auto-served [`llms.txt`](https://llmstxt.org/);
 gated sites (org-only / allowlist / password) are reachable by an LLM only through
 an authorized MCP connection, so your access control holds for AI exactly as it does for people.
