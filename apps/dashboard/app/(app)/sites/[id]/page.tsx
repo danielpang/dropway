@@ -17,6 +17,7 @@ import { sourceToolLabel } from "@/components/chats/source-tools";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployTabs } from "@/components/sites/deploy-tabs";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
+import { ShareEmbedDialog } from "@/components/sites/share-embed-dialog";
 import { addCommentAction } from "@/app/(app)/sites/[id]/actions";
 import { SiteComments, type CommentMember } from "@/components/sites/site-comments";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +30,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api, ApiError, type PlanTier, type Site, type SiteComment } from "@/lib/api";
-import { customDomainsEntitled } from "@/lib/billing";
+import { customDomainsEntitled, embedBadgeRemovable } from "@/lib/billing";
 import { MCP_URL } from "@/lib/env";
 import { canManage, loadActiveOrg } from "@/lib/org";
 import { formatBytes } from "@/lib/utils";
@@ -78,10 +79,26 @@ export default async function SiteDetailPage({
   // UNLIMITED (mirrors the server's Unlimited provider) → treat as entitled so a
   // self-hoster with Cloudflare configured is never sent to a nonexistent billing
   // page. A transient failure also fails OPEN here since the server is the real gate.
-  const domainsEntitledPromise = api
+  // The org's plan tier, used for two display-only entitlements: custom domains and
+  // removing the embed's "Powered by Dropway" badge. getBilling 404s on OSS/self-host
+  // (UNLIMITED) → null; a transient failure also collapses to null. Both entitlements
+  // are enforced server-side, so this only drives which CTAs the UI offers.
+  const planTierPromise: Promise<PlanTier | null> = api
     .getBilling()
-    .then((b) => customDomainsEntitled((b.plan_tier ?? "free") as PlanTier))
-    .catch(() => true);
+    .then((b) => (b.plan_tier ?? "free") as PlanTier)
+    .catch(() => null);
+  // Custom domains fail OPEN on a null tier (self-host/unlimited → entitled, so a
+  // self-hoster with Cloudflare configured is never sent to a nonexistent billing page).
+  const domainsEntitledPromise = planTierPromise.then((tier) =>
+    tier === null ? true : customDomainsEntitled(tier),
+  );
+  // Badge removal fails CLOSED on a null tier: self-host serves via the Go engine,
+  // which injects NO badge at all, so there's nothing to remove — hide the toggle
+  // rather than offer a no-op control. (On cloud, a transient billing miss just keeps
+  // the badge, which is the safe default.)
+  const badgeRemovablePromise = planTierPromise.then((tier) =>
+    tier === null ? false : embedBadgeRemovable(tier),
+  );
   // Deploy history for the rollback picker (newest first). Best-effort: an empty
   // list just renders the dialog's "no versions yet" state.
   const versionsPromise = api.listVersions(id).catch(() => []);
@@ -102,15 +119,23 @@ export default async function SiteDetailPage({
     throw err;
   }
 
-  const [customDomainsEnabled, domainsEntitled, versions, comments, org, siteChat] =
-    await Promise.all([
-      customDomainsPromise,
-      domainsEntitledPromise,
-      versionsPromise,
-      commentsPromise,
-      orgPromise,
-      siteChatPromise,
-    ]);
+  const [
+    customDomainsEnabled,
+    domainsEntitled,
+    badgeRemovable,
+    versions,
+    comments,
+    org,
+    siteChat,
+  ] = await Promise.all([
+    customDomainsPromise,
+    domainsEntitledPromise,
+    badgeRemovablePromise,
+    versionsPromise,
+    commentsPromise,
+    orgPromise,
+    siteChatPromise,
+  ]);
   // Free-tier orgs see the Domains button but it routes to the upgrade page; paid
   // (and self-host/unlimited) orgs go straight to the domains manager. The server
   // enforces the same gate.
@@ -179,6 +204,13 @@ export default async function SiteDetailPage({
               </Link>
             </Button>
           )}
+          <ShareEmbedDialog
+            liveUrl={liveUrl}
+            title={site.slug ?? "site"}
+            isPrivate={site.access_mode !== "public"}
+            badgeRemovable={badgeRemovable}
+            disabled={!isLive}
+          />
           <RollbackDialog siteId={site.id ?? id} versions={versions} />
         </div>
       </div>

@@ -37,6 +37,15 @@ const PlatformCSP = "default-src 'none'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'"
 
+// FramableContentCSP is ContentCSP with frame-ancestors widened to '*' for the embed
+// surface (?embed=1). Mirrors security.ts FRAMABLE_CONTENT_CSP. Used ONLY for embed
+// responses; normal serving keeps frame-ancestors 'none' (clickjacking defense).
+var FramableContentCSP = strings.Replace(ContentCSP, "frame-ancestors 'none'", "frame-ancestors *", 1)
+
+// FramablePlatformCSP is PlatformCSP with frame-ancestors widened to '*', for the
+// embed "sign in to view" placeholder (security.ts FRAMABLE_PLATFORM_CSP).
+var FramablePlatformCSP = strings.Replace(PlatformCSP, "frame-ancestors 'none'", "frame-ancestors *", 1)
+
 // baseSecurityHeaders is the always-on baseline (security.ts baseSecurityHeaders).
 func baseSecurityHeaders() map[string]string {
 	return map[string]string{
@@ -61,6 +70,32 @@ func ContentSecurityHeaders() map[string]string {
 func PlatformSecurityHeaders() map[string]string {
 	h := baseSecurityHeaders()
 	h["Content-Security-Policy"] = PlatformCSP
+	return h
+}
+
+// FramableContentSecurityHeaders is the header set for the EMBED surface (?embed=1)
+// serving tenant content (security.ts framableContentSecurityHeaders): base headers
+// with X-Frame-Options DROPPED (no "allow any origin" value exists for it, and its
+// presence would veto the CSP), Cross-Origin-Resource-Policy widened to cross-origin
+// (so a parent enforcing COEP require-corp can still frame it), and the framable
+// content CSP (frame-ancestors *) so the document can be iframed cross-origin. COOP is
+// left as-is (top-level only, ignored in a frame).
+func FramableContentSecurityHeaders() map[string]string {
+	h := baseSecurityHeaders()
+	delete(h, "X-Frame-Options")
+	h["Cross-Origin-Resource-Policy"] = "cross-origin"
+	h["Content-Security-Policy"] = FramableContentCSP
+	return h
+}
+
+// FramablePlatformSecurityHeaders is the header set for the embed gate placeholder
+// (the "sign in to view" page): base headers minus X-Frame-Options, CORP widened to
+// cross-origin, + the framable platform CSP.
+func FramablePlatformSecurityHeaders() map[string]string {
+	h := baseSecurityHeaders()
+	delete(h, "X-Frame-Options")
+	h["Cross-Origin-Resource-Policy"] = "cross-origin"
+	h["Content-Security-Policy"] = FramablePlatformCSP
 	return h
 }
 

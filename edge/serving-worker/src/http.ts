@@ -16,7 +16,7 @@
 // pages; `securityHeaders()` here re-exports the CONTENT set so existing call
 // sites keep their import surface.
 
-import { contentSecurityHeaders } from "./security";
+import { contentSecurityHeaders, framableContentSecurityHeaders } from "./security";
 
 const MIME: Record<string, string> = {
   // Documents
@@ -141,6 +141,36 @@ export function publicResponseHeaders(
   h.set("Content-Type", opts.contentType ?? contentTypeFor(servedPath));
   h.set("Cache-Control", cacheControlFor(servedPath));
   for (const [k, v] of Object.entries(securityHeaders())) {
+    if (v !== "") h.set(k, v);
+  }
+  if (opts.etag) h.set("ETag", opts.etag);
+  if (opts.lastModified) h.set("Last-Modified", opts.lastModified.toUTCString());
+  if (typeof opts.contentLength === "number") {
+    h.set("Content-Length", String(opts.contentLength));
+  }
+  return h;
+}
+
+/**
+ * Header set for a successful EMBED (?embed=1) document response — identical to
+ * publicResponseHeaders except the security headers are the FRAMABLE set
+ * (X-Frame-Options dropped, CSP `frame-ancestors *`) so the document can be iframed
+ * cross-origin. Cache-Control still follows the served path (HTML → short TTL), so
+ * an embed of a public page stays browser-cacheable; only the framing posture differs.
+ */
+export function embedResponseHeaders(
+  servedPath: string,
+  opts: {
+    contentType?: string;
+    etag?: string;
+    lastModified?: Date;
+    contentLength?: number;
+  } = {},
+): Headers {
+  const h = new Headers();
+  h.set("Content-Type", opts.contentType ?? contentTypeFor(servedPath));
+  h.set("Cache-Control", cacheControlFor(servedPath));
+  for (const [k, v] of Object.entries(framableContentSecurityHeaders())) {
     if (v !== "") h.set(k, v);
   }
   if (opts.etag) h.set("ETag", opts.etag);

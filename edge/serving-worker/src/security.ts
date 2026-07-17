@@ -79,6 +79,25 @@ export const PLATFORM_CSP =
   "form-action 'none'";
 
 /**
+ * Framable variant of CONTENT_CSP for the EMBED surface (?embed=1). Identical to
+ * the served-content CSP except `frame-ancestors 'none'` is widened to
+ * `frame-ancestors *`, so the document may be embedded in an <iframe> on ANY parent
+ * origin (Notion, Linear, Confluence, …). Used ONLY when a request explicitly opts
+ * into embed mode; normal tenant serving keeps `frame-ancestors 'none'` so an
+ * ordinary page can't be framed (clickjacking / UI-redress defense).
+ */
+export const FRAMABLE_CONTENT_CSP = CONTENT_CSP.replace(
+  "frame-ancestors 'none'",
+  "frame-ancestors *",
+);
+
+/** Framable variant of PLATFORM_CSP for the embed "sign in to view" placeholder. */
+export const FRAMABLE_PLATFORM_CSP = PLATFORM_CSP.replace(
+  "frame-ancestors 'none'",
+  "frame-ancestors *",
+);
+
+/**
  * Headers common to BOTH content and platform responses (the always-on baseline):
  *  - `X-Content-Type-Options: nosniff` — never MIME-sniff untrusted tenant bytes.
  *  - `Referrer-Policy: no-referrer` — never leak the (possibly unguessable)
@@ -189,6 +208,35 @@ export function platformSecurityHeaders(): Record<string, string> {
     ...baseSecurityHeaders(),
     "Content-Security-Policy": PLATFORM_CSP,
   };
+}
+
+/**
+ * Security headers for the EMBED surface (?embed=1) serving tenant content. Same as
+ * contentSecurityHeaders() with two deliberate relaxations so the document can be
+ * iframed cross-origin:
+ *   (a) `X-Frame-Options` is DROPPED entirely — there is no "allow any origin" value
+ *       for that legacy header, and its presence (DENY) would veto the CSP; omitting
+ *       it defers framing control to `frame-ancestors` alone.
+ *   (b) the CSP is FRAMABLE_CONTENT_CSP (`frame-ancestors *`), so any parent embeds.
+ *   (c) `Cross-Origin-Resource-Policy` is widened to `cross-origin` (from `same-site`):
+ *       CORP doesn't gate the iframe navigation itself, but a parent page that sets
+ *       COEP `require-corp` WOULD have the frame blocked under `same-site`, so an embed
+ *       meant to paste anywhere opts into cross-origin. The resource is public anyway.
+ * COOP is left as-is (it only applies to top-level documents, ignored in a frame).
+ */
+export function framableContentSecurityHeaders(): Record<string, string> {
+  const base = baseSecurityHeaders();
+  delete base["X-Frame-Options"];
+  base["Cross-Origin-Resource-Policy"] = "cross-origin";
+  return { ...base, "Content-Security-Policy": FRAMABLE_CONTENT_CSP };
+}
+
+/** Framable platform headers for the embed gate placeholder (the "sign in" page). */
+export function framablePlatformSecurityHeaders(): Record<string, string> {
+  const base = baseSecurityHeaders();
+  delete base["X-Frame-Options"];
+  base["Cross-Origin-Resource-Policy"] = "cross-origin";
+  return { ...base, "Content-Security-Policy": FRAMABLE_PLATFORM_CSP };
 }
 
 /** Apply a header record to a Headers object (skipping empty values). */
