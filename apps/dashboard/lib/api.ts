@@ -269,9 +269,9 @@ export class ApiError extends Error {
  *
  * Better Auth throws an APIError("Unauthorized") when the session expired
  * between the page's session check and this mint. That is a normal signed-out
- * state, not a server fault: swallow it to null so the request goes out
- * unauthenticated and the Go API's 401 drives the usual re-auth path, instead
- * of the render crashing into onRequestError and error tracking. */
+ * state, not a server fault: swallow it to null. apiFetch turns the null into a
+ * local ApiError(401, {error:"reauth_required"}) — the same shape callers get
+ * from a real API 401 — WITHOUT sending an unauthenticated request first. */
 async function mintBearerToken(): Promise<string | null> {
   const requestHeaders = await headers();
   try {
@@ -293,37 +293,86 @@ async function mintBearerToken(): Promise<string | null> {
 const tokenCache = new TokenCache();
 
 /**
+ * Per-request cell holding the in-flight/resolved token promise for THIS request.
+ * `cache()` yields one cell per request (and is a plain passthrough in unit
+ * tests, so each call there gets a fresh cell).
+ *
+ * Holding the PROMISE — not the resolved value — preserves the concurrent
+ * fan-out dedup the old `cache(async …)` memo gave (a page hitting sites +
+ * billing + org mints once, the rest await the same promise). But unlike that
+ * memo, the cell is MUTABLE: after a 401 recovery, refreshBearerToken republishes
+ * a fresh promise here, so later apiFetch calls in the same render pick up the
+ * new token instead of the stale one the first resolve pinned for the whole
+ * request (which used to make every endpoint re-mint on a mid-render staleness).
+ */
+const requestToken = cache((): { promise?: Promise<string | null> } => ({}));
+
+/**
  * The short-lived EdDSA JWT for the current Better Auth session.
  *
  * Two layers of reuse, both preserving the exact same token semantics:
- *  - React `cache()` memoizes the result for the CURRENT request, so a page that
- *    fans out to several endpoints (sites + billing + org) mints/looks-up once
- *    rather than per call. cache() is request-scoped, so requests never share.
+ *  - the per-request `requestToken` cell dedupes the mint/look-up across a
+ *    single render's fan-out (and lets a mid-render refresh be seen — above).
  *  - `tokenCache` reuses a still-valid token ACROSS requests for a short window,
  *    avoiding a jwks read + decrypt + sign on every page load. Keyed by session
  *    id + active org so a different user — or an org switch — always re-mints.
- *
- * Falls back to an uncached mint when there's no resolvable session id to key on.
  */
-const bearerToken = cache(async (): Promise<string | null> => {
-  const session = await getCurrentSession();
-  const sessionId =
-    (session?.session as { id?: string } | undefined)?.id ?? null;
-  const activeOrgId =
-    (session?.session as { activeOrganizationId?: string | null } | undefined)
-      ?.activeOrganizationId ?? null;
+function bearerToken(): Promise<string | null> {
+  const cell = requestToken();
+  if (!cell.promise) cell.promise = resolveBearerToken();
+  return cell.promise;
+}
+
+/**
+ * Resolve a token from the cross-request cache or a fresh mint. Falls back to an
+ * uncached mint when there's no resolvable session id to key on.
+ */
+async function resolveBearerToken(): Promise<string | null> {
+  const key = await currentTokenKey();
 
   // No resolvable session id → can't form a safe per-user key; mint directly.
-  if (!sessionId) return mintBearerToken();
+  if (!key) return mintBearerToken();
 
-  const key = tokenCacheKey(sessionId, activeOrgId);
   const cached = tokenCache.get(key);
   if (cached) return cached;
 
   const minted = await mintBearerToken();
   if (minted) tokenCache.set(key, minted);
   return minted;
-});
+}
+
+/** The current session's token-cache key, or null when there's no session id to
+ * key on. Shared by the cached read path and the 401-recovery path so both
+ * always address the same entry. */
+async function currentTokenKey(): Promise<string | null> {
+  const session = await getCurrentSession();
+  const sessionId =
+    (session?.session as { id?: string } | undefined)?.id ?? null;
+  if (!sessionId) return null;
+  const activeOrgId =
+    (session?.session as { activeOrganizationId?: string | null } | undefined)
+      ?.activeOrganizationId ?? null;
+  return tokenCacheKey(sessionId, activeOrgId);
+}
+
+/**
+ * Drop the cross-request cache entry for the current session and mint fresh.
+ * The 401-recovery path in apiFetch calls this when the Go API rejects a token
+ * we sent: the usual cause is a cached token whose context went stale (org
+ * switch settled elsewhere, a hard revocation, a key mishap), and one fresh
+ * mint either heals it or proves the session itself is dead. Deliberately NOT
+ * request-memoized — its whole point is to bypass the caches once.
+ */
+async function refreshBearerToken(): Promise<string | null> {
+  const key = await currentTokenKey();
+  if (key) tokenCache.delete(key);
+  const minted = await mintBearerToken();
+  if (minted && key) tokenCache.set(key, minted);
+  // Publish to the per-request cell so later bearerToken() calls in this render
+  // see the fresh token rather than the stale one the first resolve pinned.
+  requestToken().promise = Promise.resolve(minted);
+  return minted;
+}
 
 /**
  * The current session's bearer token, for callers that talk to the Go API
@@ -342,17 +391,31 @@ async function apiFetch<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const token = await bearerToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init.headers,
-    },
-    // Business data is per-user; never serve a shared cache.
-    cache: "no-store",
-  });
+
+  // No mintable token = no session. Fail here with the same ApiError(401) shape
+  // callers already handle, instead of sending the request UNAUTHENTICATED and
+  // paying a network round trip for a guaranteed 401 (which also showed up in
+  // error tracking as unexplained "APIError: Unauthorized" noise).
+  if (!token) {
+    throw new ApiError(401, `API 401 on ${path}`, {
+      error: "reauth_required",
+      message: "no valid session; sign in again",
+    });
+  }
+
+  let res = await doApiFetch(path, init, token);
+
+  // One bounded recovery: the API rejected a token we believed valid. If it came
+  // from the cross-request cache it may be stale relative to the server's view
+  // (org switch settled elsewhere, hard revocation, key mishap) — drop the cache
+  // entry, mint fresh, retry ONCE. A fresh mint that still 401s (or a dead
+  // session, mint → null) falls through to the normal ApiError below.
+  if (res.status === 401) {
+    const fresh = await refreshBearerToken();
+    if (fresh && fresh !== token) {
+      res = await doApiFetch(path, init, fresh);
+    }
+  }
 
   if (!res.ok) {
     let body: unknown = null;
@@ -366,6 +429,24 @@ async function apiFetch<T>(
 
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+function doApiFetch(
+  path: string,
+  init: RequestInit,
+  token: string,
+): Promise<Response> {
+  return fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...init.headers,
+    },
+    // Business data is per-user; never serve a shared cache.
+    cache: "no-store",
+  });
 }
 
 /**

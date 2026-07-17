@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +111,56 @@ func TestAuth_Rejections(t *testing.T) {
 			}
 			if fv.called != tc.wantCalled {
 				t.Errorf("verifier called = %v, want %v", fv.called, tc.wantCalled)
+			}
+		})
+	}
+}
+
+// A cryptographically valid token whose sub or org_id is empty must be rejected
+// AT THE BOUNDARY with the typed reauth_required body — never reach a handler
+// and later fail in the store as an opaque 500 (the "claims missing
+// user_id/org_id for RLS context" incident class).
+func TestAuth_EmptyTenantClaims_ReauthRequired(t *testing.T) {
+	cases := []struct {
+		name  string
+		sub   string
+		orgID string
+	}{
+		{"empty org", "user_1", ""},
+		{"empty sub", "", "org_1"},
+		{"both empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := &auth.Claims{OrgID: tc.orgID}
+			claims.Subject = tc.sub
+			fv := &fakeVerifier{wantToken: "t", claims: claims}
+
+			nextCalled := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				nextCalled = true
+				w.WriteHeader(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+			req.Header.Set("Authorization", "Bearer t")
+			rr := httptest.NewRecorder()
+			Auth(fv)(next).ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", rr.Code)
+			}
+			if nextCalled {
+				t.Error("next handler must not run for a tenant-less token")
+			}
+			var body struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body.Error != ReauthRequiredCode {
+				t.Errorf("error code = %q, want %q (machine-readable so the client re-authenticates)", body.Error, ReauthRequiredCode)
 			}
 		})
 	}

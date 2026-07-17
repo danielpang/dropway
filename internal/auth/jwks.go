@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/danielpang/dropway/internal/jwtclock"
 )
 
 // allowedAlg is the ONLY accepted signing algorithm. jwt.WithValidMethods pins
@@ -148,6 +150,12 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		jwt.WithValidMethods([]string{allowedAlg}), // rejects none + HMAC
 		jwt.WithIssuer(v.issuer),
 		jwt.WithExpirationRequired(),
+		// Absorb modest wall-clock drift between the minting host (dashboard on
+		// Vercel) and this verifier (Fly). golang-jwt's default tolerance is ZERO,
+		// so a few seconds of NTP skew would intermittently reject valid tokens as
+		// expired (or not-yet-valid via iat). Small next to the 10m token lifetime
+		// and bounded: a token is accepted at most jwtclock.Leeway past exp.
+		jwt.WithLeeway(jwtclock.Leeway),
 	}
 	// With no extra audiences keep the library's strict single-audience check (the
 	// API path, unchanged). With extras, validate the audience ourselves against the
