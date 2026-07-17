@@ -5,32 +5,32 @@ flowchart LR
   subgraph edge["Content edge"]
     direction TB
     caddy["Caddy<br/>TLS · on-demand certs · cache"]
-    serve["serve (Go)<br/>*.dropwaycontent.com<br/>content + access + llms.txt"]
+    serve["serve (Go)<br/>*.dropwaycontent.com<br/>content · access · llms.txt<br/>How-this-was-made chat panel"]
   end
 
   subgraph control["Control plane"]
     direction TB
-    dash["dashboard (Next.js)<br/>Better Auth · /authz · OAuth AS<br/>app.dropway.dev"]
-    api["api (Go)<br/>system of record + authz<br/>api.dropway.dev"]
+    dash["dashboard (Next.js)<br/>Better Auth · /authz · OAuth AS<br/>sites · skills · chats · feed"]
+    api["api (Go)<br/>system of record + authz<br/>sites · skills · chat logs"]
   end
 
   subgraph llm["LLM access"]
     direction TB
-    mcp["mcp (Go)<br/>OAuth-protected MCP server<br/>mcp.dropway.dev"]
+    mcp["mcp (Go)<br/>OAuth-protected MCP server<br/>site · skill · chat tools"]
   end
 
   subgraph datap["Data plane"]
     direction TB
-    pg[("Postgres<br/>identity + app schemas · RLS")]
+    pg[("Postgres<br/>identity + app schemas · RLS<br/>skills · chat_logs")]
     redis[("Redis / Valkey<br/>route projection · revocation")]
-    store[("Object store · MinIO / R2<br/>blobs + manifests")]
+    store[("Object store · MinIO<br/>blobs · manifests<br/>skill files · chat transcripts")]
   end
 
   smtp(["SMTP / Mailpit"])
 
   user -->|session cookie| dash
   user -->|content GET| caddy
-  user -. presigned blob upload .-> store
+  user -. presigned upload .-> store
   agent -->|public: llms.txt · crawl| caddy
   agent -->|OAuth 2.1 sign-in + consent| dash
   agent -->|Bearer JWT · MCP| mcp
@@ -39,15 +39,15 @@ flowchart LR
   dash -->|identity schema| pg
   dash -. verify / magic link .-> smtp
   api -->|app schema · dropway_app · RLS| pg
-  api -->|presign · write manifest| store
-  api -->|write route + revocation| redis
-  serve -->|resolve_host| pg
-  serve -->|read blobs + manifests| store
+  api -->|manifests · skill files · chat transcripts| store
+  api -->|route + chat_id · revocation| redis
+  serve -->|resolve_host + chat_id| pg
+  serve -->|blobs · manifests · chat transcripts| store
   serve -->|read revocation| redis
   serve -->|fetch edge JWKS| api
   mcp -->|verify token · fetch JWKS| dash
   mcp -->|app schema · dropway_app · RLS| pg
-  mcp -->|read blobs + manifests| store
+  mcp -->|skill files · chat transcripts · blobs| store
 
   classDef plane fill:#f8fafc,stroke:#cbd5e1,color:#0f172a;
   class edge,control,datap,llm plane;

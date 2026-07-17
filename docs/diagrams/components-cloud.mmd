@@ -1,0 +1,63 @@
+flowchart LR
+  user(["User / Browser"])
+  agent(["LLM agent<br/>Claude · Cursor · Codex"])
+
+  subgraph edge["Content edge · Cloudflare"]
+    direction TB
+    worker["serving Worker<br/>*.dropwaycontent.com<br/>content · access · llms.txt<br/>How-this-was-made chat panel"]
+  end
+
+  subgraph control["Control plane"]
+    direction TB
+    dash["dashboard (Next.js · Vercel)<br/>Better Auth · /authz · OAuth AS<br/>sites · skills · chats · feed"]
+    api["api (Go · Fly.io)<br/>system of record + authz<br/>sites · skills · chat logs"]
+  end
+
+  subgraph llm["LLM access"]
+    direction TB
+    mcp["mcp (Go · Fly.io)<br/>OAuth-protected MCP server<br/>site · skill · chat tools"]
+  end
+
+  subgraph datap["Data plane"]
+    direction TB
+    pg[("Supabase Postgres<br/>identity + app schemas · RLS<br/>skills · chat_logs")]
+    kv[("Cloudflare Workers KV<br/>route projection + chat_id · revocation")]
+    r2[("Cloudflare R2<br/>blobs · manifests<br/>skill files · chat transcripts")]
+  end
+
+  subgraph cloudmod["cloud/ (SaaS only)"]
+    direction TB
+    stripe(["Stripe<br/>metered AI + plan quotas"])
+  end
+
+  email(["Transactional email"])
+  posthog(["PostHog<br/>analytics · error tracking"])
+
+  user -->|session cookie| dash
+  user -->|content GET| worker
+  user -. presigned upload .-> r2
+  agent -->|public: llms.txt · crawl| worker
+  agent -->|OAuth 2.1 sign-in + consent| dash
+  agent -->|Bearer JWT · MCP| mcp
+  dash -->|Bearer EdDSA JWT| api
+  dash -->|identity schema · pooler| pg
+  dash -. verify / magic link .-> email
+  api -->|app schema · dropway_app · RLS| pg
+  api -->|manifests · skill files · chat transcripts| r2
+  api -->|route + chat_id · revocation| kv
+  api -->|checkout · meter usage| stripe
+  stripe -. plan_tier webhook .-> api
+  worker -->|route + chat_id · revocation| kv
+  worker -->|blobs · manifests · chat transcripts| r2
+  worker -->|fetch edge JWKS| api
+  mcp -->|verify token · fetch JWKS| dash
+  mcp -->|app schema · dropway_app · RLS| pg
+  mcp -->|skill files · chat transcripts · blobs| r2
+  api -. errors · events .-> posthog
+  dash -. errors · events .-> posthog
+  worker -. errors .-> posthog
+
+  classDef plane fill:#f8fafc,stroke:#cbd5e1,color:#0f172a;
+  classDef saas fill:#fef3c7,stroke:#f59e0b,color:#78350f;
+  class edge,control,datap,llm plane;
+  class cloudmod saas;

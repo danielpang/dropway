@@ -78,3 +78,14 @@ sequenceDiagram
     MCP->>OS: read manifest + blob (org-scoped)
     MCP-->>L: list_sites / read_file results
   end
+
+  rect rgb(255,249,196)
+    note over U,OS: f) Share the chat behind a build ("How this was made")
+    U->>A: share transcript (dropway chat share / mcp share_chat / dashboard)
+    A->>PG: insert chat_log + messages (app schema, RLS)
+    A->>OS: write compiled transcript JSON
+    A->>A: attach to site -> route projection carries chat_id
+    V->>S: GET https://slug.dropwaycontent.com/
+    S->>OS: read content + transcript (route has chat_id)
+    S-->>V: content + injected "How this was made" panel (site's access mode)
+  end
