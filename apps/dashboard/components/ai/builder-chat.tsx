@@ -16,6 +16,7 @@ import { ModelPicker } from "@/components/ai/model-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AiModel } from "@/lib/api";
+import { buildEmbedUrl } from "@/lib/embed";
 import { cn } from "@/lib/utils";
 
 /**
@@ -224,11 +225,15 @@ type PreviewDeviceId = (typeof PREVIEW_DEVICES)[number]["id"];
 
 /**
  * The preview column: a toolbar (device-size toggle, refresh, open-in-new-tab, and
- * the Publish action) over the draft iframe. A PUBLIC draft renders inline; a GATED
- * one can't (its cross-site auth cookie is blocked in a cross-origin iframe, looping
- * on /authz), so it shows an open-in-new-tab fallback. Empty state before the first
- * draft. The device toggle restyles the iframe width without reloading it; Refresh
- * remounts the iframe (via a bumped key) to reload the same URL.
+ * the Publish action) over the draft iframe. A PUBLIC draft renders inline through
+ * the EMBED surface (?embed=1): normal serving sends `frame-ancestors 'none'` +
+ * X-Frame-Options: DENY, so a plain preview URL is silently blocked by the browser
+ * inside the iframe — the embed surface is the one framable rendering. A GATED
+ * draft can't render inline at all (embeds fail closed to a "sign in" placeholder;
+ * in-frame cookie auth is blocked cross-origin), so it shows an open-in-new-tab
+ * fallback. Empty state before the first draft. The device toggle restyles the
+ * iframe width without reloading it; Refresh remounts the iframe (via a bumped
+ * key) to reload the same URL.
  */
 function PreviewPanel({
   draft,
@@ -331,10 +336,13 @@ function PreviewPanel({
           </div>
         ) : canInline ? (
           <div className="flex h-full justify-center overflow-auto bg-muted/20">
+            {/* Framable embed rendering of the draft. badge removal is requested
+                unconditionally; the serving layer only honors it for entitled
+                (Pro+) orgs, so this is a no-op elsewhere. */}
             <iframe
               key={reloadKey}
               title="Preview"
-              src={draft.previewUrl}
+              src={buildEmbedUrl(draft.previewUrl, true)}
               style={{ width: selected.width }}
               className={cn(
                 "h-full border-0 bg-white",
@@ -347,8 +355,9 @@ function PreviewPanel({
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="max-w-xs text-sm text-muted-foreground">
-              This site is private, so its preview opens in a new tab where you can
-              sign in. It can&rsquo;t display inside this panel.
+              This site is private. Private sites can&rsquo;t be embedded in the
+              preview panel, so the preview opens in a new tab where you can sign
+              in.
             </p>
             <Button size="sm" onClick={openInNewTab}>
               Open preview
