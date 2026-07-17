@@ -169,6 +169,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// STEP 3.9: embed surface (?embed=1) — a framable, chrome-stripped rendering of
+	// the top document so a site can be iframed into Notion/Linear/Confluence. Access
+	// control is preserved: a gated site shows a "Sign in to view" placeholder, never
+	// its bytes (serveEmbed fails closed for every non-public mode). Runs AFTER
+	// suspension/expiry/LLM-meta, before the access-mode dispatch.
+	if isEmbedRequested(r) {
+		h.serveEmbed(w, r, &rt, host)
+		return
+	}
+
 	// STEP 4: dispatch by access mode.
 	switch rt.AccessMode {
 	case projection.AccessPublic:

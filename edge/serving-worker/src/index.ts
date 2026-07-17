@@ -36,7 +36,15 @@ import {
   parseManifest,
   resolveManifestEntry,
 } from "./manifest";
-import { publicResponseHeaders, securityHeaders } from "./http";
+import { embedResponseHeaders, publicResponseHeaders, securityHeaders } from "./http";
+import {
+  EMBED_BADGE_BYTE_LENGTH,
+  embedGatePlaceholder,
+  injectEmbedBadge,
+  isEmbedRequested,
+  isInjectableEmbedBadge,
+  shouldShowEmbedBadge,
+} from "./embed";
 import { directoryPrefix, listDirectory, renderDirectoryListing } from "./listing";
 import {
   MARKDOWN_MAX_RENDER_BYTES,
@@ -420,6 +428,15 @@ export async function serve(
   const llmMeta = await handleLLMMeta(request, env, route, url, opts);
   if (llmMeta !== null) return bodyFor(request, llmMeta);
 
+  // 3.9 EMBED surface (?embed=1): a framable, chrome-stripped rendering of the top
+  //     document, so a site can be iframed into Notion/Linear/Confluence. Access
+  //     control is fully preserved — a gated site shows a "Sign in to view"
+  //     placeholder, never its bytes — so this runs AFTER suspension/expiry but its
+  //     own gate check (in serveEmbed) fails closed for every non-public mode.
+  if (isEmbedRequested(url)) {
+    return serveEmbed(request, env, route, url, opts);
+  }
+
   // 4. Dispatch by access mode.
   switch (route.access_mode) {
     case "public":
@@ -621,6 +638,102 @@ async function servePublicBody(
   const out = await bannerize(env, route, resolved, request.method === "HEAD");
   const response = contentResponse(resolved.servedPath, out);
   return bodyFor(request, response);
+}
+
+/**
+ * EMBED serve path (?embed=1) — a framable, chrome-stripped rendering of the top
+ * document. Two arms:
+ *
+ *   - GATED (password/allowlist/org_only): NEVER serve tenant bytes into an embed.
+ *     Return the framable "Sign in to view" placeholder that links out to the real
+ *     site (new tab) for authentication. This fails closed for every non-public
+ *     mode — an embed can't be a bypass around the gate.
+ *   - PUBLIC: resolve the blob exactly like the public path, but emit FRAMABLE
+ *     headers (X-Frame-Options dropped, CSP `frame-ancestors *`) and inject only the
+ *     "Powered by Dropway" badge (the free-tier banner + chat pill are suppressed in
+ *     an embed). Not written to the PoP Cache API — embed traffic is low-volume and
+ *     this avoids a second cache-key dimension; the browser still caches per
+ *     Cache-Control.
+ */
+async function serveEmbed(
+  request: Request,
+  env: Env,
+  route: RouteValue,
+  url: URL,
+  opts: ServeOptions,
+): Promise<Response> {
+  if (route.access_mode !== "public") {
+    // The placeholder links to the site ROOT with no ?embed=1, so clicking it opens
+    // the gated site (new tab) and runs the normal /authz sign-in.
+    return bodyFor(request, embedGatePlaceholder(new URL("/", url).toString()));
+  }
+
+  const resolved = await resolveBlob(request, env, route, url, opts);
+  if (resolved.kind === "not-found") return bodyFor(request, resolved.response);
+
+  // Count the embed view like any other HTML page view (isVisit still gates to a GET
+  // of an HTML document, so embedded assets and HEAD probes don't count).
+  scheduleVisit(env, request, route, url, resolved.contentType, opts);
+
+  const out = await embedBadgeInject(route, url, resolved, request.method === "HEAD");
+  const response = new Response(out.body, {
+    status: 200,
+    headers: embedResponseHeaders(resolved.servedPath, {
+      contentType: out.contentType,
+      etag: out.etag,
+      lastModified: out.lastModified,
+      contentLength: out.contentLength,
+    }),
+  });
+  return bodyFor(request, response);
+}
+
+/**
+ * Inject the "Powered by Dropway" embed badge into an HTML document, when the badge
+ * should show for this route (see shouldShowEmbedBadge) and the body is injectable
+ * UTF-8 HTML. Mirrors bannerize's HEAD-without-buffering optimization: the badge only
+ * INSERTS bytes, so a HEAD reports `original + EMBED_BADGE_BYTE_LENGTH` without
+ * reading the whole body. Non-badge / non-HTML responses pass through untouched.
+ */
+async function embedBadgeInject(
+  route: RouteValue,
+  url: URL,
+  resolved: ResolvedBlob,
+  isHead: boolean,
+): Promise<ServeBody> {
+  const passthrough: ServeBody = {
+    contentType: resolved.contentType,
+    body: resolved.body,
+    etag: resolved.etag,
+    lastModified: resolved.lastModified,
+    contentLength: resolved.contentLength,
+  };
+  if (
+    !shouldShowEmbedBadge(route, url) ||
+    !isInjectableEmbedBadge(resolved.servedPath, resolved.contentType)
+  ) {
+    return passthrough;
+  }
+
+  if (isHead) {
+    return {
+      contentType: resolved.contentType,
+      body: null,
+      contentLength:
+        resolved.contentLength === undefined
+          ? undefined
+          : resolved.contentLength + EMBED_BADGE_BYTE_LENGTH,
+    };
+  }
+
+  const injected = injectEmbedBadge(
+    resolved.body ? await new Response(resolved.body).text() : "",
+  );
+  return {
+    contentType: resolved.contentType,
+    body: injected,
+    contentLength: new TextEncoder().encode(injected).length,
+  };
 }
 
 /** Outcome of resolving a request path to its R2 blob (shared public/gated). */

@@ -128,6 +128,23 @@ exported and the exact string is asserted in tests.
 site legitimately loads its own subdomain assets, but a **different registrable
 site** cannot embed a tenant resource as a subresource.
 
+#### Embed exception (`?embed=1`)
+
+The **embed surface** (`src/embed.ts`) is the one place framing is intentionally
+opened. A request with `?embed=1` renders the **top document** framable and
+chrome-stripped so a site can be pasted into an `<iframe>` in Notion / Linear /
+Confluence. Only that response is relaxed, via `framableContentSecurityHeaders()`:
+`X-Frame-Options` is **dropped**, the CSP uses **`frame-ancestors *`**, and
+`Cross-Origin-Resource-Policy` widens to **`cross-origin`** (so a COEP-enforcing
+parent can still frame it). Every other hardening header is unchanged, and normal
+(non-embed) serving still sends `frame-ancestors 'none'` + `X-Frame-Options: DENY`.
+
+Access control is **preserved**: a gated site (password/allowlist/org_only) never
+serves its bytes into an embed — it returns a framable "Sign in to view"
+placeholder that links out to the real site. Public embeds carry a slim "Powered
+by Dropway" badge that **Pro+** orgs may remove with `?badge=0` (the entitlement is
+re-checked server-side against the KV route projection's `plan_tier`).
+
 ### 2. Service-worker registration blocked on content origins
 
 `isServiceWorkerScript()` recognizes the conventional SW script names (`sw.js`,

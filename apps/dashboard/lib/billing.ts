@@ -191,6 +191,17 @@ export function customDomainsEntitled(tier: PlanTier): boolean {
 }
 
 /**
+ * Whether a tier may REMOVE the "Powered by Dropway" badge from an embed ("Pro+").
+ * A paid feature — excluded on Free, included on every paid tier. DISPLAY/UX gating
+ * only: the serving layer re-checks the org's plan_tier off the KV route projection
+ * before honoring `?badge=0`, so a free org toggling this in the DOM changes nothing
+ * (the badge still renders). The UI uses it to show/hide the "Remove badge" toggle.
+ */
+export function embedBadgeRemovable(tier: PlanTier): boolean {
+  return tier !== "free";
+}
+
+/**
  * Numeric per-org site cap by tier for the usage meter (null = unlimited).
  * Mirrors cloud/quota's bands (Free 10 / Pro 100; Business and Enterprise
  * unlimited). Display-only — the real cap is enforced server-side.
