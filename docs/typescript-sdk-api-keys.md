@@ -409,24 +409,28 @@ without a store or handler change — the `ResourceSkillPerOrg` pattern.
 
 ## Migration plan
 
-One goose migration in `db/migrations/app/`:
+The old table goes first, on its own: **migration
+`0015_drop_deploy_tokens.sql` ships separately** (its own PR), dropping
+`app.deploy_tokens` — no server code has ever read or written it, so
+the drop is a no-op in every real database, and keeping two
+nearly-identical dormant token tables would only invite drift. That
+change also removes the table from the sqlc schema mirror, the
+generated `AppDeployToken` model, and the RLS integration test's table
+list.
+
+The API-keys work is then one goose migration in `db/migrations/app/`:
 
 1. `CREATE TABLE app.api_keys` + index + RLS policies (above).
 2. `ALTER TABLE app.org_meta ADD COLUMN api_keys_enabled boolean NOT
    NULL DEFAULT true`.
-3. `DROP TABLE app.deploy_tokens` — no server code has ever read or
-   written it, so this is a no-op in every real database; keeping two
-   nearly-identical dormant token tables would only invite drift. The
-   surviving client-side references update in the same change: the
-   audit `ActorToken` doc comments (`internal/audit/audit.go`, the
-   sqlc query comments) now point at `app.api_keys.id`, and the CLI's
-   `DROPWAY_TOKEN` path is folded into the `DROPWAY_API_KEY` support
-   above. The RLS integration test's table list swaps `deploy_tokens`
-   for `api_keys`.
 
-Mirror all of it in `db/sqlc/schema.sql`, add queries to
+Alongside it: mirror the DDL in `db/sqlc/schema.sql`, add queries to
 `db/sqlc/query.sql` (resolve-by-hash, insert, list-by-org, revoke,
-touch-last-used), regenerate sqlc.
+touch-last-used), regenerate sqlc, add `app.api_keys` to the RLS
+integration test's table list, repoint the audit `ActorToken` doc
+comments (`internal/audit/audit.go`, the sqlc query comments) at
+`app.api_keys.id`, and fold the CLI's `DROPWAY_TOKEN` path into the
+`DROPWAY_API_KEY` support above.
 
 ## Testing
 
