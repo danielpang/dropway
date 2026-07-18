@@ -4,8 +4,10 @@ package serve_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielpang/dropway/internal/edgetoken"
 	"github.com/danielpang/dropway/internal/storage"
@@ -109,6 +111,68 @@ func TestEmbed_GatedShowsPlaceholderNotBytes(t *testing.T) {
 			t.Errorf("mode %s: placeholder should link to the site root; body=%s", mode, body)
 		}
 	}
+}
+
+// --- Failure pages inside an embed are framable ------------------------------
+//
+// A framing-blocked response renders as a BLANK iframe in Notion/Linear/etc., so
+// under ?embed=1 even the failure pages (404/410) must be framable to say what's
+// wrong. Outside an embed they stay unframable (clickjacking defense).
+
+func assertFramable(t *testing.T, rec *httptest.ResponseRecorder, what string) {
+	t.Helper()
+	if got := rec.Header().Get("X-Frame-Options"); got != "" {
+		t.Errorf("%s: X-Frame-Options = %q, want empty (must be framable)", what, got)
+	}
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors *") {
+		t.Errorf("%s: CSP = %q, want frame-ancestors *", what, csp)
+	}
+	if got := rec.Header().Get("Cross-Origin-Resource-Policy"); got != "cross-origin" {
+		t.Errorf("%s: CORP = %q, want cross-origin", what, got)
+	}
+}
+
+func TestEmbed_UnknownHost404IsFramable(t *testing.T) {
+	h := newHandler(fakeResolver{map[string]serve.Route{}}, storage.NewFake(), nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/?embed=1", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown host embed should 404, got %d", rec.Code)
+	}
+	assertFramable(t, rec, "unknown-host 404")
+
+	// Control: without ?embed the 404 stays unframable.
+	rec = doRequest(h, http.MethodGet, testHost, "/", nil, "")
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("non-embed 404 X-Frame-Options = %q, want DENY", got)
+	}
+}
+
+func TestEmbed_MissingPath404IsFramable(t *testing.T) {
+	store := storage.NewFake()
+	stagePublicIndex(t, store, "<h1>hello</h1>")
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: publicRoute()}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/nope.html?embed=1", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing path embed should 404, got %d", rec.Code)
+	}
+	assertFramable(t, rec, "missing-path 404")
+}
+
+func TestEmbed_ExpiredLink410IsFramable(t *testing.T) {
+	store := storage.NewFake()
+	stagePublicIndex(t, store, "<h1>hello</h1>")
+	rt := publicRoute()
+	past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	rt.ExpiresAt = &past
+	h := newHandler(fakeResolver{map[string]serve.Route{testHost: rt}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, testHost, "/?embed=1", nil, "")
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expired link embed should 410, got %d", rec.Code)
+	}
+	assertFramable(t, rec, "expired 410")
 }
 
 // A valid edge cookie does NOT unlock content in an embed — the embed is always the
