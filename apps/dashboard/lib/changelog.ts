@@ -58,12 +58,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     ],
   },
   {
-    id: "ai-website-builder",
+    id: "ai-website-builder-skills-library",
     date: "2026-07-09",
     label: "New",
-    title: "AI website builder",
+    title: "AI website builder and skills library",
     summary:
-      "Describe the page you want and watch it come together. The builder generates a site from a prompt, streams its work live, and hands you a real, access-controlled URL the moment you publish.",
+      "Build sites from prompts and share skills across your org. Create or evolve a site with the AI builder, then publish it instantly, and drag skills into a shared library where teammates and AI tools can find and use them.",
     changes: [
       {
         id: "ai-builder-chat",
@@ -80,16 +80,6 @@ export const CHANGELOG: ChangelogEntry[] = [
         title: "Pick your model",
         body: "Choose the model that drives a build from the model picker. Requests are proxied through the dashboard so your session, not an API key, authorizes the work.",
       },
-    ],
-  },
-  {
-    id: "skills",
-    date: "2026-06-24",
-    label: "New",
-    title: "Skills library",
-    summary:
-      "A shared library of skills for your whole org: upload once, and every teammate (and connected AI tool) can find and pull them. Curated into folders, versioned, and available over MCP.",
-    changes: [
       {
         id: "skills-library",
         title: "Share skills across your org",
@@ -104,6 +94,31 @@ export const CHANGELOG: ChangelogEntry[] = [
         id: "skills-mcp",
         title: "Reach skills over MCP",
         body: "Connected AI tools can list and download your org's skills through the Dropway MCP server, honoring the same access rules as the dashboard.",
+      },
+    ],
+  },
+  {
+    id: "embed-sites",
+    date: "2026-07-06",
+    label: "New",
+    title: "Embed sites",
+    summary:
+      "Paste any site into Notion, Linear, Confluence, and others using an iframe. Sites need to be public to be embedded so gated sites never show inside an <iframe>.",
+    changes: [
+      {
+        id: "embed-sites-actionable",
+        title: "Embed sites are now available",
+        body: "Every site now has an embed option. You can share an embed URL in the dashboard or generate an <iframe> snippet to copy and paste. Use the embed dialog for any site, including AI builder sites.",
+      },
+      {
+        id: "embed-sites-public-only",
+        title: "Sites must be public to embed",
+        body: "Only public sites can be embedded; gated sites (password, allowlist, org-only) show a 'Sign in to view' placeholder inside the embed frame. This is enforced at embed time to ensure security.",
+      },
+      {
+        id: "embed-sites-frame",
+        title: "Framed, chrome-stripped rendering",
+        body: "Embeds render as framable documents with no browser chrome. Just an iframe you control. Pro+ orgs can remove the 'Powered by Dropway' badge with ?badge=0, but usage counts toward metered AI builder usage.",
       },
     ],
   },
