@@ -26,7 +26,7 @@ type Querier interface {
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
 	// Active = a session a user could still be driving (not archived/failed).
-	CountActiveAISessions(ctx context.Context, orgID string) (int64, error)
+	CountActiveAISessions(ctx context.Context, arg CountActiveAISessionsParams) (int64, error)
 	CountChatLogsForOrg(ctx context.Context, orgID string) (int64, error)
 	CountChatMessages(ctx context.Context, arg CountChatMessagesParams) (int64, error)
 	CountFolderItems(ctx context.Context, arg CountFolderItemsParams) (int64, error)

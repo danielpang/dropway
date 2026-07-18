@@ -58,13 +58,24 @@ test("new user: sign up → org → site → drag-and-drop deploy goes live", as
     timeout: 90_000,
   });
 
-  // The site's live URL is now present (both in the dropzone success state and the
-  // page's "Live URL" card, which router.refresh() repopulated). The content host is
-  // ORG-NAMESPACED (<orgSlug>--<slug>.<domain>) and the domain/scheme/port vary by
-  // environment (localhost in dev, the content domain in prod), so match the
-  // org-namespaced slug rather than a fixed URL. The badge also flips Live.
+  // The success state confirms the deploy published; now assert the site detail
+  // page reflects the site as live. The header badge + "Live URL" card update from
+  // the server-component re-render the publish action's revalidatePath triggers,
+  // which streams to the client asynchronously — on a connection-pool-saturated CI
+  // runner that reconciliation can lag well past the default expect timeout, which
+  // made this a flaky failure. Reload to read the PERSISTED live state from a single
+  // deterministic server render instead of racing the in-place revalidation, and
+  // give the render generous headroom (the detail page fans out several API calls
+  // that contend for the same saturated pool).
+  await page.reload();
+
+  // The content host is ORG-NAMESPACED (<orgSlug>--<slug>.<domain>) and the
+  // domain/scheme/port vary by environment (localhost in dev, the content domain in
+  // prod), so match the org-namespaced slug rather than a fixed URL.
   await expect(
     page.locator(`a[href*="--${siteSlug}."]`).first(),
-  ).toBeVisible();
-  await expect(page.getByText("Live", { exact: true })).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Live", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
 });

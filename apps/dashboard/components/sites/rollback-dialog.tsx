@@ -26,9 +26,12 @@ import { cn, formatBytes } from "@/lib/utils";
 export function RollbackDialog({
   siteId,
   versions,
+  triggerClassName,
 }: {
   siteId: string;
   versions: SiteVersion[];
+  /** Extra classes for the trigger button (e.g. to stretch it in a mobile grid). */
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<string | null>(null);
@@ -65,7 +68,12 @@ export function RollbackDialog({
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setOpen(true)}
+        className={triggerClassName}
+      >
         <History aria-hidden />
         Roll back
       </Button>

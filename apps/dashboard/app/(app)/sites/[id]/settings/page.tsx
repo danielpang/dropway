@@ -95,9 +95,6 @@ export default async function SiteAccessSettingsPage({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Current access</CardTitle>
-          <CardDescription>
-            The live URL and the access mode it serves under right now.
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -134,10 +131,7 @@ export default async function SiteAccessSettingsPage({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Access mode</CardTitle>
-          <CardDescription>
-            Pick how viewers reach this site. Password and allowlist links can
-            optionally expire.
-          </CardDescription>
+          <CardDescription>Choose who can reach this site.</CardDescription>
         </CardHeader>
         <CardContent>
           <AccessSettingsForm
@@ -153,8 +147,7 @@ export default async function SiteAccessSettingsPage({
         <CardHeader>
           <CardTitle className="text-base">Org feed</CardTitle>
           <CardDescription>
-            Whether this site shows up in your organization&rsquo;s feed for
-            teammates to discover. New sites are shared by default.
+            Show this site in your org feed for teammates to find.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -180,8 +173,7 @@ export default async function SiteAccessSettingsPage({
         <CardHeader>
           <CardTitle className="text-base">Collaboration</CardTitle>
           <CardDescription>
-            Who can deploy, publish, and preview this site&rsquo;s content.
-            Sites are collaborative by default.
+            Who can deploy, publish, and preview this site.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -200,8 +192,7 @@ export default async function SiteAccessSettingsPage({
           <CardHeader>
             <CardTitle className="text-base">Allowlist</CardTitle>
             <CardDescription>
-              Only these verified emails can view the site. External emails (not
-              on an org-verified domain) require external sharing to be enabled.
+              Only these verified emails can view the site.
             </CardDescription>
           </CardHeader>
           <CardContent>

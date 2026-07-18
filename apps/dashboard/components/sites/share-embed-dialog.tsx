@@ -39,6 +39,7 @@ export function ShareEmbedDialog({
   isPrivate,
   badgeRemovable,
   disabled,
+  triggerClassName,
 }: {
   /** The site's live URL (custom domain or `<slug>.dropwaycontent.com`). */
   liveUrl: string;
@@ -50,6 +51,8 @@ export function ShareEmbedDialog({
   badgeRemovable: boolean;
   /** Disable the trigger (e.g. the site isn't deployed yet). */
   disabled?: boolean;
+  /** Extra classes for the trigger button (e.g. to stretch it in a mobile grid). */
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = React.useState(false);
   const [width, setWidth] = React.useState("100%");
@@ -73,6 +76,7 @@ export function ShareEmbedDialog({
         size="sm"
         onClick={() => setOpen(true)}
         disabled={disabled}
+        className={triggerClassName}
       >
         <Share2 aria-hidden />
         Share

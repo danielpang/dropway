@@ -1053,14 +1053,18 @@ ORDER BY last_activity_at DESC;
 
 -- name: LockOrgAISessionQuota :exec
 -- Serialize concurrent session creates for the SAME org (TOCTOU guard for the
--- per-org active-session concurrency cap, same pattern as LockOrgSiteQuota).
+-- active-session concurrency cap, same pattern as LockOrgSiteQuota). The cap
+-- itself is counted per-site; this org-wide lock is a coarser-but-correct guard.
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':ai_sessions'));
 
 -- name: CountActiveAISessions :one
--- Active = a session a user could still be driving (not archived/failed).
+-- Active = a session a user could still be driving (not archived/failed). Scoped
+-- to the SITE: the concurrency cap is per-site, not per-org, so building on one
+-- site never blocks building on another (a site normally has a single resumable
+-- session, so the natural limit is the number of sites). Uses ai_sessions_org_site_idx.
 SELECT count(*)::bigint AS n
 FROM app.ai_sessions
-WHERE org_id = $1 AND status IN ('active', 'running', 'idle');
+WHERE org_id = $1 AND site_id = $2 AND status IN ('active', 'running', 'idle');
 
 -- name: SetAISessionStatus :exec
 UPDATE app.ai_sessions

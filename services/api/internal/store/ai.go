@@ -110,7 +110,10 @@ func (s *Store) StartAISession(ctx context.Context, t Tenant, siteID, model stri
 		if err := q.LockOrgAISessionQuota(ctx, t.OrgID); err != nil {
 			return err
 		}
-		n, err := q.CountActiveAISessions(ctx, t.OrgID)
+		n, err := q.CountActiveAISessions(ctx, db.CountActiveAISessionsParams{
+			OrgID:  t.OrgID,
+			SiteID: siteID,
+		})
 		if err != nil {
 			return err
 		}

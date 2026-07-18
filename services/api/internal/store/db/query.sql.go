@@ -118,12 +118,20 @@ func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEnt
 const countActiveAISessions = `-- name: CountActiveAISessions :one
 SELECT count(*)::bigint AS n
 FROM app.ai_sessions
-WHERE org_id = $1 AND status IN ('active', 'running', 'idle')
+WHERE org_id = $1 AND site_id = $2 AND status IN ('active', 'running', 'idle')
 `
 
-// Active = a session a user could still be driving (not archived/failed).
-func (q *Queries) CountActiveAISessions(ctx context.Context, orgID string) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveAISessions, orgID)
+type CountActiveAISessionsParams struct {
+	OrgID  string
+	SiteID string
+}
+
+// Active = a session a user could still be driving (not archived/failed). Scoped
+// to the SITE: the concurrency cap is per-site, not per-org, so building on one
+// site never blocks building on another (a site normally has a single resumable
+// session, so the natural limit is the number of sites). Uses ai_sessions_org_site_idx.
+func (q *Queries) CountActiveAISessions(ctx context.Context, arg CountActiveAISessionsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAISessions, arg.OrgID, arg.SiteID)
 	var n int64
 	err := row.Scan(&n)
 	return n, err
@@ -3285,7 +3293,8 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':ai_sessions'))
 `
 
 // Serialize concurrent session creates for the SAME org (TOCTOU guard for the
-// per-org active-session concurrency cap, same pattern as LockOrgSiteQuota).
+// active-session concurrency cap, same pattern as LockOrgSiteQuota). The cap
+// itself is counted per-site; this org-wide lock is a coarser-but-correct guard.
 func (q *Queries) LockOrgAISessionQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockOrgAISessionQuota, dollar_1)
 	return err
