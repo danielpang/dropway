@@ -38,17 +38,22 @@ export const CHANGELOG: ChangelogEntry[] = [
     label: "Improved",
     title: "Usage-based pricing for the AI builder",
     summary:
-      "The AI builder is charged per usage. Your builds are metered as you go and billed to your account at the end of your billing cycle, so there is nothing to pay up front and nothing to enable.",
+      "The AI builder is charged per usage, at cost with no markup. Available on paid plans, your builds are metered as you go and billed to your account at the end of your billing cycle, so there is nothing to pay up front.",
     changes: [
       {
         id: "ai-builder-metered-usage",
-        title: "Pay only for what you build",
-        body: "Each build meters the model usage it takes to generate and revise your site. There is no flat fee and no seat to buy: you are charged for the work you actually run.",
+        title: "Pay only for what you build, at cost",
+        body: "Each build meters the model usage it takes to generate and revise your site, passed through at cost with no markup. There is no seat to buy: you are charged for the work you actually run.",
       },
       {
         id: "ai-builder-billing-cycle",
         title: "Billed at the end of your cycle",
         body: "Metered usage is added to your account and settled with the rest of your bill at the end of your billing cycle. A note in the builder reminds you that usage is metered while you work.",
+      },
+      {
+        id: "ai-builder-paid-plans",
+        title: "Available on paid plans",
+        body: "The AI builder is included on paid plans, which already have a card on file, so metered usage lands on your regular invoice. Free plans can upgrade to turn it on.",
       },
     ],
   },
