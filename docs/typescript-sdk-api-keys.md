@@ -61,6 +61,9 @@ and hits the same `/v1` control plane (`services/api/internal/router/router.go`)
 - The secret is displayed **once**, in the creation response, and never
   again — the server stores only a hash. List/read endpoints return
   metadata plus a non-secret display prefix.
+- The CLI works headless: setting `DROPWAY_API_KEY` bypasses the
+  interactive OAuth flow, so `dropway deploy` runs in CI with no browser
+  and no stored session.
 - Admin-manageable: create/revoke from the dashboard org settings and
   from `/v1`, admin-or-owner only, with live role re-checks (the
   `store/members.go` confused-deputy pattern).
@@ -298,6 +301,40 @@ content hash.
 Actions example using a repository secret), and a runnable example under
 `examples/`.
 
+The constructor falls back to `process.env.DROPWAY_API_KEY` when
+`apiKey` isn't passed (throwing a clear error if neither is present), so
+SDK and CLI share one configuration convention.
+
+## CLI — headless auth via `DROPWAY_API_KEY`
+
+The CLI's only credential today is the interactive browser OAuth flow
+(`cli/internal/auth/oauth.go`) — a dead end in CI, which is exactly
+where `dropway deploy` is most wanted. Keys close that gap with a small
+client-side change; the server needs nothing beyond the middleware
+already scoped above.
+
+- When `DROPWAY_API_KEY` is set, the CLI uses it as the bearer token on
+  every request and skips the OAuth flow and any stored session
+  entirely. No `dropway login` required.
+- **The env var takes precedence over a logged-in session.** CI runs
+  must be deterministic even on a machine (or reused runner) where
+  someone once logged in interactively; an explicitly set key is the
+  stronger signal of intent. `dropway whoami` reports which credential
+  source is active ("authenticated via API key dw_live_3fk9… (org
+  acme)") so precedence is never a mystery.
+- **Env var only; never persisted.** No `--api-key` flag (flags leak
+  into shell history and process lists) and the key is never written to
+  the CLI's config or OS keychain — it is read from the environment on
+  each invocation. This matches the `VERCEL_TOKEN` /
+  `NETLIFY_AUTH_TOKEN` / `GITHUB_TOKEN` convention CI users already
+  know.
+- **Role-ceiling errors are translated.** Commands gated on admin roles
+  or key management will 403 under a key; the CLI maps
+  `admin_required_interactive` to "this command requires an interactive
+  login — run `dropway login`" instead of surfacing a bare 403.
+- Keyed invocations are subject to the same per-key rate limit; the CLI
+  already honors `Retry-After`.
+
 ## Rate limiting
 
 There is no per-principal rate limiting today (the in-memory bucket in
@@ -379,8 +416,10 @@ touch-last-used), regenerate sqlc.
    API-key auth usable with `curl`.)
 2. **Dashboard** — org-settings section: create/reveal-once/list/revoke,
    kill switch toggle.
-3. **SDK** — `packages/sdk` scaffold, generated types, deploy-loop port,
-   errors/retries, tests incl. digest parity.
+3. **SDK + CLI** — `packages/sdk` scaffold, generated types, deploy-loop
+   port, errors/retries, tests incl. digest parity; CLI
+   `DROPWAY_API_KEY` support (precedence, `whoami` source reporting,
+   role-ceiling error mapping).
 4. **Polish & launch** — examples, README/docs, e2e smoke workflow,
    secret-scanning registration (stretch), changelog entry.
 
