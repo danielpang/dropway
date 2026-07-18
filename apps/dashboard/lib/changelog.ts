@@ -58,6 +58,36 @@ export const CHANGELOG: ChangelogEntry[] = [
     ],
   },
   {
+    id: "chat-sharing",
+    date: "2026-07-17",
+    label: "New",
+    title: "Share the conversation behind your site",
+    summary:
+      "Attach the AI session that built a site so visitors can read how it was made. Import a transcript from Claude Code, ChatGPT, or Cursor, or stream one in as you work over MCP and the CLI.",
+    changes: [
+      {
+        id: "chat-how-this-was-made",
+        title: "A How this was made panel",
+        body: "Attach the session that built a site and visitors get a How this was made pill in the corner. It opens a drawer with the full transcript, served under the site's own access, so no Claude account is needed to read it.",
+      },
+      {
+        id: "chat-import",
+        title: "Import from Claude Code, ChatGPT, or Cursor",
+        body: "Paste or upload a transcript and the format is detected automatically. Turn on activity annotations to condense tool runs and file edits into compact rows, so the story shows what the assistant did, not just what it said.",
+      },
+      {
+        id: "chat-mcp-cli",
+        title: "Append as you build over MCP and the CLI",
+        body: "Stream a conversation into a log with the share_chat and append_chat MCP tools, or the dropway chat commands. Each site keeps one append-only log, so an agent can narrate its work while it builds.",
+      },
+      {
+        id: "chat-library-controls",
+        title: "Your library, your controls",
+        body: "Sessions you do not attach live in an org Chats library for your team to read. Hide the panel without detaching, delete a single message if something slipped in, and owners can turn the whole feature off in Settings.",
+      },
+    ],
+  },
+  {
     id: "ai-website-builder",
     date: "2026-07-09",
     label: "New",
