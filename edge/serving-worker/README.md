@@ -145,6 +145,14 @@ placeholder that links out to the real site. Public embeds carry a slim "Powered
 by Dropway" badge that **Pro+** orgs may remove with `?badge=0` (the entitlement is
 re-checked server-side against the KV route projection's `plan_tier`).
 
+**Failure pages are framable too** (the `serve()` embed post-pass): under
+`?embed=1` the 404 / 410 link-expired / 429 / 503 suspended / 500 pages are also
+served framable. A framing-blocked response renders as a **blank iframe** in
+Notion/Linear/Confluence with zero diagnostics, so inside an embed the error page
+itself must render to say what's wrong. These pages carry no interactive state, so
+opening them to framing has no clickjacking value; gated bytes still never reach
+an embed.
+
 ### 2. Service-worker registration blocked on content origins
 
 `isServiceWorkerScript()` recognizes the conventional SW script names (`sw.js`,

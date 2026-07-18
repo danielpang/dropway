@@ -14,10 +14,18 @@ import (
 )
 
 // writePage writes a platform-owned HTML page with the strict platform CSP. Used
-// for the default 404, 410, 429, and 503 pages. The body is suppressed for HEAD.
+// for the default 404, 410, 429, 500, and 503 pages. The body is suppressed for
+// HEAD. When the request opted into the embed surface (?embed=1) the FRAMABLE
+// platform headers are used instead (mirrors index.ts asFramable): a framing-
+// blocked error page renders as a BLANK iframe in Notion/Linear/Confluence, so
+// inside an embed the failure page itself must be framable to say what's wrong.
 func writePage(w http.ResponseWriter, r *http.Request, status int, cacheControl, body string, extra map[string]string) {
 	h := w.Header()
-	servehttp.ApplyHeaders(h, servehttp.PlatformSecurityHeaders())
+	if isEmbedRequested(r) {
+		servehttp.ApplyHeaders(h, servehttp.FramablePlatformSecurityHeaders())
+	} else {
+		servehttp.ApplyHeaders(h, servehttp.PlatformSecurityHeaders())
+	}
 	for k, v := range extra {
 		h.Set(k, v)
 	}
@@ -47,7 +55,13 @@ func (h *Handler) notFound(w http.ResponseWriter, r *http.Request, route *Route,
 			if err == nil {
 				defer body.Close()
 				hd := w.Header()
-				servehttp.ApplyHeaders(hd, servehttp.ContentSecurityHeaders())
+				// A custom 404 inside an embed must be framable like the embed
+				// itself (tenant CSP either way; see writePage on why).
+				if isEmbedRequested(r) {
+					servehttp.ApplyHeaders(hd, servehttp.FramableContentSecurityHeaders())
+				} else {
+					servehttp.ApplyHeaders(hd, servehttp.ContentSecurityHeaders())
+				}
 				hd.Set("Content-Type", entry.ContentType)
 				hd.Set("Cache-Control", cacheControl)
 				if gated {

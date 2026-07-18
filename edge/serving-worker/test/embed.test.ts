@@ -274,3 +274,64 @@ describe("serve() embed — gated placeholder", () => {
     expect(body).not.toContain("embed=1");
   });
 });
+
+// A framing-blocked response renders as a BLANK iframe in Notion/Linear/etc. —
+// so inside an embed, even the FAILURE pages must be framable to say what's
+// wrong (the serve() embed post-pass). Outside an embed they stay unframable.
+describe("serve() embed — failure pages are framable", () => {
+  function expectFramable(res: Response) {
+    expect(res.headers.get("X-Frame-Options")).toBeNull();
+    expect(res.headers.get("Content-Security-Policy")).toContain("frame-ancestors *");
+    expect(res.headers.get("Cross-Origin-Resource-Policy")).toBe("cross-origin");
+  }
+
+  it("unknown host: the 404 page is framable under ?embed=1", async () => {
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+    const res = await serveNoCache(embedReq(), env);
+    expect(res.status).toBe(404);
+    expectFramable(res);
+  });
+
+  it("unknown host WITHOUT embed stays unframable (control)", async () => {
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+    const res = await serveNoCache(new Request(`https://${HOST}/`, { method: "GET" }), env);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+    expect(res.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+  });
+
+  it("missing path within a public site: the 404 is framable under ?embed=1", async () => {
+    const env = envFor(
+      publicRoute(),
+      deploy({ "index.html": { body: HTML_BODY, content_type: "text/html; charset=utf-8" } }),
+    );
+    const res = await serveNoCache(embedReq("/nope.html?embed=1"), env);
+    expect(res.status).toBe(404);
+    expectFramable(res);
+  });
+
+  it("expired link: the 410 page is framable under ?embed=1", async () => {
+    const expired: RouteValue = {
+      ...publicRoute(),
+      schema_version: 2,
+      expires_at: "2020-01-01T00:00:00Z",
+    };
+    const env = envFor(
+      expired,
+      deploy({ "index.html": { body: HTML_BODY, content_type: "text/html; charset=utf-8" } }),
+    );
+    const res = await serveNoCache(embedReq(), env);
+    expect(res.status).toBe(410);
+    expectFramable(res);
+  });
+
+  it("unparsable route projection: the 500 page is framable under ?embed=1", async () => {
+    const env: Env = {
+      ROUTES: mockRoutes({ [routeKey(HOST)]: { schema_version: 999 } as unknown as RouteValue }),
+      BUCKET: mockBucket({}),
+    };
+    const res = await serveNoCache(embedReq(), env);
+    expect(res.status).toBe(500);
+    expectFramable(res);
+  });
+});
