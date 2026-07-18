@@ -146,26 +146,45 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 	// 1. Rebuild the conversation from the persisted transcript (resumable).
 	// This happens BEFORE the user message is enqueued below, so the in-memory
 	// list is exactly history + this turn's messages regardless of when the
-	// async writes land.
+	// async writes land. sanitizeHistory is a safety net: it drops any message
+	// run that would make the provider reject the conversation (an assistant
+	// tool_calls message with missing results, an orphan tool message), so one
+	// historically-corrupt row can't permanently brick the session.
 	history, err := r.loadHistory(ctx, t, sess.ID)
 	if err != nil {
 		return err
 	}
+	history = sanitizeHistory(history)
 
 	// 2. Start the async transcript writer and enqueue the user message.
-	// Persistence must never block or fail the conversation: the writer drains
-	// in the background (with retries) while the model streams, and the deferred
-	// Close waits for the backlog before the session claim above is released
-	// (defers are LIFO), so the next turn's loadHistory sees the full transcript.
-	tw := r.newTranscriptWriter(ctx, t, sess.ID)
+	// Persistence never blocks the model stream: the writer drains in the
+	// background while tokens flow. Its failure semantics are fail-stop — on the
+	// first permanently-failed write it cancels the turn (cancel below), the
+	// backlog is discarded so the persisted transcript stays a clean prefix, and
+	// the user is asked to send the message again. The Flush before publishing
+	// and the deferred Close (LIFO, before the claim release above) guarantee
+	// the claim is never released while writes are still in flight.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	tw := r.newTranscriptWriter(ctx, t, sess.ID, cancel)
 	defer tw.Close()
 	userMsg := openrouter.Message{Role: "user", Content: userText}
 	tw.Append(userMsg)
 
+	// persistFailed maps any error to the transcript failure when the writer is
+	// what actually stopped the turn (the cancel above surfaces as a generic
+	// context.Canceled inside the step that was running).
+	persistFailed := func(err error) error {
+		if terr := tw.Err(); terr != nil {
+			return fmt.Errorf("%w: %w", ErrTranscriptPersist, terr)
+		}
+		return err
+	}
+
 	// 3. Ensure a live, seeded sandbox for the session.
 	sb, err := r.ensureSandbox(ctx, t, &sess)
 	if err != nil {
-		return fmt.Errorf("sandbox: %w", err)
+		return persistFailed(fmt.Errorf("sandbox: %w", err))
 	}
 
 	messages := append([]openrouter.Message{{Role: "system", Content: r.systemPrompt()}}, history...)
@@ -174,19 +193,24 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 	tools := builderTools()
 	settings, err := r.Store.GetAISettings(ctx, t)
 	if err != nil {
-		return err
+		return persistFailed(err)
 	}
 	// Spend before this turn started; the running per-turn total is added to it so
 	// the cap is enforced immediately after each generation, not a full iteration
 	// late. periodStart is read once (stable for the turn).
 	priorSpent, err := r.Store.AISpendSince(ctx, t, r.periodStart(ctx, t))
 	if err != nil {
-		return err
+		return persistFailed(err)
 	}
 	var turnSpent float64
 
 	// 4. The tool-call loop.
 	for i := 0; i < r.maxIterations(); i++ {
+		// Stop before the next generation if persistence already failed: nothing
+		// generated past this point could be saved, so it is wasted spend.
+		if terr := tw.Err(); terr != nil {
+			return persistFailed(nil)
+		}
 		// Refuse the next generation if the org is already at/over its monthly cap,
 		// or if this single turn has hit its own ceiling (a runaway-loop backstop
 		// that applies even when there is no monthly cap, e.g. self-host unlimited).
@@ -196,7 +220,7 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 
 		result, genErr := r.streamOnce(ctx, sess.Model, messages, tools, emitFromCtx(ctx))
 		if genErr != nil {
-			return genErr
+			return persistFailed(genErr)
 		}
 
 		// Enqueue the assistant message for async persistence + record usage.
@@ -228,8 +252,62 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 		}
 	}
 
-	// 5. Export the result and deploy it as an AI draft version + preview.
+	// 5. The transcript must be durable before the turn can succeed: wait for
+	// the writer's backlog (near-instant when the database is healthy, since it
+	// drained concurrently with the generations above) and stop here if it
+	// failed, rather than publishing a draft for a conversation that was lost.
+	if err := tw.Flush(); err != nil {
+		return persistFailed(nil)
+	}
+
+	// 6. Export the result and deploy it as an AI draft version + preview.
 	return r.publishDraft(ctx, t, &sess, sb, previewTTL, contentURL, emitFromCtx(ctx))
+}
+
+// ErrTranscriptPersist marks a turn stopped because its transcript could not be
+// written to the database. The handler maps it to a user-facing "please try
+// sending your message again"; the persisted transcript stays a clean prefix of
+// the conversation (nothing after the failed write is stored).
+var ErrTranscriptPersist = errors.New("ai: transcript persistence failed")
+
+// sanitizeHistory drops message runs that would make the provider reject the
+// conversation: an assistant tool_calls message whose tool results are missing
+// (in part or full), and any tool message with no parent assistant tool_calls.
+// The transcript writer's fail-stop semantics should make such rows impossible
+// going forward; this is the load-time safety net so one bad historical row can
+// never permanently brick a session with provider 400s.
+func sanitizeHistory(msgs []openrouter.Message) []openrouter.Message {
+	out := make([]openrouter.Message, 0, len(msgs))
+	for i := 0; i < len(msgs); {
+		m := msgs[i]
+		switch {
+		case m.Role == "tool":
+			i++ // orphan tool result (its assistant message was lost): drop
+		case m.Role == "assistant" && len(m.ToolCalls) > 0:
+			// Keep the block only when every tool call has its result among the
+			// tool messages that follow.
+			want := make(map[string]bool, len(m.ToolCalls))
+			for _, c := range m.ToolCalls {
+				want[c.ID] = true
+			}
+			block := []openrouter.Message{m}
+			j := i + 1
+			for ; j < len(msgs) && msgs[j].Role == "tool"; j++ {
+				if want[msgs[j].ToolCallID] {
+					delete(want, msgs[j].ToolCallID)
+					block = append(block, msgs[j])
+				}
+			}
+			if len(want) == 0 {
+				out = append(out, block...)
+			}
+			i = j
+		default:
+			out = append(out, m)
+			i++
+		}
+	}
+	return out
 }
 
 // streamOnce runs one OpenRouter generation, forwarding token deltas to emit and
