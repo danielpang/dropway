@@ -33,27 +33,27 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    id: "ai-builder-usage-billing",
+    id: "embed-sites",
     date: "2026-07-18",
-    label: "Improved",
-    title: "Usage-based pricing for the AI builder",
+    label: "New",
+    title: "Embed sites anywhere",
     summary:
-      "The AI builder is charged per usage, at cost with no markup. Available on paid plans, your builds are metered as you go and billed to your account at the end of your billing cycle, so there is nothing to pay up front.",
+      "Drop any deployed site into Notion, Linear, or any page as an iframe. Open Share, copy the embed code, and paste it in. The site must be public for the embed to show its content.",
     changes: [
       {
-        id: "ai-builder-metered-usage",
-        title: "Pay only for what you build, at cost",
-        body: "Each build meters the model usage it takes to generate and revise your site, passed through at cost with no markup. There is no seat to buy: you are charged for the work you actually run.",
+        id: "embed-copy-code",
+        title: "Copy an embed code from Share",
+        body: "Every deployed site has a Share button. Open it, set the width and height you want, and copy a ready made iframe snippet. A live preview shows exactly how it will look before you paste it in.",
       },
       {
-        id: "ai-builder-billing-cycle",
-        title: "Billed at the end of your cycle",
-        body: "Metered usage is added to your account and settled with the rest of your bill at the end of your billing cycle. A note in the builder reminds you that usage is metered while you work.",
+        id: "embed-public-only",
+        title: "Public sites only",
+        body: "Embedding serves the site into a frame on other origins, so it only works when the site is public. If a site is private, visitors who are not signed in see a Sign in to view placeholder inside the embed, never the content.",
       },
       {
-        id: "ai-builder-paid-plans",
-        title: "Available on paid plans",
-        body: "The AI builder is included on paid plans, which already have a card on file, so metered usage lands on your regular invoice. Free plans can upgrade to turn it on.",
+        id: "embed-remove-badge",
+        title: "Remove the badge on paid plans",
+        body: "Embeds carry a small Powered by Dropway badge. Pro plans and above can toggle it off, and the entitlement is enforced on our servers so it stays off wherever the site is framed.",
       },
     ],
   },
@@ -79,6 +79,11 @@ export const CHANGELOG: ChangelogEntry[] = [
         id: "ai-builder-models",
         title: "Pick your model",
         body: "Choose the model that drives a build from the model picker. Requests are proxied through the dashboard so your session, not an API key, authorizes the work.",
+      },
+      {
+        id: "ai-builder-metered-usage",
+        title: "Usage-based pricing",
+        body: "The builder is charged per usage, at cost with no markup, on paid plans. Your builds are metered as you go and settled with the rest of your bill at the end of your billing cycle, so there is nothing to pay up front, and a note in the builder reminds you that usage is metered while you work.",
       },
     ],
   },
