@@ -63,7 +63,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     label: "New",
     title: "AI website builder and skills library",
     summary:
-      "Build sites from prompts and share skills across your org. Create or evolve a site with the AI builder, then publish it instantly, and drag skills into a shared library where teammates and AI tools can find and use them.",
+      "Create or evolve a site with the AI builder, then publish it instantly. Drag skills into a shared library where teammates and AI tools can find and use them.",
     changes: [
       {
         id: "ai-builder-chat",
