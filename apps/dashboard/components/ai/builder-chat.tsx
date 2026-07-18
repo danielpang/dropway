@@ -129,6 +129,31 @@ export function BuilderChat({
     }
   }, [input, running, ensureSession]);
 
+  // Switching the model. The builder binds a model to a session for the session's
+  // whole life (the message endpoint always runs on the session's model), so once
+  // a conversation is underway a switch can't apply retroactively. Instead we start
+  // a fresh session with the new model: clear the transcript + preview and drop the
+  // session id so the next send creates a new one. The already-published live site
+  // is untouched (only the unpublished preview is cleared).
+  const handleModelChange = useCallback(
+    (next: string) => {
+      if (next === model || running) return;
+      setModel(next);
+      if (sessionId === null) return;
+      setSessionId(null);
+      setDraft(null);
+      setError(null);
+      const label = friendlyModelName(models.find((m) => m.id === next)?.name ?? next);
+      setMessages([
+        {
+          role: "status",
+          text: `Started a new conversation with ${label}. The new model applies to your next message.`,
+        },
+      ]);
+    },
+    [model, running, sessionId, models],
+  );
+
   const publish = useCallback(async () => {
     if (!draft) return;
     setPublishing(true);
@@ -159,8 +184,8 @@ export function BuilderChat({
           <ModelPicker
             models={models}
             value={model}
-            onChange={setModel}
-            disabled={running || sessionId !== null}
+            onChange={handleModelChange}
+            disabled={running}
           />
         </div>
 
@@ -394,6 +419,14 @@ function previewLifetimeCopy(expiresAt: string): string {
   if (days === 1) return "This preview link is live for about a day.";
   const hours = Math.max(1, Math.round(remainingMs / (60 * 60 * 1000)));
   return `This preview link is live for about ${hours} hour${hours === 1 ? "" : "s"}.`;
+}
+
+// friendlyModelName strips the "Provider: " prefix off a catalog name so status
+// copy reads "Claude Opus 4" rather than "Anthropic: Claude Opus 4". Falls back to
+// the raw value (which may be a model id) when there's no prefix.
+function friendlyModelName(name: string): string {
+  const colon = name.indexOf(": ");
+  return colon === -1 ? name : name.slice(colon + 2);
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {

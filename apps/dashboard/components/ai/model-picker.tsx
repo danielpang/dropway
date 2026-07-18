@@ -42,14 +42,17 @@ export function ModelPicker({ models, value, onChange, disabled }: ModelPickerPr
   // `groups` drives rendering (a provider header before its models).
   const { groups, flat } = useMemo(() => filterAndGroup(models, query), [models, query]);
 
-  // Close on outside click.
+  // Close on outside click. Listen for `pointerdown` (not `mousedown`) so a tap on
+  // a touch device closes the popover too — iOS Safari doesn't reliably synthesize
+  // `mousedown` for taps on non-interactive elements, so a mousedown-only listener
+  // leaves the popover stuck open after an outside tap.
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("pointerdown", onDoc);
+    return () => document.removeEventListener("pointerdown", onDoc);
   }, [open]);
 
   // Focus the search + reset state when opening.

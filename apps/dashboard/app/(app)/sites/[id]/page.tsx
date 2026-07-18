@@ -183,23 +183,26 @@ export default async function SiteDetailPage({
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex flex-wrap items-center gap-2 border-y border-border py-3">
-        <Button asChild size="sm">
+      {/* Actions. On mobile the buttons are laid out on a tidy grid (primary full
+          width, secondary actions two-up) instead of wrapping left-aligned; from
+          sm+ they collapse back to a single row with the primary on the left and
+          the secondary actions pushed right. */}
+      <div className="flex flex-col gap-2 border-y border-border py-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <Button asChild size="sm" className="w-full sm:w-auto">
           <Link href={`/sites/${id}/builder`}>
             <Sparkles aria-hidden />
             Build with AI
           </Link>
         </Button>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Button asChild variant="outline" size="sm">
+        <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:items-center">
+          <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
             <Link href={`/sites/${id}/settings`}>
               <Settings aria-hidden />
               Access
             </Link>
           </Button>
           {customDomainsEnabled && (
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
               <Link href={domainsHref}>
                 <Link2 aria-hidden />
                 Domains
@@ -212,8 +215,13 @@ export default async function SiteDetailPage({
             isPrivate={site.access_mode !== "public"}
             badgeRemovable={badgeRemovable}
             disabled={!isLive}
+            triggerClassName="w-full sm:w-auto"
           />
-          <RollbackDialog siteId={site.id ?? id} versions={versions} />
+          <RollbackDialog
+            siteId={site.id ?? id}
+            versions={versions}
+            triggerClassName="w-full sm:w-auto"
+          />
         </div>
       </div>
 
