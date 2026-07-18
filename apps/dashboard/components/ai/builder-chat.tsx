@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ExternalLink,
+  Info,
   Loader2,
   Monitor,
   RefreshCw,
@@ -230,6 +231,15 @@ export function BuilderChat({
             <Send className="h-4 w-4" />
           </Button>
         </form>
+
+        {/* Usage note: the builder meters model usage and bills it after the fact,
+            so the cost of a build isn't obvious mid-conversation. Keep it a quiet,
+            always-visible line rather than a dismissable banner. */}
+        <p className="flex items-center gap-1.5 border-t px-4 py-2 text-[0.7rem] leading-relaxed text-muted-foreground">
+          <Info className="h-3 w-3 shrink-0" aria-hidden />
+          AI builder usage is metered and billed to your account at the end of
+          your billing cycle.
+        </p>
       </div>
 
       {/* Preview column */}

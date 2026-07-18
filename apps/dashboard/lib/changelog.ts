@@ -33,6 +33,26 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "ai-builder-usage-billing",
+    date: "2026-07-18",
+    label: "Improved",
+    title: "Usage-based pricing for the AI builder",
+    summary:
+      "The AI builder is charged per usage. Your builds are metered as you go and billed to your account at the end of your billing cycle, so there is nothing to pay up front and nothing to enable.",
+    changes: [
+      {
+        id: "ai-builder-metered-usage",
+        title: "Pay only for what you build",
+        body: "Each build meters the model usage it takes to generate and revise your site. There is no flat fee and no seat to buy: you are charged for the work you actually run.",
+      },
+      {
+        id: "ai-builder-billing-cycle",
+        title: "Billed at the end of your cycle",
+        body: "Metered usage is added to your account and settled with the rest of your bill at the end of your billing cycle. A note in the builder reminds you that usage is metered while you work.",
+      },
+    ],
+  },
+  {
     id: "ai-website-builder",
     date: "2026-07-09",
     label: "New",
