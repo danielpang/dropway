@@ -281,3 +281,114 @@ export async function captureDbCapacityIssue(input: {
     },
   });
 }
+
+// OAuth error codes that indicate a BROKEN handshake (a misconfigured client, a
+// server/config bug, a scope/redirect mismatch) rather than an ordinary user
+// decision. Only these are raised to Error Tracking as alertable issues; the rest
+// (a user clicking "Deny" → access_denied, a not-yet-authenticated authorize →
+// login_required) are still recorded as `oauth_error` events for funnel analysis
+// but must NOT page anyone — they're expected, not failures.
+const ALERTABLE_OAUTH_ERRORS = new Set([
+  "invalid_scope",
+  "invalid_client",
+  "invalid_redirect",
+  "invalid_request",
+  "unsupported_response_type",
+  "unauthorized_client",
+  "invalid_grant",
+  "server_error",
+]);
+
+/**
+ * An OAuth 2.1 / MCP-connect authorization attempt failed at the provider
+ * endpoints (Dynamic Client Registration, /authorize, /token). These are the
+ * errors that BLOCK an AI client (Claude, Cursor, …) or the CLI from connecting —
+ * e.g. `invalid_scope`, `invalid_client`, `invalid_redirect` — and, unlike a
+ * rejected login, they never surface as a normal app error the user or a server
+ * action sees: an /authorize failure is a `?error=` REDIRECT back to the client,
+ * and a register/token failure is a 4xx OAuth JSON body. So without this they were
+ * invisible — exactly why the `invalid_scope: offline_access` connect regression
+ * had no telemetry.
+ *
+ * We do two things: record an `oauth_error` event (queryable — rate by error code /
+ * endpoint / client) AND, for a connection-breaking code (ALERTABLE_OAUTH_ERRORS),
+ * raise it to Error Tracking so a spike is alertable, not just a chart. No user is
+ * authenticated at this point, so it's attributed to the system distinct_id unless
+ * a session is known; client_id / scope / resource ride along as properties.
+ *
+ * Best-effort and self-swallowing: telemetry must never affect the auth response.
+ */
+export async function captureOAuthError(input: {
+  /** The OAuth endpoint leaf that produced the error: "authorize" | "register" | "token". */
+  endpoint: string;
+  /** The OAuth error code, e.g. "invalid_scope", "invalid_client", "access_denied". */
+  error: string;
+  /** The human-readable error_description, when the provider supplied one. */
+  errorDescription?: string | null;
+  /** HTTP status of the failing response (302 for a redirect error, 4xx for JSON). */
+  status?: number;
+  /** The requesting client_id, when known. */
+  clientId?: string | null;
+  /** The requested scope string (the offending scope for invalid_scope), when known. */
+  scope?: string | null;
+  /** The RFC 8707 resource the token was for (which server), when known. */
+  resource?: string | null;
+  /** Acting user, when a session exists; defaults to the system distinct_id. */
+  distinctId?: string | null;
+}): Promise<void> {
+  const properties = {
+    oauth_endpoint: input.endpoint,
+    oauth_error: input.error,
+    oauth_error_description: input.errorDescription ?? undefined,
+    status: input.status,
+    client_id: input.clientId ?? undefined,
+    scope: input.scope ?? undefined,
+    resource: input.resource ?? undefined,
+  };
+  await captureServerEvent({
+    event: "oauth_error",
+    distinctId: input.distinctId || SYSTEM_DISTINCT_ID,
+    properties,
+  });
+  if (ALERTABLE_OAUTH_ERRORS.has(input.error)) {
+    // Raise the connection-breaking ones to Error Tracking too, so a broken-connect
+    // regression pages instead of merely trending. The message encodes endpoint +
+    // code so issues group by failure kind.
+    await captureServerException({
+      error: new Error(`oauth ${input.endpoint} failed: ${input.error}`),
+      distinctId: input.distinctId,
+      properties: { issue: "oauth_connect_error", ...properties },
+    });
+  }
+}
+
+/**
+ * The provider gracefully NARROWED a client's requested scope: it asked for one or
+ * more scopes we don't support, and rather than hard-failing the whole handshake
+ * with `invalid_scope` we dropped the unsupported ones and proceeded with the rest
+ * (OAuth 2.0 §3.3 permits partially ignoring requested scope). Recorded as an event
+ * — NOT an exception: this is the intended graceful path, not a failure. But it's
+ * worth seeing: a client repeatedly asking for a scope we drop is a sign we should
+ * either add that scope or fix the client, and the trend is the early warning.
+ */
+export async function captureOAuthScopeDropped(input: {
+  /** The OAuth endpoint leaf: "authorize" | "register" | "token". */
+  endpoint: string;
+  /** The scopes we dropped (unsupported). */
+  dropped: string[];
+  /** The scopes we kept (supported) and proceeded with. */
+  kept: string[];
+  /** The requesting client_id, when known. */
+  clientId?: string | null;
+}): Promise<void> {
+  await captureServerEvent({
+    event: "oauth_scope_dropped",
+    distinctId: SYSTEM_DISTINCT_ID,
+    properties: {
+      oauth_endpoint: input.endpoint,
+      dropped_scopes: input.dropped.join(" "),
+      kept_scopes: input.kept.join(" "),
+      client_id: input.clientId ?? undefined,
+    },
+  });
+}

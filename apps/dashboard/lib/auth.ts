@@ -158,6 +158,20 @@ async function firstOrgId(userId: string): Promise<string | undefined> {
   }
 }
 
+// The scopes the OAuth provider supports. Single source of truth: the provider's
+// `scopes` option below (what it will register/mint) AND the scope-narrowing hook
+// (what it keeps vs. drops) both read this, so they can never drift. Keeps the OIDC
+// defaults (openid/profile/email — "openid" is required to stay a valid OIDC
+// provider) plus offline_access (refresh tokens) and the custom "mcp" scope the MCP
+// server advertises in its RFC 9728 metadata.
+const SUPPORTED_SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+  "mcp",
+] as const;
+
 export const auth = betterAuth({
   appName: "Dropway",
   baseURL: betterAuthUrl(),
@@ -256,20 +270,148 @@ export const auth = betterAuth({
     },
   },
 
-  // Record a `sign_in_failed` / `sign_up_failed` event for every auth attempt that
-  // errors out. `hooks.after` runs EVEN WHEN THE ENDPOINT THROWS: Better Auth's
-  // dispatch catches the APIError into `ctx.context.returned` before after-hooks
-  // run, so a rejected login (401 bad credentials, 400 validation, 403 unverified
-  // email, 500 server error) or a rejected signup (422 email already in use, 400
-  // weak password, 500) is observable here with its HTTP status. Scoped to the
-  // interactive /sign-in/* and /sign-up/* endpoints and emits ONLY on an APIError:
-  // it never double-counts the successes already captured at session creation
-  // (sign_in_succeeded) or user creation (user_signed_up). Pure observation: it
-  // returns nothing, so the response is untouched. Analytics is lazily imported +
-  // self-swallowing so telemetry can't block or break auth.
+  // Auth request hooks. `hooks.after` runs EVEN WHEN THE ENDPOINT THROWS: Better
+  // Auth's dispatch catches the APIError into `ctx.context.returned` before
+  // after-hooks run, so a rejected request is observable here with its HTTP status.
+  // Three jobs, all lazily-imported + self-swallowing so telemetry/observation can
+  // never block or break auth:
+  //   - before: gracefully narrow an OAuth client's requested scope (see below).
+  //   - after (oauth):  emit an `oauth_error` on a failed /authorize|/register|/token
+  //                     so a broken MCP/CLI connect handshake is visible.
+  //   - after (signin): emit `sign_in_failed` / `sign_up_failed` on a rejected login
+  //                     (401 bad credentials, 400 validation, 403 unverified email,
+  //                     500) or signup (422 email in use, 400 weak password, 500).
+  //                     Emits ONLY on an APIError, so it never double-counts the
+  //                     successes already captured at session/user creation.
   hooks: {
+    // BEFORE: gracefully narrow a client's requested `scope` to the scopes we
+    // support, dropping unsupported ones instead of hard-failing the whole
+    // handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
+    // partially ignore requested scope and grant a subset, and narrowing only ever
+    // REDUCES privilege, so it's the safe direction: a client that tacks on a scope
+    // we don't offer still connects (with less), rather than dead-ending. Runs
+    // before the provider's own scope validation so the request it sees is already
+    // clean. Scoped to the scope-bearing OAuth endpoints; scope lives in the query
+    // for GET /authorize and in the body for POST /register + /token.
+    //
+    // Guardrails: we narrow ONLY when at least one supported scope remains. If EVERY
+    // requested scope is unsupported we leave the request untouched so the provider
+    // returns its normal invalid_scope — rewriting to an empty scope would instead
+    // let it fall back to a DEFAULT grant (granting MORE than asked) or mint a
+    // useless empty token. The whole body is guarded so a bug here can never throw
+    // into (and break) the auth path — on any error we proceed unmodified.
+    before: createAuthMiddleware(async (ctx) => {
+      try {
+        const path = ctx.path;
+        if (path !== "/oauth2/authorize" && path !== "/oauth2/register" && path !== "/oauth2/token") {
+          return;
+        }
+        const inQuery = path === "/oauth2/authorize";
+        const source = (inQuery ? ctx.query : ctx.body) as
+          | Record<string, unknown>
+          | undefined;
+        const rawScope = source?.scope;
+        if (typeof rawScope !== "string" || rawScope.trim() === "") return;
+        const requested = rawScope.split(" ").filter(Boolean);
+        const supported = new Set<string>(SUPPORTED_SCOPES);
+        const kept = requested.filter((s) => supported.has(s));
+        const dropped = requested.filter((s) => !supported.has(s));
+        // Nothing unsupported (common case), or NOTHING supported (leave the normal
+        // invalid_scope to stand) → don't touch the request.
+        if (dropped.length === 0 || kept.length === 0) return;
+        const filtered = kept.join(" ");
+        // Fire-and-forget: record that we narrowed, so a client repeatedly asking
+        // for a scope we drop is visible. Never blocks or breaks the auth path.
+        void (async () => {
+          try {
+            const clientId = source?.client_id;
+            const analytics = await import("@/lib/analytics-server");
+            await analytics.captureOAuthScopeDropped({
+              endpoint: path.slice("/oauth2/".length),
+              dropped,
+              kept,
+              clientId: typeof clientId === "string" ? clientId : null,
+            });
+          } catch {
+            // telemetry is best-effort
+          }
+        })();
+        // Rewrite only `scope`; the merge (defuReplaceArrays) keeps every other
+        // query/body field. Returning a `context` patch is how a before-hook edits
+        // the request the endpoint then handles.
+        return inQuery
+          ? { context: { query: { ...source, scope: filtered } } }
+          : { context: { body: { ...source, scope: filtered } } };
+      } catch {
+        // A narrowing bug must never break auth: proceed with the request unmodified.
+        return;
+      }
+    }),
     after: createAuthMiddleware(async (ctx) => {
       const path = ctx.path;
+      // OAuth 2.1 / MCP-connect failures at the provider endpoints. These block a
+      // client (AI tool or CLI) from connecting and, unlike a rejected login,
+      // surface as an OAuth error rather than a thrown app error: an /authorize
+      // failure comes back as a `?error=` REDIRECT (an APIError with status "FOUND"
+      // whose `location` carries the error), while /register + /token failures are
+      // 4xx OAuth JSON (an APIError with body.error). Capture BOTH so a broken
+      // handshake (e.g. the invalid_scope: offline_access regression) is observable.
+      // Emit ONLY on a real error: a SUCCESSFUL authorize is ALSO a FOUND redirect
+      // (to login / consent / the callback code), so isAPIError alone isn't enough —
+      // we require an `error` param (redirect) or a 4xx (JSON).
+      if (path?.startsWith("/oauth2/")) {
+        const returned: unknown = (ctx.context as { returned?: unknown }).returned;
+        if (!isAPIError(returned)) return;
+        try {
+          const endpoint = path.slice("/oauth2/".length).split("/")[0] || path;
+          const query = ctx.query as Record<string, unknown> | undefined;
+          const body = ctx.body as Record<string, unknown> | undefined;
+          const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+          let error: string | undefined;
+          let errorDescription: string | undefined;
+          if (returned.status === "FOUND") {
+            // Redirect: the OAuth error (if any) is in the location's query string.
+            // Location may be relative (login page) or absolute (client callback); a
+            // base makes relative URLs parse. No `error` param ⇒ a SUCCESS redirect
+            // ⇒ nothing to capture.
+            const loc = (returned.headers as Headers | undefined)?.get?.("location");
+            if (!loc) return;
+            let parsed: URL;
+            try {
+              parsed = new URL(loc, "http://localhost");
+            } catch {
+              return;
+            }
+            error = parsed.searchParams.get("error") ?? undefined;
+            if (!error) return;
+            errorDescription =
+              parsed.searchParams.get("error_description") ?? undefined;
+          } else if (returned.statusCode >= 400) {
+            const errBody = returned.body as
+              | { error?: unknown; error_description?: unknown; message?: unknown; code?: unknown }
+              | undefined;
+            error = str(errBody?.error) ?? str(errBody?.code);
+            if (!error) return;
+            errorDescription =
+              str(errBody?.error_description) ?? str(errBody?.message);
+          } else {
+            return; // 2xx / non-error
+          }
+          const analytics = await import("@/lib/analytics-server");
+          await analytics.captureOAuthError({
+            endpoint,
+            error,
+            errorDescription,
+            status: returned.statusCode,
+            clientId: str(query?.client_id) ?? str(body?.client_id) ?? null,
+            scope: str(query?.scope) ?? str(body?.scope) ?? null,
+            resource: str(query?.resource) ?? str(body?.resource) ?? null,
+          });
+        } catch {
+          // Telemetry must never break the auth path.
+        }
+        return;
+      }
       const isSignIn = path?.startsWith("/sign-in/");
       const isSignUp = path?.startsWith("/sign-up/");
       if (!path || (!isSignIn && !isSignUp)) return;
@@ -580,7 +722,7 @@ export const auth = betterAuth({
       // metadata, so MCP clients request scope=mcp; it must be a registered scope or
       // the authorize step 400s with invalid_scope. DCR clients inherit this list as
       // their allowed scopes (clientRegistrationAllowedScopes defaults to it).
-      scopes: ["openid", "profile", "email", "offline_access", "mcp"],
+      scopes: [...SUPPORTED_SCOPES],
       // Dynamic Client Registration (RFC 7591) is REQUIRED for the MCP "paste a
       // URL" UX: an MCP client (Claude/Cursor/Codex) self-registers a client_id
       // anonymously the first time it hits the server, the user has no client
