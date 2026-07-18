@@ -13,12 +13,28 @@
 // connect regression) had ZERO test coverage: nothing exercised DCR → authorize.
 // The scope cases below lock in both the fix (offline_access is a valid MCP scope)
 // and the graceful-narrowing behavior (an unsupported scope is dropped, not fatal).
+//
+// Rate limits shape the structure here: unauthenticated DCR is capped at 5/hour/IP
+// (lib/oauth-ratelimit.ts), and the e2e dashboard runs in production mode where the
+// limit is live. So the two clients these tests need are registered ONCE in
+// beforeAll and shared — re-registering per test would exhaust the budget (429).
 
 import { createHash, randomBytes } from "node:crypto";
 
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import {
+  expect,
+  request as playwrightRequest,
+  test,
+  type APIRequestContext,
+} from "@playwright/test";
 
 const REDIRECT_URI = "http://localhost:9999/callback";
+const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
+
+interface RegisteredClient {
+  client_id: string;
+  scope?: string;
+}
 
 /** A fresh PKCE challenge (public clients require S256). */
 function pkceChallenge(): string {
@@ -30,7 +46,7 @@ function pkceChallenge(): string {
 async function registerClient(
   request: APIRequestContext,
   scope?: string,
-): Promise<{ client_id: string; scope?: string }> {
+): Promise<RegisteredClient> {
   const res = await request.post("/api/auth/oauth2/register", {
     data: {
       client_name: "E2E OAuth Test Client",
@@ -41,7 +57,8 @@ async function registerClient(
       ...(scope ? { scope } : {}),
     },
   });
-  expect(res.status(), await res.text()).toBe(201);
+  // RFC 7591 says 201, but Better Auth returns 200 — assert success, not a code.
+  expect(res.ok(), await res.text()).toBeTruthy();
   return res.json();
 }
 
@@ -71,12 +88,36 @@ async function authorizeLocation(
   // No session in this context, so a VALID authorize redirects to the login page
   // and a REJECTED one redirects back to the client with ?error=... — either way
   // it's a 3xx we inspect rather than follow.
-  expect(res.status(), `expected a redirect, got ${res.status()}`).toBeGreaterThanOrEqual(300);
+  expect(
+    res.status(),
+    `expected a redirect, got ${res.status()}`,
+  ).toBeGreaterThanOrEqual(300);
   expect(res.status()).toBeLessThan(400);
   return res.headers()["location"] ?? "";
 }
 
 test.describe("OAuth 2.1 provider endpoints", () => {
+  // The two clients the scope tests need, registered ONCE (DCR is 5/hour/IP):
+  //  - `bothClient` asked for both supported scopes AND an unsupported one; its
+  //    stored scope proves narrowing, and it's reused for the authorize tests.
+  //  - `mcpOnlyClient` registered only "mcp", for the "can't exceed registration".
+  let apiContext: APIRequestContext;
+  let bothClient: RegisteredClient;
+  let mcpOnlyClient: RegisteredClient;
+
+  test.beforeAll(async () => {
+    apiContext = await playwrightRequest.newContext({ baseURL: BASE_URL });
+    bothClient = await registerClient(
+      apiContext,
+      "mcp offline_access urn:example:unsupported",
+    );
+    mcpOnlyClient = await registerClient(apiContext, "mcp");
+  });
+
+  test.afterAll(async () => {
+    await apiContext.dispose();
+  });
+
   test("authorization-server metadata advertises the endpoints and MCP scopes", async ({
     request,
   }) => {
@@ -94,15 +135,16 @@ test.describe("OAuth 2.1 provider endpoints", () => {
     );
   });
 
-  test("DCR narrows an unsupported scope instead of failing registration", async ({
-    request,
-  }) => {
-    // A client asking for one scope we support and one we don't must still register
-    // (the graceful-narrowing behavior), keeping only the supported scope.
-    const client = await registerClient(request, "mcp urn:example:unsupported");
-    expect(client.client_id).toBeTruthy();
-    expect(client.scope ?? "").toContain("mcp");
-    expect(client.scope ?? "").not.toContain("urn:example:unsupported");
+  test("DCR narrows an unsupported scope instead of failing registration", async () => {
+    // bothClient asked for "mcp offline_access urn:example:unsupported"; the
+    // unsupported scope must be dropped (graceful narrowing) rather than 400-ing
+    // the whole registration, leaving only the two supported scopes.
+    const scope = bothClient.scope ?? "";
+    expect(bothClient.client_id).toBeTruthy();
+    expect(scope.split(" ")).toEqual(
+      expect.arrayContaining(["mcp", "offline_access"]),
+    );
+    expect(scope).not.toContain("urn:example:unsupported");
   });
 
   test("authorize accepts mcp + offline_access (offline_access connect regression)", async ({
@@ -110,8 +152,11 @@ test.describe("OAuth 2.1 provider endpoints", () => {
   }) => {
     // The exact scope combo Claude's connector requests. Registered for both, the
     // authorize step must NOT reject it — it should fall through to the login page.
-    const client = await registerClient(request, "mcp offline_access");
-    const location = await authorizeLocation(request, client.client_id, "mcp offline_access");
+    const location = await authorizeLocation(
+      request,
+      bothClient.client_id,
+      "mcp offline_access",
+    );
     expect(location).not.toContain("error=invalid_scope");
     expect(location).not.toContain(`${REDIRECT_URI}?error`);
   });
@@ -121,10 +166,9 @@ test.describe("OAuth 2.1 provider endpoints", () => {
   }) => {
     // Requesting a bogus scope on top of registered ones is narrowed away, so the
     // handshake proceeds (to login) rather than dead-ending with invalid_scope.
-    const client = await registerClient(request, "mcp offline_access");
     const location = await authorizeLocation(
       request,
-      client.client_id,
+      bothClient.client_id,
       "mcp offline_access urn:example:unsupported",
     );
     expect(location).not.toContain("error=invalid_scope");
@@ -134,12 +178,15 @@ test.describe("OAuth 2.1 provider endpoints", () => {
     request,
   }) => {
     // Narrowing drops UNSUPPORTED scopes; it must NOT let a client exceed what it
-    // registered. This client registered only "mcp", so requesting offline_access
+    // registered. mcpOnlyClient registered only "mcp", so requesting offline_access
     // (which IS a supported scope, hence not narrowed away) is correctly rejected —
     // which is precisely why the MCP resource metadata must advertise offline_access
     // up front, so real clients register for it.
-    const client = await registerClient(request, "mcp");
-    const location = await authorizeLocation(request, client.client_id, "mcp offline_access");
+    const location = await authorizeLocation(
+      request,
+      mcpOnlyClient.client_id,
+      "mcp offline_access",
+    );
     expect(location).toContain("error=invalid_scope");
   });
 });
