@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 	"unicode/utf8"
@@ -53,6 +54,10 @@ type Runner struct {
 	// event (pass-through cost + card fee). Nil in OSS (self-host is BYO key, no
 	// pass-through billing).
 	UsageReporter UsageReporter
+	// Logger receives the async transcript writer's warnings/errors (writes
+	// happen off the request path, so there is no request logger to use).
+	// Nil → slog.Default().
+	Logger *slog.Logger
 }
 
 // UsageReporter forwards a recorded AI generation's cost to a billing meter. The
@@ -66,6 +71,13 @@ func (r *Runner) systemPrompt() string {
 		return r.SystemPrompt
 	}
 	return defaultSystemPrompt
+}
+
+func (r *Runner) logger() *slog.Logger {
+	if r.Logger != nil {
+		return r.Logger
+	}
+	return slog.Default()
 }
 
 func (r *Runner) maxIterations() int {
@@ -131,23 +143,33 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 		_ = r.Store.SetAISessionStatus(releaseCtx, t, sess.ID, "active")
 	}()
 
-	// 1. Persist the user message.
-	if _, err := r.appendMessage(ctx, t, sess.ID, openrouter.Message{Role: "user", Content: userText}); err != nil {
+	// 1. Rebuild the conversation from the persisted transcript (resumable).
+	// This happens BEFORE the user message is enqueued below, so the in-memory
+	// list is exactly history + this turn's messages regardless of when the
+	// async writes land.
+	history, err := r.loadHistory(ctx, t, sess.ID)
+	if err != nil {
 		return err
 	}
 
-	// 2. Ensure a live, seeded sandbox for the session.
+	// 2. Start the async transcript writer and enqueue the user message.
+	// Persistence must never block or fail the conversation: the writer drains
+	// in the background (with retries) while the model streams, and the deferred
+	// Close waits for the backlog before the session claim above is released
+	// (defers are LIFO), so the next turn's loadHistory sees the full transcript.
+	tw := r.newTranscriptWriter(ctx, t, sess.ID)
+	defer tw.Close()
+	userMsg := openrouter.Message{Role: "user", Content: userText}
+	tw.Append(userMsg)
+
+	// 3. Ensure a live, seeded sandbox for the session.
 	sb, err := r.ensureSandbox(ctx, t, &sess)
 	if err != nil {
 		return fmt.Errorf("sandbox: %w", err)
 	}
 
-	// 3. Rebuild the conversation from the persisted transcript (resumable).
-	history, err := r.loadHistory(ctx, t, sess.ID)
-	if err != nil {
-		return err
-	}
 	messages := append([]openrouter.Message{{Role: "system", Content: r.systemPrompt()}}, history...)
+	messages = append(messages, userMsg)
 
 	tools := builderTools()
 	settings, err := r.Store.GetAISettings(ctx, t)
@@ -177,10 +199,8 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 			return genErr
 		}
 
-		// Persist the assistant message + record usage.
-		if _, err := r.appendMessage(ctx, t, sess.ID, result.Message); err != nil {
-			return err
-		}
+		// Enqueue the assistant message for async persistence + record usage.
+		tw.Append(result.Message)
 		if result.Usage != nil {
 			// Only count the cost toward the per-turn/cap total when the ledger
 			// GENUINELY recorded it (recordUsage dedupes on the generation id), so a
@@ -203,9 +223,7 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 			emit(Event{Type: "tool_finished", Tool: call.Function.Name, ToolResult: truncate(out, 4000)})
 
 			toolMsg := openrouter.Message{Role: "tool", ToolCallID: call.ID, Name: call.Function.Name, Content: out}
-			if _, err := r.appendMessage(ctx, t, sess.ID, toolMsg); err != nil {
-				return err
-			}
+			tw.Append(toolMsg)
 			messages = append(messages, toolMsg)
 		}
 	}
@@ -389,15 +407,6 @@ func (r *Runner) recordUsage(ctx context.Context, t store.Tenant, sessionID, mod
 		_ = r.UsageReporter.ReportUsage(ctx, t.OrgID, genID, u.Cost)
 	}
 	return recorded
-}
-
-// appendMessage persists one OpenRouter message as an ai_messages row.
-func (r *Runner) appendMessage(ctx context.Context, t store.Tenant, sessionID string, m openrouter.Message) (store.AIMessage, error) {
-	body, err := json.Marshal(m)
-	if err != nil {
-		return store.AIMessage{}, err
-	}
-	return r.Store.AppendAIMessage(ctx, t, sessionID, m.Role, body)
 }
 
 // loadHistory rebuilds the OpenRouter message list from the persisted transcript.
