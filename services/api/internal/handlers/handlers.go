@@ -128,7 +128,7 @@ type API struct {
 	AIGate   AIGate         // plan/card gate (cloud); nil → allow all
 	// AIDefaultModel is the model used when a session omits one.
 	AIDefaultModel string
-	// AIMaxConcurrent bounds active AI sessions per org (0 → default 2).
+	// AIMaxConcurrent bounds active AI sessions per site (0 → default 2).
 	AIMaxConcurrent int
 	// AISpendPeriodStart returns the start of the window the AI spend cap + the
 	// "usage this month" display are computed over. Nil → the calendar month; the

@@ -20,7 +20,10 @@ import (
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
-// defaultAIMaxConcurrent bounds active AI sessions per org when unset.
+// defaultAIMaxConcurrent bounds active AI sessions per SITE when unset. It is
+// per-site (not per-org) so building on one site never blocks another; a site
+// normally has a single resumable session, so the natural limit is the number
+// of sites.
 const defaultAIMaxConcurrent = 2
 
 func (a *API) aiMaxConcurrent() int {
@@ -151,7 +154,7 @@ func (a *API) CreateAISession(w http.ResponseWriter, r *http.Request) {
 	sess, err := a.Store.StartAISession(r.Context(), t, siteID, model, baseVersionID, a.aiMaxConcurrent())
 	if err != nil {
 		if err == store.ErrAIConcurrencyLimit {
-			httpx.WriteError(w, fmt.Errorf("%w: too many active AI sessions; finish or close one first", httpx.ErrTooManyRequests))
+			httpx.WriteError(w, fmt.Errorf("%w: too many active AI sessions for this site; finish or close one first", httpx.ErrTooManyRequests))
 			return
 		}
 		writeStoreError(w, err)
