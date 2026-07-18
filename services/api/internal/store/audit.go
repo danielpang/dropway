@@ -119,7 +119,7 @@ func (s *Store) ListAudit(ctx context.Context, t Tenant, p ListAuditParams) ([]A
 
 	var out []AuditEntry
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListAuditLog(ctx, db.ListAuditLogParams{Limit: limit, Offset: offset})
+		rows, err := q.ListAuditLog(ctx, db.ListAuditLogParams{Limit: limit, Offset: offset, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}

@@ -45,7 +45,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 	t := Tenant{OrgID: orgID, UserID: orgID} // user id is unused by these reads; reuse org for a valid GUC
 	routes := map[string]projection.RouteValue{}
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListPublishedSitesForRebuild(ctx)
+		rows, err := q.ListPublishedSitesForRebuild(ctx, orgID)
 		if err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			// ListHostRoutesForSite runs under this org's RLS tenant context and
 			// returns only rows the site owns, so each host is owned by this org/site
 			// (the same global-registry defense-in-depth the old GetHostRoute gave us).
-			hostRoutes, err := q.ListHostRoutesForSite(ctx, r.SiteID)
+			hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: r.SiteID, OrgID: orgID})
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			// silently un-expire a shared link). Read it per site exactly as Publish does;
 			// a missing policy row means "no expiry".
 			var expiresAt string
-			if pol, perr := q.GetSiteAccessPolicy(ctx, r.SiteID); perr == nil {
+			if pol, perr := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: r.SiteID, OrgID: orgID}); perr == nil {
 				expiresAt = routeExpiry(r.AccessMode, accessPolicyFromDB(pol))
 			} else if !isNoRows(perr) {
 				return perr
@@ -86,7 +86,7 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 			// The attached, panel-enabled chat log (v4 chat_id) must survive a
 			// rebuild exactly like expiry/plan_tier — omitting it would silently
 			// strip the "How this was made" panel from every rebuilt route.
-			chatID, err := chatIDForSiteTx(ctx, q, r.SiteID)
+			chatID, err := chatIDForSiteTx(ctx, q, orgID, r.SiteID)
 			if err != nil {
 				return err
 			}
@@ -106,13 +106,13 @@ func (s *Store) CollectRoutesForOrg(ctx context.Context, orgID string) (map[stri
 		// them anyway, and the ops sweep purges the rows). This also covers
 		// previews of sites with NO live version (an AI-created site that has
 		// never been published), which the published-sites loop above misses.
-		previews, err := q.ListPreviewRoutesForRebuild(ctx)
+		previews, err := q.ListPreviewRoutesForRebuild(ctx, orgID)
 		if err != nil {
 			return err
 		}
 		for _, p := range previews {
 			var policyExpiry string
-			if pol, perr := q.GetSiteAccessPolicy(ctx, p.SiteID); perr == nil {
+			if pol, perr := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: p.SiteID, OrgID: orgID}); perr == nil {
 				policyExpiry = routeExpiry(p.AccessMode, accessPolicyFromDB(pol))
 			} else if !isNoRows(perr) {
 				return perr

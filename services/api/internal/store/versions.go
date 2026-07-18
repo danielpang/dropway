@@ -59,7 +59,7 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		// Re-derive the site (RLS scopes it to the org) — a miss means the site
 		// is absent or belongs to another tenant.
-		site, err := q.GetSite(ctx, p.SiteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: p.SiteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -74,6 +74,7 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 		if existing, err := q.GetSiteVersionByContentHash(ctx, db.GetSiteVersionByContentHashParams{
 			SiteID:      p.SiteID,
 			ContentHash: p.ContentHash,
+			OrgID:       t.OrgID,
 		}); err == nil {
 			out = versionFromDB(existing)
 			return nil
@@ -90,7 +91,7 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 			return err // *quota.ExceededError → 402; rolls back the whole deploy tx
 		}
 
-		nextNo, err := q.NextVersionNo(ctx, p.SiteID)
+		nextNo, err := q.NextVersionNo(ctx, db.NextVersionNoParams{SiteID: p.SiteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -234,7 +235,7 @@ type SiteStorage struct {
 func (s *Store) SiteStorageBytes(ctx context.Context, t Tenant, siteID string) (int64, error) {
 	var n int64
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		v, err := q.GetSiteStorageBytes(ctx, siteID)
+		v, err := q.GetSiteStorageBytes(ctx, db.GetSiteStorageBytesParams{ID: siteID, OrgID: t.OrgID})
 		n = v
 		return err
 	})
@@ -247,7 +248,7 @@ func (s *Store) SiteStorageBytes(ctx context.Context, t Tenant, siteID string) (
 func (s *Store) ListSiteStorage(ctx context.Context, t Tenant) ([]SiteStorage, error) {
 	var out []SiteStorage
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListSiteStorageForOrg(ctx)
+		rows, err := q.ListSiteStorageForOrg(ctx, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -281,7 +282,7 @@ func manifestPrefix(orgID, siteID string) string {
 func (s *Store) GetSiteVersion(ctx context.Context, t Tenant, id string) (SiteVersion, error) {
 	var out SiteVersion
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSiteVersion(ctx, id)
+		row, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -298,7 +299,7 @@ func (s *Store) GetSiteVersion(ctx context.Context, t Tenant, id string) (SiteVe
 func (s *Store) ListSiteVersions(ctx context.Context, t Tenant, siteID string) ([]SiteVersion, error) {
 	var out []SiteVersion
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListSiteVersions(ctx, siteID)
+		rows, err := q.ListSiteVersions(ctx, db.ListSiteVersionsParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -341,7 +342,7 @@ type PublishResult struct {
 func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string) (PublishResult, error) {
 	var res PublishResult
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -352,7 +353,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 			return ErrNotFound
 		}
 
-		ver, err := q.GetSiteVersion(ctx, versionID)
+		ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: versionID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -375,7 +376,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 			return err
 		}
 		host := projection.HostForSite(orgSlug, site.Slug)
-		hr, err := q.GetHostRoute(ctx, host)
+		hr, err := q.GetHostRoute(ctx, db.GetHostRouteParams{Host: host, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrHostTaken
@@ -390,6 +391,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		if err := q.SetCurrentVersion(ctx, db.SetCurrentVersionParams{
 			ID:               siteID,
 			CurrentVersionID: &vid,
+			OrgID:            t.OrgID,
 		}); err != nil {
 			return err
 		}
@@ -401,7 +403,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		// identity-gated modes enforce it at mint time (routeExpiry returns "" for
 		// them). A public site may have no policy row → treat as "no expiry".
 		var expiresAt string
-		if pol, err := q.GetSiteAccessPolicy(ctx, siteID); err == nil {
+		if pol, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: siteID, OrgID: t.OrgID}); err == nil {
 			expiresAt = routeExpiry(site.AccessMode, accessPolicyFromDB(pol))
 		} else if !isNoRows(err) {
 			return err
@@ -417,7 +419,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 
 		// The attached, panel-enabled chat log rides on every published route
 		// (v4 chat_id) so the Worker can inject the "How this was made" pill.
-		chatID, err := chatIDForSiteTx(ctx, q, siteID)
+		chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, siteID)
 		if err != nil {
 			return err
 		}
@@ -437,7 +439,7 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		// publish/rollback (parity with SetSiteAccess / the reconcile path; FIX 1).
 		// Preview rows are excluded: each pins its own draft version and must not be
 		// repointed at the published one.
-		hostRoutes, err := q.ListHostRoutesForSite(ctx, siteID)
+		hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -452,14 +454,14 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		// once a draft goes live, the whole draft-review surface is moot, so every
 		// pending preview host for the site is removed. Returns hosts for KV cleanup.
 		deleted, err := q.DeleteSitePreviewRoutesExcept(ctx, db.DeleteSitePreviewRoutesExceptParams{
-			SiteID: siteID, KeepVersionID: nil,
+			SiteID: siteID, KeepVersionID: nil, OrgID: t.OrgID,
 		})
 		if err != nil {
 			return err
 		}
 		res.DeletedPreviewHosts = deleted
 		if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
-			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{},
+			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{}, OrgID: t.OrgID,
 		}); err != nil {
 			return err
 		}

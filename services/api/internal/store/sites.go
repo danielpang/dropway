@@ -386,7 +386,7 @@ type HostRoute struct {
 func (s *Store) ListHostRoutesForSite(ctx context.Context, t Tenant, siteID string) ([]HostRoute, error) {
 	var out []HostRoute
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListHostRoutesForSite(ctx, siteID)
+		rows, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -412,7 +412,7 @@ func hostRouteFromDB(r db.AppHostRoute) HostRoute {
 func (s *Store) ListSites(ctx context.Context, t Tenant) ([]Site, error) {
 	var out []Site
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListSites(ctx)
+		rows, err := q.ListSites(ctx, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -444,7 +444,7 @@ type FeedSite struct {
 func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]FeedSite, error) {
 	var out []FeedSite
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListFeedSites(ctx, t.UserID)
+		rows, err := q.ListFeedSites(ctx, db.ListFeedSitesParams{UserID: t.UserID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -472,7 +472,7 @@ func (s *Store) ListFeedSites(ctx context.Context, t Tenant) ([]FeedSite, error)
 func (s *Store) SetSiteFeedVisible(ctx context.Context, t Tenant, siteID string, visible bool) (Site, error) {
 	var out Site
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.SetSiteFeedVisible(ctx, db.SetSiteFeedVisibleParams{ID: siteID, FeedVisible: visible})
+		row, err := q.SetSiteFeedVisible(ctx, db.SetSiteFeedVisibleParams{ID: siteID, FeedVisible: visible, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -497,6 +497,7 @@ func (s *Store) SetSiteFeedMeta(ctx context.Context, t Tenant, siteID, title, de
 			ID:          siteID,
 			Title:       pgtype.Text{String: title, Valid: title != ""},
 			Description: pgtype.Text{String: description, Valid: description != ""},
+			OrgID:       t.OrgID,
 		})
 		if err != nil {
 			if isNoRows(err) {
@@ -510,12 +511,12 @@ func (s *Store) SetSiteFeedMeta(ctx context.Context, t Tenant, siteID, title, de
 	return out, err
 }
 
-// GetSite returns one site by id (RLS makes other orgs' sites invisible → a miss
-// surfaces as ErrNotFound, never a cross-tenant leak).
+// GetSite returns one site by id (the explicit org_id predicate + RLS make other
+// orgs' sites invisible → a miss surfaces as ErrNotFound, never a cross-tenant leak).
 func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) {
 	var out Site
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSite(ctx, id)
+		row, err := q.GetSite(ctx, db.GetSiteParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound

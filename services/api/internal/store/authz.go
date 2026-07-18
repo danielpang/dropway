@@ -117,8 +117,9 @@ func (s *Store) AuthorizeMint(ctx context.Context, v MintViewer, host string) (M
 	}
 	q := db.New(tx)
 
-	// Load the policy to enforce expiry (and confirm the mode).
-	pol, err := q.GetSiteAccessPolicy(ctx, rh.SiteID)
+	// Load the policy to enforce expiry (and confirm the mode). Explicitly scoped
+	// to the RESOLVED site org (the tenant context switched to it above).
+	pol, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: rh.SiteID, OrgID: rh.OrgID})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return MintDecision{}, err
 	}
@@ -150,7 +151,7 @@ func (s *Store) AuthorizeMint(ctx context.Context, v MintViewer, host string) (M
 		}
 		email := normalizeEmail(v.Email)
 		entry, err := q.GetAllowlistEntryByEmail(ctx, db.GetAllowlistEntryByEmailParams{
-			SiteID: rh.SiteID, Email: email,
+			SiteID: rh.SiteID, Email: email, OrgID: rh.OrgID,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -171,7 +172,7 @@ func (s *Store) AuthorizeMint(ctx context.Context, v MintViewer, host string) (M
 		// Claim the grant on first match (idempotent: keeps the original claimant).
 		uid := v.UserID
 		if err := q.ClaimAllowlistEntry(ctx, db.ClaimAllowlistEntryParams{
-			ID: entry.ID, ClaimedByUserID: &uid,
+			ID: entry.ID, ClaimedByUserID: &uid, OrgID: rh.OrgID,
 		}); err != nil {
 			return MintDecision{}, err
 		}
@@ -245,7 +246,7 @@ func (s *Store) ResolveForPassword(ctx context.Context, host string) (PasswordDe
 		return PasswordDecision{}, "", err
 	}
 	q := db.New(tx)
-	pol, err := q.GetSiteAccessPolicy(ctx, rh.SiteID)
+	pol, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: rh.SiteID, OrgID: rh.OrgID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PasswordDecision{}, "", ErrNoPolicy

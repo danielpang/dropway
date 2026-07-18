@@ -120,18 +120,18 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 		}
 
 		// --- Disabling: downgrade public sites + drop external grants. ---
-		publicSites, err := q.ListPublicSitesForOrg(ctx)
+		publicSites, err := q.ListPublicSitesForOrg(ctx, t.OrgID)
 		if err != nil {
 			return err
 		}
 		for _, site := range publicSites {
 			if err := q.SetSiteAccessMode(ctx, db.SetSiteAccessModeParams{
-				ID: site.ID, AccessMode: projection.AccessOrgOnly,
+				ID: site.ID, AccessMode: projection.AccessOrgOnly, OrgID: t.OrgID,
 			}); err != nil {
 				return err
 			}
 			// Mirror the mode into the policy row if one exists (keep them in sync).
-			if _, err := q.GetSiteAccessPolicy(ctx, site.ID); err == nil {
+			if _, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: site.ID, OrgID: t.OrgID}); err == nil {
 				if _, err := q.UpsertSiteAccessPolicy(ctx, db.UpsertSiteAccessPolicyParams{
 					SiteID: site.ID, OrgID: t.OrgID, Mode: projection.AccessOrgOnly,
 				}); err != nil {
@@ -145,13 +145,13 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 			// a custom host left at 'public' keeps serving publicly after the policy
 			// tightened (FIX 1). Preview hosts downgrade too (keeping their pinned
 			// version + deadline) — they exist even for sites with no live version.
-			hostRoutes, err := q.ListHostRoutesForSite(ctx, site.ID)
+			hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: site.ID, OrgID: t.OrgID})
 			if err != nil {
 				return err
 			}
 			// The downgrade must not strip the attached chat log (v4 chat_id)
 			// from the live routes; previews stay chat-less (publish parity).
-			chatID, err := chatIDForSiteTx(ctx, q, site.ID)
+			chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, site.ID)
 			if err != nil {
 				return err
 			}
@@ -188,7 +188,7 @@ func (s *Store) SetAllowExternalSharing(ctx context.Context, t Tenant, enabled b
 		}
 
 		// Revoke every external-email allowlist grant in the org.
-		if err := q.DeleteExternalAllowlistEntriesForOrg(ctx); err != nil {
+		if err := q.DeleteExternalAllowlistEntriesForOrg(ctx, t.OrgID); err != nil {
 			return err
 		}
 		return nil

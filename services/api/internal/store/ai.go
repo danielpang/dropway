@@ -96,7 +96,7 @@ var ErrAIConcurrencyLimit = errors.New("store: AI session concurrency limit reac
 func (s *Store) StartAISession(ctx context.Context, t Tenant, siteID, model string, baseVersionID *string, maxConcurrent int) (AISession, error) {
 	var out AISession
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -136,7 +136,7 @@ func (s *Store) StartAISession(ctx context.Context, t Tenant, siteID, model stri
 func (s *Store) GetAISession(ctx context.Context, t Tenant, id string) (AISession, error) {
 	var out AISession
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetAISession(ctx, id)
+		row, err := q.GetAISession(ctx, db.GetAISessionParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -157,7 +157,7 @@ func (s *Store) GetAISession(ctx context.Context, t Tenant, id string) (AISessio
 func (s *Store) ListAISessionsForSite(ctx context.Context, t Tenant, siteID string) ([]AISession, error) {
 	var out []AISession
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListAISessionsForSite(ctx, siteID)
+		rows, err := q.ListAISessionsForSite(ctx, db.ListAISessionsForSiteParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func (s *Store) ListAISessionsForSite(ctx context.Context, t Tenant, siteID stri
 // SetAISessionStatus updates a session's lifecycle status.
 func (s *Store) SetAISessionStatus(ctx context.Context, t Tenant, id, status string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		return q.SetAISessionStatus(ctx, db.SetAISessionStatusParams{ID: id, Status: status})
+		return q.SetAISessionStatus(ctx, db.SetAISessionStatusParams{ID: id, Status: status, OrgID: t.OrgID})
 	})
 }
 
@@ -186,7 +186,7 @@ func (s *Store) TryBeginAITurn(ctx context.Context, t Tenant, id string) (claime
 	err = s.withTx(ctx, t, func(q *db.Queries) error {
 		// Confirm the session exists for this tenant first, so a caller can tell
 		// "not found" (404) apart from "busy" (409).
-		sess, gerr := q.GetAISession(ctx, id)
+		sess, gerr := q.GetAISession(ctx, db.GetAISessionParams{ID: id, OrgID: t.OrgID})
 		if gerr != nil {
 			if isNoRows(gerr) {
 				return ErrNotFound
@@ -196,7 +196,7 @@ func (s *Store) TryBeginAITurn(ctx context.Context, t Tenant, id string) (claime
 		if sess.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		if _, uerr := q.TryBeginAITurn(ctx, id); uerr != nil {
+		if _, uerr := q.TryBeginAITurn(ctx, db.TryBeginAITurnParams{ID: id, OrgID: t.OrgID}); uerr != nil {
 			if isNoRows(uerr) {
 				claimed = false // already running → not claimed
 				return nil
@@ -212,7 +212,7 @@ func (s *Store) TryBeginAITurn(ctx context.Context, t Tenant, id string) (claime
 // SetAISessionSandbox caches (or clears) the live sandbox handle for a session.
 func (s *Store) SetAISessionSandbox(ctx context.Context, t Tenant, id, sandboxID string, expiresAt *time.Time) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		p := db.SetAISessionSandboxParams{ID: id}
+		p := db.SetAISessionSandboxParams{ID: id, OrgID: t.OrgID}
 		if sandboxID != "" {
 			p.SandboxID = pgtype.Text{String: sandboxID, Valid: true}
 		}
@@ -227,7 +227,7 @@ func (s *Store) SetAISessionSandbox(ctx context.Context, t Tenant, id, sandboxID
 func (s *Store) SetAISessionLatestVersion(ctx context.Context, t Tenant, id, versionID string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
 		v := versionID
-		return q.SetAISessionLatestVersion(ctx, db.SetAISessionLatestVersionParams{ID: id, LatestVersionID: &v})
+		return q.SetAISessionLatestVersion(ctx, db.SetAISessionLatestVersionParams{ID: id, LatestVersionID: &v, OrgID: t.OrgID})
 	})
 }
 
@@ -235,7 +235,7 @@ func (s *Store) SetAISessionLatestVersion(ctx context.Context, t Tenant, id, ver
 // survive with a null session_id for billing integrity).
 func (s *Store) DeleteAISession(ctx context.Context, t Tenant, id string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetAISession(ctx, id)
+		row, err := q.GetAISession(ctx, db.GetAISessionParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -245,7 +245,7 @@ func (s *Store) DeleteAISession(ctx context.Context, t Tenant, id string) error 
 		if row.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		return q.DeleteAISession(ctx, id)
+		return q.DeleteAISession(ctx, db.DeleteAISessionParams{ID: id, OrgID: t.OrgID})
 	})
 }
 
@@ -290,7 +290,7 @@ func (s *Store) AppendAIMessage(ctx context.Context, t Tenant, sessionID, role s
 func (s *Store) ListAIMessages(ctx context.Context, t Tenant, sessionID string, afterSeq int32) ([]AIMessage, error) {
 	var out []AIMessage
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListAIMessages(ctx, db.ListAIMessagesParams{SessionID: sessionID, Seq: afterSeq})
+		rows, err := q.ListAIMessages(ctx, db.ListAIMessagesParams{SessionID: sessionID, Seq: afterSeq, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}

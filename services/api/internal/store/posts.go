@@ -79,6 +79,7 @@ func (s *Store) ListPostComments(ctx context.Context, t Tenant, subjectType, sub
 			SubjectType: subjectType,
 			SubjectID:   subjectID,
 			Limit:       maxCommentsPerThread,
+			OrgID:       t.OrgID,
 		})
 		if err != nil {
 			return err
@@ -120,6 +121,7 @@ func (s *Store) SetPostVote(ctx context.Context, t Tenant, subjectType, subjectI
 				SubjectType: subjectType,
 				SubjectID:   subjectID,
 				UserID:      t.UserID,
+				OrgID:       t.OrgID,
 			}); derr != nil {
 				return derr
 			}
@@ -137,6 +139,7 @@ func (s *Store) SetPostVote(ctx context.Context, t Tenant, subjectType, subjectI
 		sc, serr := q.GetPostVoteScore(ctx, db.GetPostVoteScoreParams{
 			SubjectType: subjectType,
 			SubjectID:   subjectID,
+			OrgID:       t.OrgID,
 		})
 		if serr != nil {
 			return serr
@@ -152,15 +155,17 @@ func (s *Store) SetPostVote(ctx context.Context, t Tenant, subjectType, subjectI
 // The polymorphic tables can't FK-cascade to two parents, so a subject's delete
 // path (currently only DeleteSkill — sites are never deleted) calls this to keep
 // the feed-social tables from orphaning rows.
-func deletePostSubjectTx(ctx context.Context, q *db.Queries, subjectType, subjectID string) error {
+func deletePostSubjectTx(ctx context.Context, q *db.Queries, orgID, subjectType, subjectID string) error {
 	if err := q.DeletePostVotesForSubject(ctx, db.DeletePostVotesForSubjectParams{
 		SubjectType: subjectType,
 		SubjectID:   subjectID,
+		OrgID:       orgID,
 	}); err != nil {
 		return err
 	}
 	return q.DeletePostCommentsForSubject(ctx, db.DeletePostCommentsForSubjectParams{
 		SubjectType: subjectType,
 		SubjectID:   subjectID,
+		OrgID:       orgID,
 	})
 }
