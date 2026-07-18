@@ -26,7 +26,7 @@ import (
 //
 // The plan/card gate is added separately by the cloud build (mountCloud); the
 // OSS default allows any org with a BYO key.
-func wireAIBuilder(api *handlers.API, cfg config.Config, siteStore handlers.SiteStore, obj storage.Store, proj projection.Writer, _ *slog.Logger) (*ai.Runner, error) {
+func wireAIBuilder(api *handlers.API, cfg config.Config, siteStore handlers.SiteStore, obj storage.Store, proj projection.Writer, log *slog.Logger) (*ai.Runner, error) {
 	if cfg.OpenRouterAPIKey == "" {
 		slog.Info("AI builder disabled (no OPENROUTER_API_KEY)")
 		return nil, nil
@@ -66,6 +66,7 @@ func wireAIBuilder(api *handlers.API, cfg config.Config, siteStore handlers.Site
 		Projection:    proj,
 		SandboxTTL:    2 * time.Hour,
 		MaxIterations: 50,
+		Logger:        log,
 	}
 	if cfg.AIMonthlyCapUSD > 0 {
 		// Self-host cap override: enforce a flat monthly cap via the period-start

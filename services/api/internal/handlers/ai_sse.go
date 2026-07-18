@@ -79,6 +79,8 @@ func aiErrorMessage(err error) string {
 		return "monthly AI spend cap reached; raise it in settings to continue"
 	}
 	switch {
+	case errors.Is(err, aipkg.ErrTranscriptPersist):
+		return "your message could not be saved, so this turn was stopped. Please send it again."
 	case errors.Is(err, store.ErrAIConcurrencyLimit):
 		return "too many active AI sessions"
 	case errors.Is(err, store.ErrNotFound):

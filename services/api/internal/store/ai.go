@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/dropway/services/api/internal/store/db"
@@ -284,6 +285,25 @@ func (s *Store) AppendAIMessage(ctx context.Context, t Tenant, sessionID, role s
 		}
 		return AIMessage{}, err
 	}
+}
+
+// IsPermanentWriteError reports whether a failed write can never succeed by
+// retrying: Postgres rejected the statement itself (data, integrity, syntax, or
+// program-limit errors) rather than failing transiently (connection loss,
+// timeout, resource pressure). Anything that is not a recognizably-permanent
+// Postgres error is treated as transient, since retrying a doomed write only
+// wastes time while retrying a transient one preserves data. The AI transcript
+// writer uses this to fail fast instead of burning its retry budget.
+func IsPermanentWriteError(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || len(pgErr.Code) < 2 {
+		return false
+	}
+	switch pgErr.Code[:2] {
+	case "22", "23", "42", "54": // data, integrity, syntax/access, program limits
+		return true
+	}
+	return false
 }
 
 // ListAIMessages returns a session's transcript after afterSeq (0 = all).
