@@ -310,20 +310,6 @@ func rlsTables() []rlsTable {
 			},
 		},
 		{
-			name:   "app.deploy_tokens",
-			orgCol: "org_id",
-			seed: func(org string) (string, []any) {
-				return `INSERT INTO app.deploy_tokens (org_id, token_hash)
-						VALUES ($1, $2)`,
-					[]any{org, "tokhash-" + org[:6]}
-			},
-			forgeInsert: func(other string) (string, []any) {
-				return `INSERT INTO app.deploy_tokens (org_id, token_hash)
-						VALUES ($1, 'sneaky-tokhash')`,
-					[]any{other}
-			},
-		},
-		{
 			name:   "app.host_routes",
 			orgCol: "org_id",
 			seed: func(org string) (string, []any) {

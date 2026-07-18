@@ -243,17 +243,6 @@ CREATE TABLE app.allowlist_entries (
     CONSTRAINT allowlist_entries_site_email_key UNIQUE (site_id, email)
 );
 
--- deploy_tokens: hashed bearer tokens for the CLI / CI deploy path.
-CREATE TABLE app.deploy_tokens (
-    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    token_hash text NOT NULL UNIQUE,
-    scopes     text[] NOT NULL DEFAULT ARRAY['deploy']::text[],
-    site_id    uuid REFERENCES app.sites (id) ON DELETE CASCADE,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    revoked_at timestamptz
-);
-
 -- audit_log: append-only record of sensitive actions. actor_token / request_id /
 -- trace_id added in migration 0007 (Phase 4 audit + tracing provenance).
 CREATE TABLE app.audit_log (

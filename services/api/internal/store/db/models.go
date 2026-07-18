@@ -101,16 +101,6 @@ type AppChatMessage struct {
 	CreatedAt time.Time
 }
 
-type AppDeployToken struct {
-	ID        string
-	OrgID     string
-	TokenHash string
-	Scopes    []string
-	SiteID    *string
-	CreatedAt time.Time
-	RevokedAt pgtype.Timestamptz
-}
-
 type AppDomain struct {
 	ID           string
 	OrgID        string
