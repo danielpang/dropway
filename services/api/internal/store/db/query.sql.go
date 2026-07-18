@@ -3535,55 +3535,6 @@ func (q *Queries) RenameSkillFolder(ctx context.Context, arg RenameSkillFolderPa
 	return i, err
 }
 
-const resolveSiteByHostRoute = `-- name: ResolveSiteByHostRoute :one
-
-SELECT
-    hr.host       AS host,
-    s.id          AS site_id,
-    s.org_id      AS org_id,
-    s.slug        AS slug,
-    s.access_mode AS access_mode,
-    COALESCE(hr.version_id, s.current_version_id) AS version_id
-FROM app.host_routes hr
-JOIN app.sites s ON s.id = hr.site_id
-WHERE hr.host = $1 AND hr.org_id = $2 AND s.org_id = $2
-`
-
-type ResolveSiteByHostRouteParams struct {
-	Host  string
-	OrgID string
-}
-
-type ResolveSiteByHostRouteRow struct {
-	Host       string
-	SiteID     string
-	OrgID      string
-	Slug       string
-	AccessMode string
-	VersionID  *string
-}
-
-// ===========================================================================
-// host resolution (Phase 2) — resolve a content host → owning site (for /authz)
-// ===========================================================================
-// Resolve a content host (the *.dropwaycontent.com label OR a verified custom
-// host) to its owning site via the global host registry, returning the site's
-// access fields. Runs under RLS so only the active org's hosts resolve — the
-// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
-func (q *Queries) ResolveSiteByHostRoute(ctx context.Context, arg ResolveSiteByHostRouteParams) (ResolveSiteByHostRouteRow, error) {
-	row := q.db.QueryRow(ctx, resolveSiteByHostRoute, arg.Host, arg.OrgID)
-	var i ResolveSiteByHostRouteRow
-	err := row.Scan(
-		&i.Host,
-		&i.SiteID,
-		&i.OrgID,
-		&i.Slug,
-		&i.AccessMode,
-		&i.VersionID,
-	)
-	return i, err
-}
-
 const setAIEnabled = `-- name: SetAIEnabled :exec
 UPDATE app.org_meta
 SET ai_enabled = $2

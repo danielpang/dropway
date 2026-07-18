@@ -381,14 +381,6 @@ type Querier interface {
 	RecomputeOrgStorage(ctx context.Context, orgID string) error
 	RemoveSkillFolderItem(ctx context.Context, arg RemoveSkillFolderItemParams) (string, error)
 	RenameSkillFolder(ctx context.Context, arg RenameSkillFolderParams) (AppSkillFolder, error)
-	// ===========================================================================
-	// host resolution (Phase 2) — resolve a content host → owning site (for /authz)
-	// ===========================================================================
-	// Resolve a content host (the *.dropwaycontent.com label OR a verified custom
-	// host) to its owning site via the global host registry, returning the site's
-	// access fields. Runs under RLS so only the active org's hosts resolve — the
-	// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
-	ResolveSiteByHostRoute(ctx context.Context, arg ResolveSiteByHostRouteParams) (ResolveSiteByHostRouteRow, error)
 	// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
 	// exact analog of SetMcpEnabled.
 	SetAIEnabled(ctx context.Context, arg SetAIEnabledParams) error
