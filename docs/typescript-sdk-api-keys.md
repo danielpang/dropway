@@ -40,7 +40,15 @@ and hits the same `/v1` control plane (`services/api/internal/router/router.go`)
   SDK is essentially a TypeScript port of that file.
 - A dormant table `app.deploy_tokens` (hashed bearer tokens, scopes
   array, optional site scope) exists in the baseline migration with RLS
-  policies but **zero code paths** — no sqlc queries, no handlers.
+  policies but **no server-side code paths** — no sqlc queries, no
+  handlers, nothing that mints or verifies one. It was scoped as the
+  "CLI / CI deploy path" credential (per its `db/sqlc/schema.sql`
+  comment): the client half was even built in anticipation — the CLI
+  reads a `DROPWAY_TOKEN` env var as a CI bearer
+  (`cli/internal/cmd/deploy.go`) and the audit trail reserved
+  `actor_token` provenance (`internal/audit/audit.go`) — but the server
+  half was never wired, and interactive OAuth login shipped for the CLI
+  instead. API keys are that half-finished feature, finished properly.
 - The control plane is described by OpenAPI 3.1
   (`services/api/openapi/openapi.yaml`); the dashboard already generates
   its client types from it with `openapi-typescript` — the SDK reuses
@@ -79,8 +87,11 @@ and hits the same `/v1` control plane (`services/api/internal/router/router.go`)
 - **No per-site-restricted keys** in the UI (column exists, unwired —
   same posture as `deploy_tokens` had).
 - **No key rotation endpoint** (revoke + create covers it).
-- **No SDK coverage of skills, chat logs, AI sessions, or org
-  administration.** Sites + deployments only; the surface can grow.
+- **No hand-written ergonomics beyond the site/deploy path.** The SDK
+  covers the **entire `/v1` OpenAPI surface** with generated typed
+  calls, but only sites + deployments get the curated orchestration
+  layer (`dw.sites.deploy(...)` etc.); everything else is exposed
+  through the generated client as-is.
 - **No self-host restriction.** Keys and SDK are core (FSL), not
   cloud-gated — self-hosters get the whole feature, per the open-core
   boundary.
@@ -236,14 +247,28 @@ glob already covers it), published to npm as `@dropway/sdk`.
   Node ≥ 18 (global `fetch`, `node:crypto` for SHA-256). **Zero runtime
   dependencies** — the deploy loop needs only `fetch`, hashing, and
   file reads.
-- Response/request types generated from `services/api/openapi/openapi.yaml`
-  with `openapi-typescript`, same as the dashboard — the spec is the
+- **Two layers, one package.** The base layer is a fully generated,
+  typed client for the **whole `/v1` OpenAPI spec**
+  (`services/api/openapi/openapi.yaml`, via `openapi-typescript` +
+  a thin typed `fetch` wrapper, same toolchain as the dashboard) —
+  every path, request, and response in the spec is callable as
+  `dw.api.GET("/v1/skills", …)`-style operations, so sites, skills,
+  chats, domains, and access policies are all reachable from day one
+  with zero per-endpoint maintenance. On top sits a small hand-written
+  ergonomic layer (`dw.sites.*`) for the headline flow — the multi-step
+  deploy loop that a generated client cannot express. The spec is the
   single source of truth; the SDK build regenerates and fails on drift.
+- Full coverage doesn't repeal the key role ceiling: session-only and
+  admin-gated operations (key management, org policy, member admin)
+  exist in the generated layer but return 403 under key auth, exactly
+  as they would for any keyed caller. The SDK documents this per the
+  spec's security annotations rather than hiding the endpoints.
 - Works in any environment with `fetch` for the API calls; the
   filesystem convenience (`deployDir`) is Node-only and lazily imports
   `node:fs`, so bundlers targeting edge runtimes can tree-shake it.
 
-**Public surface (v1)**:
+**Public surface (v1)** — the ergonomic layer; anything not shown here
+is still available through the generated `dw.api` layer:
 
 ```ts
 import { Dropway } from "@dropway/sdk";
@@ -328,6 +353,13 @@ already scoped above.
   each invocation. This matches the `VERCEL_TOKEN` /
   `NETLIFY_AUTH_TOKEN` / `GITHUB_TOKEN` convention CI users already
   know.
+- **`DROPWAY_TOKEN` is subsumed.** The CLI already reads a
+  `DROPWAY_TOKEN` env var as a raw CI bearer
+  (`cli/internal/cmd/deploy.go`) — the client half of the never-finished
+  deploy-tokens feature. `DROPWAY_API_KEY` becomes the canonical,
+  documented variable; `DROPWAY_TOKEN` keeps working as a
+  lower-precedence alias (it forwards whatever bearer it holds, so an
+  API key placed in it works too), with a deprecation note in `--help`.
 - **Role-ceiling errors are translated.** Commands gated on admin roles
   or key management will 403 under a key; the CLI maps
   `admin_required_interactive` to "this command requires an interactive
@@ -382,9 +414,15 @@ One goose migration in `db/migrations/app/`:
 1. `CREATE TABLE app.api_keys` + index + RLS policies (above).
 2. `ALTER TABLE app.org_meta ADD COLUMN api_keys_enabled boolean NOT
    NULL DEFAULT true`.
-3. `DROP TABLE app.deploy_tokens` — it has never had a reader or writer
-   in any code path, so this is a no-op in every real database; keeping
-   two nearly-identical dormant token tables would only invite drift.
+3. `DROP TABLE app.deploy_tokens` — no server code has ever read or
+   written it, so this is a no-op in every real database; keeping two
+   nearly-identical dormant token tables would only invite drift. The
+   surviving client-side references update in the same change: the
+   audit `ActorToken` doc comments (`internal/audit/audit.go`, the
+   sqlc query comments) now point at `app.api_keys.id`, and the CLI's
+   `DROPWAY_TOKEN` path is folded into the `DROPWAY_API_KEY` support
+   above. The RLS integration test's table list swaps `deploy_tokens`
+   for `api_keys`.
 
 Mirror all of it in `db/sqlc/schema.sql`, add queries to
 `db/sqlc/query.sql` (resolve-by-hash, insert, list-by-org, revoke,
@@ -416,10 +454,11 @@ touch-last-used), regenerate sqlc.
    API-key auth usable with `curl`.)
 2. **Dashboard** — org-settings section: create/reveal-once/list/revoke,
    kill switch toggle.
-3. **SDK + CLI** — `packages/sdk` scaffold, generated types, deploy-loop
-   port, errors/retries, tests incl. digest parity; CLI
-   `DROPWAY_API_KEY` support (precedence, `whoami` source reporting,
-   role-ceiling error mapping).
+3. **SDK + CLI** — `packages/sdk` scaffold, generated full-spec `/v1`
+   client, hand-written `dw.sites` layer with the deploy-loop port,
+   errors/retries, tests incl. digest parity; CLI `DROPWAY_API_KEY`
+   support (precedence, `DROPWAY_TOKEN` alias, `whoami` source
+   reporting, role-ceiling error mapping).
 4. **Polish & launch** — examples, README/docs, e2e smoke workflow,
    secret-scanning registration (stretch), changelog entry.
 
