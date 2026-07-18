@@ -542,26 +542,6 @@ WHERE app.host_routes.org_id = EXCLUDED.org_id;
 DELETE FROM app.host_routes WHERE host = $1 AND org_id = $2;
 
 -- ===========================================================================
--- host resolution (Phase 2) — resolve a content host → owning site (for /authz)
--- ===========================================================================
-
--- name: ResolveSiteByHostRoute :one
--- Resolve a content host (the *.dropwaycontent.com label OR a verified custom
--- host) to its owning site via the global host registry, returning the site's
--- access fields. Runs under RLS so only the active org's hosts resolve — the
--- /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
-SELECT
-    hr.host       AS host,
-    s.id          AS site_id,
-    s.org_id      AS org_id,
-    s.slug        AS slug,
-    s.access_mode AS access_mode,
-    COALESCE(hr.version_id, s.current_version_id) AS version_id
-FROM app.host_routes hr
-JOIN app.sites s ON s.id = hr.site_id
-WHERE hr.host = $1 AND hr.org_id = $2 AND s.org_id = $2;
-
--- ===========================================================================
 -- org policy (Phase 2) — allow_external_sharing toggle + reconcile
 -- ===========================================================================
 
