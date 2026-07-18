@@ -245,9 +245,19 @@ func requireMCPEnabled(st *store.Store, next http.Handler) http.Handler {
 // at the Dropway authorization server (the dashboard's Better Auth).
 func protectedResourceMetadata(resource, authServer string) http.HandlerFunc {
 	body, _ := json.Marshal(map[string]any{
-		"resource":                 resource,
-		"authorization_servers":    []string{authServer},
-		"scopes_supported":         []string{"mcp"},
+		"resource":              resource,
+		"authorization_servers": []string{authServer},
+		// Advertise BOTH the custom "mcp" scope and the standard "offline_access"
+		// scope. MCP clients (Claude, Cursor, Codex) derive the scope they send at
+		// Dynamic Client Registration from this list, and the authorization server
+		// (Better Auth) then pins the authorize-time scope check to that registered
+		// client's scopes. Claude additionally requests offline_access at authorize to
+		// obtain a refresh token; if we advertised only "mcp", the client would be
+		// registered with scopes=["mcp"] and the offline_access request would be
+		// rejected as invalid_scope, dead-ending the connect flow before consent.
+		// Including offline_access here lets the client register for it up front so the
+		// authorize step accepts it (and the user gets a durable, refreshable session).
+		"scopes_supported":         []string{"mcp", "offline_access"},
 		"bearer_methods_supported": []string{"header"},
 	})
 	return func(w http.ResponseWriter, _ *http.Request) {
