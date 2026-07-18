@@ -160,36 +160,38 @@ export default async function SiteDetailPage({
       </Link>
 
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-lg bg-secondary text-secondary-foreground">
-            <Globe className="size-5" aria-hidden />
-          </span>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">{site.slug}</h1>
-            <div className="flex items-center gap-2">
-              {isLive ? (
-                <Badge variant="success">
-                  <span
-                    className="size-1.5 rounded-full bg-emerald-500"
-                    aria-hidden
-                  />
-                  Live
-                </Badge>
-              ) : (
-                <Badge variant="muted">Not deployed</Badge>
-              )}
-              <AccessModeBadge mode={site.access_mode} />
-            </div>
+      <div className="flex items-center gap-3">
+        <span className="grid size-10 place-items-center rounded-lg bg-secondary text-secondary-foreground">
+          <Globe className="size-5" aria-hidden />
+        </span>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">{site.slug}</h1>
+          <div className="flex items-center gap-2">
+            {isLive ? (
+              <Badge variant="success">
+                <span
+                  className="size-1.5 rounded-full bg-emerald-500"
+                  aria-hidden
+                />
+                Live
+              </Badge>
+            ) : (
+              <Badge variant="muted">Not deployed</Badge>
+            )}
+            <AccessModeBadge mode={site.access_mode} />
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button asChild size="sm">
-            <Link href={`/sites/${id}/builder`}>
-              <Sparkles aria-hidden />
-              Build with AI
-            </Link>
-          </Button>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-wrap items-center gap-2 border-y border-border py-3">
+        <Button asChild size="sm">
+          <Link href={`/sites/${id}/builder`}>
+            <Sparkles aria-hidden />
+            Build with AI
+          </Link>
+        </Button>
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <Button asChild variant="outline" size="sm">
             <Link href={`/sites/${id}/settings`}>
               <Settings aria-hidden />
