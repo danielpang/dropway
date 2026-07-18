@@ -116,7 +116,7 @@ func (s *Store) CreateSkill(ctx context.Context, t Tenant, skillSlug, title stri
 				return err
 			}
 		}
-		refs, err := foldersForSkillsTx(ctx, q, []string{row.ID})
+		refs, err := foldersForSkillsTx(ctx, q, t.OrgID, []string{row.ID})
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func (s *Store) CreateSkill(ctx context.Context, t Tenant, skillSlug, title stri
 // membership (upsert hit) can't overshoot the cap: the pre-count includes the
 // existing row, and count+1 is only checked when the skill isn't a member yet.
 func (s *Store) addFolderItemTx(ctx context.Context, q *db.Queries, t Tenant, planTier, folderID, skillID string, isPreset bool) error {
-	if _, err := q.GetSkillFolder(ctx, folderID); err != nil {
+	if _, err := q.GetSkillFolder(ctx, db.GetSkillFolderParams{ID: folderID, OrgID: t.OrgID}); err != nil {
 		if isNoRows(err) {
 			return ErrFolderNotFound
 		}
@@ -142,13 +142,13 @@ func (s *Store) addFolderItemTx(ctx context.Context, q *db.Queries, t Tenant, pl
 	if err := q.LockSkillFolderQuota(ctx, folderID); err != nil {
 		return err
 	}
-	current, err := q.CountFolderItems(ctx, folderID)
+	current, err := q.CountFolderItems(ctx, db.CountFolderItemsParams{FolderID: folderID, OrgID: t.OrgID})
 	if err != nil {
 		return err
 	}
 	// Only a genuinely-new membership consumes a slot; re-flagging an existing
 	// one must never 402. Cheap existence probe via the upsert's conflict target.
-	member, err := isFolderMember(ctx, q, folderID, skillID)
+	member, err := isFolderMember(ctx, q, t.OrgID, folderID, skillID)
 	if err != nil {
 		return err
 	}
@@ -166,9 +166,9 @@ func (s *Store) addFolderItemTx(ctx context.Context, q *db.Queries, t Tenant, pl
 	})
 }
 
-// isFolderMember reports whether the skill is already in the folder (RLS-scoped).
-func isFolderMember(ctx context.Context, q *db.Queries, folderID, skillID string) (bool, error) {
-	rows, err := q.ListFoldersForSkills(ctx, []string{skillID})
+// isFolderMember reports whether the skill is already in the folder (org-scoped).
+func isFolderMember(ctx context.Context, q *db.Queries, orgID, folderID, skillID string) (bool, error) {
+	rows, err := q.ListFoldersForSkills(ctx, db.ListFoldersForSkillsParams{SkillIds: []string{skillID}, OrgID: orgID})
 	if err != nil {
 		return false, err
 	}
@@ -192,6 +192,7 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, q, folderSlug string, 
 			Q:           q,
 			FolderSlug:  folderSlug,
 			PresetsOnly: presetsOnly,
+			OrgID:       t.OrgID,
 		})
 		if err != nil {
 			return err
@@ -202,7 +203,7 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, q, folderSlug string, 
 			out[i] = skillFromRow(r.AppSkill, r.SizeBytes, r.Version)
 			ids[i] = r.AppSkill.ID
 		}
-		return attachFolders(ctx, qq, out, ids)
+		return attachFolders(ctx, qq, t.OrgID, out, ids)
 	})
 	return out, err
 }
@@ -212,13 +213,13 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, q, folderSlug string, 
 func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string) ([]Skill, error) {
 	var out []Skill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		if _, err := q.GetSkillFolder(ctx, folderID); err != nil {
+		if _, err := q.GetSkillFolder(ctx, db.GetSkillFolderParams{ID: folderID, OrgID: t.OrgID}); err != nil {
 			if isNoRows(err) {
 				return ErrFolderNotFound
 			}
 			return err
 		}
-		rows, err := q.ListFolderSkills(ctx, folderID)
+		rows, err := q.ListFolderSkills(ctx, db.ListFolderSkillsParams{FolderID: folderID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -228,7 +229,7 @@ func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string)
 			out[i] = skillFromRow(r.AppSkill, r.SizeBytes, r.Version)
 			ids[i] = r.AppSkill.ID
 		}
-		return attachFolders(ctx, q, out, ids)
+		return attachFolders(ctx, q, t.OrgID, out, ids)
 	})
 	return out, err
 }
@@ -236,11 +237,11 @@ func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string)
 // attachFolders fills the folder memberships for a slice of skills in one
 // round-trip (no N+1). Current-version size is already carried on each row by
 // the read queries' LEFT JOIN, so it is not fetched here.
-func attachFolders(ctx context.Context, q *db.Queries, skills []Skill, ids []string) error {
+func attachFolders(ctx context.Context, q *db.Queries, orgID string, skills []Skill, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	refs, err := foldersForSkillsTx(ctx, q, ids)
+	refs, err := foldersForSkillsTx(ctx, q, orgID, ids)
 	if err != nil {
 		return err
 	}
@@ -250,8 +251,8 @@ func attachFolders(ctx context.Context, q *db.Queries, skills []Skill, ids []str
 	return nil
 }
 
-func foldersForSkillsTx(ctx context.Context, q *db.Queries, ids []string) (map[string][]SkillFolderRef, error) {
-	rows, err := q.ListFoldersForSkills(ctx, ids)
+func foldersForSkillsTx(ctx context.Context, q *db.Queries, orgID string, ids []string) (map[string][]SkillFolderRef, error) {
+	rows, err := q.ListFoldersForSkills(ctx, db.ListFoldersForSkillsParams{SkillIds: ids, OrgID: orgID})
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +273,7 @@ func foldersForSkillsTx(ctx context.Context, q *db.Queries, ids []string) (map[s
 func (s *Store) GetSkill(ctx context.Context, t Tenant, id string) (Skill, error) {
 	var out Skill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSkill(ctx, id)
+		row, err := q.GetSkill(ctx, db.GetSkillParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -281,7 +282,7 @@ func (s *Store) GetSkill(ctx context.Context, t Tenant, id string) (Skill, error
 		}
 		out = skillFromRow(row.AppSkill, row.SizeBytes, row.Version)
 		skills := []Skill{out}
-		if err := attachFolders(ctx, q, skills, []string{row.AppSkill.ID}); err != nil {
+		if err := attachFolders(ctx, q, t.OrgID, skills, []string{row.AppSkill.ID}); err != nil {
 			return err
 		}
 		out = skills[0]
@@ -294,7 +295,7 @@ func (s *Store) GetSkill(ctx context.Context, t Tenant, id string) (Skill, error
 func (s *Store) GetSkillBySlug(ctx context.Context, t Tenant, slug string) (Skill, error) {
 	var out Skill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSkillBySlug(ctx, slug)
+		row, err := q.GetSkillBySlug(ctx, db.GetSkillBySlugParams{Slug: slug, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -303,7 +304,7 @@ func (s *Store) GetSkillBySlug(ctx context.Context, t Tenant, slug string) (Skil
 		}
 		out = skillFromRow(row.AppSkill, row.SizeBytes, row.Version)
 		skills := []Skill{out}
-		if err := attachFolders(ctx, q, skills, []string{row.AppSkill.ID}); err != nil {
+		if err := attachFolders(ctx, q, t.OrgID, skills, []string{row.AppSkill.ID}); err != nil {
 			return err
 		}
 		out = skills[0]
@@ -318,13 +319,13 @@ func (s *Store) GetSkillBySlug(ctx context.Context, t Tenant, slug string) (Skil
 // the delete to the org.
 func (s *Store) DeleteSkill(ctx context.Context, t Tenant, id string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		if _, err := q.DeleteSkill(ctx, id); err != nil {
+		if _, err := q.DeleteSkill(ctx, db.DeleteSkillParams{ID: id, OrgID: t.OrgID}); err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
 			}
 			return err
 		}
-		return deletePostSubjectTx(ctx, q, SubjectSkill, id)
+		return deletePostSubjectTx(ctx, q, t.OrgID, SubjectSkill, id)
 	})
 }
 
@@ -345,7 +346,7 @@ type FeedSkill struct {
 func (s *Store) ListFeedSkills(ctx context.Context, t Tenant) ([]FeedSkill, error) {
 	var out []FeedSkill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListFeedSkills(ctx, t.UserID)
+		rows, err := q.ListFeedSkills(ctx, db.ListFeedSkillsParams{UserID: t.UserID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -356,7 +357,7 @@ func (s *Store) ListFeedSkills(ctx context.Context, t Tenant) ([]FeedSkill, erro
 			skills[i] = skillFromRow(r.AppSkill, r.SizeBytes, r.Version)
 			ids[i] = r.AppSkill.ID
 		}
-		if err := attachFolders(ctx, q, skills, ids); err != nil {
+		if err := attachFolders(ctx, q, t.OrgID, skills, ids); err != nil {
 			return err
 		}
 		for i, r := range rows {
@@ -379,7 +380,7 @@ func (s *Store) ListFeedSkills(ctx context.Context, t Tenant) ([]FeedSkill, erro
 func (s *Store) SetSkillFeedVisible(ctx context.Context, t Tenant, id string, visible bool) (Skill, error) {
 	var out Skill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.SetSkillFeedVisible(ctx, db.SetSkillFeedVisibleParams{ID: id, FeedVisible: visible})
+		row, err := q.SetSkillFeedVisible(ctx, db.SetSkillFeedVisibleParams{ID: id, FeedVisible: visible, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -401,6 +402,7 @@ func (s *Store) SetSkillMeta(ctx context.Context, t Tenant, id, title, descripti
 			ID:          id,
 			Title:       pgtype.Text{String: title, Valid: title != ""},
 			Description: pgtype.Text{String: description, Valid: description != ""},
+			OrgID:       t.OrgID,
 		})
 		if err != nil {
 			if isNoRows(err) {
@@ -421,7 +423,7 @@ func (s *Store) SetSkillMeta(ctx context.Context, t Tenant, id, title, descripti
 func (s *Store) SetSkillFolders(ctx context.Context, t Tenant, skillID string, folderIDs []string) (Skill, error) {
 	var out Skill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSkill(ctx, skillID)
+		row, err := q.GetSkill(ctx, db.GetSkillParams{ID: skillID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -433,7 +435,7 @@ func (s *Store) SetSkillFolders(ctx context.Context, t Tenant, skillID string, f
 			return err
 		}
 		// Preserve preset flags for memberships that survive the replace.
-		existing, err := foldersForSkillsTx(ctx, q, []string{skillID})
+		existing, err := foldersForSkillsTx(ctx, q, t.OrgID, []string{skillID})
 		if err != nil {
 			return err
 		}
@@ -441,7 +443,7 @@ func (s *Store) SetSkillFolders(ctx context.Context, t Tenant, skillID string, f
 		for _, ref := range existing[skillID] {
 			preset[ref.FolderID] = ref.IsPreset
 		}
-		if err := q.DeleteSkillFolderItemsForSkill(ctx, skillID); err != nil {
+		if err := q.DeleteSkillFolderItemsForSkill(ctx, db.DeleteSkillFolderItemsForSkillParams{SkillID: skillID, OrgID: t.OrgID}); err != nil {
 			return err
 		}
 		for _, folderID := range folderIDs {
@@ -451,7 +453,7 @@ func (s *Store) SetSkillFolders(ctx context.Context, t Tenant, skillID string, f
 		}
 		out = skillFromRow(row.AppSkill, row.SizeBytes, row.Version)
 		skills := []Skill{out}
-		if err := attachFolders(ctx, q, skills, []string{skillID}); err != nil {
+		if err := attachFolders(ctx, q, t.OrgID, skills, []string{skillID}); err != nil {
 			return err
 		}
 		out = skills[0]
@@ -491,7 +493,7 @@ func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillV
 
 	var out SkillVersion
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		skill, err := q.GetSkill(ctx, p.SkillID)
+		skill, err := q.GetSkill(ctx, db.GetSkillParams{ID: p.SkillID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -515,6 +517,7 @@ func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillV
 		if existing, err := q.GetSkillVersionByContentHash(ctx, db.GetSkillVersionByContentHashParams{
 			SkillID:     p.SkillID,
 			ContentHash: p.ContentHash,
+			OrgID:       t.OrgID,
 		}); err == nil {
 			out = skillVersionFromDB(existing)
 			return nil
@@ -522,7 +525,7 @@ func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillV
 			return err
 		}
 
-		nextNo, err := q.NextSkillVersionNo(ctx, p.SkillID)
+		nextNo, err := q.NextSkillVersionNo(ctx, db.NextSkillVersionNoParams{SkillID: p.SkillID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -550,7 +553,7 @@ func (s *Store) CreateSkillVersion(ctx context.Context, t Tenant, p CreateSkillV
 // asserts the version belongs to the skill.
 func (s *Store) PublishSkillVersion(ctx context.Context, t Tenant, skillID, versionID string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		skill, err := q.GetSkill(ctx, skillID)
+		skill, err := q.GetSkill(ctx, db.GetSkillParams{ID: skillID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -560,7 +563,7 @@ func (s *Store) PublishSkillVersion(ctx context.Context, t Tenant, skillID, vers
 		if skill.AppSkill.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		ver, err := q.GetSkillVersion(ctx, versionID)
+		ver, err := q.GetSkillVersion(ctx, db.GetSkillVersionParams{ID: versionID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -574,6 +577,7 @@ func (s *Store) PublishSkillVersion(ctx context.Context, t Tenant, skillID, vers
 		return q.SetSkillCurrentVersion(ctx, db.SetSkillCurrentVersionParams{
 			ID:               skillID,
 			CurrentVersionID: &vid,
+			OrgID:            t.OrgID,
 		})
 	})
 }
@@ -582,7 +586,7 @@ func (s *Store) PublishSkillVersion(ctx context.Context, t Tenant, skillID, vers
 func (s *Store) GetSkillVersion(ctx context.Context, t Tenant, id string) (SkillVersion, error) {
 	var out SkillVersion
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSkillVersion(ctx, id)
+		row, err := q.GetSkillVersion(ctx, db.GetSkillVersionParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound

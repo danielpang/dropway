@@ -114,12 +114,12 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 	var retained []db.ListVersionsForGCRow
 	var skillRetained []db.ListCurrentSkillVersionsForGCRow
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListVersionsForGC(ctx)
+		rows, err := q.ListVersionsForGC(ctx, orgID)
 		if err != nil {
 			return err
 		}
 		retained = selectRetained(rows, pol.KeepLastN, time.Now().Add(-pol.draftRetention()))
-		skillRetained, err = q.ListCurrentSkillVersionsForGC(ctx)
+		skillRetained, err = q.ListCurrentSkillVersionsForGC(ctx, orgID)
 		if isUndefinedTable(err) {
 			// The skills tables (migration 0008) aren't applied yet — deploy ran
 			// before migrate. Treat as "no skills to protect" so the site GC still

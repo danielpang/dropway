@@ -81,7 +81,7 @@ func (s *Store) CreateDomain(ctx context.Context, t Tenant, p CreateDomainParams
 	}
 	var out Domain
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, p.SiteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: p.SiteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -114,7 +114,7 @@ func (s *Store) CreateDomain(ctx context.Context, t Tenant, p CreateDomainParams
 func (s *Store) GetDomain(ctx context.Context, t Tenant, id string) (Domain, error) {
 	var out Domain
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetDomain(ctx, id)
+		row, err := q.GetDomain(ctx, db.GetDomainParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -131,7 +131,7 @@ func (s *Store) GetDomain(ctx context.Context, t Tenant, id string) (Domain, err
 func (s *Store) ListDomainsForSite(ctx context.Context, t Tenant, siteID string) ([]Domain, error) {
 	var out []Domain
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -141,7 +141,7 @@ func (s *Store) ListDomainsForSite(ctx context.Context, t Tenant, siteID string)
 		if site.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		rows, err := q.ListDomainsForSite(ctx, siteID)
+		rows, err := q.ListDomainsForSite(ctx, db.ListDomainsForSiteParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, t Tenant, id, verifyStat
 	var res MarkDomainVerifiedResult
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		// Confirm ownership first (RLS already scopes, but be explicit).
-		existing, err := q.GetDomain(ctx, id)
+		existing, err := q.GetDomain(ctx, db.GetDomainParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -189,7 +189,7 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, t Tenant, id, verifyStat
 		}
 
 		row, err := q.UpdateDomainStatus(ctx, db.UpdateDomainStatusParams{
-			ID: id, VerifyStatus: verifyStatus, TlsStatus: tlsStatus,
+			ID: id, VerifyStatus: verifyStatus, TlsStatus: tlsStatus, OrgID: t.OrgID,
 		})
 		if err != nil {
 			if checkViolation(err) {
@@ -201,7 +201,7 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, t Tenant, id, verifyStat
 
 		// On verified + TLS issued, write the global host route → site.
 		if verifyStatus == DomainVerified && tlsStatus == TLSIssued {
-			site, err := q.GetSite(ctx, row.SiteID)
+			site, err := q.GetSite(ctx, db.GetSiteParams{ID: row.SiteID, OrgID: t.OrgID})
 			if err != nil {
 				if isNoRows(err) {
 					return ErrNotFound
@@ -221,7 +221,7 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, t Tenant, id, verifyStat
 			if site.CurrentVersionID != nil {
 				// A newly-verified custom host serves the same chat surface as
 				// the canonical one (v4 chat_id).
-				chatID, err := chatIDForSiteTx(ctx, q, row.SiteID)
+				chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, row.SiteID)
 				if err != nil {
 					return err
 				}
@@ -258,7 +258,7 @@ func (s *Store) DeleteDomain(ctx context.Context, t Tenant, id string) (DeleteDo
 	var res DeleteDomainResult
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		// Confirm ownership first (RLS already scopes, but be explicit + give 404).
-		existing, err := q.GetDomain(ctx, id)
+		existing, err := q.GetDomain(ctx, db.GetDomainParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -268,7 +268,7 @@ func (s *Store) DeleteDomain(ctx context.Context, t Tenant, id string) (DeleteDo
 		if existing.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		row, err := q.DeleteDomain(ctx, id)
+		row, err := q.DeleteDomain(ctx, db.DeleteDomainParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -276,7 +276,7 @@ func (s *Store) DeleteDomain(ctx context.Context, t Tenant, id string) (DeleteDo
 			return err
 		}
 		// Drop the global host route so the custom host stops serving immediately.
-		if err := q.DeleteHostRoute(ctx, row.Hostname); err != nil {
+		if err := q.DeleteHostRoute(ctx, db.DeleteHostRouteParams{Host: row.Hostname, OrgID: t.OrgID}); err != nil {
 			return err
 		}
 		res.Hostname = row.Hostname

@@ -87,7 +87,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 
 	var res PublishResult
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
-		site, err := q.GetSite(ctx, p.SiteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: p.SiteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -101,7 +101,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 		// Flip the site's access_mode (the RouteValue source). The trigger rejects
 		// 'public' under a false org policy → 23514 → ErrExternalSharingDisabled.
 		if err := q.SetSiteAccessMode(ctx, db.SetSiteAccessModeParams{
-			ID: p.SiteID, AccessMode: p.Mode,
+			ID: p.SiteID, AccessMode: p.Mode, OrgID: t.OrgID,
 		}); err != nil {
 			if checkViolation(err) {
 				return ErrExternalSharingDisabled
@@ -146,14 +146,14 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 			// Preview hosts are rewritten too (a gated site's draft must gate the
 			// same way), but keep their pinned version + preview deadline. They also
 			// exist for sites with NO live version (an unpublished AI-created site).
-			hostRoutes, err := q.ListHostRoutesForSite(ctx, p.SiteID)
+			hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: p.SiteID, OrgID: t.OrgID})
 			if err != nil {
 				return err
 			}
 			// Carry the attached chat log (v4 chat_id) through the rewrite —
 			// an access flip must not strip the "How this was made" panel.
 			// Preview routes stay chat-less (parity with publish/rebuild).
-			chatID, err := chatIDForSiteTx(ctx, q, p.SiteID)
+			chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, p.SiteID)
 			if err != nil {
 				return err
 			}
@@ -216,7 +216,7 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 func (s *Store) GetSiteAccessPolicy(ctx context.Context, t Tenant, siteID string) (AccessPolicy, error) {
 	var out AccessPolicy
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		row, err := q.GetSiteAccessPolicy(ctx, siteID)
+		row, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNoPolicy
@@ -250,7 +250,7 @@ func (s *Store) AddAllowlistEntry(ctx context.Context, t Tenant, p AddAllowlistE
 	}
 	var out AllowlistEntry
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, p.SiteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: p.SiteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -282,7 +282,7 @@ func (s *Store) AddAllowlistEntry(ctx context.Context, t Tenant, p AddAllowlistE
 func (s *Store) RemoveAllowlistEntry(ctx context.Context, t Tenant, siteID, email string) error {
 	email = normalizeEmail(email)
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -292,7 +292,7 @@ func (s *Store) RemoveAllowlistEntry(ctx context.Context, t Tenant, siteID, emai
 		if site.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		return q.DeleteAllowlistEntry(ctx, db.DeleteAllowlistEntryParams{SiteID: siteID, Email: email})
+		return q.DeleteAllowlistEntry(ctx, db.DeleteAllowlistEntryParams{SiteID: siteID, Email: email, OrgID: t.OrgID})
 	})
 }
 
@@ -300,7 +300,7 @@ func (s *Store) RemoveAllowlistEntry(ctx context.Context, t Tenant, siteID, emai
 func (s *Store) ListAllowlistEntries(ctx context.Context, t Tenant, siteID string) ([]AllowlistEntry, error) {
 	var out []AllowlistEntry
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -310,7 +310,7 @@ func (s *Store) ListAllowlistEntries(ctx context.Context, t Tenant, siteID strin
 		if site.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		rows, err := q.ListAllowlistEntries(ctx, siteID)
+		rows, err := q.ListAllowlistEntries(ctx, db.ListAllowlistEntriesParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}

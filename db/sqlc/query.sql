@@ -6,9 +6,13 @@
 -- annotated query into services/api/internal/store/db. Every query here runs
 -- inside a per-request transaction that has already executed the SET LOCAL
 -- tenant GUCs (see internal/store + internal/middleware/rlstx), so RLS scopes
--- each statement to the active org. These queries therefore carry NO explicit
--- org filter beyond what RLS enforces, except where we deliberately re-derive a
--- resource's org for the confused-deputy guard.
+-- each statement to the active org.
+--
+-- Every tenant-table query ALSO carries an explicit org_id predicate bound from
+-- the verified Tenant. RLS is the backstop, not the only filter: a misconfigured
+-- runtime role (e.g. a BYPASSRLS user in DATABASE_URL) silently disables RLS,
+-- and in July 2026 exactly that leaked cross-tenant reads in production. The
+-- explicit predicate keeps queries correctly scoped even when RLS is inert.
 
 -- ===========================================================================
 -- org provisioning
@@ -156,7 +160,7 @@ RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed
 -- name: GetSite :one
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: GetSiteStorageBytes :one
 -- LOGICAL storage of a single site = the byte size of its CURRENT (live) version
@@ -167,7 +171,7 @@ WHERE id = $1;
 SELECT COALESCE(v.size_bytes, 0)::bigint AS bytes
 FROM app.sites s
 LEFT JOIN app.site_versions v ON v.id = s.current_version_id
-WHERE s.id = $1;
+WHERE s.id = $1 AND s.org_id = $2;
 
 -- name: ListSiteStorageForOrg :many
 -- LOGICAL storage per site for the active org (the current-version size of each
@@ -180,11 +184,13 @@ SELECT
     COALESCE(v.size_bytes, 0)::bigint AS bytes
 FROM app.sites s
 LEFT JOIN app.site_versions v ON v.id = s.current_version_id
+WHERE s.org_id = $1
 ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
+WHERE org_id = $1
 ORDER BY created_at DESC;
 
 -- name: ListFeedSites :many
@@ -200,7 +206,7 @@ SELECT
     COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'site' AND mv.subject_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'site' AND c.subject_id = s.id), 0)::bigint AS comment_count
 FROM app.sites s
-WHERE s.feed_visible
+WHERE s.feed_visible AND s.org_id = sqlc.arg(org_id)
 ORDER BY s.created_at DESC;
 
 -- name: ListFeedSkills :many
@@ -219,6 +225,7 @@ SELECT
 FROM app.skills sk
 LEFT JOIN app.skill_versions ver ON ver.id = sk.current_version_id
 WHERE sk.feed_visible
+  AND sk.org_id = sqlc.arg(org_id)
   AND (sk.current_version_id IS NOT NULL OR sk.owner_user_id = $1::uuid)
 ORDER BY sk.created_at DESC;
 
@@ -229,29 +236,30 @@ ORDER BY sk.created_at DESC;
 INSERT INTO app.post_votes (subject_type, subject_id, org_id, user_id, value)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (subject_type, subject_id, user_id) DO UPDATE
-SET value = EXCLUDED.value, updated_at = now();
+SET value = EXCLUDED.value, updated_at = now()
+WHERE app.post_votes.org_id = EXCLUDED.org_id;
 
 -- name: DeletePostVote :exec
 -- Remove the caller's vote on a feed post (un-vote). RLS scopes the delete to the org.
 DELETE FROM app.post_votes
-WHERE subject_type = $1 AND subject_id = $2 AND user_id = $3;
+WHERE subject_type = $1 AND subject_id = $2 AND user_id = $3 AND org_id = $4;
 
 -- name: GetPostVoteScore :one
 -- A feed post's net vote score (sum of +1/-1). RLS scopes the read to the org.
 SELECT COALESCE(SUM(value), 0)::bigint AS score
 FROM app.post_votes
-WHERE subject_type = $1 AND subject_id = $2;
+WHERE subject_type = $1 AND subject_id = $2 AND org_id = $3;
 
 -- name: DeletePostVotesForSubject :exec
 -- Drop every vote on a subject (called when the site/skill itself is deleted,
 -- since the polymorphic table can't FK-cascade to two parents).
 DELETE FROM app.post_votes
-WHERE subject_type = $1 AND subject_id = $2;
+WHERE subject_type = $1 AND subject_id = $2 AND org_id = $3;
 
 -- name: DeletePostCommentsForSubject :exec
 -- Drop every comment on a subject (called on the subject's delete; see above).
 DELETE FROM app.post_comments
-WHERE subject_type = $1 AND subject_id = $2;
+WHERE subject_type = $1 AND subject_id = $2 AND org_id = $3;
 
 -- name: SetSiteFeedVisible :one
 -- Mark a site shared-to-feed (true) or private/off-feed (false). RLS scopes the
@@ -260,7 +268,7 @@ WHERE subject_type = $1 AND subject_id = $2;
 -- is unaffected (feed visibility is the discovery axis, not the access axis).
 UPDATE app.sites
 SET feed_visible = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
 
 -- name: SetSiteFeedMeta :one
@@ -270,7 +278,7 @@ RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed
 UPDATE app.sites
 SET title       = $2,
     description  = $3
-WHERE id = $1
+WHERE id = $1 AND org_id = $4
 RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
 
 -- name: SetCurrentVersion :exec
@@ -278,7 +286,7 @@ RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed
 -- touch our own org's site; we also re-check the version belongs to the site.
 UPDATE app.sites
 SET current_version_id = $2
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- ===========================================================================
 -- site_comments — org-internal discussion on a shared site, with @mentions
@@ -302,7 +310,7 @@ SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_use
 FROM (
     SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
     FROM app.post_comments
-    WHERE subject_type = $1 AND subject_id = $2
+    WHERE subject_type = $1 AND subject_id = $2 AND org_id = $4
     ORDER BY created_at DESC, id DESC
     LIMIT $3
 ) recent
@@ -316,7 +324,7 @@ ORDER BY created_at ASC, id ASC;
 -- The next monotonic version number for a site (1 on the first deploy).
 SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version_no
 FROM app.site_versions
-WHERE site_id = $1;
+WHERE site_id = $1 AND org_id = $2;
 
 -- name: CreateSiteVersion :one
 INSERT INTO app.site_versions (
@@ -328,19 +336,19 @@ RETURNING id, org_id, site_id, version_no, status, r2_prefix, content_hash, size
 -- name: GetSiteVersion :one
 SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: GetSiteVersionByContentHash :one
 -- Used to make a re-deploy of identical content idempotent (the per-site
 -- content_hash unique constraint backs this).
 SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
-WHERE site_id = $1 AND content_hash = $2;
+WHERE site_id = $1 AND content_hash = $2 AND org_id = $3;
 
 -- name: ListSiteVersions :many
 SELECT id, org_id, site_id, version_no, status, r2_prefix, content_hash, size_bytes, created_by, created_at, created_via, preview_expires_at
 FROM app.site_versions
-WHERE site_id = $1
+WHERE site_id = $1 AND org_id = $2
 ORDER BY version_no DESC;
 
 -- ===========================================================================
@@ -363,7 +371,7 @@ VALUES ($1, $2, $3);
 -- assert the publishing site OWNS the host before writing route:<host>.
 SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
-WHERE host = $1;
+WHERE host = $1 AND org_id = $2;
 
 -- name: ListHostRoutesForSite :many
 -- Every host registered for a site in the GLOBAL registry — the canonical
@@ -374,7 +382,7 @@ WHERE host = $1;
 -- OLD access_mode after the policy tightened (revocation).
 SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
-WHERE site_id = $1
+WHERE site_id = $1 AND org_id = $2
 ORDER BY host;
 
 -- ===========================================================================
@@ -392,7 +400,7 @@ SELECT
     s.access_mode   AS access_mode,
     s.current_version_id AS version_id
 FROM app.sites s
-WHERE s.current_version_id IS NOT NULL
+WHERE s.current_version_id IS NOT NULL AND s.org_id = $1
 ORDER BY s.created_at;
 
 -- ===========================================================================
@@ -405,7 +413,7 @@ ORDER BY s.created_at;
 -- under a false org policy.
 UPDATE app.sites
 SET access_mode = $2
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- name: UpsertSiteAccessPolicy :one
 -- Insert or replace the per-site access policy (one row per site, PK = site_id).
@@ -420,12 +428,13 @@ SET mode          = EXCLUDED.mode,
     expires_at    = EXCLUDED.expires_at,
     unlisted      = EXCLUDED.unlisted,
     updated_at    = now()
+WHERE app.site_access_policy.org_id = EXCLUDED.org_id
 RETURNING site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at;
 
 -- name: GetSiteAccessPolicy :one
 SELECT site_id, org_id, mode, password_hash, expires_at, unlisted, updated_at
 FROM app.site_access_policy
-WHERE site_id = $1;
+WHERE site_id = $1 AND org_id = $2;
 
 -- ===========================================================================
 -- allowlist (Phase 2)
@@ -442,23 +451,24 @@ ON CONFLICT (site_id, email) DO UPDATE
 SET is_external        = EXCLUDED.is_external,
     claimed_at         = NULL,
     claimed_by_user_id = NULL
+WHERE app.allowlist_entries.org_id = EXCLUDED.org_id
 RETURNING id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at;
 
 -- name: DeleteAllowlistEntry :exec
 DELETE FROM app.allowlist_entries
-WHERE site_id = $1 AND email = $2;
+WHERE site_id = $1 AND email = $2 AND org_id = $3;
 
 -- name: ListAllowlistEntries :many
 SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
 FROM app.allowlist_entries
-WHERE site_id = $1
+WHERE site_id = $1 AND org_id = $2
 ORDER BY created_at;
 
 -- name: GetAllowlistEntryByEmail :one
 -- Look up a grant by (site, email) for the authz claim path.
 SELECT id, org_id, site_id, email, is_external, claimed_at, claimed_by_user_id, created_at
 FROM app.allowlist_entries
-WHERE site_id = $1 AND email = $2;
+WHERE site_id = $1 AND email = $2 AND org_id = $3;
 
 -- name: ClaimAllowlistEntry :exec
 -- Claim a pending grant for the first verified account that matches it: set
@@ -468,7 +478,7 @@ WHERE site_id = $1 AND email = $2;
 UPDATE app.allowlist_entries
 SET claimed_at         = COALESCE(claimed_at, now()),
     claimed_by_user_id = COALESCE(claimed_by_user_id, $2)
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- ===========================================================================
 -- domains (Phase 2) — Cloudflare-for-SaaS custom hostnames
@@ -485,12 +495,12 @@ RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_
 -- name: GetDomain :one
 SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
 FROM app.domains
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: ListDomainsForSite :many
 SELECT id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at
 FROM app.domains
-WHERE site_id = $1
+WHERE site_id = $1 AND org_id = $2
 ORDER BY created_at;
 
 -- name: UpdateDomainStatus :one
@@ -499,7 +509,7 @@ ORDER BY created_at;
 UPDATE app.domains
 SET verify_status = $2,
     tls_status    = $3
-WHERE id = $1
+WHERE id = $1 AND org_id = $4
 RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_id, dcv_record, created_at;
 
 -- name: DeleteDomain :one
@@ -507,7 +517,7 @@ RETURNING id, org_id, site_id, hostname, verify_status, tls_status, cf_hostname_
 -- also drop the global host route (so serve/edge stop resolving the host) and delete
 -- the Cloudflare custom hostname. RLS scopes the delete to the active org.
 DELETE FROM app.domains
-WHERE id = $1
+WHERE id = $1 AND org_id = $2
 RETURNING id, org_id, site_id, hostname, cf_hostname_id;
 
 -- ===========================================================================
@@ -529,7 +539,7 @@ SET site_id = EXCLUDED.site_id,
 WHERE app.host_routes.org_id = EXCLUDED.org_id;
 
 -- name: DeleteHostRoute :exec
-DELETE FROM app.host_routes WHERE host = $1;
+DELETE FROM app.host_routes WHERE host = $1 AND org_id = $2;
 
 -- ===========================================================================
 -- host resolution (Phase 2) — resolve a content host → owning site (for /authz)
@@ -549,7 +559,7 @@ SELECT
     COALESCE(hr.version_id, s.current_version_id) AS version_id
 FROM app.host_routes hr
 JOIN app.sites s ON s.id = hr.site_id
-WHERE hr.host = $1;
+WHERE hr.host = $1 AND hr.org_id = $2 AND s.org_id = $2;
 
 -- ===========================================================================
 -- org policy (Phase 2) — allow_external_sharing toggle + reconcile
@@ -574,14 +584,14 @@ WHERE id = $1;
 -- on disabling external sharing: these are downgraded to org_only).
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
-WHERE access_mode = 'public'
+WHERE access_mode = 'public' AND org_id = $1
 ORDER BY created_at;
 
 -- name: DeleteExternalAllowlistEntriesForOrg :exec
 -- Remove every external-email allowlist grant in the active org (reconcile on
 -- disabling external sharing — revoke external access).
 DELETE FROM app.allowlist_entries
-WHERE is_external = true;
+WHERE is_external = true AND org_id = $1;
 
 -- NOTE: resolving a content host → owning site via the RLS-bypassing
 -- app.resolve_host() SECURITY DEFINER function (migration 0006) is done with raw
@@ -627,6 +637,7 @@ SELECT
     (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
 FROM app.site_versions v
 JOIN app.sites s ON s.id = v.site_id
+WHERE v.org_id = $1 AND s.org_id = $1
 ORDER BY v.site_id, v.version_no DESC;
 
 -- name: ListAuditLog :many
@@ -635,6 +646,7 @@ ORDER BY v.site_id, v.version_no DESC;
 -- adequate for an admin audit viewer (small N per page).
 SELECT id, org_id, actor_user, actor_token, action, target, metadata, ip, request_id, trace_id, created_at
 FROM app.audit_log
+WHERE org_id = $3
 ORDER BY created_at DESC, id DESC
 LIMIT $1 OFFSET $2;
 
@@ -676,7 +688,7 @@ SELECT sqlc.embed(sk),
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
-WHERE sk.id = $1;
+WHERE sk.id = $1 AND sk.org_id = $2;
 
 -- name: GetSkillBySlug :one
 SELECT sqlc.embed(sk),
@@ -684,7 +696,7 @@ SELECT sqlc.embed(sk),
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
-WHERE sk.slug = $1;
+WHERE sk.slug = $1 AND sk.org_id = $2;
 
 -- name: ListSkills :many
 -- Search + filter the active org's skills. q matches slug/title/description
@@ -698,7 +710,8 @@ SELECT sqlc.embed(sk),
        COALESCE(v.version_no, 0)::int AS version
 FROM app.skills sk
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
-WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_id)::uuid)
+WHERE sk.org_id = sqlc.arg(org_id)
+  AND (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_id)::uuid)
   AND (
         sqlc.arg(q)::text = ''
         OR sk.slug ILIKE '%' || sqlc.arg(q) || '%'
@@ -712,6 +725,7 @@ WHERE (sk.current_version_id IS NOT NULL OR sk.owner_user_id = sqlc.arg(caller_i
             FROM app.skill_folder_items fi
             JOIN app.skill_folders f ON f.id = fi.folder_id
             WHERE fi.skill_id = sk.id
+              AND fi.org_id = sqlc.arg(org_id) AND f.org_id = sqlc.arg(org_id)
               AND (sqlc.arg(folder_slug)::text = '' OR f.slug = sqlc.arg(folder_slug))
               AND (NOT sqlc.arg(presets_only)::boolean OR fi.is_preset)
         )
@@ -722,7 +736,7 @@ ORDER BY sk.created_at DESC;
 -- Remove a skill (versions + folder memberships cascade). RETURNING detects an
 -- RLS-invisible / absent row as a no-rows miss (→ ErrNotFound).
 DELETE FROM app.skills
-WHERE id = $1
+WHERE id = $1 AND org_id = $2
 RETURNING id;
 
 -- name: SetSkillMeta :one
@@ -731,7 +745,7 @@ RETURNING id;
 UPDATE app.skills
 SET title = $2,
     description = $3
-WHERE id = $1
+WHERE id = $1 AND org_id = $4
 RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: SetSkillFeedVisible :one
@@ -740,19 +754,19 @@ RETURNING id, org_id, slug, owner_user_id, title, description, current_version_i
 -- owner or an org admin/owner. A miss surfaces as a no-rows error (→ ErrNotFound).
 UPDATE app.skills
 SET feed_visible = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: SetSkillCurrentVersion :exec
 -- Flip the live pointer (finalize = publish in the latest-only v1 model).
 UPDATE app.skills
 SET current_version_id = $2
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- name: NextSkillVersionNo :one
 SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version_no
 FROM app.skill_versions
-WHERE skill_id = $1;
+WHERE skill_id = $1 AND org_id = $2;
 
 -- name: CreateSkillVersion :one
 INSERT INTO app.skill_versions (
@@ -777,14 +791,14 @@ RETURNING id, org_id, skill_id, version_no, status, content_hash, size_bytes, cr
 -- name: GetSkillVersion :one
 SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
 FROM app.skill_versions
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: GetSkillVersionByContentHash :one
 -- Idempotent re-upload of identical content (the per-skill content_hash unique
 -- constraint backs this).
 SELECT id, org_id, skill_id, version_no, status, content_hash, size_bytes, created_by, created_at
 FROM app.skill_versions
-WHERE skill_id = $1 AND content_hash = $2;
+WHERE skill_id = $1 AND content_hash = $2 AND org_id = $3;
 
 -- ===========================================================================
 -- skill folders — admin-curated taxonomy + preset flags
@@ -809,12 +823,12 @@ RETURNING id, org_id, slug, title, created_at;
 -- name: GetSkillFolder :one
 SELECT id, org_id, slug, title, created_at
 FROM app.skill_folders
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: GetSkillFolderBySlug :one
 SELECT id, org_id, slug, title, created_at
 FROM app.skill_folders
-WHERE slug = $1;
+WHERE slug = $1 AND org_id = $2;
 
 -- name: ListSkillFolders :many
 -- The org's folders with their member counts (the folder tabs + admin panel).
@@ -822,18 +836,19 @@ SELECT
     f.id, f.org_id, f.slug, f.title, f.created_at,
     COALESCE((SELECT COUNT(*) FROM app.skill_folder_items fi WHERE fi.folder_id = f.id), 0)::bigint AS item_count
 FROM app.skill_folders f
+WHERE f.org_id = $1
 ORDER BY f.slug;
 
 -- name: RenameSkillFolder :one
 UPDATE app.skill_folders
 SET title = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, slug, title, created_at;
 
 -- name: DeleteSkillFolder :one
 -- Memberships cascade; the skills themselves survive.
 DELETE FROM app.skill_folders
-WHERE id = $1
+WHERE id = $1 AND org_id = $2
 RETURNING id;
 
 -- name: LockSkillFolderQuota :exec
@@ -845,24 +860,25 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'));
 -- name: CountFolderItems :one
 SELECT count(*)::bigint AS n
 FROM app.skill_folder_items
-WHERE folder_id = $1;
+WHERE folder_id = $1 AND org_id = $2;
 
 -- name: UpsertSkillFolderItem :exec
 -- Add a skill to a folder (or update its preset flag if already a member).
 INSERT INTO app.skill_folder_items (org_id, folder_id, skill_id, is_preset, added_by)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (folder_id, skill_id) DO UPDATE
-SET is_preset = EXCLUDED.is_preset;
+SET is_preset = EXCLUDED.is_preset
+WHERE app.skill_folder_items.org_id = EXCLUDED.org_id;
 
 -- name: RemoveSkillFolderItem :one
 DELETE FROM app.skill_folder_items
-WHERE folder_id = $1 AND skill_id = $2
+WHERE folder_id = $1 AND skill_id = $2 AND org_id = $3
 RETURNING skill_id;
 
 -- name: SetSkillFolderItemPreset :one
 UPDATE app.skill_folder_items
 SET is_preset = $3
-WHERE folder_id = $1 AND skill_id = $2
+WHERE folder_id = $1 AND skill_id = $2 AND org_id = $4
 RETURNING folder_id, skill_id, is_preset;
 
 -- name: ListFoldersForSkills :many
@@ -872,6 +888,7 @@ SELECT fi.skill_id, f.id AS folder_id, f.slug, f.title, fi.is_preset
 FROM app.skill_folder_items fi
 JOIN app.skill_folders f ON f.id = fi.folder_id
 WHERE fi.skill_id = ANY(sqlc.arg(skill_ids)::uuid[])
+  AND fi.org_id = sqlc.arg(org_id) AND f.org_id = sqlc.arg(org_id)
 ORDER BY f.slug;
 
 -- name: ListFolderSkills :many
@@ -883,6 +900,7 @@ FROM app.skill_folder_items fi
 JOIN app.skills sk ON sk.id = fi.skill_id
 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
 WHERE fi.folder_id = $1
+  AND fi.org_id = $2 AND sk.org_id = $2
   AND sk.current_version_id IS NOT NULL
 ORDER BY sk.slug;
 
@@ -890,7 +908,7 @@ ORDER BY sk.slug;
 -- Replace-memberships helper: clear a skill's memberships before re-inserting
 -- the new set (PUT /skills/{id}/folders semantics), preserving nothing.
 DELETE FROM app.skill_folder_items
-WHERE skill_id = $1;
+WHERE skill_id = $1 AND org_id = $2;
 
 -- ===========================================================================
 -- skills seeding — lazy per-org default folders + preset skills
@@ -905,7 +923,7 @@ WHERE skill_id = $1;
 -- rows to the active org.
 SELECT sk.id AS skill_id, sk.current_version_id AS version_id
 FROM app.skills sk
-WHERE sk.current_version_id IS NOT NULL
+WHERE sk.current_version_id IS NOT NULL AND sk.org_id = $1
 ORDER BY sk.id;
 
 -- name: LockOrgSkillsSeed :exec
@@ -948,19 +966,19 @@ WHERE app.host_routes.org_id = EXCLUDED.org_id
 -- this without joining host_routes.
 UPDATE app.site_versions
 SET preview_expires_at = $2
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- name: ListPreviewRoutesForVersion :many
 SELECT host, org_id, site_id, created_at, kind, version_id, expires_at
 FROM app.host_routes
-WHERE version_id = $1 AND kind = 'preview'
+WHERE version_id = $1 AND kind = 'preview' AND org_id = $2
 ORDER BY host;
 
 -- name: DeletePreviewRoutesForVersion :many
 -- Drop a version's preview routes, returning the hosts so the caller can also
 -- delete the KV keys (publish and explicit preview deletion).
 DELETE FROM app.host_routes
-WHERE version_id = $1 AND kind = 'preview'
+WHERE version_id = $1 AND kind = 'preview' AND org_id = $2
 RETURNING host;
 
 -- name: DeleteSitePreviewRoutesExcept :many
@@ -970,6 +988,7 @@ RETURNING host;
 -- Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
 DELETE FROM app.host_routes
 WHERE site_id = sqlc.arg('site_id')
+  AND org_id = sqlc.arg('org_id')
   AND kind = 'preview'
   AND version_id IS DISTINCT FROM sqlc.narg('keep_version_id')
 RETURNING host;
@@ -989,6 +1008,7 @@ SELECT
 FROM app.host_routes hr
 JOIN app.sites s ON s.id = hr.site_id
 WHERE hr.kind = 'preview'
+  AND hr.org_id = $1 AND s.org_id = $1
   AND hr.version_id IS NOT NULL
   AND hr.expires_at > now()
 ORDER BY hr.host;
@@ -998,7 +1018,7 @@ ORDER BY hr.host;
 -- grace interval ago, returning hosts for KV cleanup. The edge already 410s
 -- them; this is bookkeeping, not enforcement.
 DELETE FROM app.host_routes
-WHERE kind = 'preview' AND expires_at < $1
+WHERE kind = 'preview' AND expires_at < $1 AND org_id = $2
 RETURNING host;
 
 -- ===========================================================================
@@ -1015,7 +1035,7 @@ RETURNING id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_ex
 SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
        base_version_id, latest_version_id, created_at, last_activity_at
 FROM app.ai_sessions
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: ListAISessionsForOrg :many
 SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
@@ -1028,7 +1048,7 @@ ORDER BY last_activity_at DESC;
 SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
        base_version_id, latest_version_id, created_at, last_activity_at
 FROM app.ai_sessions
-WHERE site_id = $1 AND status <> 'archived'
+WHERE site_id = $1 AND org_id = $2 AND status <> 'archived'
 ORDER BY last_activity_at DESC;
 
 -- name: LockOrgAISessionQuota :exec
@@ -1045,7 +1065,7 @@ WHERE org_id = $1 AND status IN ('active', 'running', 'idle');
 -- name: SetAISessionStatus :exec
 UPDATE app.ai_sessions
 SET status = $2, last_activity_at = now()
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- name: TryBeginAITurn :one
 -- Atomically claim a session for a turn: flip active/idle -> running and RETURN
@@ -1055,23 +1075,23 @@ WHERE id = $1;
 -- gives is what AppendAIMessage relies on.
 UPDATE app.ai_sessions
 SET status = 'running', last_activity_at = now()
-WHERE id = $1 AND status IN ('active', 'idle')
+WHERE id = $1 AND org_id = $2 AND status IN ('active', 'idle')
 RETURNING id;
 
 -- name: SetAISessionSandbox :exec
 -- Cache the live sandbox handle (NULLs clear it after a reap/destroy).
 UPDATE app.ai_sessions
 SET sandbox_id = $2, sandbox_expires_at = $3, last_activity_at = now()
-WHERE id = $1;
+WHERE id = $1 AND org_id = $4;
 
 -- name: SetAISessionLatestVersion :exec
 UPDATE app.ai_sessions
 SET latest_version_id = $2, last_activity_at = now()
-WHERE id = $1;
+WHERE id = $1 AND org_id = $3;
 
 -- name: DeleteAISession :exec
 DELETE FROM app.ai_sessions
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: AppendAIMessage :one
 -- Transcript append with a per-session monotonic seq (MAX+1 over an empty set
@@ -1081,7 +1101,7 @@ WHERE id = $1;
 INSERT INTO app.ai_messages (org_id, session_id, seq, role, content)
 SELECT $1, $2, COALESCE(MAX(m.seq), 0) + 1, $3, $4
 FROM app.ai_messages m
-WHERE m.session_id = $2
+WHERE m.session_id = $2 AND m.org_id = $1
 RETURNING id, org_id, session_id, seq, role, content, created_at;
 
 -- name: ListAIMessages :many
@@ -1089,7 +1109,7 @@ RETURNING id, org_id, session_id, seq, role, content, created_at;
 -- pass 0 for the full history).
 SELECT id, org_id, session_id, seq, role, content, created_at
 FROM app.ai_messages
-WHERE session_id = $1 AND seq > $2
+WHERE session_id = $1 AND seq > $2 AND org_id = $3
 ORDER BY seq;
 
 -- name: InsertAIUsage :one
@@ -1129,7 +1149,7 @@ LIMIT $2;
 -- name: MarkAIUsageReported :exec
 UPDATE app.ai_usage
 SET reported_to_billing_at = now()
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: SetAIEnabled :exec
 -- Org-level AI builder kill switch (owner/admin only, enforced in Go), the
@@ -1173,12 +1193,12 @@ RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, crea
 -- name: GetChatLog :one
 SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 FROM app.chat_logs
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- name: GetChatLogBySite :one
 SELECT id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits
 FROM app.chat_logs
-WHERE site_id = $1;
+WHERE site_id = $1 AND org_id = $2;
 
 -- name: ListChatLogs :many
 -- The org's chat library, newest first, with a live message count per log.
@@ -1194,29 +1214,29 @@ ORDER BY cl.created_at DESC;
 -- index chat_logs_site_key rejects attaching to a site that already has one.
 UPDATE app.chat_logs
 SET site_id = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;
 
 -- name: SetChatLogPanelEnabled :one
 UPDATE app.chat_logs
 SET panel_enabled = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;
 
 -- name: DeleteChatLog :execrows
-DELETE FROM app.chat_logs WHERE id = $1;
+DELETE FROM app.chat_logs WHERE id = $1 AND org_id = $2;
 
 -- name: CountChatMessages :one
 SELECT count(*)::bigint AS n
 FROM app.chat_messages
-WHERE chat_log_id = $1;
+WHERE chat_log_id = $1 AND org_id = $2;
 
 -- name: AllocateChatSeq :one
 -- Reserve $2 consecutive seq numbers; returns the FIRST reserved number. seq
 -- stays monotonic across pruning because the allocator never rewinds.
 UPDATE app.chat_logs
 SET next_seq = next_seq + $2::int
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING (next_seq - $2::int)::int AS base_seq;
 
 -- name: InsertChatMessage :one
@@ -1228,21 +1248,22 @@ RETURNING id, org_id, chat_log_id, seq, version_id, created_by, role, kind, cont
 -- Ascending seq page: seq > $2, LIMIT $3 (the panel and API both page forward).
 SELECT id, org_id, chat_log_id, seq, version_id, created_by, role, kind, content, meta, created_at
 FROM app.chat_messages
-WHERE chat_log_id = $1 AND seq > $2
+WHERE chat_log_id = $1 AND seq > $2 AND org_id = $4
 ORDER BY seq ASC
 LIMIT $3;
 
 -- name: DeleteChatMessage :execrows
-DELETE FROM app.chat_messages WHERE chat_log_id = $1 AND seq = $2;
+DELETE FROM app.chat_messages WHERE chat_log_id = $1 AND seq = $2 AND org_id = $3;
 
 -- name: PruneChatMessages :execrows
 -- Free-tier rolling window: keep the NEWEST $2 rows of the log, delete the
 -- rest. Runs under LockChatLogAppend in the same tx as the INSERT.
 DELETE FROM app.chat_messages m
 WHERE m.chat_log_id = $1
+  AND m.org_id = $3
   AND m.seq NOT IN (
       SELECT keep.seq FROM app.chat_messages keep
-      WHERE keep.chat_log_id = $1
+      WHERE keep.chat_log_id = $1 AND keep.org_id = $3
       ORDER BY keep.seq DESC
       LIMIT $2
   );
@@ -1263,7 +1284,7 @@ WHERE id = $1;
 -- The version stamp for an append while attached (NULL before first publish).
 SELECT current_version_id
 FROM app.sites
-WHERE id = $1;
+WHERE id = $1 AND org_id = $2;
 
 -- ===========================================================================
 -- collaboration toggles (migration 0014): "allow non-creators to modify"
@@ -1272,17 +1293,17 @@ WHERE id = $1;
 -- name: SetSiteAllowMemberEdits :one
 UPDATE app.sites
 SET allow_member_edits = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
 
 -- name: SetSkillAllowMemberEdits :one
 UPDATE app.skills
 SET allow_member_edits = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, slug, owner_user_id, title, description, current_version_id, feed_visible, created_at, allow_member_edits;
 
 -- name: SetChatLogAllowMemberEdits :one
 UPDATE app.chat_logs
 SET allow_member_edits = $2
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;

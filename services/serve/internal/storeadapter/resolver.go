@@ -130,7 +130,7 @@ func (a *RouteResolver) Resolve(ctx context.Context, normalizedHost string) (ser
 	}
 	var expiresAt pgtype.Timestamptz
 	row := tx.QueryRow(ctx,
-		`SELECT expires_at FROM app.site_access_policy WHERE site_id = $1`, siteID)
+		`SELECT expires_at FROM app.site_access_policy WHERE site_id = $1 AND org_id = $2`, siteID, orgID)
 	switch err := row.Scan(&expiresAt); {
 	case err == nil:
 		if expiresAt.Valid {

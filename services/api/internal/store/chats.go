@@ -130,7 +130,7 @@ func (s *Store) GetChatLog(ctx context.Context, t Tenant, id string) (ChatLog, e
 			return err
 		}
 		out = chatLogFromDB(row)
-		n, err := q.CountChatMessages(ctx, id)
+		n, err := q.CountChatMessages(ctx, db.CountChatMessagesParams{ChatLogID: id, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -145,7 +145,7 @@ func (s *Store) GetChatLogForSite(ctx context.Context, t Tenant, siteID string) 
 	var out ChatLog
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		sid := siteID
-		row, err := q.GetChatLogBySite(ctx, &sid)
+		row, err := q.GetChatLogBySite(ctx, db.GetChatLogBySiteParams{SiteID: &sid, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -156,7 +156,7 @@ func (s *Store) GetChatLogForSite(ctx context.Context, t Tenant, siteID string) 
 			return ErrNotFound
 		}
 		out = chatLogFromDB(row)
-		n, err := q.CountChatMessages(ctx, row.ID)
+		n, err := q.CountChatMessages(ctx, db.CountChatMessagesParams{ChatLogID: row.ID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,7 @@ func (s *Store) DeleteChatLog(ctx context.Context, t Tenant, id string) error {
 		if _, err := getChatLogTx(ctx, q, t, id); err != nil {
 			return err
 		}
-		n, err := q.DeleteChatLog(ctx, id)
+		n, err := q.DeleteChatLog(ctx, db.DeleteChatLogParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -220,7 +220,7 @@ func (s *Store) SetChatLogSite(ctx context.Context, t Tenant, id string, siteID 
 				return err
 			}
 		}
-		row, err := q.SetChatLogSite(ctx, db.SetChatLogSiteParams{ID: id, SiteID: siteID})
+		row, err := q.SetChatLogSite(ctx, db.SetChatLogSiteParams{ID: id, SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if uniqueViolation(err, "chat_logs_site_key") {
 				return ErrSiteHasChatLog
@@ -241,7 +241,7 @@ func (s *Store) SetChatLogPanel(ctx context.Context, t Tenant, id string, enable
 		if _, err := getChatLogTx(ctx, q, t, id); err != nil {
 			return err
 		}
-		row, err := q.SetChatLogPanelEnabled(ctx, db.SetChatLogPanelEnabledParams{ID: id, PanelEnabled: enabled})
+		row, err := q.SetChatLogPanelEnabled(ctx, db.SetChatLogPanelEnabledParams{ID: id, PanelEnabled: enabled, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -283,7 +283,7 @@ func (s *Store) AppendChatMessages(ctx context.Context, t Tenant, logID string, 
 		// Version stamp: the attached site's current deploy at append time.
 		var versionID *string
 		if log.SiteID != nil {
-			vid, err := q.GetSiteCurrentVersionID(ctx, *log.SiteID)
+			vid, err := q.GetSiteCurrentVersionID(ctx, db.GetSiteCurrentVersionIDParams{ID: *log.SiteID, OrgID: t.OrgID})
 			if err != nil && !isNoRows(err) {
 				return err
 			}
@@ -292,7 +292,7 @@ func (s *Store) AppendChatMessages(ctx context.Context, t Tenant, logID string, 
 
 		window, windowed := quota.RetentionWindow(s.quota, planTier, quota.ResourceChatMessagePerLog)
 		if !windowed {
-			current, err := q.CountChatMessages(ctx, logID)
+			current, err := q.CountChatMessages(ctx, db.CountChatMessagesParams{ChatLogID: logID, OrgID: t.OrgID})
 			if err != nil {
 				return err
 			}
@@ -301,7 +301,7 @@ func (s *Store) AppendChatMessages(ctx context.Context, t Tenant, logID string, 
 			}
 		}
 
-		base, err := q.AllocateChatSeq(ctx, db.AllocateChatSeqParams{ID: logID, Column2: int32(len(msgs))})
+		base, err := q.AllocateChatSeq(ctx, db.AllocateChatSeqParams{ID: logID, Column2: int32(len(msgs)), OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -335,6 +335,7 @@ func (s *Store) AppendChatMessages(ctx context.Context, t Tenant, logID string, 
 			pruned, err := q.PruneChatMessages(ctx, db.PruneChatMessagesParams{
 				ChatLogID: logID,
 				Limit:     int32(window),
+				OrgID:     t.OrgID,
 			})
 			if err != nil {
 				return err
@@ -361,6 +362,7 @@ func (s *Store) ListChatMessages(ctx context.Context, t Tenant, logID string, af
 			ChatLogID: logID,
 			Seq:       afterSeq,
 			Limit:     limit,
+			OrgID:     t.OrgID,
 		})
 		if err != nil {
 			return err
@@ -384,7 +386,7 @@ func (s *Store) DeleteChatMessage(ctx context.Context, t Tenant, logID string, s
 		if _, err := getChatLogTx(ctx, q, t, logID); err != nil {
 			return err
 		}
-		n, err := q.DeleteChatMessage(ctx, db.DeleteChatMessageParams{ChatLogID: logID, Seq: seq})
+		n, err := q.DeleteChatMessage(ctx, db.DeleteChatMessageParams{ChatLogID: logID, Seq: seq, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -454,6 +456,7 @@ func (s *Store) CompileChatTranscript(ctx context.Context, t Tenant, logID strin
 			ChatLogID: logID,
 			Seq:       0,
 			Limit:     int32(chatspec.MaxImportMessages),
+			OrgID:     t.OrgID,
 		})
 		if err != nil {
 			return err
@@ -487,7 +490,7 @@ func (s *Store) CompileChatTranscript(ctx context.Context, t Tenant, logID strin
 func (s *Store) SiteChatRoutes(ctx context.Context, t Tenant, siteID string) ([]RouteUpdate, error) {
 	var updates []RouteUpdate
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -505,16 +508,16 @@ func (s *Store) SiteChatRoutes(ctx context.Context, t Tenant, siteID string) ([]
 			return err
 		}
 		var expiresAt string
-		if pol, perr := q.GetSiteAccessPolicy(ctx, siteID); perr == nil {
+		if pol, perr := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: siteID, OrgID: t.OrgID}); perr == nil {
 			expiresAt = routeExpiry(site.AccessMode, accessPolicyFromDB(pol))
 		} else if !isNoRows(perr) {
 			return perr
 		}
-		chatID, err := chatIDForSiteTx(ctx, q, siteID)
+		chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, siteID)
 		if err != nil {
 			return err
 		}
-		hostRoutes, err := q.ListHostRoutesForSite(ctx, siteID)
+		hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
@@ -534,9 +537,9 @@ func (s *Store) SiteChatRoutes(ctx context.Context, t Tenant, siteID string) ([]
 
 // chatIDForSiteTx returns the site's attached, panel-enabled chat log id
 // ("" when none) — the RouteValue.chat_id input for publish/rebuild/refresh.
-func chatIDForSiteTx(ctx context.Context, q *db.Queries, siteID string) (string, error) {
+func chatIDForSiteTx(ctx context.Context, q *db.Queries, orgID, siteID string) (string, error) {
 	sid := siteID
-	row, err := q.GetChatLogBySite(ctx, &sid)
+	row, err := q.GetChatLogBySite(ctx, db.GetChatLogBySiteParams{SiteID: &sid, OrgID: orgID})
 	if err != nil {
 		if isNoRows(err) {
 			return "", nil
@@ -552,7 +555,7 @@ func chatIDForSiteTx(ctx context.Context, q *db.Queries, siteID string) (string,
 // getChatLogTx reads a log and asserts it belongs to the active tenant (the
 // confused-deputy guard sensitive chat writes share).
 func getChatLogTx(ctx context.Context, q *db.Queries, t Tenant, id string) (db.AppChatLog, error) {
-	row, err := q.GetChatLog(ctx, id)
+	row, err := q.GetChatLog(ctx, db.GetChatLogParams{ID: id, OrgID: t.OrgID})
 	if err != nil {
 		if isNoRows(err) {
 			return db.AppChatLog{}, ErrNotFound
@@ -567,7 +570,7 @@ func getChatLogTx(ctx context.Context, q *db.Queries, t Tenant, id string) (db.A
 
 // assertSiteInOrgTx verifies the site exists and belongs to the tenant.
 func assertSiteInOrgTx(ctx context.Context, q *db.Queries, t Tenant, siteID string) error {
-	site, err := q.GetSite(ctx, siteID)
+	site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 	if err != nil {
 		if isNoRows(err) {
 			return ErrNotFound

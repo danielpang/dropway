@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
-// Package store is the MCP service's thin, RLS-scoped data layer. It runs every
+// Package store is the MCP service's thin, org-scoped data layer. It runs every
 // query as the non-BYPASSRLS `dropway_app` role inside a transaction that first
 // sets the per-request tenant context (SET LOCAL app.current_org_id / _user_id),
 // so a token for org A can only ever see org A's rows — the same isolation the
-// rest of the platform relies on. It can't import services/api/internal/store
-// (Go internal-package rules), so it carries its own minimal queries.
+// rest of the platform relies on. Every query ALSO carries an explicit org_id
+// predicate bound from the tenant: RLS is the backstop, not the only filter (a
+// BYPASSRLS runtime role silently disables RLS — the July 2026 prod leak). It
+// can't import services/api/internal/store (Go internal-package rules), so it
+// carries its own minimal queries.
 package store
 
 import (
@@ -35,8 +38,10 @@ type Site struct {
 }
 
 // siteCols is the shared SELECT list: site fields + one representative host.
+// The host subselect pins hr.org_id to the site's org so a (hypothetical)
+// cross-org route row can never surface here.
 const siteCols = `s.id, s.slug, s.access_mode, s.current_version_id,
-	(SELECT hr.host FROM app.host_routes hr WHERE hr.site_id = s.id ORDER BY hr.host LIMIT 1)`
+	(SELECT hr.host FROM app.host_routes hr WHERE hr.site_id = s.id AND hr.org_id = s.org_id ORDER BY hr.host LIMIT 1)`
 
 // ErrNotFound is returned when a site slug doesn't resolve under the tenant.
 var ErrNotFound = errors.New("mcp/store: not found")
@@ -89,12 +94,12 @@ func (s *Store) MCPEnabled(ctx context.Context, t Tenant) (bool, error) {
 	return enabled, err
 }
 
-// ListSites returns the org's sites (RLS-filtered to the tenant).
+// ListSites returns the org's sites (explicit org filter; RLS is the backstop).
 func (s *Store) ListSites(ctx context.Context, t Tenant) ([]Site, error) {
 	var sites []Site
 	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT `+siteCols+` FROM app.sites s ORDER BY s.slug`)
+			`SELECT `+siteCols+` FROM app.sites s WHERE s.org_id = $1 ORDER BY s.slug`, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -116,7 +121,7 @@ func (s *Store) SiteBySlug(ctx context.Context, t Tenant, slug string) (Site, er
 	var st Site
 	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`SELECT `+siteCols+` FROM app.sites s WHERE s.slug = $1`, slug).
+			`SELECT `+siteCols+` FROM app.sites s WHERE s.slug = $1 AND s.org_id = $2`, slug, t.OrgID).
 			Scan(&st.ID, &st.Slug, &st.AccessMode, &st.CurrentVersionID, &st.Host)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -159,9 +164,9 @@ func (s *Store) ChatLogBySite(ctx context.Context, t Tenant, siteID string) (Cha
 	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
 			`SELECT l.id, l.site_id, l.title, l.source_tool, l.panel_enabled,
-			        (SELECT COUNT(*) FROM app.chat_messages m WHERE m.chat_log_id = l.id),
+			        (SELECT COUNT(*) FROM app.chat_messages m WHERE m.chat_log_id = l.id AND m.org_id = l.org_id),
 			        l.created_by, l.created_at
-			 FROM app.chat_logs l WHERE l.site_id = $1`, siteID).
+			 FROM app.chat_logs l WHERE l.site_id = $1 AND l.org_id = $2`, siteID, t.OrgID).
 			Scan(&l.ID, &l.SiteID, &l.Title, &l.SourceTool, &l.PanelEnabled,
 				&l.MessageCount, &l.CreatedBy, &l.CreatedAt)
 	})
@@ -178,7 +183,7 @@ func (s *Store) ListChatMessages(ctx context.Context, t Tenant, chatLogID string
 	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT m.seq, m.role, m.kind, m.content, m.meta, m.version_id, m.created_at
-			 FROM app.chat_messages m WHERE m.chat_log_id = $1 ORDER BY m.seq`, chatLogID)
+			 FROM app.chat_messages m WHERE m.chat_log_id = $1 AND m.org_id = $2 ORDER BY m.seq`, chatLogID, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -251,7 +256,7 @@ func scanSkill(row pgx.Row) (Skill, error) {
 }
 
 // attachSkillFolders fills Folders for every skill in one query (no N+1).
-func attachSkillFolders(ctx context.Context, tx pgx.Tx, skills []Skill) error {
+func attachSkillFolders(ctx context.Context, tx pgx.Tx, orgID string, skills []Skill) error {
 	if len(skills) == 0 {
 		return nil
 	}
@@ -265,8 +270,8 @@ func attachSkillFolders(ctx context.Context, tx pgx.Tx, skills []Skill) error {
 		`SELECT fi.skill_id, f.id, f.slug, f.title, fi.is_preset
 		 FROM app.skill_folder_items fi
 		 JOIN app.skill_folders f ON f.id = fi.folder_id
-		 WHERE fi.skill_id = ANY($1)
-		 ORDER BY f.slug`, ids)
+		 WHERE fi.skill_id = ANY($1) AND fi.org_id = $2 AND f.org_id = $2
+		 ORDER BY f.slug`, ids, orgID)
 	if err != nil {
 		return err
 	}
@@ -294,6 +299,7 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, query, folderSlug stri
 		rows, err := tx.Query(ctx,
 			`SELECT `+skillCols+skillFrom+`
 			 WHERE sk.current_version_id IS NOT NULL
+			   AND sk.org_id = $4
 			   AND ($1::text = ''
 			        OR sk.slug ILIKE '%' || $1 || '%'
 			        OR COALESCE(sk.title, '') ILIKE '%' || $1 || '%'
@@ -303,9 +309,10 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, query, folderSlug stri
 			             SELECT 1 FROM app.skill_folder_items fi
 			             JOIN app.skill_folders f ON f.id = fi.folder_id
 			             WHERE fi.skill_id = sk.id
+			               AND fi.org_id = $4 AND f.org_id = $4
 			               AND ($2::text = '' OR f.slug = $2)
 			               AND (NOT $3::boolean OR fi.is_preset)))
-			 ORDER BY sk.slug`, query, folderSlug, presetsOnly)
+			 ORDER BY sk.slug`, query, folderSlug, presetsOnly, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -320,7 +327,7 @@ func (s *Store) ListSkills(ctx context.Context, t Tenant, query, folderSlug stri
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		return attachSkillFolders(ctx, tx, skills)
+		return attachSkillFolders(ctx, tx, t.OrgID, skills)
 	})
 	return skills, err
 }
@@ -332,12 +339,12 @@ func (s *Store) SkillBySlug(ctx context.Context, t Tenant, slug string) (Skill, 
 	err := s.withTx(ctx, t, func(tx pgx.Tx) error {
 		var err error
 		sk, err = scanSkill(tx.QueryRow(ctx,
-			`SELECT `+skillCols+skillFrom+` WHERE sk.slug = $1`, slug))
+			`SELECT `+skillCols+skillFrom+` WHERE sk.slug = $1 AND sk.org_id = $2`, slug, t.OrgID))
 		if err != nil {
 			return err
 		}
 		one := []Skill{sk}
-		if err := attachSkillFolders(ctx, tx, one); err != nil {
+		if err := attachSkillFolders(ctx, tx, t.OrgID, one); err != nil {
 			return err
 		}
 		sk = one[0]
@@ -357,8 +364,9 @@ func (s *Store) ListSkillFolders(ctx context.Context, t Tenant) ([]SkillFolder, 
 			`SELECT f.id, f.slug, f.title, COUNT(fi.skill_id)
 			 FROM app.skill_folders f
 			 LEFT JOIN app.skill_folder_items fi ON fi.folder_id = f.id
+			 WHERE f.org_id = $1
 			 GROUP BY f.id, f.slug, f.title
-			 ORDER BY f.slug`)
+			 ORDER BY f.slug`, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -384,8 +392,8 @@ func (s *Store) SkillFolderBySlug(ctx context.Context, t Tenant, slug string) (S
 			`SELECT f.id, f.slug, f.title, COUNT(fi.skill_id)
 			 FROM app.skill_folders f
 			 LEFT JOIN app.skill_folder_items fi ON fi.folder_id = f.id
-			 WHERE f.slug = $1
-			 GROUP BY f.id, f.slug, f.title`, slug).
+			 WHERE f.slug = $1 AND f.org_id = $2
+			 GROUP BY f.id, f.slug, f.title`, slug, t.OrgID).
 			Scan(&f.ID, &f.Slug, &f.Title, &f.ItemCount)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -404,8 +412,9 @@ func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string)
 			 FROM app.skill_folder_items fi
 			 JOIN app.skills sk ON sk.id = fi.skill_id
 			 LEFT JOIN app.skill_versions v ON v.id = sk.current_version_id
-			 WHERE fi.folder_id = $1 AND sk.current_version_id IS NOT NULL
-			 ORDER BY sk.slug`, folderID)
+			 WHERE fi.folder_id = $1 AND fi.org_id = $2 AND sk.org_id = $2
+			   AND sk.current_version_id IS NOT NULL
+			 ORDER BY sk.slug`, folderID, t.OrgID)
 		if err != nil {
 			return err
 		}
@@ -420,7 +429,7 @@ func (s *Store) ListFolderSkills(ctx context.Context, t Tenant, folderID string)
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		return attachSkillFolders(ctx, tx, skills)
+		return attachSkillFolders(ctx, tx, t.OrgID, skills)
 	})
 	return skills, err
 }

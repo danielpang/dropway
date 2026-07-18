@@ -43,7 +43,7 @@ type PreviewResult struct {
 func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versionID string, ttl time.Duration) (PreviewResult, error) {
 	var res PreviewResult
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -53,7 +53,7 @@ func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versio
 		if site.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		ver, err := q.GetSiteVersion(ctx, versionID)
+		ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: versionID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -90,7 +90,7 @@ func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versio
 		// Belt-and-braces: the upsert's WHERE guards silently no-op when the host
 		// row is owned by another (org, site) or is not a preview row. Re-read and
 		// refuse rather than projecting a route for a host we don't own.
-		hr, err := q.GetHostRoute(ctx, host)
+		hr, err := q.GetHostRoute(ctx, db.GetHostRouteParams{Host: host, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrHostTaken // owned by another org (invisible under RLS)
@@ -102,7 +102,7 @@ func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versio
 		}
 
 		if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
-			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}, OrgID: t.OrgID,
 		}); err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versio
 		// gated too). Edge expiry is the earlier of the preview deadline and any
 		// public link-expiry the site's policy carries.
 		var policyExpiry string
-		if pol, perr := q.GetSiteAccessPolicy(ctx, siteID); perr == nil {
+		if pol, perr := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: siteID, OrgID: t.OrgID}); perr == nil {
 			policyExpiry = routeExpiry(site.AccessMode, accessPolicyFromDB(pol))
 		} else if !isNoRows(perr) {
 			return perr
@@ -138,7 +138,7 @@ func (s *Store) CreatePreviewRoute(ctx context.Context, t Tenant, siteID, versio
 func (s *Store) DeletePreviewRoutes(ctx context.Context, t Tenant, siteID, versionID string) ([]string, error) {
 	var hosts []string
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		site, err := q.GetSite(ctx, siteID)
+		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -148,7 +148,7 @@ func (s *Store) DeletePreviewRoutes(ctx context.Context, t Tenant, siteID, versi
 		if site.OrgID != t.OrgID {
 			return ErrNotFound
 		}
-		ver, err := q.GetSiteVersion(ctx, versionID)
+		ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: versionID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -160,12 +160,12 @@ func (s *Store) DeletePreviewRoutes(ctx context.Context, t Tenant, siteID, versi
 		}
 
 		vid := versionID
-		hosts, err = q.DeletePreviewRoutesForVersion(ctx, &vid)
+		hosts, err = q.DeletePreviewRoutesForVersion(ctx, db.DeletePreviewRoutesForVersionParams{VersionID: &vid, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
 		return q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
-			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{},
+			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{}, OrgID: t.OrgID,
 		})
 	})
 	return hosts, err
@@ -181,7 +181,7 @@ func (s *Store) DeleteOtherSitePreviewRoutes(ctx context.Context, t Tenant, site
 		vid := keepVersionID
 		var derr error
 		hosts, derr = q.DeleteSitePreviewRoutesExcept(ctx, db.DeleteSitePreviewRoutesExceptParams{
-			SiteID: siteID, KeepVersionID: &vid,
+			SiteID: siteID, KeepVersionID: &vid, OrgID: t.OrgID,
 		})
 		return derr
 	})
@@ -196,7 +196,10 @@ func (s *Store) SweepExpiredPreviews(ctx context.Context, t Tenant, olderThan ti
 	var hosts []string
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		var err error
-		hosts, err = q.DeleteExpiredPreviewRoutes(ctx, pgtype.Timestamptz{Time: olderThan, Valid: true})
+		hosts, err = q.DeleteExpiredPreviewRoutes(ctx, db.DeleteExpiredPreviewRoutesParams{
+			ExpiresAt: pgtype.Timestamptz{Time: olderThan, Valid: true},
+			OrgID:     t.OrgID,
+		})
 		return err
 	})
 	return hosts, err
@@ -233,7 +236,7 @@ func (s *Store) ListUnreportedAIUsage(ctx context.Context, t Tenant, limit int32
 // after a successful meter send).
 func (s *Store) MarkAIUsageReported(ctx context.Context, t Tenant, rowID string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		return q.MarkAIUsageReported(ctx, rowID)
+		return q.MarkAIUsageReported(ctx, db.MarkAIUsageReportedParams{ID: rowID, OrgID: t.OrgID})
 	})
 }
 

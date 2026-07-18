@@ -22,7 +22,7 @@ func (s *Store) SetSiteAllowMemberEdits(ctx context.Context, t Tenant, siteID st
 			return err
 		}
 		row, err := q.SetSiteAllowMemberEdits(ctx, db.SetSiteAllowMemberEditsParams{
-			ID: siteID, AllowMemberEdits: allow,
+			ID: siteID, AllowMemberEdits: allow, OrgID: t.OrgID,
 		})
 		if err != nil {
 			return err
@@ -37,7 +37,7 @@ func (s *Store) SetSiteAllowMemberEdits(ctx context.Context, t Tenant, siteID st
 func (s *Store) SetSkillAllowMemberEdits(ctx context.Context, t Tenant, skillID string, allow bool) (Skill, error) {
 	var out Skill
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		existing, err := q.GetSkill(ctx, skillID)
+		existing, err := q.GetSkill(ctx, db.GetSkillParams{ID: skillID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
@@ -48,13 +48,13 @@ func (s *Store) SetSkillAllowMemberEdits(ctx context.Context, t Tenant, skillID 
 			return ErrNotFound
 		}
 		row, err := q.SetSkillAllowMemberEdits(ctx, db.SetSkillAllowMemberEditsParams{
-			ID: skillID, AllowMemberEdits: allow,
+			ID: skillID, AllowMemberEdits: allow, OrgID: t.OrgID,
 		})
 		if err != nil {
 			return err
 		}
 		out = skillFromDB(row)
-		refs, err := foldersForSkillsTx(ctx, q, []string{skillID})
+		refs, err := foldersForSkillsTx(ctx, q, t.OrgID, []string{skillID})
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func (s *Store) SetChatLogAllowMemberEdits(ctx context.Context, t Tenant, logID 
 			return err
 		}
 		row, err := q.SetChatLogAllowMemberEdits(ctx, db.SetChatLogAllowMemberEditsParams{
-			ID: logID, AllowMemberEdits: allow,
+			ID: logID, AllowMemberEdits: allow, OrgID: t.OrgID,
 		})
 		if err != nil {
 			return err
