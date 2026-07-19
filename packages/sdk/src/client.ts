@@ -105,10 +105,9 @@ export class HttpClient {
     );
 
     if (res.status === 204) return undefined as T;
-    const text = await res.text();
-    const json = text ? safeJson(text) : null;
+    const json = res.text ? safeJson(res.text) : null;
 
-    if (!res.ok) {
+    if (!statusOk(res.status)) {
       throw errorForResponse(
         res.status,
         (json as ApiErrorBody | null) ?? null,
@@ -123,13 +122,17 @@ export class HttpClient {
    * no Content-Type — the presigned URL is the credential and neither is part of the
    * SigV4 signature (matching the dashboard/CLI). Retries as an idempotent PUT.
    */
-  async putBlob(url: string, data: Uint8Array, signal?: AbortSignal): Promise<void> {
+  async putBlob(
+    url: string,
+    data: Uint8Array,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const res = await this.fetchWithRetry(
       url,
       { method: "PUT", body: data, signal },
       true,
     );
-    if (!res.ok) {
+    if (!statusOk(res.status)) {
       throw errorForResponse(res.status, null);
     }
   }
@@ -144,33 +147,51 @@ export class HttpClient {
     return url.toString();
   }
 
+  /**
+   * fetchWithRetry issues the request and reads the FULL body under a single
+   * timeout that covers both headers and body (a stalled body must not hang past
+   * timeoutMs), returning a small snapshot. Idempotent requests retry on transient
+   * 5xx / 429 / network error with jittered backoff. An already-aborted external
+   * signal short-circuits before the first fetch.
+   */
   private async fetchWithRetry(
     url: string,
     init: RequestInit,
     idempotent: boolean,
-  ): Promise<Response> {
+  ): Promise<ResponseSnapshot> {
     let lastErr: unknown;
     for (let attempt = 0; ; attempt++) {
-      const controller = new AbortController();
       const external = init.signal;
+      // Honor a signal that is ALREADY aborted (addEventListener would never fire).
+      if (external?.aborted) {
+        throw (
+          external.reason ??
+          new DOMException("The operation was aborted.", "AbortError")
+        );
+      }
+      const controller = new AbortController();
       const onAbort = () => controller.abort();
       external?.addEventListener("abort", onAbort, { once: true });
+      // One deadline for the whole exchange — headers AND body read below.
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
-        const res = await this.fetchImpl(url, { ...init, signal: controller.signal });
-        // Retry idempotent requests on transient 5xx / 429, if attempts remain.
-        if (
-          idempotent &&
-          attempt < this.maxRetries &&
-          (res.status >= 500 || res.status === 429)
-        ) {
+        const res = await this.fetchImpl(url, {
+          ...init,
+          signal: controller.signal,
+        });
+        const retryable = res.status >= 500 || res.status === 429;
+        if (idempotent && attempt < this.maxRetries && retryable) {
+          // Drain/close the body so the connection can be reused, then back off.
+          await res.body?.cancel().catch(() => {});
           await sleep(backoffMs(attempt, res.headers.get("retry-after")));
           continue;
         }
-        return res;
+        // Read the body while the timeout is still armed (a slow body aborts too).
+        const text = res.status === 204 ? "" : await res.text();
+        return { status: res.status, headers: res.headers, text };
       } catch (err) {
         lastErr = err;
-        if (external?.aborted) throw err;
+        if (external?.aborted) throw err; // caller cancelled → don't retry
         if (idempotent && attempt < this.maxRetries) {
           await sleep(backoffMs(attempt, null));
           continue;
@@ -184,6 +205,17 @@ export class HttpClient {
     // unreachable; the loop returns or throws.
     throw lastErr;
   }
+}
+
+/** A read-out response: status + headers + the fully-read body text. */
+interface ResponseSnapshot {
+  status: number;
+  headers: Headers;
+  text: string;
+}
+
+function statusOk(status: number): boolean {
+  return status >= 200 && status < 300;
 }
 
 function safeJson(text: string): unknown {

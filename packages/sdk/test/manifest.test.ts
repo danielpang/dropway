@@ -12,22 +12,29 @@ import {
   sha256Hex,
 } from "../src/manifest.js";
 
-const vector = JSON.parse(
+const fixture = JSON.parse(
   readFileSync(
     fileURLToPath(new URL("../testdata/manifest-digest.json", import.meta.url)),
     "utf8",
   ),
-) as { files: { path: string; sha256: string }[]; digest: string };
+) as {
+  vectors: {
+    name: string;
+    files: { path: string; sha256: string }[];
+    digest: string;
+  }[];
+};
 
 describe("digest parity with the Go server", () => {
-  it("reproduces internal/manifest.Digest for the shared vector", () => {
-    expect(digest(vector.files)).toBe(vector.digest);
-  });
+  for (const vector of fixture.vectors) {
+    it(`reproduces internal/manifest.Digest for the "${vector.name}" vector`, () => {
+      expect(digest(vector.files)).toBe(vector.digest);
+    });
 
-  it("is order-independent (sorted by path)", () => {
-    const reversed = [...vector.files].reverse();
-    expect(digest(reversed)).toBe(vector.digest);
-  });
+    it(`is input-order-independent for "${vector.name}" (sorted internally)`, () => {
+      expect(digest([...vector.files].reverse())).toBe(vector.digest);
+    });
+  }
 });
 
 describe("sha256Hex", () => {
@@ -41,7 +48,9 @@ describe("sha256Hex", () => {
 describe("contentTypeForPath", () => {
   it("maps known extensions and defaults otherwise", () => {
     expect(contentTypeForPath("index.html")).toBe("text/html; charset=utf-8");
-    expect(contentTypeForPath("a/b/app.js")).toBe("text/javascript; charset=utf-8");
+    expect(contentTypeForPath("a/b/app.js")).toBe(
+      "text/javascript; charset=utf-8",
+    );
     expect(contentTypeForPath("logo.PNG")).toBe("image/png");
     expect(contentTypeForPath("data.bin")).toBe("application/octet-stream");
     expect(contentTypeForPath("noext")).toBe("application/octet-stream");
@@ -60,7 +69,11 @@ describe("normalizePath", () => {
 
 describe("buildManifest", () => {
   it("produces a manifest, byte map, and digest", () => {
-    const { manifest, bytesBySha, digest: d } = buildManifest({
+    const {
+      manifest,
+      bytesBySha,
+      digest: d,
+    } = buildManifest({
       "index.html": "<h1>hi</h1>",
       "app.js": new Uint8Array([1, 2, 3]),
     });
@@ -69,6 +82,8 @@ describe("buildManifest", () => {
     expect(d).toMatch(/^[0-9a-f]{64}$/);
     const html = manifest.find((f) => f.path === "index.html")!;
     expect(html.contentType).toBe("text/html; charset=utf-8");
-    expect(html.sha256).toBe(sha256Hex(new TextEncoder().encode("<h1>hi</h1>")));
+    expect(html.sha256).toBe(
+      sha256Hex(new TextEncoder().encode("<h1>hi</h1>")),
+    );
   });
 });

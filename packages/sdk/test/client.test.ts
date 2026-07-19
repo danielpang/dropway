@@ -12,7 +12,11 @@ import {
 
 type Handler = (url: string, init: RequestInit) => Response | Promise<Response>;
 
-function json(body: unknown, status = 200, headers: Record<string, string> = {}) {
+function json(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json", ...headers },
@@ -30,7 +34,12 @@ function client(handler: Handler, apiKey = "dw_live_test") {
     });
     return handler(u, init);
   }) as unknown as typeof fetch;
-  const dw = new Dropway({ apiKey, baseUrl: "https://api.test", fetch: fetchImpl, maxRetries: 0 });
+  const dw = new Dropway({
+    apiKey,
+    baseUrl: "https://api.test",
+    fetch: fetchImpl,
+    maxRetries: 0,
+  });
   return { dw, calls };
 }
 
@@ -55,7 +64,9 @@ describe("constructor", () => {
 
   it("reads DROPWAY_API_KEY from the environment", () => {
     process.env.DROPWAY_API_KEY = "dw_live_env";
-    expect(() => new Dropway({ fetch: (() => {}) as unknown as typeof fetch })).not.toThrow();
+    expect(
+      () => new Dropway({ fetch: (() => {}) as unknown as typeof fetch }),
+    ).not.toThrow();
     delete process.env.DROPWAY_API_KEY;
   });
 
@@ -76,7 +87,15 @@ describe("error mapping", () => {
   it("maps 402 → QuotaExceededError with upgrade fields", async () => {
     const { dw } = client(() =>
       json(
-        { message: "site cap reached", limit: 10, current: 10, max: 10, plan_tier: "free", next_tier: "pro", upgrade_url: "https://u" },
+        {
+          message: "site cap reached",
+          limit: 10,
+          current: 10,
+          max: 10,
+          plan_tier: "free",
+          next_tier: "pro",
+          upgrade_url: "https://u",
+        },
         402,
       ),
     );
@@ -89,18 +108,40 @@ describe("error mapping", () => {
 
   it("maps 403 → ForbiddenError and flags the interactive ceiling", async () => {
     const { dw } = client(() =>
-      json({ message: "this action requires an interactive login; API keys are limited to member-level actions" }, 403),
+      json(
+        {
+          message:
+            "this action requires an interactive login; API keys are limited to member-level actions",
+        },
+        403,
+      ),
     );
-    const err = (await dw.request("DELETE", "/v1/api-keys/x").catch((e) => e)) as ForbiddenError;
+    const err = (await dw
+      .request("DELETE", "/v1/api-keys/x")
+      .catch((e) => e)) as ForbiddenError;
     expect(err).toBeInstanceOf(ForbiddenError);
     expect(err.interactiveRequired).toBe(true);
   });
 
   it("maps 429 → RateLimitError with Retry-After", async () => {
-    const { dw } = client(() => json({ message: "slow down" }, 429, { "retry-after": "7" }));
+    const { dw } = client(() =>
+      json({ message: "slow down" }, 429, { "retry-after": "7" }),
+    );
     const err = (await dw.sites.list().catch((e) => e)) as RateLimitError;
     expect(err).toBeInstanceOf(RateLimitError);
     expect(err.retryAfterSeconds).toBe(7);
+  });
+});
+
+describe("abort", () => {
+  it("honors an already-aborted signal without calling fetch", async () => {
+    const { dw, calls } = client(() => json({}));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      dw.request("GET", "/v1/sites", { signal: controller.signal }),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0); // never dialed
   });
 });
 
@@ -110,9 +151,12 @@ describe("deploy loop", () => {
     const { dw, calls } = client((url, init) => {
       if (url.endsWith("/deployments/prepare")) {
         // Ask for both blobs to be uploaded.
-        const body = tryParse(init.body as BodyInit) as { manifest: { sha256: string }[] };
+        const body = tryParse(init.body as BodyInit) as {
+          manifest: { sha256: string }[];
+        };
         const uploads: Record<string, string> = {};
-        for (const f of body.manifest) uploads[f.sha256] = `https://blob.test/${f.sha256}`;
+        for (const f of body.manifest)
+          uploads[f.sha256] = `https://blob.test/${f.sha256}`;
         return json({ missing: body.manifest.map((f) => f.sha256), uploads });
       }
       if (url.startsWith("https://blob.test/")) {
@@ -120,7 +164,11 @@ describe("deploy loop", () => {
         return new Response(null, { status: 200 });
       }
       if (url.endsWith("/deployments")) {
-        return json({ version_id: "v1", version_no: 1, preview_url: "https://preview.test" });
+        return json({
+          version_id: "v1",
+          version_no: 1,
+          preview_url: "https://preview.test",
+        });
       }
       if (url.endsWith("/publish")) {
         return json({ live_url: "https://live.test", version_id: "v1" });
@@ -140,7 +188,11 @@ describe("deploy loop", () => {
     expect(puts).toHaveLength(2);
 
     // Order: prepare, 2 PUTs, finalize, publish.
-    const seq = calls.map((c) => c.url.replace("https://api.test", "").replace("https://blob.test", "BLOB"));
+    const seq = calls.map((c) =>
+      c.url
+        .replace("https://api.test", "")
+        .replace("https://blob.test", "BLOB"),
+    );
     expect(seq[0]).toContain("/deployments/prepare");
     expect(seq[seq.length - 2]).toContain("/deployments");
     expect(seq[seq.length - 1]).toContain("/publish");
@@ -153,7 +205,8 @@ describe("deploy loop", () => {
         return json({ missing: [], uploads: {} });
       }
       if (url.endsWith("/deployments")) return json({ version_id: "v2" });
-      if (url.endsWith("/publish")) throw new Error("publish should not be called");
+      if (url.endsWith("/publish"))
+        throw new Error("publish should not be called");
       return json({}, 404);
     });
     const res = await dw.sites.deploy("s1", {
@@ -165,13 +218,26 @@ describe("deploy loop", () => {
     expect(res.versionId).toBe("v2");
   });
 
+  it("rejects deploy when both files and dir are given", async () => {
+    const { dw, calls } = client(() => json({}, 404));
+    await expect(
+      dw.sites.deploy("s1", { files: { "a.txt": "x" }, dir: "./dist" }),
+    ).rejects.toThrow(/not both/);
+    expect(calls).toHaveLength(0); // failed before any network call
+  });
+
   it("blob PUT omits Authorization (the presigned URL is the credential)", async () => {
     let blobAuth: string | null = "unset";
     const { dw } = client((url, init) => {
       if (url.endsWith("/deployments/prepare")) {
-        const body = tryParse(init.body as BodyInit) as { manifest: { sha256: string }[] };
+        const body = tryParse(init.body as BodyInit) as {
+          manifest: { sha256: string }[];
+        };
         const sha = body.manifest[0].sha256;
-        return json({ missing: [sha], uploads: { [sha]: "https://blob.test/x" } });
+        return json({
+          missing: [sha],
+          uploads: { [sha]: "https://blob.test/x" },
+        });
       }
       if (url.startsWith("https://blob.test/")) {
         blobAuth = new Headers(init.headers).get("authorization");

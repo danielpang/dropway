@@ -26,8 +26,17 @@ export function sha256Hex(data: Uint8Array): string {
  * `"<sha256>  <path>\n"` (two spaces) lines. `content_type`/`size` are NOT part of
  * the digest — only path + sha. A shared test vector pins parity with the Go side.
  */
-export function digest(files: ReadonlyArray<{ path: string; sha256: string }>): string {
-  const sorted = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+export function digest(
+  files: ReadonlyArray<{ path: string; sha256: string }>,
+): string {
+  // Sort by UTF-8 BYTES, not JS string order. Go compares paths bytewise
+  // (`a < b` on Go strings), which equals UTF-8 byte order; JS `<` compares UTF-16
+  // code units, which DIVERGES for supplementary-plane characters (a filename with
+  // an emoji would sort differently, producing a mismatched digest the server
+  // rejects at finalize). Buffer.compare gives us the exact byte order Go uses.
+  const sorted = [...files].sort((a, b) =>
+    Buffer.compare(Buffer.from(a.path, "utf8"), Buffer.from(b.path, "utf8")),
+  );
   const h = createHash("sha256");
   for (const f of sorted) {
     h.update(`${f.sha256}  ${f.path}\n`);

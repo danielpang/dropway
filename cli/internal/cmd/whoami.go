@@ -37,14 +37,22 @@ func newWhoamiCmd(readFactory func(baseURL, token string) api.ReadClient) *cobra
 				return fmt.Errorf("whoami: %w", err)
 			}
 
+			keyed := auth.UsingAPIKey()
 			source := "interactive login"
-			if auth.UsingAPIKey() {
+			if keyed {
 				source = "API key (" + tokenEnv + ")"
 			}
 			fmt.Fprintf(out, "User:  %s\n", me.UserID)
 			fmt.Fprintf(out, "Org:   %s\n", me.OrgID)
 			if me.Role != "" {
-				fmt.Fprintf(out, "Role:  %s\n", me.Role)
+				// /v1/me returns the key creator's role; a keyed session is
+				// capped at member-level regardless, so say so rather than
+				// implying the key can act as (say) an owner.
+				if keyed {
+					fmt.Fprintf(out, "Role:  %s (API keys are limited to member-level actions)\n", me.Role)
+				} else {
+					fmt.Fprintf(out, "Role:  %s\n", me.Role)
+				}
 			}
 			fmt.Fprintf(out, "Auth:  %s\n", source)
 			return nil

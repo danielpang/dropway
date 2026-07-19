@@ -100,7 +100,10 @@ export class Sites {
 
   /** Get one site by id. */
   get(id: string): Promise<Site> {
-    return this.http.request<Site>("GET", `/v1/sites/${encodeURIComponent(id)}`);
+    return this.http.request<Site>(
+      "GET",
+      `/v1/sites/${encodeURIComponent(id)}`,
+    );
   }
 
   /** Set a site's access mode ("public" | "org_only" | "password" | "allowlist"). */
@@ -134,9 +137,15 @@ export class Sites {
    * the digest), and publishes unless `publish: false`.
    */
   async deploy(siteId: string, input: DeployInput): Promise<DeployResult> {
-    const files = input.files ?? (input.dir ? await readDir(input.dir) : undefined);
+    if (input.files && input.dir) {
+      throw new Error("deploy: pass `files` OR `dir`, not both");
+    }
+    const files =
+      input.files ?? (input.dir ? await readDir(input.dir) : undefined);
     if (!files || Object.keys(files).length === 0) {
-      throw new Error("deploy: provide `files` or `dir` with at least one file");
+      throw new Error(
+        "deploy: provide `files` or `dir` with at least one file",
+      );
     }
     const { manifest, bytesBySha, digest } = buildManifest(files);
     const wire = wireManifest(manifest);
@@ -151,23 +160,23 @@ export class Sites {
 
     // 2) upload missing blobs, concurrency-limited.
     const missing = prep.missing ?? [];
-    await uploadAll(
-      missing,
-      input.concurrency ?? 8,
-      async (sha) => {
-        const url = prep.uploads?.[sha];
-        if (!url) throw new Error(`deploy: no upload URL for blob ${sha}`);
-        const bytes = bytesBySha.get(sha);
-        if (!bytes) throw new Error(`deploy: missing bytes for blob ${sha}`);
-        await this.http.putBlob(url, bytes, input.signal);
-      },
-    );
+    await uploadAll(missing, input.concurrency ?? 8, async (sha) => {
+      const url = prep.uploads?.[sha];
+      if (!url) throw new Error(`deploy: no upload URL for blob ${sha}`);
+      const bytes = bytesBySha.get(sha);
+      if (!bytes) throw new Error(`deploy: missing bytes for blob ${sha}`);
+      await this.http.putBlob(url, bytes, input.signal);
+    });
 
     // 3) finalize — idempotent by content hash, so it is safe to retry.
     const fin = await this.http.request<FinalizeResponse>(
       "POST",
       `${base}/deployments`,
-      { body: { manifest: wire, digest }, idempotent: true, signal: input.signal },
+      {
+        body: { manifest: wire, digest },
+        idempotent: true,
+        signal: input.signal,
+      },
     );
 
     const result: DeployResult = {
@@ -183,10 +192,14 @@ export class Sites {
     if (input.publish === false) return result;
 
     // 4) publish
-    const pub = await this.http.request<PublishResponse>("POST", `${base}/publish`, {
-      body: { version_id: fin.version_id },
-      signal: input.signal,
-    });
+    const pub = await this.http.request<PublishResponse>(
+      "POST",
+      `${base}/publish`,
+      {
+        body: { version_id: fin.version_id },
+        signal: input.signal,
+      },
+    );
     result.liveUrl = pub.live_url;
     result.published = true;
     return result;
@@ -208,7 +221,9 @@ async function uploadAll(
       await fn(item);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
 }
 
 /**
