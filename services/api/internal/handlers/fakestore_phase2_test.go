@@ -175,6 +175,15 @@ func (f *fakeStore) SetMcpEnabled(_ context.Context, t store.Tenant, enabled boo
 	}, nil
 }
 
+func (f *fakeStore) SetAPIKeysEnabled(_ context.Context, t store.Tenant, enabled bool) (store.OrgPolicy, error) {
+	f.lastTenant = t
+	return store.OrgPolicy{
+		OrgID:          t.OrgID,
+		MCPEnabled:     f.p2().mcpEnabled,
+		APIKeysEnabled: enabled,
+	}, nil
+}
+
 func (f *fakeStore) SetAllowExternalSharing(_ context.Context, t store.Tenant, enabled bool) (store.ReconcileResult, error) {
 	f.lastTenant = t
 	f.p2().orgPolicy = enabled

@@ -1342,7 +1342,7 @@ func (q *Queries) GetOrCreateSkillFolder(ctx context.Context, arg GetOrCreateSki
 }
 
 const getOrgMeta = `-- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd, api_keys_enabled
 FROM app.org_meta
 WHERE id = $1
 `
@@ -1356,6 +1356,7 @@ type GetOrgMetaRow struct {
 	McpEnabled           bool
 	AiEnabled            bool
 	AiMonthlyCapUsd      float64
+	ApiKeysEnabled       bool
 }
 
 func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, error) {
@@ -1370,6 +1371,7 @@ func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, err
 		&i.McpEnabled,
 		&i.AiEnabled,
 		&i.AiMonthlyCapUsd,
+		&i.ApiKeysEnabled,
 	)
 	return i, err
 }
@@ -3927,6 +3929,26 @@ type SetAllowExternalSharingParams struct {
 // Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
 func (q *Queries) SetAllowExternalSharing(ctx context.Context, arg SetAllowExternalSharingParams) error {
 	_, err := q.db.Exec(ctx, setAllowExternalSharing, arg.ID, arg.AllowExternalSharing)
+	return err
+}
+
+const setApiKeysEnabled = `-- name: SetApiKeysEnabled :exec
+UPDATE app.org_meta
+SET api_keys_enabled = $2
+WHERE id = $1
+`
+
+type SetApiKeysEnabledParams struct {
+	ID             string
+	ApiKeysEnabled bool
+}
+
+// Flip the org-wide API-keys kill switch (admin/owner only, enforced in Go). The
+// key auth boundary re-checks org_meta.api_keys_enabled on every keyed request, so
+// disabling 401s every org key immediately; management endpoints keep working so
+// admins can still list and revoke.
+func (q *Queries) SetApiKeysEnabled(ctx context.Context, arg SetApiKeysEnabledParams) error {
+	_, err := q.db.Exec(ctx, setApiKeysEnabled, arg.ID, arg.ApiKeysEnabled)
 	return err
 }
 

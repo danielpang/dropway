@@ -4,6 +4,7 @@ import {
   Bot,
   CreditCard,
   Globe2,
+  KeyRound,
   MessageSquareText,
   ShieldAlert,
   Sparkles,
@@ -101,9 +102,9 @@ export default async function OrgSettingsPage() {
             External sharing
           </CardTitle>
           <CardDescription>
-            Controls whether sites in this organization can be shared publicly or
-            with people outside your verified domains. New organizations start
-            fully internal.
+            Controls whether sites in this organization can be shared publicly
+            or with people outside your verified domains. New organizations
+            start fully internal.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -131,10 +132,11 @@ export default async function OrgSettingsPage() {
             LLM access (MCP)
           </CardTitle>
           <CardDescription>
-            Let AI tools reach this organization&rsquo;s sites through the Dropway
-            MCP server. Public sites are also readable by crawlers via{" "}
-            <code className="font-mono text-xs">/llms.txt</code>; gated sites stay
-            private and are reachable only through an authorized MCP connection.
+            Let AI tools reach this organization&rsquo;s sites through the
+            Dropway MCP server. Public sites are also readable by crawlers via{" "}
+            <code className="font-mono text-xs">/llms.txt</code>; gated sites
+            stay private and are reachable only through an authorized MCP
+            connection.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -173,7 +175,10 @@ export default async function OrgSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <MessageSquareText className="size-4 text-muted-foreground" aria-hidden />
+            <MessageSquareText
+              className="size-4 text-muted-foreground"
+              aria-hidden
+            />
             Shared chat logs
           </CardTitle>
           <CardDescription>
@@ -184,6 +189,26 @@ export default async function OrgSettingsPage() {
         </CardHeader>
         <CardContent>
           <ChatLogsAccess initialEnabled={chatLogsEnabled} canManage={manage} />
+        </CardContent>
+      </Card>
+
+      {/* API keys shortcut */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <KeyRound className="size-4 text-muted-foreground" aria-hidden />
+            API keys
+          </CardTitle>
+          <CardDescription>
+            Programmatic access for CI, scripts, the SDK, and the CLI. Create
+            and revoke org-scoped keys, or turn key access off for the whole
+            organization.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline">
+            <Link href="/settings/api-keys">Manage API keys</Link>
+          </Button>
         </CardContent>
       </Card>
 

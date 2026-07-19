@@ -178,6 +178,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Toggle the org-wide API-keys kill switch (admin/owner only)
+         * @description Owner/admin only (role re-checked against the member table; API-key callers are refused). Flips org_meta.api_keys_enabled. The key auth boundary re-checks this flag on every keyed request, so disabling 401s every org key immediately; the /v1/api-keys management endpoints keep working so admins can still list and revoke. Default enabled.
+         */
+        patch: operations["setApiKeysEnabled"];
+        trace?: never;
+    };
     "/v1/orgs/mcp": {
         parameters: {
             query?: never;
@@ -253,6 +273,50 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the org's API keys
+         * @description Return the caller org's API keys, newest first. Admin/owner only. Metadata + `key_prefix` only — never the hash, never the secret.
+         */
+        get: operations["listAPIKeys"];
+        put?: never;
+        /**
+         * Create an org-scoped API key
+         * @description Mint an API key for the caller's org. Admin/owner only (re-checked against the live member table). Key management is session-only — an API-key- authenticated caller is refused with 403. The full secret is generated server-side and returned ONCE in this response (`key`); it is never stored in plaintext and never returned again. Every later read exposes only the metadata + the non-secret `key_prefix`.
+         */
+        post: operations["createAPIKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/api-keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an API key
+         * @description Revoke a key by id. Admin/owner only. Idempotent — re-revoking is a no-op that keeps the first revocation's timestamp. Revocation is immediate and terminal: the very next request presenting the key is rejected with 401.
+         */
+        delete: operations["revokeAPIKey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1292,6 +1356,41 @@ export interface components {
             /** @description Whether custom domains are backed by a real provider (Cloudflare for SaaS). False in self-host/dev, where the dashboard hides the feature because it can never finish verification. */
             custom_domains_enabled?: boolean;
         };
+        /** @description The metadata view of an org-scoped API key. Never carries the secret or hash. */
+        APIKey: {
+            /** Format: uuid */
+            id?: string;
+            name?: string;
+            /** @description Non-secret display handle (e.g. "dw_live_3fk9") to match a leaked key to a row. */
+            key_prefix?: string;
+            /**
+             * Format: uuid
+             * @description The member who minted the key; keyed requests act as this user.
+             */
+            created_by?: string;
+            scopes?: string[];
+            /**
+             * Format: date-time
+             * @description Best-effort, throttled last-use stamp (omitted if never used).
+             */
+            last_used_at?: string;
+            /**
+             * Format: date-time
+             * @description Omitted for a non-expiring key (the v1 default).
+             */
+            expires_at?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /**
+             * Format: date-time
+             * @description Set once the key is revoked; a revoked key 401s on the next request.
+             */
+            revoked_at?: string;
+        };
+        APIKeyCreated: components["schemas"]["APIKey"] & {
+            /** @description The full secret (`dw_live_...`). Returned ONLY in this create response and never again — store it now; the server keeps only its hash. */
+            key: string;
+        };
         Member: {
             /** Format: uuid */
             user_id?: string;
@@ -2014,10 +2113,41 @@ export interface operations {
                     "application/json": {
                         allow_external_sharing?: boolean;
                         mcp_enabled?: boolean;
+                        api_keys_enabled?: boolean;
                     };
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    setApiKeysEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The new api_keys_enabled value */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        api_keys_enabled?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     setMcpEnabled: {
@@ -2120,6 +2250,86 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listAPIKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The org's API keys */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        keys?: components["schemas"]["APIKey"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAPIKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Human label */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The created key, including the one-time secret */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIKeyCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    revokeAPIKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.api_keys.id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The revoked key's metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIKey"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listSites: {

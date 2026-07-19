@@ -284,6 +284,7 @@ func (a *API) GetOrgPolicy(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"allow_external_sharing": pol.AllowExternalSharing,
 		"mcp_enabled":            pol.MCPEnabled,
+		"api_keys_enabled":       pol.APIKeysEnabled,
 	})
 }
 
@@ -331,6 +332,53 @@ func (a *API) SetMcpEnabled(w http.ResponseWriter, r *http.Request) {
 	})
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"mcp_enabled": pol.MCPEnabled,
+	})
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /v1/orgs/api-keys  {enabled}
+// ---------------------------------------------------------------------------
+
+type apiKeysEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetApiKeysEnabled toggles the org-wide API-keys kill switch (ADMIN/OWNER only —
+// role re-checked against the member table; keyed callers are refused by the
+// ceiling in requireAdmin). The key auth boundary re-checks org_meta.api_keys_enabled
+// per request, so a disable 401s every org key immediately; the management
+// endpoints stay available so admins can still list and revoke keys.
+func (a *API) SetApiKeysEnabled(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) {
+		return
+	}
+	if !a.requireAdmin(w, r, t) {
+		return
+	}
+
+	var req apiKeysEnabledRequest
+	if err := decodeJSON(r, &req); err != nil {
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+
+	pol, err := a.Store.SetAPIKeysEnabled(r.Context(), t, req.Enabled)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	logger(r).Info("api_keys_enabled toggled", "org_id", t.OrgID, "enabled", pol.APIKeysEnabled)
+	a.recordAudit(r, t, audit.ActionAPIKeysToggle, "org:"+t.OrgID, map[string]any{
+		"enabled": pol.APIKeysEnabled,
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"api_keys_enabled": pol.APIKeysEnabled,
 	})
 }
 

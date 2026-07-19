@@ -17,6 +17,10 @@ type OrgPolicy struct {
 	// MCPEnabled is whether the Dropway MCP server may serve this org. Default true
 	// (org_meta.mcp_enabled); an admin/owner can disable it (SetMcpEnabled).
 	MCPEnabled bool
+	// APIKeysEnabled is whether org-scoped API keys may authenticate. Default true
+	// (org_meta.api_keys_enabled); an admin/owner flips it (SetAPIKeysEnabled). The
+	// key auth boundary re-checks it per request, so a disable 401s every key at once.
+	APIKeysEnabled bool
 }
 
 // GetOrgPolicy returns the active org's sharing policy.
@@ -34,6 +38,7 @@ func (s *Store) GetOrgPolicy(ctx context.Context, t Tenant) (OrgPolicy, error) {
 			OrgID:                meta.ID,
 			AllowExternalSharing: meta.AllowExternalSharing,
 			MCPEnabled:           meta.McpEnabled,
+			APIKeysEnabled:       meta.ApiKeysEnabled,
 		}
 		return nil
 	})
@@ -64,6 +69,38 @@ func (s *Store) SetMcpEnabled(ctx context.Context, t Tenant, enabled bool) (OrgP
 			OrgID:                meta.ID,
 			AllowExternalSharing: meta.AllowExternalSharing,
 			MCPEnabled:           meta.McpEnabled,
+			APIKeysEnabled:       meta.ApiKeysEnabled,
+		}
+		return nil
+	})
+	return out, err
+}
+
+// SetAPIKeysEnabled flips the org-wide API-keys kill switch (admin/owner only — the
+// caller re-checks the role against the member table) and returns the resulting
+// policy. The key auth boundary re-checks org_meta.api_keys_enabled per request, so
+// disabling takes effect immediately; management endpoints keep working so admins
+// can still list and revoke keys.
+func (s *Store) SetAPIKeysEnabled(ctx context.Context, t Tenant, enabled bool) (OrgPolicy, error) {
+	var out OrgPolicy
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := q.SetApiKeysEnabled(ctx, db.SetApiKeysEnabledParams{
+			ID: t.OrgID, ApiKeysEnabled: enabled,
+		}); err != nil {
+			return err
+		}
+		meta, err := q.GetOrgMeta(ctx, t.OrgID)
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		out = OrgPolicy{
+			OrgID:                meta.ID,
+			AllowExternalSharing: meta.AllowExternalSharing,
+			MCPEnabled:           meta.McpEnabled,
+			APIKeysEnabled:       meta.ApiKeysEnabled,
 		}
 		return nil
 	})

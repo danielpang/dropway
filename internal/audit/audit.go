@@ -135,6 +135,9 @@ const (
 	ActionAPIKeyCreate Action = "api_key.create"
 	// ActionAPIKeyRevoke records an API key revoked (DELETE /v1/api-keys/{id}).
 	ActionAPIKeyRevoke Action = "api_key.revoke"
+	// ActionAPIKeysToggle records the org api_keys_enabled kill switch flip
+	// (PATCH /v1/orgs/api-keys).
+	ActionAPIKeysToggle Action = "api_keys.toggle"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

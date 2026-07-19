@@ -242,7 +242,39 @@ paths:
                 properties:
                   allow_external_sharing: { type: boolean }
                   mcp_enabled: { type: boolean }
+                  api_keys_enabled: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/orgs/api-keys:
+    patch:
+      summary: Toggle the org-wide API-keys kill switch (admin/owner only)
+      description: >
+        Owner/admin only (role re-checked against the member table; API-key callers
+        are refused). Flips org_meta.api_keys_enabled. The key auth boundary
+        re-checks this flag on every keyed request, so disabling 401s every org key
+        immediately; the /v1/api-keys management endpoints keep working so admins can
+        still list and revoke. Default enabled.
+      operationId: setApiKeysEnabled
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new api_keys_enabled value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_keys_enabled: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/orgs/mcp:
     patch:
