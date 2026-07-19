@@ -9,9 +9,8 @@ package middleware
 import (
 	"context"
 	"errors"
-	"math"
+	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,11 +55,12 @@ type KeyPrincipal struct {
 // Store + limiter); the middleware depends only on this interface so it stays
 // unit-testable and takes no store dependency.
 //
-// It returns *RateLimitedError when the key is over its per-key budget (→ 429), or
+// It returns *RateLimitedError when the request is over a rate budget (→ 429), or
 // a generic error for every authentication failure (→ a uniform 401, so the
-// boundary is not an existence/liveness oracle).
+// boundary is not an existence/liveness oracle). clientIP is the resolved client
+// address (for the per-IP pre-throttle); it may be empty when unknown.
 type KeyAuthenticator interface {
-	AuthenticateAPIKey(ctx context.Context, secret string) (*KeyPrincipal, error)
+	AuthenticateAPIKey(ctx context.Context, secret, clientIP string) (*KeyPrincipal, error)
 }
 
 // RateLimitedError signals a keyed request exceeded its per-key rate budget. It
@@ -101,11 +101,11 @@ func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Han
 			// is a Better Auth JWT. The prefix check is syntactic only — authentication
 			// is the resolver's job.
 			if keys != nil && apikey.HasPrefix(token) {
-				princ, err := keys.AuthenticateAPIKey(r.Context(), token)
+				princ, err := keys.AuthenticateAPIKey(r.Context(), token, clientIP(r))
 				if err != nil {
 					var rle *RateLimitedError
 					if errors.As(err, &rle) {
-						writeRateLimited(w, rle.RetryAfter)
+						httpx.WriteRateLimited(w, rle.RetryAfter, "rate_limited", "too many requests, please slow down")
 						return
 					}
 					// Uniform 401 for unknown / revoked / expired / disabled-org /
@@ -148,18 +148,6 @@ func APIKeyIDFromContext(ctx context.Context) (string, bool) {
 	return id, ok && id != ""
 }
 
-// writeRateLimited renders the 429 for a keyed request over its budget: a
-// Retry-After header (seconds, rounded up, min 1) and a generic body.
-func writeRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
-	secs := int(math.Ceil(retryAfter.Seconds()))
-	if secs < 1 {
-		secs = 1
-	}
-	w.Header().Set("Retry-After", strconv.Itoa(secs))
-	httpx.WriteJSON(w, http.StatusTooManyRequests,
-		httpx.ErrorBody{Error: "rate_limited", Message: "too many requests, please slow down"})
-}
-
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header.
 // The scheme match is case-insensitive per RFC 7235.
 func bearerToken(r *http.Request) (string, bool) {
@@ -176,6 +164,18 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return token, true
+}
+
+// clientIP returns the best-effort client address for the per-IP key throttle. chi's
+// RealIP middleware has already rewritten RemoteAddr from a trusted forwarded
+// header, so RemoteAddr is the resolved value; we keep just the host. The value is
+// used ONLY as a rate-limit key (never for authz), so a spoofed header only
+// re-buckets the attacker onto themselves.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 // wrapUnauthorized produces an error that httpx.WriteError maps to 401.

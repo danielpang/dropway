@@ -306,9 +306,14 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		api.Keys = st
 		apiKeyLimiterStop := make(chan struct{})
 		defer close(apiKeyLimiterStop)
-		api.WireAPIKeyAuth(cfg.APIKeyRateLimitPerMin, cfg.APIKeyRateLimitBurst, apiKeyLimiterStop)
+		api.WireAPIKeyAuth(
+			cfg.APIKeyRateLimitPerMin, cfg.APIKeyRateLimitBurst,
+			cfg.APIKeyIPRateLimitPerMin, cfg.APIKeyIPRateLimitBurst,
+			apiKeyLimiterStop,
+		)
 		slog.Info("api key rate limit",
-			"per_min", cfg.APIKeyRateLimitPerMin, "burst", cfg.APIKeyRateLimitBurst)
+			"key_per_min", cfg.APIKeyRateLimitPerMin, "key_burst", cfg.APIKeyRateLimitBurst,
+			"ip_per_min", cfg.APIKeyIPRateLimitPerMin, "ip_burst", cfg.APIKeyIPRateLimitBurst)
 	}
 
 	// Build the router (concrete *chi.Mux), then let the build-tag-selected

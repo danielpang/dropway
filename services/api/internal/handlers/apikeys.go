@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
@@ -42,31 +44,55 @@ type APIKeyStore interface {
 // Key authenticator (the middleware.KeyAuthenticator implementation)
 // ---------------------------------------------------------------------------
 
+// touchInterval is how often a key's last_used_at is refreshed. It matches the
+// SQL-side throttle in TouchAPIKeyLastUsed; the in-process cache below front-runs
+// that throttle so the common case does NO database work at all.
+const touchInterval = 5 * time.Minute
+
 // keyAuthenticator resolves a presented API-key secret to synthesized claims,
-// applying the fail-closed liveness policy and a per-key rate limit. It implements
+// applying the fail-closed liveness policy and rate limits. It implements
 // middleware.KeyAuthenticator.
 type keyAuthenticator struct {
 	store         APIKeyStore
-	limiter       *rateLimiter
-	allowFallback bool // mirror AllowJWTRoleFallback for the missing-member-table case
+	keyLimiter    *rateLimiter // per-key-id budget (the primary control)
+	ipLimiter     *rateLimiter // per-client-IP budget, consulted BEFORE any DB work
+	allowFallback bool         // mirror AllowJWTRoleFallback for the missing-member-table case
+	lastTouch     sync.Map     // keyID -> time.Time; gates the last_used_at write
 }
 
-// NewKeyAuthenticator builds the boundary authenticator. limiter may be nil (no
-// per-key rate limiting). allowFallback governs the self-host-pre-Better-Auth case
+// NewKeyAuthenticator builds the boundary authenticator. Either limiter may be nil
+// (that control disabled). allowFallback governs the self-host-pre-Better-Auth case
 // (identity.member absent): true → resolve as a member-role principal so keys still
 // work; false (default, strict) → deny, since creator membership can't be confirmed.
-func NewKeyAuthenticator(s APIKeyStore, limiter *rateLimiter, allowFallback bool) *keyAuthenticator {
-	return &keyAuthenticator{store: s, limiter: limiter, allowFallback: allowFallback}
+func NewKeyAuthenticator(s APIKeyStore, keyLimiter, ipLimiter *rateLimiter, allowFallback bool) *keyAuthenticator {
+	return &keyAuthenticator{store: s, keyLimiter: keyLimiter, ipLimiter: ipLimiter, allowFallback: allowFallback}
 }
 
 // AuthenticateAPIKey resolves the secret and returns the synthesized principal, or
 // an error the middleware maps to a uniform 401 (any liveness failure) or a 429
 // (*middleware.RateLimitedError). The steps mirror the JWT path's fail-closed
 // posture: nothing is trusted that can't be re-confirmed live.
-func (k *keyAuthenticator) AuthenticateAPIKey(ctx context.Context, secret string) (*middleware.KeyPrincipal, error) {
+//
+// Throttling is two-tiered so neither failed nor over-budget auth can hammer the
+// database: a generous per-CLIENT-IP bucket is consulted FIRST, before any lookup,
+// which bounds a spray of bad/random secrets (the resolve query never runs once the
+// IP is over budget) the way the password exchange throttles by IP before bcrypt;
+// then a tighter per-KEY bucket is consulted right after resolution, before the
+// identity.member re-check, so a flood on one valid key can't drive that second
+// query either. Legitimate CI behind a shared egress IP is why the IP bucket is
+// generous relative to the per-key one (see WireAPIKeyAuth defaults).
+func (k *keyAuthenticator) AuthenticateAPIKey(ctx context.Context, secret, clientIP string) (*middleware.KeyPrincipal, error) {
 	if k.store == nil {
 		return nil, errors.New("apikey: no store configured")
 	}
+
+	// IP pre-throttle: bounds unauthenticated resolve load before the first query.
+	if k.ipLimiter != nil && clientIP != "" {
+		if ok, retryAfter := k.ipLimiter.allow("apikey-ip:" + clientIP); !ok {
+			return nil, &middleware.RateLimitedError{RetryAfter: retryAfter}
+		}
+	}
+
 	if _, err := apikey.Parse(secret); err != nil {
 		return nil, err // malformed → generic 401
 	}
@@ -75,7 +101,7 @@ func (k *keyAuthenticator) AuthenticateAPIKey(ctx context.Context, secret string
 		return nil, err // unknown hash (ErrNotFound) or DB error → generic 401
 	}
 
-	// Fail-closed liveness, in the same spirit as the JWT path's live re-checks.
+	// Fail-closed liveness — all in-memory on the already-fetched row (no DB).
 	if princ.RevokedAt != nil {
 		return nil, errors.New("apikey: revoked")
 	}
@@ -89,6 +115,14 @@ func (k *keyAuthenticator) AuthenticateAPIKey(ctx context.Context, secret string
 		return nil, errors.New("apikey: org kill switch on")
 	}
 
+	// Per-key rate limit BEFORE the identity.member re-check, so an over-budget valid
+	// key is denied without driving the second (membership) query.
+	if k.keyLimiter != nil {
+		if ok, retryAfter := k.keyLimiter.allow("apikey:" + princ.ID); !ok {
+			return nil, &middleware.RateLimitedError{RetryAfter: retryAfter}
+		}
+	}
+
 	// The key acts AS its creator; a creator who left the org kills the key. The
 	// live role is the creator's real role (carried for attribution) — the
 	// member-level ceiling is enforced downstream at the admin gate, not here.
@@ -97,18 +131,10 @@ func (k *keyAuthenticator) AuthenticateAPIKey(ctx context.Context, secret string
 		return nil, err
 	}
 
-	// Per-key rate limit AFTER resolution (need the key id). The lookup is a single
-	// indexed SELECT, so resolving-then-limiting is cheap; presigned blob PUTs never
-	// hit the API, so bulk uploads stay fast.
-	if k.limiter != nil {
-		if ok, retryAfter := k.limiter.allow("apikey:" + princ.ID); !ok {
-			return nil, &middleware.RateLimitedError{RetryAfter: retryAfter}
-		}
-	}
-
-	// Best-effort last-used stamp, off the hot path (throttled in SQL). A failure
-	// here must never fail the request.
-	k.touchAsync(princ)
+	// Best-effort last-used stamp, off the hot path and gated by the in-process
+	// interval cache so it opens a transaction at most once per touchInterval per key
+	// (not once per request). A failure here must never fail the request.
+	k.maybeTouch(princ)
 
 	claims := &auth.Claims{OrgID: princ.OrgID, Role: role}
 	claims.Subject = princ.CreatedBy
@@ -133,9 +159,20 @@ func (k *keyAuthenticator) liveRole(ctx context.Context, orgID, userID string) (
 	return "", errors.New("apikey: creator membership could not be confirmed")
 }
 
-// touchAsync stamps last_used_at without blocking the request. It uses a detached
-// context with a short deadline so a slow/failed write can't wedge anything.
-func (k *keyAuthenticator) touchAsync(p store.APIKeyPrincipal) {
+// maybeTouch stamps last_used_at without blocking the request, but only when this
+// process hasn't already stamped the key within touchInterval — so the common case
+// (a busy key) does NO database work, instead of opening a full transaction per
+// request for a field that only needs to move every few minutes. The SQL throttle
+// in TouchAPIKeyLastUsed remains the cross-process backstop. A benign race (two
+// requests both seeing a stale entry) costs at most one extra no-op transaction.
+func (k *keyAuthenticator) maybeTouch(p store.APIKeyPrincipal) {
+	now := time.Now()
+	if v, ok := k.lastTouch.Load(p.ID); ok {
+		if last, ok := v.(time.Time); ok && now.Sub(last) < touchInterval {
+			return
+		}
+	}
+	k.lastTouch.Store(p.ID, now)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -205,6 +242,13 @@ func (a *API) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(name) > 100 {
 		httpx.WriteError(w, fmt.Errorf("%w: name is too long (max 100 chars)", httpx.ErrBadRequest))
+		return
+	}
+	// Reject control characters (newlines, escapes, etc.): the name is echoed into
+	// the audit trail and the dashboard key list, so a control char would enable
+	// log-line / terminal spoofing.
+	if hasControlChar(name) {
+		httpx.WriteError(w, fmt.Errorf("%w: name must not contain control characters", httpx.ErrBadRequest))
 		return
 	}
 
@@ -277,6 +321,18 @@ func (a *API) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	logger(r).Info("api key revoked", "org_id", t.OrgID, "key_id", key.ID, "revoked_by", t.UserID)
 	httpx.WriteJSON(w, http.StatusOK, apiKeyView(key))
+}
+
+// hasControlChar reports whether s contains any Unicode control character (C0/C1
+// range, including newlines and terminal escapes). Used to keep free-text that
+// flows into the audit trail / dashboard free of log- and terminal-spoofing input.
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // requireKeysStore returns the key store or writes a 503 (DB-less deployment).

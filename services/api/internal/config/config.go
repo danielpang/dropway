@@ -186,6 +186,15 @@ type Config struct {
 	// burst 240 (APIKEY_RATELIMIT_PER_MIN / APIKEY_RATELIMIT_BURST).
 	APIKeyRateLimitPerMin int
 	APIKeyRateLimitBurst  int
+
+	// APIKeyIPRateLimitPerMin / APIKeyIPRateLimitBurst bound key-auth ATTEMPTS per
+	// client IP, consulted before any key lookup, so a spray of bad/unknown secrets
+	// can't drive unbounded resolve queries. Deliberately generous relative to the
+	// per-key budget so legitimate CI behind a shared egress IP (many keys, one IP)
+	// is unaffected. Defaults: 600 per minute, burst 1200 (APIKEY_IP_RATELIMIT_PER_MIN
+	// / APIKEY_IP_RATELIMIT_BURST).
+	APIKeyIPRateLimitPerMin int
+	APIKeyIPRateLimitBurst  int
 }
 
 // Load reads the environment and returns a validated Config. It returns an error
@@ -246,6 +255,8 @@ func Load() (Config, error) {
 		PasswordRateLimitBurst:  envIntOr("PASSWORD_RATELIMIT_BURST", 5),
 		APIKeyRateLimitPerMin:   envIntOr("APIKEY_RATELIMIT_PER_MIN", 120),
 		APIKeyRateLimitBurst:    envIntOr("APIKEY_RATELIMIT_BURST", 240),
+		APIKeyIPRateLimitPerMin: envIntOr("APIKEY_IP_RATELIMIT_PER_MIN", 600),
+		APIKeyIPRateLimitBurst:  envIntOr("APIKEY_IP_RATELIMIT_BURST", 1200),
 	}
 
 	if p := os.Getenv("PORT"); p != "" {

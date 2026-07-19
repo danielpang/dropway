@@ -5,9 +5,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/danielpang/dropway/internal/auth"
@@ -268,15 +266,10 @@ func wrapPasswordUnauthorized() error {
 // writePasswordRateLimited renders the throttle response for the password gate:
 // a 429 with a Retry-After header (seconds, rounded up) and a generic message.
 // The body deliberately says nothing about the host or password so it can't be
-// used as an existence oracle.
+// used as an existence oracle. Delegates to the shared httpx.WriteRateLimited so
+// the password and API-key throttle responses stay identical.
 func writePasswordRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
-	secs := int(math.Ceil(retryAfter.Seconds()))
-	if secs < 1 {
-		secs = 1
-	}
-	w.Header().Set("Retry-After", strconv.Itoa(secs))
-	httpx.WriteJSON(w, http.StatusTooManyRequests,
-		httpx.ErrorBody{Error: "rate_limited", Message: "too many attempts, please try again later"})
+	httpx.WriteRateLimited(w, retryAfter, "rate_limited", "too many attempts, please try again later")
 }
 
 // normalizeHost lowercases + trims a host (content hosts are case-insensitive).

@@ -143,9 +143,10 @@ func (s *Store) ListAPIKeys(ctx context.Context, t Tenant) ([]APIKey, error) {
 	return out, err
 }
 
-// RevokeAPIKey revokes a key by id in the active org (idempotent — re-revoking
-// keeps the first revocation's timestamp/actor) and records an api_key.revoke audit
-// row in the same tx. A missing/invisible key → ErrNotFound.
+// RevokeAPIKey revokes a key by id in the active org. It is idempotent, but the
+// audit event fires ONLY on the genuine live→revoked transition: re-revoking an
+// already-revoked key returns the row without appending a duplicate api_key.revoke
+// row. A missing/invisible key → ErrNotFound.
 func (s *Store) RevokeAPIKey(ctx context.Context, t Tenant, id string, ctxProv audit.Context) (APIKey, error) {
 	var out APIKey
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
@@ -154,11 +155,22 @@ func (s *Store) RevokeAPIKey(ctx context.Context, t Tenant, id string, ctxProv a
 			ID: id, OrgID: t.OrgID, RevokedBy: &revokedBy,
 		})
 		if err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
+			if !isNoRows(err) {
+				return err
 			}
-			return err
+			// No live row matched: either the key doesn't exist (→ ErrNotFound) or it
+			// was already revoked (→ idempotent no-op, no audit). Disambiguate.
+			existing, gerr := q.GetAPIKey(ctx, db.GetAPIKeyParams{ID: id, OrgID: t.OrgID})
+			if gerr != nil {
+				if isNoRows(gerr) {
+					return ErrNotFound
+				}
+				return gerr
+			}
+			out = apiKeyFromGetRow(existing)
+			return nil
 		}
+		// Transitioned live→revoked → record the audit event exactly once.
 		out = apiKeyFromRevokeRow(row)
 		if _, err := writeAuditTx(ctx, q, t.OrgID, AuditRecord{
 			Action:   audit.ActionAPIKeyRevoke,
@@ -187,6 +199,15 @@ func apiKeyFromCreateRow(r db.CreateAPIKeyRow) APIKey {
 }
 
 func apiKeyFromListRow(r db.ListAPIKeysRow) APIKey {
+	return APIKey{
+		ID: r.ID, OrgID: r.OrgID, CreatedBy: r.CreatedBy, Name: r.Name,
+		KeyPrefix: r.KeyPrefix, Scopes: r.Scopes, SiteID: r.SiteID,
+		LastUsedAt: ptrFromTimestamptz(r.LastUsedAt), ExpiresAt: ptrFromTimestamptz(r.ExpiresAt),
+		CreatedAt: r.CreatedAt, RevokedAt: ptrFromTimestamptz(r.RevokedAt), RevokedBy: r.RevokedBy,
+	}
+}
+
+func apiKeyFromGetRow(r db.GetAPIKeyRow) APIKey {
 	return APIKey{
 		ID: r.ID, OrgID: r.OrgID, CreatedBy: r.CreatedBy, Name: r.Name,
 		KeyPrefix: r.KeyPrefix, Scopes: r.Scopes, SiteID: r.SiteID,

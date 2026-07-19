@@ -408,8 +408,11 @@ type Querier interface {
 	// access fields. Runs under RLS so only the active org's hosts resolve — the
 	// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
 	ResolveSiteByHostRoute(ctx context.Context, arg ResolveSiteByHostRouteParams) (ResolveSiteByHostRouteRow, error)
-	// Revoke a key (idempotent): keep the FIRST revocation's timestamp + actor if it
-	// was already revoked. 0 rows → the key is absent/invisible → not found.
+	// Revoke a key that is still LIVE (revoked_at IS NULL). Matching only unrevoked
+	// rows makes revocation a genuine transition: 1 row → the key went live→revoked
+	// (the caller writes the audit event); 0 rows → the key is absent OR already
+	// revoked, which the caller disambiguates with GetAPIKey (already-revoked is an
+	// idempotent no-op, no duplicate audit row).
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (RevokeAPIKeyRow, error)
 	// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
 	// exact analog of SetMcpEnabled.

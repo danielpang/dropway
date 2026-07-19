@@ -127,7 +127,7 @@ type fakeKeyAuth struct {
 	err   error
 }
 
-func (f *fakeKeyAuth) AuthenticateAPIKey(_ context.Context, _ string) (*KeyPrincipal, error) {
+func (f *fakeKeyAuth) AuthenticateAPIKey(_ context.Context, _, _ string) (*KeyPrincipal, error) {
 	return f.princ, f.err
 }
 

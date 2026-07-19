@@ -1342,12 +1342,14 @@ FROM app.api_keys
 WHERE id = $1 AND org_id = $2;
 
 -- name: RevokeAPIKey :one
--- Revoke a key (idempotent): keep the FIRST revocation's timestamp + actor if it
--- was already revoked. 0 rows → the key is absent/invisible → not found.
+-- Revoke a key that is still LIVE (revoked_at IS NULL). Matching only unrevoked
+-- rows makes revocation a genuine transition: 1 row → the key went live→revoked
+-- (the caller writes the audit event); 0 rows → the key is absent OR already
+-- revoked, which the caller disambiguates with GetAPIKey (already-revoked is an
+-- idempotent no-op, no duplicate audit row).
 UPDATE app.api_keys
-SET revoked_at = COALESCE(revoked_at, now()),
-    revoked_by = COALESCE(revoked_by, $3)
-WHERE id = $1 AND org_id = $2
+SET revoked_at = now(), revoked_by = $3
+WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
 RETURNING id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by;
 
 -- name: TouchAPIKeyLastUsed :exec
