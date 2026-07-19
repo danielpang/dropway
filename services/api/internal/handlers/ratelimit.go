@@ -179,6 +179,21 @@ func (a *API) WirePasswordRateLimiter(ratePerMin, burst int, stop <-chan struct{
 	go l.runSweeper(stop)
 }
 
+// WireAPIKeyAuth builds the API-key boundary authenticator (a.KeyAuth) from the
+// wired key store, with a per-key rate limiter, and starts the limiter's sweeper
+// until stop is closed. ratePerMin/burst are the sustained/immediate request budget
+// per key id. It is a no-op when no key store is configured (DB-less), leaving
+// a.KeyAuth nil so the router accepts JWTs only. Call AFTER a.Keys is set and
+// AllowJWTRoleFallback is configured.
+func (a *API) WireAPIKeyAuth(ratePerMin, burst int, stop <-chan struct{}) {
+	if a.Keys == nil {
+		return
+	}
+	l := newRateLimiter(float64(ratePerMin), float64(burst), 10*time.Minute)
+	go l.runSweeper(stop)
+	a.KeyAuth = NewKeyAuthenticator(a.Keys, l, a.AllowJWTRoleFallback)
+}
+
 // clientIPForRateLimit extracts the best-effort client IP for the rate-limit key. The API
 // sits behind Fly's proxy, so Fly-Client-IP is the trustworthy source. We fall
 // back to the left-most X-Forwarded-For entry, then the raw RemoteAddr.

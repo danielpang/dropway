@@ -60,6 +60,22 @@ type AppAllowlistEntry struct {
 	CreatedAt       time.Time
 }
 
+type AppApiKey struct {
+	ID         string
+	OrgID      string
+	CreatedBy  string
+	Name       string
+	KeyHash    string
+	KeyPrefix  string
+	Scopes     []string
+	SiteID     *string
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	RevokedAt  pgtype.Timestamptz
+	RevokedBy  *string
+}
+
 type AppAuditLog struct {
 	ID         string
 	OrgID      string
@@ -142,6 +158,7 @@ type AppOrgMetum struct {
 	AiEnabled            bool
 	AiMonthlyCapUsd      float64
 	ChatLogsEnabled      bool
+	ApiKeysEnabled       bool
 }
 
 type AppOrgUsage struct {

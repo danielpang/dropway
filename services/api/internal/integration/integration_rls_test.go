@@ -338,6 +338,20 @@ func rlsTables() []rlsTable {
 			},
 		},
 		{
+			name:   "app.api_keys",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.api_keys (org_id, created_by, name, key_hash, key_prefix)
+						VALUES ($1, $2, 'seed', $3, 'dw_live_seed')`,
+					[]any{org, org, "hash-" + org[:8]}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.api_keys (org_id, created_by, name, key_hash, key_prefix)
+						VALUES ($1, $1, 'sneaky', 'sneaky-hash', 'dw_live_x')`,
+					[]any{other}
+			},
+		},
+		{
 			name:   "app.skills",
 			orgCol: "org_id",
 			seed: func(org string) (string, []any) {

@@ -111,6 +111,18 @@ type API struct {
 	// unset); main.go wires a limiter for the real server.
 	PasswordRateLimiter *rateLimiter
 
+	// Keys is the data layer for org-scoped API keys (create/list/revoke +
+	// resolve/touch). Separate from Store so the key feature composes without
+	// widening the large SiteStore interface (and its test fakes). nil → the
+	// /v1/api-keys management routes return 503 and no key auth is possible.
+	Keys APIKeyStore
+
+	// KeyAuth authenticates a presented API key at the boundary (resolve +
+	// fail-closed liveness + per-key rate limit → synthesized claims). Wired from
+	// Keys + a rate limiter in main.go and handed to middleware.AuthWithKeys. nil →
+	// only JWT auth is accepted (keys 401).
+	KeyAuth middleware.KeyAuthenticator
+
 	// SkillSeeds are the embedded default preset skills materialized lazily per
 	// org on the first skills touch (internal/skillseeds.Load, wired in main.go).
 	// Empty → orgs start with no folders/presets (they can still create both).
@@ -273,6 +285,15 @@ func (a *API) requireDomains(w http.ResponseWriter) bool {
 //
 // On success it returns true; callers proceed with the privileged action.
 func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request, t store.Tenant) bool {
+	// Role ceiling: an API-key-authenticated request is capped at member-level
+	// permissions, regardless of the key creator's real role. Every admin-gated
+	// action (org policy, member admin, key management) refuses keyed callers so a
+	// leaked CI key can never escalate to org takeover — admin actions stay
+	// interactive-login only.
+	if _, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
+		httpx.WriteError(w, fmt.Errorf("%w: this action requires an interactive login; API keys are limited to member-level actions", httpx.ErrForbidden))
+		return false
+	}
 	role, err := a.Store.MemberRole(r.Context(), t.OrgID, t.UserID)
 	if err != nil {
 		if errors.Is(err, store.ErrAuthSchemaUnavailable) {

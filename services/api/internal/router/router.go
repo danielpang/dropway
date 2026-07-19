@@ -60,7 +60,11 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	// Authenticated control-plane surface. Everything else under /v1 requires a
 	// verified EdDSA JWT (the authz boundary), then ensure-org-provisioned.
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(middleware.Auth(verifier))
+		// Accept either a Better Auth JWT or an org-scoped API key (api.KeyAuth,
+		// nil in a DB-less/dev build → JWT only). A keyed request resolves to
+		// synthesized claims, so it flows through the same tenant context, quota,
+		// and handlers as a session — subject to the member-level role ceiling.
+		r.Use(middleware.AuthWithKeys(verifier, api.KeyAuth))
 		// Attribute any downstream exception to the authenticated user (runs after
 		// Auth, before EnsureOrgProvisioned, so even provisioning errors carry the id).
 		r.Use(attributeErrors)
@@ -249,6 +253,16 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Delete("/{id}/items/{skillID}", api.RemoveSkillFolderItem)
 			r.Patch("/{id}/items/{skillID}", api.SetSkillFolderItemPreset)
 			r.Get("/{id}/download", api.DownloadSkillFolder)
+		})
+
+		// Org-scoped API keys (SDK / CLI / CI credentials). Management is
+		// session-only + admin/owner (re-checked live in requireAdmin, which also
+		// refuses keyed callers — a key can never manage keys). The secret is
+		// returned only in the create response.
+		r.Route("/api-keys", func(r chi.Router) {
+			r.Post("/", api.CreateAPIKey)
+			r.Get("/", api.ListAPIKeys)
+			r.Delete("/{id}", api.RevokeAPIKey)
 		})
 
 		// Poll a custom domain's verification status (drives the state machine).

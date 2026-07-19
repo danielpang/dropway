@@ -178,6 +178,14 @@ type Config struct {
 	// per minute, burst 5 (PASSWORD_RATELIMIT_PER_MIN / PASSWORD_RATELIMIT_BURST).
 	PasswordRateLimitPerMin int
 	PasswordRateLimitBurst  int
+
+	// APIKeyRateLimitPerMin / APIKeyRateLimitBurst bound requests authenticated by a
+	// single org-scoped API key, keyed by key id. Keys make the /v1 surface
+	// scriptable, so this is the first-layer per-principal throttle (presigned blob
+	// PUTs go direct to object storage and don't count). Defaults: 120 per minute,
+	// burst 240 (APIKEY_RATELIMIT_PER_MIN / APIKEY_RATELIMIT_BURST).
+	APIKeyRateLimitPerMin int
+	APIKeyRateLimitBurst  int
 }
 
 // Load reads the environment and returns a validated Config. It returns an error
@@ -236,6 +244,8 @@ func Load() (Config, error) {
 
 		PasswordRateLimitPerMin: envIntOr("PASSWORD_RATELIMIT_PER_MIN", 10),
 		PasswordRateLimitBurst:  envIntOr("PASSWORD_RATELIMIT_BURST", 5),
+		APIKeyRateLimitPerMin:   envIntOr("APIKEY_RATELIMIT_PER_MIN", 120),
+		APIKeyRateLimitBurst:    envIntOr("APIKEY_RATELIMIT_BURST", 240),
 	}
 
 	if p := os.Getenv("PORT"); p != "" {

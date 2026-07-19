@@ -120,3 +120,102 @@ func TestClaimsFromContext_Absent(t *testing.T) {
 		t.Error("expected ok=false on a bare context")
 	}
 }
+
+// fakeKeyAuth drives AuthWithKeys' API-key branch.
+type fakeKeyAuth struct {
+	princ *KeyPrincipal
+	err   error
+}
+
+func (f *fakeKeyAuth) AuthenticateAPIKey(_ context.Context, _ string) (*KeyPrincipal, error) {
+	return f.princ, f.err
+}
+
+func TestAuthWithKeys_APIKey_InjectsClaimsAndMarker(t *testing.T) {
+	claims := &auth.Claims{OrgID: "org_1", Role: "member"}
+	claims.Subject = "creator_1"
+	ka := &fakeKeyAuth{princ: &KeyPrincipal{Claims: claims, KeyID: "key_9"}}
+	// The verifier must NOT be consulted for a dw_live_ token.
+	fv := &fakeVerifier{wantToken: "never"}
+
+	var seenClaims *auth.Claims
+	var seenKey string
+	var keyed bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenClaims, _ = ClaimsFromContext(r.Context())
+		seenKey, keyed = APIKeyIDFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer dw_live_abc123")
+	rr := httptest.NewRecorder()
+	AuthWithKeys(fv, ka)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if fv.called {
+		t.Error("JWT verifier must not be consulted for an API-key token")
+	}
+	if seenClaims == nil || seenClaims.UserID() != "creator_1" || seenClaims.OrgID != "org_1" {
+		t.Errorf("synthesized claims not injected: %+v", seenClaims)
+	}
+	if !keyed || seenKey != "key_9" {
+		t.Errorf("keyed marker = (%q, %v), want (key_9, true)", seenKey, keyed)
+	}
+}
+
+func TestAuthWithKeys_APIKey_RateLimited429(t *testing.T) {
+	ka := &fakeKeyAuth{err: &RateLimitedError{RetryAfter: 2 * 1e9}} // 2s
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer dw_live_abc123")
+	rr := httptest.NewRecorder()
+	AuthWithKeys(&fakeVerifier{}, ka)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("missing Retry-After header on 429")
+	}
+}
+
+func TestAuthWithKeys_APIKey_AuthFailure401(t *testing.T) {
+	ka := &fakeKeyAuth{err: errors.New("revoked")}
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { nextCalled = true })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer dw_live_abc123")
+	rr := httptest.NewRecorder()
+	AuthWithKeys(&fakeVerifier{}, ka)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if nextCalled {
+		t.Error("next handler must not run on key auth failure")
+	}
+}
+
+func TestAuthWithKeys_NoAuthenticator_KeyFallsToJWT(t *testing.T) {
+	// With no key authenticator, a dw_live_ token is treated as a JWT and fails
+	// verification → 401 (surfaces that keys aren't accepted on this surface).
+	fv := &fakeVerifier{wantToken: "never", err: errors.New("bad jwt")}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer dw_live_abc123")
+	rr := httptest.NewRecorder()
+	AuthWithKeys(fv, nil)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if !fv.called {
+		t.Error("with no key authenticator, the JWT verifier should be consulted")
+	}
+}

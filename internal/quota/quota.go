@@ -72,6 +72,13 @@ const (
 	// and every viewer-facing surface is bounded by the site caps); the seam
 	// exists so the cloud provider can tighten it without a store/handler change.
 	ResourceChatLogPerOrg Resource = "chat_logs_per_org"
+	// ResourceAPIKeyPerOrg caps the number of org-scoped API keys. DORMANT:
+	// unlimited on every tier today (per-key blast radius is bounded by the
+	// member-level role ceiling + revocation, and the surface is already bounded by
+	// the per-key rate limit + the site caps). The seam exists so the cloud provider
+	// can cap key counts later without a store/handler change (the ResourceSkillPerOrg
+	// pattern).
+	ResourceAPIKeyPerOrg Resource = "api_keys_per_org"
 )
 
 // ExceededError is returned by an enforcing Provider when an action would cross

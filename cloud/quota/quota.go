@@ -179,6 +179,11 @@ func (p *Provider) AllowN(planTier string, res corequota.Resource, current, n in
 	case corequota.ResourceChatLogPerOrg:
 		// Unlimited on every tier today (dormant seam — see internal/quota).
 		return nil
+	case corequota.ResourceAPIKeyPerOrg:
+		// Unlimited on every tier today (dormant seam — see internal/quota). Per-key
+		// blast radius is bounded by the member-level ceiling + revocation + the
+		// per-key rate limit, so key COUNT is not a lever yet.
+		return nil
 	case corequota.ResourceCustomDomainPerOrg:
 		// Custom domains are a PAID feature modeled as a 0/unlimited band: the free
 		// tier may register NONE (cap 0 → the first add is current+1 > 0 → 402

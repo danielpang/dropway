@@ -33,7 +33,10 @@ CREATE TABLE app.org_meta (
     ai_enabled             boolean NOT NULL DEFAULT true,
     ai_monthly_cap_usd     numeric(10,2) NOT NULL DEFAULT 20.00,
     -- Chat-log (Share This Session) kill switch (migration 0013).
-    chat_logs_enabled      boolean NOT NULL DEFAULT true
+    chat_logs_enabled      boolean NOT NULL DEFAULT true,
+    -- API-keys kill switch (migration 0016): off → every org key 401s at the
+    -- auth boundary; management endpoints still work so admins can revoke.
+    api_keys_enabled       boolean NOT NULL DEFAULT true
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -241,6 +244,27 @@ CREATE TABLE app.allowlist_entries (
     claimed_by_user_id uuid,
     created_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT allowlist_entries_site_email_key UNIQUE (site_id, email)
+);
+
+-- api_keys: org-scoped API keys for the SDK / CLI / CI (migration 0016). The full
+-- secret is returned once at creation; only key_hash (sha256 hex) + key_prefix are
+-- stored. created_by attributes keyed requests to the minting member. The auth-path
+-- lookup uses the SECURITY DEFINER app.resolve_api_key() (omitted here per this
+-- file's convention); management queries run under RLS.
+CREATE TABLE app.api_keys (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    created_by   uuid NOT NULL,
+    name         text NOT NULL,
+    key_hash     text NOT NULL UNIQUE,
+    key_prefix   text NOT NULL,
+    scopes       text[] NOT NULL DEFAULT ARRAY['sites:*']::text[],
+    site_id      uuid REFERENCES app.sites (id) ON DELETE CASCADE,
+    last_used_at timestamptz,
+    expires_at   timestamptz,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    revoked_at   timestamptz,
+    revoked_by   uuid
 );
 
 -- audit_log: append-only record of sensitive actions. actor_token / request_id /

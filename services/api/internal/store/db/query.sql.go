@@ -261,6 +261,73 @@ func (q *Queries) CreateAISession(ctx context.Context, arg CreateAISessionParams
 	return i, err
 }
 
+const createAPIKey = `-- name: CreateAPIKey :one
+
+INSERT INTO app.api_keys (org_id, created_by, name, key_hash, key_prefix, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by
+`
+
+type CreateAPIKeyParams struct {
+	OrgID     string
+	CreatedBy string
+	Name      string
+	KeyHash   string
+	KeyPrefix string
+	ExpiresAt pgtype.Timestamptz
+}
+
+type CreateAPIKeyRow struct {
+	ID         string
+	OrgID      string
+	CreatedBy  string
+	Name       string
+	KeyPrefix  string
+	Scopes     []string
+	SiteID     *string
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	RevokedAt  pgtype.Timestamptz
+	RevokedBy  *string
+}
+
+// ===========================================================================
+// API keys (migration 0016): org-scoped credentials for the SDK / CLI / CI.
+// The auth-boundary lookup is app.resolve_api_key() (SECURITY DEFINER, called via
+// raw pgx since sqlc can't type a RETURNS TABLE function); the management queries
+// below run under the caller's RLS tenant context.
+// ===========================================================================
+// Mint a key for the active org. key_hash is the sha256 of the full secret (which
+// the caller has already discarded after returning it once); key_prefix is the
+// non-secret display handle. Never returns key_hash.
+func (q *Queries) CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (CreateAPIKeyRow, error) {
+	row := q.db.QueryRow(ctx, createAPIKey,
+		arg.OrgID,
+		arg.CreatedBy,
+		arg.Name,
+		arg.KeyHash,
+		arg.KeyPrefix,
+		arg.ExpiresAt,
+	)
+	var i CreateAPIKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.CreatedBy,
+		&i.Name,
+		&i.KeyPrefix,
+		&i.Scopes,
+		&i.SiteID,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.RevokedBy,
+	)
+	return i, err
+}
+
 const createChatLog = `-- name: CreateChatLog :one
 INSERT INTO app.chat_logs (org_id, site_id, title, source_tool, created_by)
 VALUES ($1, $2, $3, $4, $5)
@@ -1032,6 +1099,53 @@ func (q *Queries) GetAISession(ctx context.Context, arg GetAISessionParams) (App
 		&i.LatestVersionID,
 		&i.CreatedAt,
 		&i.LastActivityAt,
+	)
+	return i, err
+}
+
+const getAPIKey = `-- name: GetAPIKey :one
+SELECT id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by
+FROM app.api_keys
+WHERE id = $1 AND org_id = $2
+`
+
+type GetAPIKeyParams struct {
+	ID    string
+	OrgID string
+}
+
+type GetAPIKeyRow struct {
+	ID         string
+	OrgID      string
+	CreatedBy  string
+	Name       string
+	KeyPrefix  string
+	Scopes     []string
+	SiteID     *string
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	RevokedAt  pgtype.Timestamptz
+	RevokedBy  *string
+}
+
+// One key by id in the active org (RLS-scoped).
+func (q *Queries) GetAPIKey(ctx context.Context, arg GetAPIKeyParams) (GetAPIKeyRow, error) {
+	row := q.db.QueryRow(ctx, getAPIKey, arg.ID, arg.OrgID)
+	var i GetAPIKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.CreatedBy,
+		&i.Name,
+		&i.KeyPrefix,
+		&i.Scopes,
+		&i.SiteID,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.RevokedBy,
 	)
 	return i, err
 }
@@ -2075,6 +2189,63 @@ func (q *Queries) ListAIUsageForOrg(ctx context.Context, arg ListAIUsageForOrgPa
 			&i.CostUsd,
 			&i.ReportedToBillingAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAPIKeys = `-- name: ListAPIKeys :many
+SELECT id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by
+FROM app.api_keys
+WHERE org_id = $1
+ORDER BY created_at DESC
+`
+
+type ListAPIKeysRow struct {
+	ID         string
+	OrgID      string
+	CreatedBy  string
+	Name       string
+	KeyPrefix  string
+	Scopes     []string
+	SiteID     *string
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	RevokedAt  pgtype.Timestamptz
+	RevokedBy  *string
+}
+
+// The active org's keys, newest first (RLS-scoped; backed by api_keys_org_idx).
+// Metadata + prefix only — never the hash, never the secret.
+func (q *Queries) ListAPIKeys(ctx context.Context, orgID string) ([]ListAPIKeysRow, error) {
+	rows, err := q.db.Query(ctx, listAPIKeys, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAPIKeysRow{}
+	for rows.Next() {
+		var i ListAPIKeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.CreatedBy,
+			&i.Name,
+			&i.KeyPrefix,
+			&i.Scopes,
+			&i.SiteID,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.RevokedAt,
+			&i.RevokedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -3593,6 +3764,57 @@ func (q *Queries) ResolveSiteByHostRoute(ctx context.Context, arg ResolveSiteByH
 	return i, err
 }
 
+const revokeAPIKey = `-- name: RevokeAPIKey :one
+UPDATE app.api_keys
+SET revoked_at = COALESCE(revoked_at, now()),
+    revoked_by = COALESCE(revoked_by, $3)
+WHERE id = $1 AND org_id = $2
+RETURNING id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by
+`
+
+type RevokeAPIKeyParams struct {
+	ID        string
+	OrgID     string
+	RevokedBy *string
+}
+
+type RevokeAPIKeyRow struct {
+	ID         string
+	OrgID      string
+	CreatedBy  string
+	Name       string
+	KeyPrefix  string
+	Scopes     []string
+	SiteID     *string
+	LastUsedAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  time.Time
+	RevokedAt  pgtype.Timestamptz
+	RevokedBy  *string
+}
+
+// Revoke a key (idempotent): keep the FIRST revocation's timestamp + actor if it
+// was already revoked. 0 rows → the key is absent/invisible → not found.
+func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (RevokeAPIKeyRow, error) {
+	row := q.db.QueryRow(ctx, revokeAPIKey, arg.ID, arg.OrgID, arg.RevokedBy)
+	var i RevokeAPIKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.CreatedBy,
+		&i.Name,
+		&i.KeyPrefix,
+		&i.Scopes,
+		&i.SiteID,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.RevokedBy,
+	)
+	return i, err
+}
+
 const setAIEnabled = `-- name: SetAIEnabled :exec
 UPDATE app.org_meta
 SET ai_enabled = $2
@@ -4221,6 +4443,26 @@ func (q *Queries) SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams
 	var total_cost_usd float64
 	err := row.Scan(&total_cost_usd)
 	return total_cost_usd, err
+}
+
+const touchAPIKeyLastUsed = `-- name: TouchAPIKeyLastUsed :exec
+UPDATE app.api_keys
+SET last_used_at = now()
+WHERE id = $1 AND org_id = $2
+  AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes')
+`
+
+type TouchAPIKeyLastUsedParams struct {
+	ID    string
+	OrgID string
+}
+
+// Best-effort, throttled last-used stamp: update at most once per 5 minutes per key
+// so a keyed GET doesn't become a write on every request. Runs under the resolved
+// org's tenant context (RLS-scoped by org_id).
+func (q *Queries) TouchAPIKeyLastUsed(ctx context.Context, arg TouchAPIKeyLastUsedParams) error {
+	_, err := q.db.Exec(ctx, touchAPIKeyLastUsed, arg.ID, arg.OrgID)
+	return err
 }
 
 const tryBeginAITurn = `-- name: TryBeginAITurn :one
