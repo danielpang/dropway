@@ -137,10 +137,11 @@ const (
 // are optional — an empty field is written as SQL NULL.
 type Context struct {
 	// ActorUser is the verified Better Auth user id (claims.UserID). Empty for a
-	// deploy-token-driven action.
+	// token-driven action.
 	ActorUser string
-	// ActorToken is the deploy-token id (app.deploy_tokens.id) when a deploy token
-	// drove the action rather than a user session. Empty otherwise.
+	// ActorToken is the id of the non-session credential that drove the action
+	// rather than a user session. Reserved provenance for the forthcoming
+	// org-scoped API keys (it will record app.api_keys.id). Empty otherwise.
 	ActorToken string
 	// IP is the client IP (from the request RemoteAddr / X-Forwarded-For via chi
 	// RealIP). Empty when unknown.

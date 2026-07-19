@@ -51,15 +51,6 @@ erDiagram
     text request_id
     text trace_id
   }
-  app__deploy_tokens["app.deploy_tokens"] {
-    uuid id PK
-    uuid org_id FK
-    text token_hash
-    text[] scopes
-    uuid site_id FK
-    timestamptz created_at
-    timestamptz revoked_at
-  }
   app__domains["app.domains"] {
     uuid id PK
     uuid org_id FK
@@ -103,8 +94,6 @@ erDiagram
   app__sites ||--o{ app__allowlist_entries : "site_id"
   app__org_meta ||--o{ app__allowlist_entries : "org_id"
   app__org_meta ||--o{ app__audit_log : "org_id"
-  app__sites ||--o{ app__deploy_tokens : "site_id"
-  app__org_meta ||--o{ app__deploy_tokens : "org_id"
   app__org_meta ||--o{ app__domains : "org_id"
   app__sites ||--o{ app__domains : "site_id"
   app__sites ||--o{ app__host_routes : "site_id"
