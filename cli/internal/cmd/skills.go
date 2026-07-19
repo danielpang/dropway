@@ -152,7 +152,7 @@ func newSkillsPushCmd(skillsFactory func(baseURL, token string) api.SkillsClient
 			files := api.ManifestFromBuild(m)
 			fmt.Fprintf(out, "Pushing skill %q from %q\n  %s\n\n", name, dir, m.Summary())
 
-			// 3. Resolve auth (DROPWAY_TOKEN, else stored `dropway login` credentials).
+			// 3. Resolve auth (DROPWAY_API_KEY, else stored `dropway login` credentials).
 			ctx := context.Background()
 			token, err := auth.Token(ctx, baseURL)
 			if err != nil {

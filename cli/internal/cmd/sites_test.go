@@ -47,7 +47,7 @@ func newSitesFixture() *fakeReadClient {
 
 func runSites(t *testing.T, client api.ReadClient, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("DROPWAY_TOKEN", "test-token") // auth.Token short-circuits to this
+	t.Setenv("DROPWAY_API_KEY", "test-token") // auth.Token short-circuits to this
 	cmd := newSitesCmd(readFactoryOf(client))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

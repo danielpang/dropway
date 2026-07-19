@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/danielpang/dropway/cli/internal/manifest"
 	"github.com/danielpang/dropway/internal/contenttype"
@@ -79,6 +81,8 @@ type SitesResponse struct {
 // used to pick out the sites they own.
 type MeResponse struct {
 	UserID string `json:"user_id"`
+	OrgID  string `json:"org_id"`
+	Role   string `json:"role"`
 }
 
 // CreateSiteRequest creates a site by slug.
@@ -105,7 +109,8 @@ type ReadClient interface {
 	Me(ctx context.Context) (*MeResponse, error)
 }
 
-// HTTPClient is the real Client. Token is the Bearer credential (DROPWAY_TOKEN).
+// HTTPClient is the real Client. Token is the Bearer credential (an API key from
+// DROPWAY_API_KEY, or an access token from `dropway login`).
 type HTTPClient struct {
 	BaseURL string
 	Token   string
@@ -140,12 +145,24 @@ func (c *HTTPClient) postJSON(ctx context.Context, path string, body, out any) e
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("POST %s: server returned %d: %s", path, resp.StatusCode, bytes.TrimSpace(rb))
+		return c.statusError(http.MethodPost, path, resp.StatusCode, rb)
 	}
 	if out == nil {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// statusError formats a non-2xx response. When the credential is an API key and the
+// server said 403, it appends a hint: keys are capped at member-level actions, so an
+// admin-only operation needs an interactive login. (Keyed deploy/create are
+// member-level and unaffected.)
+func (c *HTTPClient) statusError(method, path string, status int, body []byte) error {
+	msg := fmt.Sprintf("%s %s: server returned %d: %s", method, path, status, bytes.TrimSpace(body))
+	if status == http.StatusForbidden && strings.HasPrefix(c.Token, "dw_live_") {
+		msg += "\nhint: API keys are limited to member-level actions; run `dropway login` for admin-only operations"
+	}
+	return errors.New(msg)
 }
 
 // getJSON GETs the API path with the Bearer token and decodes the JSON response
@@ -164,7 +181,7 @@ func (c *HTTPClient) getJSON(ctx context.Context, path string, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("GET %s: server returned %d: %s", path, resp.StatusCode, bytes.TrimSpace(rb))
+		return c.statusError(http.MethodGet, path, resp.StatusCode, rb)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

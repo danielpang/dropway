@@ -22,6 +22,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newLogoutCmd())
 	root.AddCommand(newDeployCmd(defaultClientFactory))
 	root.AddCommand(newSitesCmd(defaultReadClientFactory))
+	root.AddCommand(newWhoamiCmd(defaultReadClientFactory))
 	root.AddCommand(newReadCmd(defaultReadClientFactory))
 	root.AddCommand(newSkillsCmd(defaultSkillsClientFactory))
 	root.AddCommand(newChatCmd(defaultChatClientFactory))

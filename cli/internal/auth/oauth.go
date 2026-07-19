@@ -130,11 +130,26 @@ func Login(ctx context.Context, apiBase string, open Opener) (*Credentials, erro
 	}
 }
 
-// Token resolves a bearer token for calls to apiBase. DROPWAY_TOKEN wins (CI);
-// otherwise it uses the stored login, refreshing the access token when expired.
+// APIKeyEnv is the environment variable carrying an org-scoped API key
+// (dw_live_...) for CI / non-interactive use. When set it takes precedence over any
+// stored interactive login, so a CI run is deterministic even on a machine where
+// someone once ran `dropway login`. The key is read per invocation and never
+// persisted.
+const APIKeyEnv = "DROPWAY_API_KEY"
+
+// UsingAPIKey reports whether an API key in the environment will be used as the
+// credential — it takes precedence over any stored interactive login. `dropway
+// whoami` reports this so the active credential source is never a mystery.
+func UsingAPIKey() bool {
+	return strings.TrimSpace(os.Getenv(APIKeyEnv)) != ""
+}
+
+// Token resolves a bearer credential for calls to apiBase. An API key in
+// DROPWAY_API_KEY wins (CI); otherwise it uses the stored login, refreshing the
+// access token when expired.
 func Token(ctx context.Context, apiBase string) (string, error) {
-	if t := strings.TrimSpace(os.Getenv("DROPWAY_TOKEN")); t != "" {
-		return t, nil
+	if k := strings.TrimSpace(os.Getenv(APIKeyEnv)); k != "" {
+		return k, nil
 	}
 	apiBase = strings.TrimRight(apiBase, "/")
 	c, err := Load()
@@ -282,7 +297,7 @@ func callbackHandler(state string, codeCh chan<- string, errCh chan<- error) htt
 // failure). Self-contained HTML + inline CSS with light/dark support, since this is
 // served by the CLI's transient loopback server (no app assets available).
 func writeResult(w http.ResponseWriter, ok bool, title, msg string) {
-	accent := "#d97706"          // amber-600 (failure)
+	accent := "#d97706" // amber-600 (failure)
 	tint := "rgba(217,119,6,.12)"
 	icon := `<path d="M18 6 6 18M6 6l12 12"/>` // X
 	if ok {

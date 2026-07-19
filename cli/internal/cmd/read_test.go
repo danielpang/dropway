@@ -12,7 +12,7 @@ import (
 
 func runRead(t *testing.T, client api.ReadClient, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("DROPWAY_TOKEN", "test-token")
+	t.Setenv("DROPWAY_API_KEY", "test-token")
 	cmd := newReadCmd(readFactoryOf(client))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

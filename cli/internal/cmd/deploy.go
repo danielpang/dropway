@@ -18,8 +18,9 @@ import (
 	"github.com/danielpang/dropway/internal/slug"
 )
 
-// tokenEnv is the env var carrying a Bearer deploy token (CI / non-interactive).
-const tokenEnv = "DROPWAY_TOKEN"
+// tokenEnv is the env var carrying an org-scoped API key (dw_live_...) for CI /
+// non-interactive use. It takes precedence over a stored `dropway login`.
+const tokenEnv = auth.APIKeyEnv
 
 // newDeployCmd builds the `dropway deploy <dir>` command. clientFactory is
 // injected so tests can supply a fake api.Client; the default builds the real
@@ -68,7 +69,7 @@ func newDeployCmd(clientFactory func(baseURL, token string) api.Client) *cobra.C
 				return nil
 			}
 
-			// 3. --send: resolve auth (DROPWAY_TOKEN, else the stored `dropway login`
+			// 3. --send: resolve auth (DROPWAY_API_KEY, else the stored `dropway login`
 			// credentials, refreshing as needed) + require a target site.
 			ctx := context.Background()
 			token, err := auth.Token(ctx, baseURL)
