@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import { Dropway } from "../src/index.js";
 import {
   AuthError,
+  DropwayError,
   ForbiddenError,
+  NotFoundError,
   QuotaExceededError,
   RateLimitError,
 } from "../src/errors.js";
@@ -130,6 +132,68 @@ describe("error mapping", () => {
     const err = (await dw.sites.list().catch((e) => e)) as RateLimitError;
     expect(err).toBeInstanceOf(RateLimitError);
     expect(err.retryAfterSeconds).toBe(7);
+  });
+
+  it("maps 404 → NotFoundError", async () => {
+    const { dw } = client(() => json({ message: "no such site" }, 404));
+    await expect(dw.sites.get("missing")).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("retry", () => {
+  function retryingClient(handler: Handler, maxRetries = 3) {
+    let calls = 0;
+    const dw = new Dropway({
+      apiKey: "dw_live_test",
+      baseUrl: "https://api.test",
+      maxRetries,
+      fetch: (async (url: string | URL, init: RequestInit = {}) => {
+        calls++;
+        return handler(String(url), init);
+      }) as unknown as typeof fetch,
+    });
+    return { dw, calls: () => calls };
+  }
+
+  it("retries an idempotent GET on 503, then returns the success body", async () => {
+    let n = 0;
+    const { dw, calls } = retryingClient(() => {
+      n++;
+      return n < 3 ? new Response("", { status: 503 }) : json({ ok: true });
+    });
+    const res = await dw.request<{ ok: boolean }>("GET", "/v1/x");
+    expect(res.ok).toBe(true);
+    expect(calls()).toBe(3);
+  });
+
+  it("does not retry a non-idempotent POST on 503", async () => {
+    const { dw, calls } = retryingClient(() => json({ message: "boom" }, 503));
+    await expect(dw.request("POST", "/v1/x", { body: {} })).rejects.toBeInstanceOf(
+      DropwayError,
+    );
+    expect(calls()).toBe(1);
+  });
+
+  it("retries a failed blob upload (the PUT is idempotent)", async () => {
+    let puts = 0;
+    const { dw } = retryingClient((url, init) => {
+      if (url.endsWith("/deployments/prepare")) {
+        const sha = (
+          tryParse(init.body as BodyInit) as { manifest: { sha256: string }[] }
+        ).manifest[0].sha256;
+        return json({ missing: [sha], uploads: { [sha]: "https://blob.test/x" } });
+      }
+      if (url.startsWith("https://blob.test/")) {
+        puts++;
+        return new Response("", { status: puts < 2 ? 500 : 200 });
+      }
+      if (url.endsWith("/deployments")) return json({ version_id: "v1" });
+      if (url.endsWith("/publish")) return json({ live_url: "https://live.test" });
+      return json({}, 404);
+    });
+    const res = await dw.sites.deploy("s1", { files: { "a.txt": "hi" } });
+    expect(puts).toBe(2);
+    expect(res.published).toBe(true);
   });
 });
 

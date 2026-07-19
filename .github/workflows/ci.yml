@@ -464,6 +464,10 @@ jobs:
       - name: install workspace deps
         run: pnpm install --frozen-lockfile
 
+      # The dashboard imports @dropway/sdk (its e2e spec), so its types must exist.
+      - name: build @dropway/sdk
+        run: pnpm --filter @dropway/sdk build
+
       - name: typecheck all packages
         run: pnpm -r typecheck
 
@@ -495,11 +499,9 @@ jobs:
         run: pnpm --filter @dropway/dashboard test
 
   # ---------------------------------------------------------------------------
-  # (e2) SDK: build @dropway/sdk (tsc) and run its vitest suite — including the
-  #      deploy-digest parity with Go's internal/manifest.Digest (the SDK side of
-  #      the same byte-exact contract the dashboard-unit job guards; a drift there
-  #      silently breaks finalize for SDK deploys). Kept a separate job from the
-  #      dashboard so a failure points at the right package.
+  # (e2) SDK: build @dropway/sdk and run its vitest suite, including the digest
+  #      parity with Go's internal/manifest.Digest. A separate job so a failure
+  #      points at the package.
   # ---------------------------------------------------------------------------
   sdk:
     name: SDK · build & unit tests
@@ -581,6 +583,10 @@ jobs:
 
       - name: install workspace deps
         run: pnpm install --frozen-lockfile
+
+      # The SDK deploy spec imports @dropway/sdk from its built dist.
+      - name: build @dropway/sdk
+        run: pnpm --filter @dropway/sdk build
 
       - name: install Playwright chromium
         run: pnpm --filter @dropway/dashboard exec playwright install --with-deps chromium

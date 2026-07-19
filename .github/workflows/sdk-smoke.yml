@@ -1,16 +1,10 @@
 # SPDX-License-Identifier: FSL-1.1-Apache-2.0
 #
-# SDK end-to-end smoke test — the dogfood proof that @dropway/sdk can create and
-# deploy a real site with an org-scoped API key, all the way to a live URL that
-# serves the deployed bytes.
-#
-# This is OPT-IN (workflow_dispatch only): it needs a real API and a real key, so
-# it never runs on a normal PR. Configure two repository secrets first:
+# Opt-in prod canary: deploy a fixture to a live URL via @dropway/sdk against the
+# REAL hosted API. PR-time e2e lives in ci.yml's `e2e` job (self-host stack); this
+# proves the published package still works end to end. Needs repository secrets:
 #   DROPWAY_API_KEY : an org-scoped key (dw_live_...) for a throwaway/dev org.
-#   DROPWAY_API     : (optional) the API base URL; defaults to the hosted API.
-#
-# It mirrors examples/sdk-deploy/deploy.mjs, but imports the freshly-built SDK
-# from its dist so the check exercises exactly the code in this commit.
+#   DROPWAY_API     : (optional) API base URL; defaults to the hosted API.
 
 name: sdk-smoke
 
