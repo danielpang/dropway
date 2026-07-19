@@ -33,6 +33,36 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "api-keys",
+    date: "2026-07-19",
+    label: "New",
+    title: "API keys, a TypeScript SDK, and CI-ready CLI auth",
+    summary:
+      "Create org-scoped API keys to deploy sites from CI, a server script, the new @dropway/sdk, or the CLI, with no browser sign in. A key acts as the member who made it and is limited to member level actions.",
+    changes: [
+      {
+        id: "api-keys-manage",
+        title: "Create and revoke keys in Settings",
+        body: "Owners and admins can mint API keys under Settings, API keys. The full secret is shown once at creation and only a short prefix after that, so treat it like a password and store it right away. Revoking a key stops it working immediately, and an org wide switch can turn all key access off at once.",
+      },
+      {
+        id: "api-keys-sdk",
+        title: "The @dropway/sdk package",
+        body: "A zero dependency TypeScript SDK for Node 18 and up. Point it at a key and create, deploy, publish, or roll back sites in a few lines. Deploys hash files locally, upload only what changed, and verify byte for byte on the server, the same flow the dashboard and CLI use. Errors are typed, including a clear message when a plan limit is reached.",
+      },
+      {
+        id: "api-keys-cli",
+        title: "Headless CLI with DROPWAY_API_KEY",
+        body: "Set DROPWAY_API_KEY and the same dropway deploy commands run in CI with no browser step. The key takes precedence over a stored login, so pipelines are predictable, and dropway whoami shows who you are and which credential is in use.",
+      },
+      {
+        id: "api-keys-safety",
+        title: "Safe by default",
+        body: "A key is capped at member level no matter who created it, so a leaked key can never administer your organization. Keys stop working the moment their creator leaves the org, and every action a key takes is recorded in the audit log against both the key and the person who made it.",
+      },
+    ],
+  },
+  {
     id: "embed-sites",
     date: "2026-07-18",
     label: "New",

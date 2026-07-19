@@ -495,6 +495,38 @@ jobs:
         run: pnpm --filter @dropway/dashboard test
 
   # ---------------------------------------------------------------------------
+  # (e2) SDK: build @dropway/sdk (tsc) and run its vitest suite — including the
+  #      deploy-digest parity with Go's internal/manifest.Digest (the SDK side of
+  #      the same byte-exact contract the dashboard-unit job guards; a drift there
+  #      silently breaks finalize for SDK deploys). Kept a separate job from the
+  #      dashboard so a failure points at the right package.
+  # ---------------------------------------------------------------------------
+  sdk:
+    name: SDK · build & unit tests
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build @dropway/sdk
+        run: pnpm --filter @dropway/sdk build
+
+      - name: vitest (incl. Go digest parity)
+        run: pnpm --filter @dropway/sdk test
+
+  # ---------------------------------------------------------------------------
   # (f) E2E: the full self-host stack in Docker + a real browser. Boots compose
   #     (dashboard + Go API + Postgres + MinIO), runs Better Auth's one-time
   #     migration, then drives the browser folder drag-and-drop deploy through to
