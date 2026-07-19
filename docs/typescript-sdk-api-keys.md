@@ -354,12 +354,20 @@ already scoped above.
   `NETLIFY_AUTH_TOKEN` / `GITHUB_TOKEN` convention CI users already
   know.
 - **One variable, no legacy alias.** The CLI's existing `DROPWAY_TOKEN`
-  env-var handling (`cli/internal/cmd/deploy.go`) — the client half of
-  the never-finished deploy-tokens feature, whose table is dropped in
-  migration 0015 — is **removed** as part of this work, not aliased.
-  It never worked end-to-end (nothing server-side ever accepted a
-  minted token), so there is nothing to stay compatible with;
-  `DROPWAY_API_KEY` is the only documented variable.
+  env-var handling — the client half of the never-finished
+  deploy-tokens feature, whose table is dropped in migration 0015 — is
+  **removed** as part of this work, not aliased; `DROPWAY_API_KEY`
+  becomes the only documented variable. Scope of the removal, honestly
+  stated: `DROPWAY_TOKEN` is today the bearer override for *every* CLI
+  command (`auth.Token` in `cli/internal/auth/oauth.go` short-circuits
+  to it ahead of stored login) and is mentioned on the dashboard's CLI
+  page — so anyone exporting a session JWT into it for CI is broken by
+  the removal. That flow was always impractical (JWTs are short-lived;
+  keys are the actual answer), but it's a breaking change and is
+  treated as one: changelog entry, the dashboard CLI page copy updates
+  to `DROPWAY_API_KEY`, the CLI error when only `DROPWAY_TOKEN` is set
+  says exactly what to do, and the CLI tests that stub `DROPWAY_TOKEN`
+  move to the new variable.
 - **Role-ceiling errors are translated.** Commands gated on admin roles
   or key management will 403 under a key; the CLI maps
   `admin_required_interactive` to "this command requires an interactive
