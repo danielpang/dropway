@@ -39,9 +39,10 @@ and hits the same `/v1` control plane (`services/api/internal/router/router.go`)
   `services/mcp/internal/apiclient/apiclient.go` (`Client.Deploy`). The
   SDK is essentially a TypeScript port of that file.
 - A dormant table `app.deploy_tokens` (hashed bearer tokens, scopes
-  array, optional site scope) exists in the baseline migration with RLS
+  array, optional site scope) sat in the baseline migration with RLS
   policies but **no server-side code paths** — no sqlc queries, no
-  handlers, nothing that mints or verifies one. It was scoped as the
+  handlers, nothing that mints or verifies one; it has since been
+  dropped (migration 0015, PR #112). It was scoped as the
   "CLI / CI deploy path" credential (per its `db/sqlc/schema.sql`
   comment): the client half was even built in anticipation — the CLI
   reads a `DROPWAY_TOKEN` env var as a CI bearer
@@ -417,14 +418,15 @@ without a store or handler change — the `ResourceSkillPerOrg` pattern.
 
 ## Migration plan
 
-The old table goes first, on its own: **migration
-`0015_drop_deploy_tokens.sql` ships separately** (its own PR), dropping
-`app.deploy_tokens` — no server code has ever read or written it, so
-the drop is a no-op in every real database, and keeping two
-nearly-identical dormant token tables would only invite drift. That
-change also removes the table from the sqlc schema mirror, the
-generated `AppDeployToken` model, and the RLS integration test's table
-list.
+The old table went first, on its own: **migration
+`0015_drop_deploy_tokens.sql` already shipped separately** (PR #112,
+merged), dropping `app.deploy_tokens` — no server code had ever read
+or written it, so the drop was a no-op in every real database, and
+keeping two nearly-identical dormant token tables would only have
+invited drift. That change also removed the table from the sqlc schema
+mirror, the generated `AppDeployToken` model, the RLS integration
+test's table list, the schema diagrams, and the audit/query doc
+comments.
 
 The API-keys work is then one goose migration in `db/migrations/app/`:
 
