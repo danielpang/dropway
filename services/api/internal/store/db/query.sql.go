@@ -4589,9 +4589,9 @@ type WriteAuditLogParams struct {
 // Append an audit row for a sensitive mutation. Runs inside the SAME RLS tenant
 // tx as the action it records (org-scoped by the per-tx GUC + the explicit org_id),
 // so an audit write can never land under the wrong tenant. actor_user is the verified
-// user id (null for a deploy-token actor); actor_token is the deploy-token id when a
-// token drove the action; metadata is freeform jsonb; ip/request_id/trace_id carry
-// the request provenance.
+// user id (null for a token actor); actor_token is the id of the non-session
+// credential when a token drove the action; metadata is freeform jsonb;
+// ip/request_id/trace_id carry the request provenance.
 func (q *Queries) WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) (AppAuditLog, error) {
 	row := q.db.QueryRow(ctx, writeAuditLog,
 		arg.OrgID,
