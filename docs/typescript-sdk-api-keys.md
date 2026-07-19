@@ -353,13 +353,13 @@ already scoped above.
   each invocation. This matches the `VERCEL_TOKEN` /
   `NETLIFY_AUTH_TOKEN` / `GITHUB_TOKEN` convention CI users already
   know.
-- **`DROPWAY_TOKEN` is subsumed.** The CLI already reads a
-  `DROPWAY_TOKEN` env var as a raw CI bearer
-  (`cli/internal/cmd/deploy.go`) — the client half of the never-finished
-  deploy-tokens feature. `DROPWAY_API_KEY` becomes the canonical,
-  documented variable; `DROPWAY_TOKEN` keeps working as a
-  lower-precedence alias (it forwards whatever bearer it holds, so an
-  API key placed in it works too), with a deprecation note in `--help`.
+- **One variable, no legacy alias.** The CLI's existing `DROPWAY_TOKEN`
+  env-var handling (`cli/internal/cmd/deploy.go`) — the client half of
+  the never-finished deploy-tokens feature, whose table is dropped in
+  migration 0015 — is **removed** as part of this work, not aliased.
+  It never worked end-to-end (nothing server-side ever accepted a
+  minted token), so there is nothing to stay compatible with;
+  `DROPWAY_API_KEY` is the only documented variable.
 - **Role-ceiling errors are translated.** Commands gated on admin roles
   or key management will 403 under a key; the CLI maps
   `admin_required_interactive` to "this command requires an interactive
@@ -429,8 +429,8 @@ Alongside it: mirror the DDL in `db/sqlc/schema.sql`, add queries to
 touch-last-used), regenerate sqlc, add `app.api_keys` to the RLS
 integration test's table list, repoint the audit `ActorToken` doc
 comments (`internal/audit/audit.go`, the sqlc query comments) at
-`app.api_keys.id`, and fold the CLI's `DROPWAY_TOKEN` path into the
-`DROPWAY_API_KEY` support above.
+`app.api_keys.id`, and delete the CLI's legacy `DROPWAY_TOKEN`
+env-var handling in favor of `DROPWAY_API_KEY`.
 
 ## Testing
 
@@ -461,8 +461,8 @@ comments (`internal/audit/audit.go`, the sqlc query comments) at
 3. **SDK + CLI** — `packages/sdk` scaffold, generated full-spec `/v1`
    client, hand-written `dw.sites` layer with the deploy-loop port,
    errors/retries, tests incl. digest parity; CLI `DROPWAY_API_KEY`
-   support (precedence, `DROPWAY_TOKEN` alias, `whoami` source
-   reporting, role-ceiling error mapping).
+   support (precedence, legacy `DROPWAY_TOKEN` removal, `whoami`
+   source reporting, role-ceiling error mapping).
 4. **Polish & launch** — examples, README/docs, e2e smoke workflow,
    secret-scanning registration (stretch), changelog entry.
 
