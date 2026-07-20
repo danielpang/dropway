@@ -26,8 +26,14 @@ console.log(`created ${slug} (${site.id})`);
 const res = await dw.sites.deploy(site.id, { dir: FIXTURE });
 assert.equal(res.published, true, "deploy did not publish");
 assert.ok(res.liveUrl, "deploy returned no live URL");
-assert.equal(res.filesUploaded, 2, "expected 2 files uploaded"); // index.html + style.css
-console.log(`deployed v${res.versionNo ?? res.versionId} -> ${res.liveUrl}`);
+assert.ok(res.versionId, "deploy returned no version id");
+// NOT asserting filesUploaded: blobs are content-addressed and shared per org,
+// so a reused org already has the fixture's blobs and uploads 0. The deploy
+// still publishes; serving the live URL below is the real proof of content.
+console.log(
+  `deployed v${res.versionNo ?? res.versionId} -> ${res.liveUrl} ` +
+    `(${res.filesUploaded} new blob(s))`,
+);
 
 await waitFor(res.liveUrl, 200, "live URL never served 200");
 console.log("live URL serves 200");
