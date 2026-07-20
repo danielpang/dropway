@@ -4,8 +4,8 @@
 # creates a site, deploys files, then deletes it and confirms it's gone — proving
 # the full lifecycle, cleanup included, works headlessly.
 #
-# Opt-in: needs a real key, so it runs on demand (or nightly), never on a PR. The
-# `sdk-e2e` GitHub Environment supplies:
+# Opt-in: needs a real key, so it runs on demand only (workflow_dispatch), never
+# on a PR or a schedule. The `development` GitHub Environment supplies:
 #   DROPWAY_API_KEY : an org-scoped key (dw_live_...) for a throwaway/dev org.
 #   DROPWAY_API     : (optional) API base URL; defaults to the hosted API.
 
@@ -13,8 +13,6 @@ name: sdk-cli-e2e
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 7 * * *" # nightly
 
 permissions:
   contents: read
@@ -23,7 +21,7 @@ jobs:
   e2e:
     name: SDK + CLI · create, deploy, delete
     runs-on: ubuntu-latest
-    environment: sdk-e2e
+    environment: development
     env:
       DROPWAY_API_KEY: ${{ secrets.DROPWAY_API_KEY }}
       DROPWAY_API: ${{ secrets.DROPWAY_API }}
@@ -55,7 +53,7 @@ jobs:
       - name: require the API key secret
         run: |
           if [ -z "${DROPWAY_API_KEY:-}" ]; then
-            echo "::error::DROPWAY_API_KEY is not set on the sdk-e2e environment."
+            echo "::error::DROPWAY_API_KEY is not set on the development environment."
             exit 1
           fi
 
