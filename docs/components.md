@@ -120,9 +120,10 @@ The terminal client for deploys.
 **Main use cases**
 - `dropway login` — browser **OAuth 2.1** (PKCE + DCR) against the dashboard; a loopback `http://localhost:<port>/callback` catches the code; tokens stored + auto-refreshed.
 - `dropway deploy <dir>` — folder → live URL via the API deploy pipeline (`--send` to upload; `--new --site <slug>` to create). Dry-run without `--send`.
+- `dropway sites` — list your sites (`--all` for the whole org); `dropway sites delete <id-or-slug>` removes one (`--yes` to skip the prompt in CI).
 - `dropway logout`.
 
-**Calls** the **dashboard** (OAuth discovery/register/authorize/token) and the **api** (create site, prepare, upload presigned, finalize, publish). `DROPWAY_API_KEY` (an org API key) overrides login for CI.
+**Calls** the **dashboard** (OAuth discovery/register/authorize/token) and the **api** (create site, prepare, upload presigned, finalize, publish, delete). `DROPWAY_API_KEY` (an org API key) overrides login for CI.
 
 ---
 

@@ -16,6 +16,8 @@ type Action string
 const (
 	// ActionSiteCreate records a new site (POST /v1/sites).
 	ActionSiteCreate Action = "site.create"
+	// ActionSiteDelete records a site permanently removed (DELETE /v1/sites/{id}).
+	ActionSiteDelete Action = "site.delete"
 	// ActionSiteAccessChange records an access-mode / policy change
 	// (PUT /v1/sites/{id}/access).
 	ActionSiteAccessChange Action = "site.access_change"

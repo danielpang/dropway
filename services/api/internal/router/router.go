@@ -121,6 +121,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/", api.CreateSite)
 			r.Get("/", api.ListSites)
 			r.Get("/{id}", api.GetSite)
+			// Permanently delete a site (owner/admin; the handler re-checks). The
+			// DB cascade drops its versions/routes/domains; GC reclaims the blobs.
+			r.Delete("/{id}", api.DeleteSite)
 			// Deploy history (newest first) for the rollback picker.
 			r.Get("/{id}/versions", api.ListVersions)
 

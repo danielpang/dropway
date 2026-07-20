@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -78,7 +80,88 @@ func newSitesCmd(readFactory func(baseURL, token string) api.ReadClient) *cobra.
 
 	cmd.Flags().BoolVar(&all, "all", false, "list every site in the org, not just the ones you own")
 	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Dropway API base URL")
+
+	cmd.AddCommand(newSitesDeleteCmd(readFactory))
 	return cmd
+}
+
+// newSitesDeleteCmd builds `dropway sites delete <id-or-slug>`: permanently
+// remove a site and all its versions. Prompts for confirmation unless --yes is
+// passed (required in CI, where there is no interactive stdin).
+func newSitesDeleteCmd(readFactory func(baseURL, token string) api.ReadClient) *cobra.Command {
+	var (
+		yes     bool
+		baseURL string
+	)
+	cmd := &cobra.Command{
+		Use:   "delete <id-or-slug>",
+		Short: "Permanently delete a site and all its versions",
+		Long: "Delete a site by id or slug. This removes every version and its live URL and\n" +
+			"cannot be undone. You can delete a site you own; deleting someone else's needs\n" +
+			"an org admin. Use --yes to skip the prompt in CI.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			out := cmd.OutOrStdout()
+
+			token, err := auth.Token(ctx, baseURL)
+			if err != nil {
+				return fmt.Errorf("sites delete: %w", err)
+			}
+			client := readFactory(baseURL, token)
+
+			resp, err := client.ListSites(ctx)
+			if err != nil {
+				return fmt.Errorf("sites delete: %w", err)
+			}
+			site, err := findSite(resp.Sites, args[0])
+			if err != nil {
+				return fmt.Errorf("sites delete: %w", err)
+			}
+
+			if !yes {
+				fmt.Fprintf(out, "Permanently delete site %q (%s)? This cannot be undone. [y/N]: ", site.Slug, site.ID)
+				if !confirmed(cmd.InOrStdin()) {
+					fmt.Fprintln(out, "Aborted.")
+					return nil
+				}
+			}
+
+			if err := client.DeleteSite(ctx, site.ID); err != nil {
+				return fmt.Errorf("sites delete: %w", err)
+			}
+			fmt.Fprintf(out, "Deleted site %q (%s).\n", site.Slug, site.ID)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt (required in CI)")
+	cmd.Flags().StringVar(&baseURL, "api", defaultAPIBase(), "Dropway API base URL")
+	return cmd
+}
+
+// findSite resolves a site by exact id or exact slug within the org's sites.
+func findSite(sites []api.Site, idOrSlug string) (api.Site, error) {
+	for _, s := range sites {
+		if s.ID == idOrSlug || s.Slug == idOrSlug {
+			return s, nil
+		}
+	}
+	return api.Site{}, fmt.Errorf("no site with id or slug %q in this org", idOrSlug)
+}
+
+// confirmed reads one line and reports whether it is an affirmative (y/yes). An
+// empty line or EOF (e.g. non-interactive CI without --yes) is a no.
+func confirmed(in io.Reader) bool {
+	sc := bufio.NewScanner(in)
+	if !sc.Scan() {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(sc.Text())) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // printSites renders an aligned site table. The org-wide view adds an OWNER

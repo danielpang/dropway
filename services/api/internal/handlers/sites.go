@@ -236,6 +236,51 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
 }
 
+// DeleteSite permanently removes a site (DELETE /v1/sites/{id}). Gated by
+// requireSiteEditor: the site owner (or, for a site they don't own, an org
+// admin) — the same member-level gate as preview delete, so an API key can
+// clean up the sites it created. The DB cascade removes the site's versions,
+// routes, domains, access policy, and allowlist; the freed blobs are reclaimed
+// by the background GC. Returns 204.
+func (a *API) DeleteSite(w http.ResponseWriter, r *http.Request) {
+	t, ok := tenant(r.Context())
+	if !ok {
+		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !a.requireStore(w) || !a.requireProjection(w) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	site, err := a.Store.GetSite(r.Context(), t, id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !a.requireSiteEditor(w, r, t, site) {
+		return
+	}
+
+	hosts, err := a.Store.DeleteSite(r.Context(), t, id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	for _, host := range hosts {
+		if err := a.Projection.DeleteRoute(r.Context(), host); err != nil {
+			// Best-effort: the DB row is gone, so a rebuild won't resurrect it and
+			// the edge falls back to a miss; the ops sweep clears any straggler.
+			logger(r).Error("site route delete failed", "host", host, "site_id", id, "err", err)
+		}
+	}
+
+	logger(r).Info("site deleted", "site_id", id, "hosts", len(hosts), "org_id", t.OrgID)
+	a.recordAudit(r, t, audit.ActionSiteDelete, "site:"+id, map[string]any{
+		"slug": site.Slug,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // versionResponse is one row of a site's deploy history.
 type versionResponse struct {
 	ID          string    `json:"id"`

@@ -162,6 +162,17 @@ SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_vi
 FROM app.sites
 WHERE id = $1 AND org_id = $2;
 
+-- name: DeleteSite :one
+-- Remove a site. Its versions, host_routes, domains, access policy, allowlist,
+-- AI sessions, and site-scoped API keys cascade at the DB level; comments/votes
+-- (polymorphic) are cleaned separately in the same tx. RETURNING detects an
+-- RLS-invisible / absent row as a no-rows miss (-> ErrNotFound). Orphaned blobs
+-- are reclaimed by the background GC (the deleted versions drop out of its
+-- retained set), the same path that prunes old versions.
+DELETE FROM app.sites
+WHERE id = $1 AND org_id = $2
+RETURNING id;
+
 -- name: GetSiteStorageBytes :one
 -- LOGICAL storage of a single site = the byte size of its CURRENT (live) version
 -- (site_versions.size_bytes, the sum of that version's file sizes). A site with no

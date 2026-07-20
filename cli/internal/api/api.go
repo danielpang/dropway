@@ -101,12 +101,14 @@ type Client interface {
 	Publish(ctx context.Context, siteID string, req PublishRequest) (*PublishResponse, error)
 }
 
-// ReadClient is the read-only control-plane surface the `sites` and `read`
-// commands need. Separate from Client (and its deploy fake) so the read commands
-// stay testable with a small fake and don't widen the deploy interface.
+// ReadClient is the control-plane surface the `sites`, `read`, and `whoami`
+// commands need: listing/identity plus site deletion (the `sites delete`
+// subcommand). Separate from the deploy Client so these commands stay testable
+// with a small fake and don't widen the deploy interface.
 type ReadClient interface {
 	ListSites(ctx context.Context) (*SitesResponse, error)
 	Me(ctx context.Context) (*MeResponse, error)
+	DeleteSite(ctx context.Context, siteID string) error
 }
 
 // HTTPClient is the real Client. Token is the Bearer credential (an API key from
@@ -257,6 +259,26 @@ func (c *HTTPClient) Publish(ctx context.Context, siteID string, req PublishRequ
 		return nil, err
 	}
 	return &out, nil
+}
+
+// DeleteSite permanently deletes a site (DELETE /v1/sites/{id}). The server
+// returns 204 on success.
+func (c *HTTPClient) DeleteSite(ctx context.Context, siteID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/sites/"+siteID, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	resp, err := c.http().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return c.statusError(http.MethodDelete, "/v1/sites/"+siteID, resp.StatusCode, rb)
+	}
+	return nil
 }
 
 // ManifestFromBuild converts a manifest.Manifest into the API wire shape.

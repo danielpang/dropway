@@ -930,6 +930,30 @@ func (q *Queries) DeletePreviewRoutesForVersion(ctx context.Context, arg DeleteP
 	return items, nil
 }
 
+const deleteSite = `-- name: DeleteSite :one
+DELETE FROM app.sites
+WHERE id = $1 AND org_id = $2
+RETURNING id
+`
+
+type DeleteSiteParams struct {
+	ID    string
+	OrgID string
+}
+
+// Remove a site. Its versions, host_routes, domains, access policy, allowlist,
+// AI sessions, and site-scoped API keys cascade at the DB level; comments/votes
+// (polymorphic) are cleaned separately in the same tx. RETURNING detects an
+// RLS-invisible / absent row as a no-rows miss (-> ErrNotFound). Orphaned blobs
+// are reclaimed by the background GC (the deleted versions drop out of its
+// retained set), the same path that prunes old versions.
+func (q *Queries) DeleteSite(ctx context.Context, arg DeleteSiteParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteSite, arg.ID, arg.OrgID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteSitePreviewRoutesExcept = `-- name: DeleteSitePreviewRoutesExcept :many
 DELETE FROM app.host_routes
 WHERE site_id = $1

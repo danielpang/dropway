@@ -153,8 +153,8 @@ func (s *Store) SetPostVote(ctx context.Context, t Tenant, subjectType, subjectI
 
 // deletePostSubjectTx drops a subject's votes + comments inside an open tenant tx.
 // The polymorphic tables can't FK-cascade to two parents, so a subject's delete
-// path (currently only DeleteSkill — sites are never deleted) calls this to keep
-// the feed-social tables from orphaning rows.
+// path (DeleteSkill, DeleteSite) calls this to keep the feed-social tables from
+// orphaning rows.
 func deletePostSubjectTx(ctx context.Context, q *db.Queries, orgID, subjectType, subjectID string) error {
 	if err := q.DeletePostVotesForSubject(ctx, db.DeletePostVotesForSubjectParams{
 		SubjectType: subjectType,

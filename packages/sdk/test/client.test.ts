@@ -6,6 +6,7 @@ import { Dropway } from "../src/index.js";
 import {
   AuthError,
   ForbiddenError,
+  NotFoundError,
   QuotaExceededError,
   RateLimitError,
 } from "../src/errors.js";
@@ -130,6 +131,23 @@ describe("error mapping", () => {
     const err = (await dw.sites.list().catch((e) => e)) as RateLimitError;
     expect(err).toBeInstanceOf(RateLimitError);
     expect(err.retryAfterSeconds).toBe(7);
+  });
+});
+
+describe("delete", () => {
+  it("DELETEs the site (id encoded) and resolves on 204", async () => {
+    const { dw, calls } = client(() => new Response(null, { status: 204 }));
+    await expect(dw.sites.delete("s 1")).resolves.toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("DELETE");
+    expect(calls[0].url).toBe("https://api.test/v1/sites/s%201");
+  });
+
+  it("maps 404 → NotFoundError", async () => {
+    const { dw } = client(() => json({ message: "gone" }, 404));
+    await expect(dw.sites.delete("missing")).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
   });
 });
 

@@ -210,6 +210,19 @@ func (f *fakeStore) GetSite(_ context.Context, t store.Tenant, id string) (store
 	return s, nil
 }
 
+func (f *fakeStore) DeleteSite(_ context.Context, t store.Tenant, id string) ([]string, error) {
+	f.lastTenant = t
+	s, ok := f.sites[id]
+	if !ok || s.OrgID != t.OrgID {
+		return nil, store.ErrNotFound
+	}
+	delete(f.sites, id)
+	if s.CurrentVersionID != nil {
+		delete(f.versions, *s.CurrentVersionID)
+	}
+	return []string{projection.HostForSite("org", s.Slug)}, nil
+}
+
 // siteBytes is the fake's logical size of a site: its current version's SizeBytes
 // (0 when it has no live version) — mirrors GetSiteStorageBytes' LEFT JOIN.
 func (f *fakeStore) siteBytes(s store.Site) int64 {
