@@ -4,8 +4,8 @@
 # creates a site, deploys files, then deletes it and confirms it's gone — proving
 # the full lifecycle, cleanup included, works headlessly.
 #
-# Opt-in: needs a real key, so it runs on demand (or nightly), never on a PR. The
-# `development` GitHub Environment supplies:
+# Opt-in: needs a real key, so it runs on demand only (workflow_dispatch), never
+# on a PR or a schedule. The `development` GitHub Environment supplies:
 #   DROPWAY_API_KEY : an org-scoped key (dw_live_...) for a throwaway/dev org.
 #   DROPWAY_API     : (optional) API base URL; defaults to the hosted API.
 
@@ -13,8 +13,6 @@ name: sdk-cli-e2e
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "17 7 * * *" # nightly
 
 permissions:
   contents: read
