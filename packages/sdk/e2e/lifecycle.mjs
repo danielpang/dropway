@@ -8,16 +8,17 @@
 
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { Dropway, NotFoundError } from "../dist/index.js";
+import { Dropway, DEFAULT_BASE_URL, NotFoundError } from "../dist/index.js";
 
 const FIXTURE = fileURLToPath(
   new URL("../../../examples/synthwave-sunset", import.meta.url),
 );
 const slug = process.env.E2E_SLUG ?? `sdk-e2e-${Date.now()}`;
 
-// `||` not `??`: DROPWAY_API is set to "" (not unset) when the environment has
-// no such secret, and an empty baseUrl would override the default hosted API.
-const dw = new Dropway({ baseUrl: process.env.DROPWAY_API || undefined });
+// Explicit default: DROPWAY_API is set to "" (not unset) when the environment
+// has no such secret, so `||` falls back to a concrete base URL rather than
+// passing an empty string (which would throw) or undefined.
+const dw = new Dropway({ baseUrl: process.env.DROPWAY_API || DEFAULT_BASE_URL });
 
 const site = await dw.sites.create({ slug });
 console.log(`created ${slug} (${site.id})`);
