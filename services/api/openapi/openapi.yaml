@@ -343,6 +343,78 @@ paths:
                     items: { $ref: "#/components/schemas/FeedItem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /v1/api-keys:
+    post:
+      summary: Create an org-scoped API key
+      description: >
+        Mint an API key for the caller's org. Admin/owner only (re-checked against
+        the live member table). Key management is session-only — an API-key-
+        authenticated caller is refused with 403. The full secret is generated
+        server-side and returned ONCE in this response (`key`); it is never stored in
+        plaintext and never returned again. Every later read exposes only the
+        metadata + the non-secret `key_prefix`.
+      operationId: createAPIKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100, description: Human label, e.g. "GitHub Actions" }
+      responses:
+        "201":
+          description: The created key, including the one-time secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKeyCreated" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      summary: List the org's API keys
+      description: >
+        Return the caller org's API keys, newest first. Admin/owner only. Metadata +
+        `key_prefix` only — never the hash, never the secret.
+      operationId: listAPIKeys
+      responses:
+        "200":
+          description: The org's API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items: { $ref: "#/components/schemas/APIKey" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/api-keys/{id}:
+    delete:
+      summary: Revoke an API key
+      description: >
+        Revoke a key by id. Admin/owner only. Idempotent — re-revoking is a no-op that
+        keeps the first revocation's timestamp. Revocation is immediate and terminal:
+        the very next request presenting the key is rejected with 401.
+      operationId: revokeAPIKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: app.api_keys.id
+      responses:
+        "200":
+          description: The revoked key's metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKey" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/sites:
     post:
       summary: Create a site
@@ -2383,7 +2455,12 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Short-lived EdDSA JWT (Better Auth) or a deploy token.
+      description: >
+        Either a short-lived EdDSA JWT (Better Auth, interactive) OR an org-scoped
+        API key (`dw_live_...`, for the SDK / CLI / CI). A keyed request acts as the
+        key's creator under the same org tenant, subject to a member-level role
+        ceiling: admin-gated endpoints (org policy, member admin, and this
+        /v1/api-keys management surface itself) reject API keys with 403.
 
   parameters:
     SiteID:
@@ -2424,6 +2501,49 @@ components:
             Whether custom domains are backed by a real provider (Cloudflare for
             SaaS). False in self-host/dev, where the dashboard hides the feature
             because it can never finish verification.
+
+    APIKey:
+      type: object
+      description: The metadata view of an org-scoped API key. Never carries the secret or hash.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        key_prefix:
+          type: string
+          description: Non-secret display handle (e.g. "dw_live_3fk9") to match a leaked key to a row.
+        created_by:
+          type: string
+          format: uuid
+          description: The member who minted the key; keyed requests act as this user.
+        scopes:
+          type: array
+          items: { type: string }
+        last_used_at:
+          type: string
+          format: date-time
+          description: Best-effort, throttled last-use stamp (omitted if never used).
+        expires_at:
+          type: string
+          format: date-time
+          description: Omitted for a non-expiring key (the v1 default).
+        created_at: { type: string, format: date-time }
+        revoked_at:
+          type: string
+          format: date-time
+          description: Set once the key is revoked; a revoked key 401s on the next request.
+
+    APIKeyCreated:
+      allOf:
+        - $ref: "#/components/schemas/APIKey"
+        - type: object
+          required: [key]
+          properties:
+            key:
+              type: string
+              description: >
+                The full secret (`dw_live_...`). Returned ONLY in this create
+                response and never again — store it now; the server keeps only its
+                hash.
 
     Member:
       type: object

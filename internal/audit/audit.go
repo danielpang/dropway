@@ -129,6 +129,12 @@ const (
 	ActionSiteCollab    Action = "site.collab"
 	ActionSkillCollab   Action = "skill.collab"
 	ActionChatLogCollab Action = "chatlog.collab"
+	// ActionAPIKeyCreate records a new org-scoped API key minted
+	// (POST /v1/api-keys). The row carries actor_token empty (a key can't mint a
+	// key — creation is session-only) and target api_key:<id>.
+	ActionAPIKeyCreate Action = "api_key.create"
+	// ActionAPIKeyRevoke records an API key revoked (DELETE /v1/api-keys/{id}).
+	ActionAPIKeyRevoke Action = "api_key.revoke"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

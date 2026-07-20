@@ -25,7 +25,10 @@ type Querier interface {
 	// no-op; we only set claim fields when still unclaimed so the original claimant
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
-	// Active = a session a user could still be driving (not archived/failed).
+	// Active = a session a user could still be driving (not archived/failed). Scoped
+	// to the SITE: the concurrency cap is per-site, not per-org, so building on one
+	// site never blocks building on another (a site normally has a single resumable
+	// session, so the natural limit is the number of sites). Uses ai_sessions_org_site_idx.
 	CountActiveAISessions(ctx context.Context, arg CountActiveAISessionsParams) (int64, error)
 	CountChatLogsForOrg(ctx context.Context, orgID string) (int64, error)
 	CountChatMessages(ctx context.Context, arg CountChatMessagesParams) (int64, error)
@@ -40,6 +43,16 @@ type Querier interface {
 	// AI builder — sessions, transcript, cost ledger
 	// ===========================================================================
 	CreateAISession(ctx context.Context, arg CreateAISessionParams) (AppAiSession, error)
+	// ===========================================================================
+	// API keys (migration 0016): org-scoped credentials for the SDK / CLI / CI.
+	// The auth-boundary lookup is app.resolve_api_key() (SECURITY DEFINER, called via
+	// raw pgx since sqlc can't type a RETURNS TABLE function); the management queries
+	// below run under the caller's RLS tenant context.
+	// ===========================================================================
+	// Mint a key for the active org. key_hash is the sha256 of the full secret (which
+	// the caller has already discarded after returning it once); key_prefix is the
+	// non-secret display handle. Never returns key_hash.
+	CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
 	CreateChatLog(ctx context.Context, arg CreateChatLogParams) (AppChatLog, error)
 	// ===========================================================================
 	// site_comments — org-internal discussion on a shared site, with @mentions
@@ -134,6 +147,8 @@ type Querier interface {
 	// Idempotent upsert of the per-org counter row backing the quota gate.
 	EnsureOrgUsage(ctx context.Context, orgID string) error
 	GetAISession(ctx context.Context, arg GetAISessionParams) (AppAiSession, error)
+	// One key by id in the active org (RLS-scoped).
+	GetAPIKey(ctx context.Context, arg GetAPIKeyParams) (GetAPIKeyRow, error)
 	// Look up a grant by (site, email) for the authz claim path.
 	GetAllowlistEntryByEmail(ctx context.Context, arg GetAllowlistEntryByEmailParams) (AppAllowlistEntry, error)
 	GetChatLog(ctx context.Context, arg GetChatLogParams) (AppChatLog, error)
@@ -225,6 +240,9 @@ type Querier interface {
 	ListAISessionsForSite(ctx context.Context, arg ListAISessionsForSiteParams) ([]AppAiSession, error)
 	// Recent ledger rows for the billing page's usage detail.
 	ListAIUsageForOrg(ctx context.Context, arg ListAIUsageForOrgParams) ([]AppAiUsage, error)
+	// The active org's keys, newest first (RLS-scoped; backed by api_keys_org_idx).
+	// Metadata + prefix only — never the hash, never the secret.
+	ListAPIKeys(ctx context.Context, orgID string) ([]ListAPIKeysRow, error)
 	ListAllowlistEntries(ctx context.Context, arg ListAllowlistEntriesParams) ([]AppAllowlistEntry, error)
 	// Page the active org's audit log newest-first. RLS scopes the read to the org; the
 	// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
@@ -324,7 +342,8 @@ type Querier interface {
 	// appends can't both slip past the cap or over-prune.
 	LockChatLogAppend(ctx context.Context, dollar_1 string) error
 	// Serialize concurrent session creates for the SAME org (TOCTOU guard for the
-	// per-org active-session concurrency cap, same pattern as LockOrgSiteQuota).
+	// active-session concurrency cap, same pattern as LockOrgSiteQuota). The cap
+	// itself is counted per-site; this org-wide lock is a coarser-but-correct guard.
 	LockOrgAISessionQuota(ctx context.Context, dollar_1 string) error
 	// ===========================================================================
 	// chat logs (Share This Session) — append-only conversation histories with
@@ -389,6 +408,12 @@ type Querier interface {
 	// access fields. Runs under RLS so only the active org's hosts resolve — the
 	// /authz mint sets the tenant from the resolved org first (see store.AuthzContext).
 	ResolveSiteByHostRoute(ctx context.Context, arg ResolveSiteByHostRouteParams) (ResolveSiteByHostRouteRow, error)
+	// Revoke a key that is still LIVE (revoked_at IS NULL). Matching only unrevoked
+	// rows makes revocation a genuine transition: 1 row → the key went live→revoked
+	// (the caller writes the audit event); 0 rows → the key is absent OR already
+	// revoked, which the caller disambiguates with GetAPIKey (already-revoked is an
+	// idempotent no-op, no duplicate audit row).
+	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (RevokeAPIKeyRow, error)
 	// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
 	// exact analog of SetMcpEnabled.
 	SetAIEnabled(ctx context.Context, arg SetAIEnabledParams) error
@@ -457,6 +482,10 @@ type Querier interface {
 	// The org's AI spend since a period start (the spend-cap check input and the
 	// dashboard usage figure).
 	SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams) (float64, error)
+	// Best-effort, throttled last-used stamp: update at most once per 5 minutes per key
+	// so a keyed GET doesn't become a write on every request. Runs under the resolved
+	// org's tenant context (RLS-scoped by org_id).
+	TouchAPIKeyLastUsed(ctx context.Context, arg TouchAPIKeyLastUsedParams) error
 	// Atomically claim a session for a turn: flip active/idle -> running and RETURN
 	// the id ONLY if the claim won. A session already 'running' matches no row
 	// (no-rows), so a concurrent second turn is rejected instead of racing on the

@@ -1311,3 +1311,52 @@ UPDATE app.chat_logs
 SET allow_member_edits = $2
 WHERE id = $1 AND org_id = $3
 RETURNING id, org_id, site_id, title, source_tool, panel_enabled, next_seq, created_by, created_at, allow_member_edits;
+
+-- ===========================================================================
+-- API keys (migration 0016): org-scoped credentials for the SDK / CLI / CI.
+-- The auth-boundary lookup is app.resolve_api_key() (SECURITY DEFINER, called via
+-- raw pgx since sqlc can't type a RETURNS TABLE function); the management queries
+-- below run under the caller's RLS tenant context.
+-- ===========================================================================
+
+-- name: CreateAPIKey :one
+-- Mint a key for the active org. key_hash is the sha256 of the full secret (which
+-- the caller has already discarded after returning it once); key_prefix is the
+-- non-secret display handle. Never returns key_hash.
+INSERT INTO app.api_keys (org_id, created_by, name, key_hash, key_prefix, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by;
+
+-- name: ListAPIKeys :many
+-- The active org's keys, newest first (RLS-scoped; backed by api_keys_org_idx).
+-- Metadata + prefix only — never the hash, never the secret.
+SELECT id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by
+FROM app.api_keys
+WHERE org_id = $1
+ORDER BY created_at DESC;
+
+-- name: GetAPIKey :one
+-- One key by id in the active org (RLS-scoped).
+SELECT id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by
+FROM app.api_keys
+WHERE id = $1 AND org_id = $2;
+
+-- name: RevokeAPIKey :one
+-- Revoke a key that is still LIVE (revoked_at IS NULL). Matching only unrevoked
+-- rows makes revocation a genuine transition: 1 row → the key went live→revoked
+-- (the caller writes the audit event); 0 rows → the key is absent OR already
+-- revoked, which the caller disambiguates with GetAPIKey (already-revoked is an
+-- idempotent no-op, no duplicate audit row).
+UPDATE app.api_keys
+SET revoked_at = now(), revoked_by = $3
+WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
+RETURNING id, org_id, created_by, name, key_prefix, scopes, site_id, last_used_at, expires_at, created_at, revoked_at, revoked_by;
+
+-- name: TouchAPIKeyLastUsed :exec
+-- Best-effort, throttled last-used stamp: update at most once per 5 minutes per key
+-- so a keyed GET doesn't become a write on every request. Runs under the resolved
+-- org's tenant context (RLS-scoped by org_id).
+UPDATE app.api_keys
+SET last_used_at = now()
+WHERE id = $1 AND org_id = $2
+  AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes');

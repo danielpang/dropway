@@ -11,7 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/danielpang/dropway/internal/quota"
 )
@@ -36,6 +39,20 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("httpx: encode response", "err", err)
 	}
+}
+
+// WriteRateLimited renders a 429 with a Retry-After header (seconds, rounded up,
+// minimum 1) and a generic body that says nothing about what was throttled — the
+// single source of truth for throttle responses across the password exchange and
+// the API-key boundary, so the two can never drift. code is the stable
+// machine-readable error code (e.g. "rate_limited"); msg is the human detail.
+func WriteRateLimited(w http.ResponseWriter, retryAfter time.Duration, code, msg string) {
+	secs := int(math.Ceil(retryAfter.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	WriteJSON(w, http.StatusTooManyRequests, ErrorBody{Error: code, Message: msg})
 }
 
 // WriteError renders err to the response. The mapping is:

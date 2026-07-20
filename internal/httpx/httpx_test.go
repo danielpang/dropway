@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/danielpang/dropway/internal/quota"
 )
@@ -117,4 +118,22 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestWriteRateLimited(t *testing.T) {
+	rr := httptest.NewRecorder()
+	WriteRateLimited(rr, 1500*time.Millisecond, "rate_limited", "slow down")
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rr.Code)
+	}
+	if got := rr.Header().Get("Retry-After"); got != "2" { // 1.5s rounds up to 2
+		t.Errorf("Retry-After = %q, want 2", got)
+	}
+	var body ErrorBody
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	if body.Error != "rate_limited" {
+		t.Errorf("error code = %q", body.Error)
+	}
 }

@@ -297,6 +297,25 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	slog.Info("password endpoint rate limit",
 		"per_min", cfg.PasswordRateLimitPerMin, "burst", cfg.PasswordRateLimitBurst)
 
+	// Org-scoped API keys: wire the key data layer + the boundary authenticator
+	// (resolve → fail-closed liveness → per-key rate limit → synthesized claims).
+	// Only when a real store is configured; DB-less leaves api.KeyAuth nil so the
+	// router accepts JWTs only. The authenticator inherits AllowJWTRoleFallback for
+	// the self-host-pre-Better-Auth case.
+	if st != nil {
+		api.Keys = st
+		apiKeyLimiterStop := make(chan struct{})
+		defer close(apiKeyLimiterStop)
+		api.WireAPIKeyAuth(
+			cfg.APIKeyRateLimitPerMin, cfg.APIKeyRateLimitBurst,
+			cfg.APIKeyIPRateLimitPerMin, cfg.APIKeyIPRateLimitBurst,
+			apiKeyLimiterStop,
+		)
+		slog.Info("api key rate limit",
+			"key_per_min", cfg.APIKeyRateLimitPerMin, "key_burst", cfg.APIKeyRateLimitBurst,
+			"ip_per_min", cfg.APIKeyIPRateLimitPerMin, "ip_burst", cfg.APIKeyIPRateLimitBurst)
+	}
+
 	// Build the router (concrete *chi.Mux), then let the build-tag-selected
 	// mountCloud add cloud-only routes onto it. In the OSS build mountCloud is a
 	// no-op (wire_oss.go) → no /webhooks/stripe, no /v1/billing (self-host has no

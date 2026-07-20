@@ -29,6 +29,12 @@ func auditCtx(r *http.Request) audit.Context {
 	if claims, ok := middleware.ClaimsFromContext(r.Context()); ok {
 		c.ActorUser = claims.UserID()
 	}
+	// A key-authenticated request records BOTH the acting user (the key's
+	// created_by, already set above from the synthesized claims) AND the key id, so
+	// the trail reads "this was done by Dana's CI key".
+	if keyID, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
+		c.ActorToken = keyID
+	}
 	return c
 }
 
