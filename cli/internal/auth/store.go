@@ -3,7 +3,7 @@
 // Package auth implements the CLI's browser sign-in: `dropway login` runs an
 // OAuth 2.1 loopback flow (PKCE + dynamic client registration) against the Dropway
 // authorization server, stores the resulting credentials locally, and refreshes
-// the access token as needed so `dropway deploy` just works. DROPWAY_TOKEN still
+// the access token as needed so `dropway deploy` just works. DROPWAY_API_KEY still
 // takes precedence for CI / non-interactive use.
 package auth
 

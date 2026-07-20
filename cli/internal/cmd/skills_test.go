@@ -113,7 +113,7 @@ func tempSkill(t *testing.T) string {
 
 func runSkills(t *testing.T, client api.SkillsClient, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("DROPWAY_TOKEN", "test-token") // auth.Token short-circuits to this
+	t.Setenv("DROPWAY_API_KEY", "test-token") // auth.Token short-circuits to this
 	cmd := newSkillsCmd(skillsFactoryOf(client))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

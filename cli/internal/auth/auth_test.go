@@ -61,7 +61,7 @@ func TestStore_RoundTripAndPerms(t *testing.T) {
 
 func TestToken_EnvWins(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("DROPWAY_TOKEN", "ci-token")
+	t.Setenv("DROPWAY_API_KEY", "ci-token")
 	got, err := Token(context.Background(), "http://localhost:8080")
 	if err != nil || got != "ci-token" {
 		t.Fatalf("Token = %q, %v; want the env token", got, err)
@@ -70,7 +70,7 @@ func TestToken_EnvWins(t *testing.T) {
 
 func TestToken_NotSignedIn(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	os.Unsetenv("DROPWAY_TOKEN")
+	os.Unsetenv("DROPWAY_API_KEY")
 	if _, err := Token(context.Background(), "http://localhost:8080"); err == nil ||
 		!strings.Contains(err.Error(), "login") {
 		t.Fatalf("err = %v, want a sign-in error", err)
@@ -79,7 +79,7 @@ func TestToken_NotSignedIn(t *testing.T) {
 
 func TestToken_ValidStored(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	os.Unsetenv("DROPWAY_TOKEN")
+	os.Unsetenv("DROPWAY_API_KEY")
 	must(t, Save(&Credentials{
 		APIBase: "http://localhost:8080", AccessToken: "fresh",
 		Expiry: time.Now().Add(time.Hour),
@@ -92,7 +92,7 @@ func TestToken_ValidStored(t *testing.T) {
 
 func TestToken_WrongAPIBase(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	os.Unsetenv("DROPWAY_TOKEN")
+	os.Unsetenv("DROPWAY_API_KEY")
 	must(t, Save(&Credentials{APIBase: "http://other", AccessToken: "x", Expiry: time.Now().Add(time.Hour)}))
 	if _, err := Token(context.Background(), "http://localhost:8080"); err == nil ||
 		!strings.Contains(err.Error(), "login --api") {
@@ -102,7 +102,7 @@ func TestToken_WrongAPIBase(t *testing.T) {
 
 func TestToken_RefreshesWhenExpired(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	os.Unsetenv("DROPWAY_TOKEN")
+	os.Unsetenv("DROPWAY_API_KEY")
 
 	var grant string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

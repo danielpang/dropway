@@ -3,7 +3,13 @@ import Link from "next/link";
 import { ArrowLeft, Bot } from "lucide-react";
 
 import { CodeBlock } from "@/components/docs/code-block";
-import { Callout, Code, DocHero, DocTable, Section } from "@/components/docs/doc";
+import {
+  Callout,
+  Code,
+  DocHero,
+  DocTable,
+  Section,
+} from "@/components/docs/doc";
 import { Button } from "@/components/ui/button";
 
 export const metadata: Metadata = {
@@ -57,7 +63,10 @@ export default function CliReferencePage() {
           Prefer to build from source? Install it with Go instead (this puts a{" "}
           <Code>dropway</Code> binary under <Code>$(go env GOPATH)/bin</Code>):
         </p>
-        <CodeBlock label="install" code={`go install ${CLI_MODULE_PATH}@latest`} />
+        <CodeBlock
+          label="install"
+          code={`go install ${CLI_MODULE_PATH}@latest`}
+        />
         <p>Either way, check it worked:</p>
         <CodeBlock label="terminal" code="dropway version" />
       </Section>
@@ -69,21 +78,23 @@ export default function CliReferencePage() {
       >
         <CodeBlock label="terminal" code="dropway login" />
         <p>
-          The CLI opens your browser to the Dropway sign-in page (the same account
-          you use in the dashboard). After you approve, it saves your credentials
-          to <Code>~/.config/dropway/credentials.json</Code>. That&rsquo;s it, no
-          tokens to copy. Sign out any time with <Code>dropway logout</Code>.
+          The CLI opens your browser to the Dropway sign-in page (the same
+          account you use in the dashboard). After you approve, it saves your
+          credentials to <Code>~/.config/dropway/credentials.json</Code>.
+          That&rsquo;s it, no tokens to copy. Sign out any time with{" "}
+          <Code>dropway logout</Code>.
         </p>
         <Callout title="CI and scripts">
-          For non-interactive environments, skip the browser and set a deploy
-          token instead: <Code>DROPWAY_TOKEN</Code> takes precedence over the
-          stored login, so the same <Code>dropway deploy</Code> commands work in a
-          pipeline.
+          For non-interactive environments, skip the browser and set an org API
+          key instead: <Code>DROPWAY_API_KEY</Code> takes precedence over the
+          stored login, so the same <Code>dropway deploy</Code> commands work in
+          a pipeline. Create a key under <strong>Settings → API keys</strong>.
         </Callout>
         <p>
-          Self-hosting? Point the CLI at your own instance with <Code>--api</Code>{" "}
-          (or the <Code>DROPWAY_API</Code> environment variable); it defaults to
-          the hosted <Code>https://api.dropway.dev</Code>. <Code>dropway login</Code>{" "}
+          Self-hosting? Point the CLI at your own instance with{" "}
+          <Code>--api</Code> (or the <Code>DROPWAY_API</Code> environment
+          variable); it defaults to the hosted{" "}
+          <Code>https://api.dropway.dev</Code>. <Code>dropway login</Code>{" "}
           honors the same flag.
         </p>
         <CodeBlock
@@ -112,6 +123,10 @@ export default function CliReferencePage() {
             [
               <Code key="c">sites</Code>,
               "List the sites you own, or every site in the org with --all.",
+            ],
+            [
+              <Code key="c">whoami</Code>,
+              "Show who you're authenticated as and whether an API key or login is in use.",
             ],
             [
               <Code key="c">read &lt;url-or-slug&gt;</Code>,
@@ -159,7 +174,7 @@ export default function CliReferencePage() {
           Without <Code>--send</Code> it is a dry run: it prints the manifest it
           would upload and makes no network calls. Add <Code>--send</Code> to
           actually deploy (run <Code>dropway login</Code> first, or set{" "}
-          <Code>DROPWAY_TOKEN</Code>).
+          <Code>DROPWAY_API_KEY</Code>).
         </p>
         <DocTable
           head={["Flag", "Description"]}
@@ -171,7 +186,8 @@ export default function CliReferencePage() {
             [
               <Code key="f">--new</Code>,
               <>
-                Create a new site before deploying (requires <Code>--site</Code>).
+                Create a new site before deploying (requires <Code>--site</Code>
+                ).
               </>,
             ],
             [
@@ -187,8 +203,8 @@ export default function CliReferencePage() {
             [
               <Code key="f">--api &lt;url&gt;</Code>,
               <>
-                API base URL (defaults to <Code>https://api.dropway.dev</Code>, or{" "}
-                <Code>DROPWAY_API</Code>).
+                API base URL (defaults to <Code>https://api.dropway.dev</Code>,
+                or <Code>DROPWAY_API</Code>).
               </>,
             ],
           ]}
@@ -203,7 +219,9 @@ export default function CliReferencePage() {
         <p className="text-foreground">Preview a deploy (dry run, no upload)</p>
         <CodeBlock label="terminal" code="dropway deploy ./dist" />
 
-        <p className="pt-2 text-foreground">Create a new site and deploy to it</p>
+        <p className="pt-2 text-foreground">
+          Create a new site and deploy to it
+        </p>
         <CodeBlock
           label="terminal"
           code="dropway deploy ./dist --new --site my-docs --send"
@@ -286,7 +304,9 @@ dropway skills list --search review       # text filter
 dropway skills list --folder engineering  # one folder
 dropway skills list --presets             # Dropway presets only`}
         />
-        <p className="pt-2 text-foreground">Download a skill (or a folder of them)</p>
+        <p className="pt-2 text-foreground">
+          Download a skill (or a folder of them)
+        </p>
         <p>
           <Code>dropway skills pull</Code> writes each skill under{" "}
           <Code>.claude/skills/&lt;name&gt;/</Code>. Pull one by name, or every
@@ -301,9 +321,9 @@ dropway skills pull --folder engineering  # every skill in a folder`}
         <p className="pt-2 text-foreground">Check for updates</p>
         <p>
           Each pull records the version it fetched (a small{" "}
-          <Code>.dropway.json</Code> beside the skill). <Code>dropway skills
-          check</Code> compares your pulled skills against the org&rsquo;s
-          current versions and reports which are behind; add{" "}
+          <Code>.dropway.json</Code> beside the skill).{" "}
+          <Code>dropway skills check</Code> compares your pulled skills against
+          the org&rsquo;s current versions and reports which are behind; add{" "}
           <Code>--update</Code> to re-pull the outdated ones in place.
         </p>
         <CodeBlock
@@ -313,8 +333,8 @@ dropway skills check --update   # re-pull the outdated ones`}
         />
         <Callout title="Author and edit in the dashboard">
           You can also write a skill in a Markdown editor, or edit an existing
-          one into a new version, from the Skills page in the dashboard, no local
-          folder needed.
+          one into a new version, from the Skills page in the dashboard, no
+          local folder needed.
         </Callout>
       </Section>
 
@@ -324,11 +344,11 @@ dropway skills check --update   # re-pull the outdated ones`}
         lead="Share the agent session behind a deploy as an org chat log, and attach it to a site so viewers see the story behind the artifact."
       >
         <p>
-          <Code>dropway chat share</Code> reads a conversation export (Claude Code
-          JSONL, a ChatGPT JSON export, or plain text) and publishes it to your
-          organization&rsquo;s chat library. Add <Code>--site</Code> to attach it
-          to a site, where it becomes that site&rsquo;s &ldquo;How this was
-          made&rdquo; panel under the site&rsquo;s own access control.
+          <Code>dropway chat share</Code> reads a conversation export (Claude
+          Code JSONL, a ChatGPT JSON export, or plain text) and publishes it to
+          your organization&rsquo;s chat library. Add <Code>--site</Code> to
+          attach it to a site, where it becomes that site&rsquo;s &ldquo;How
+          this was made&rdquo; panel under the site&rsquo;s own access control.
         </p>
         <CodeBlock
           label="terminal"
@@ -342,8 +362,8 @@ dropway chat share ./session.jsonl --site my-docs --derive-actions`}
         <p>
           <Code>dropway chat append</Code> adds a follow-up message, an action
           annotation, or another export to an existing log, by chat id or by{" "}
-          <Code>--site</Code>. Action annotations record a file edit or a tool run
-          with a one-line note on why.
+          <Code>--site</Code>. Action annotations record a file edit or a tool
+          run with a one-line note on why.
         </p>
         <CodeBlock
           label="terminal"
@@ -397,8 +417,8 @@ dropway chat append --site my-docs --action file_edit --path index.html --commen
             Dropway MCP server
           </Link>{" "}
           exposes <Code>share_chat</Code>, <Code>append_chat</Code>, and{" "}
-          <Code>get_site_chat</Code> so an assistant can record and read these logs
-          directly from a conversation.
+          <Code>get_site_chat</Code> so an assistant can record and read these
+          logs directly from a conversation.
         </Callout>
       </Section>
 
@@ -409,8 +429,8 @@ dropway chat append --site my-docs --action file_edit --path index.html --commen
       >
         <p>
           New sites start at your organization&rsquo;s default visibility
-          (org-only). To make a site public, password-protected, or limited to an
-          email allowlist, change its access in the dashboard, or use the{" "}
+          (org-only). To make a site public, password-protected, or limited to
+          an email allowlist, change its access in the dashboard, or use the{" "}
           <Code>set_site_access</Code> tool on the Dropway MCP server.
         </p>
         <Callout title="Manage access from an AI tool">

@@ -59,7 +59,7 @@ func (c *errClient) Publish(_ context.Context, _ string, _ api.PublishRequest) (
 
 func TestDeploy_New_RequiresSlug(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	// --new without --site <slug> must error.
 	_, err := runDeploy(t, factory, dir, "--send", "--new")
@@ -72,7 +72,7 @@ func TestDeploy_New_RequiresSlug(t *testing.T) {
 
 func TestDeploy_CreateError_Wrapped(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	factory := func(string, string) api.Client { return &errClient{createErr: errors.New("slug taken")} }
 	_, err := runDeploy(t, factory, dir, "--send", "--new", "--site", "dup")
 	if err == nil || !strings.Contains(err.Error(), "create site") || !strings.Contains(err.Error(), "slug taken") {
@@ -82,7 +82,7 @@ func TestDeploy_CreateError_Wrapped(t *testing.T) {
 
 func TestDeploy_PrepareError_Wrapped(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	factory := func(string, string) api.Client { return &errClient{prepareErr: errors.New("boom")} }
 	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "s1")
 	if err == nil || !strings.Contains(err.Error(), "prepare") {
@@ -92,7 +92,7 @@ func TestDeploy_PrepareError_Wrapped(t *testing.T) {
 
 func TestDeploy_FinalizeError_Wrapped(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	factory := func(string, string) api.Client { return &errClient{finalizeErr: errors.New("verify failed")} }
 	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "s1")
 	if err == nil || !strings.Contains(err.Error(), "finalize") {
@@ -102,7 +102,7 @@ func TestDeploy_FinalizeError_Wrapped(t *testing.T) {
 
 func TestDeploy_PublishError_Wrapped(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	factory := func(string, string) api.Client { return &errClient{publishErr: errors.New("pointer flip failed")} }
 	_, err := runDeploy(t, factory, dir, "--send", "--site-id", "s1")
 	if err == nil || !strings.Contains(err.Error(), "publish") {

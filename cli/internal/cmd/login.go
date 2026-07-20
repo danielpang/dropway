@@ -19,7 +19,7 @@ func newLoginCmd() *cobra.Command {
 		Short: "Sign in to Dropway in your browser",
 		Long: "Open a browser tab to sign in to Dropway. After you approve, the CLI\n" +
 			"stores credentials locally and refreshes them automatically, so `dropway\n" +
-			"deploy` just works. For CI, set DROPWAY_TOKEN instead (it takes precedence).",
+			"deploy` just works. For CI, set DROPWAY_API_KEY instead (it takes precedence).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()

@@ -122,7 +122,7 @@ The terminal client for deploys.
 - `dropway deploy <dir>` — folder → live URL via the API deploy pipeline (`--send` to upload; `--new --site <slug>` to create). Dry-run without `--send`.
 - `dropway logout`.
 
-**Calls** the **dashboard** (OAuth discovery/register/authorize/token) and the **api** (create site, prepare, upload presigned, finalize, publish). `DROPWAY_TOKEN` overrides login for CI.
+**Calls** the **dashboard** (OAuth discovery/register/authorize/token) and the **api** (create site, prepare, upload presigned, finalize, publish). `DROPWAY_API_KEY` (an org API key) overrides login for CI.
 
 ---
 

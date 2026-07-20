@@ -1,0 +1,41 @@
+{
+  "name": "@dropway/sdk",
+  "version": "0.1.0",
+  "license": "FSL-1.1-Apache-2.0",
+  "description": "Official TypeScript SDK for Dropway — create and deploy sites over the /v1 API with an org-scoped API key.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/generated/schema.d.ts",
+      "import": "./dist/generated/schema.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "gen:api": "openapi-typescript ../../services/api/openapi/openapi.yaml -o src/generated/schema.ts",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.7.3",
+    "vitest": "2.1.9"
+  }
+}

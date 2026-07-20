@@ -106,7 +106,7 @@ func TestDeploy_DryRun_PrintsManifest_NoNetwork(t *testing.T) {
 // data and the live URL is printed.
 func TestDeploy_FullFlow_NewSite(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 
 	// The single file's sha is reported missing so the upload step runs.
 	idxSHA := sha256Hex(t, filepath.Join(dir, "index.html"))
@@ -149,7 +149,7 @@ func TestDeploy_FullFlow_NewSite(t *testing.T) {
 // user is told what slug was used (H1: the API now rejects non-canonical slugs).
 func TestDeploy_NewSite_NormalizesSlug(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	fc := newFakeClient([]string{sha256Hex(t, filepath.Join(dir, "index.html"))})
 	factory := func(_, _ string) api.Client { return fc }
 
@@ -169,7 +169,7 @@ func TestDeploy_NewSite_NormalizesSlug(t *testing.T) {
 // characters errors locally (no API call) instead of producing an empty slug.
 func TestDeploy_NewSite_RejectsUnusableSlug(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	fc := newFakeClient(nil)
 	factory := func(_, _ string) api.Client { return fc }
 
@@ -185,7 +185,7 @@ func TestDeploy_NewSite_RejectsUnusableSlug(t *testing.T) {
 // TestDeploy_SkipsAlreadyUploadedBlobs proves only-missing blobs are uploaded.
 func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 
 	fc := newFakeClient(nil) // nothing missing → no uploads
 	factory := func(string, string) api.Client { return fc }
@@ -204,7 +204,7 @@ func TestDeploy_SkipsAlreadyUploadedBlobs(t *testing.T) {
 
 func TestDeploy_Send_RequiresAuth(t *testing.T) {
 	dir := tempSite(t)
-	os.Unsetenv("DROPWAY_TOKEN")
+	os.Unsetenv("DROPWAY_API_KEY")
 	// Isolate credential storage to an empty dir so there's no stored login.
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -217,7 +217,7 @@ func TestDeploy_Send_RequiresAuth(t *testing.T) {
 
 func TestDeploy_Send_RequiresTarget(t *testing.T) {
 	dir := tempSite(t)
-	t.Setenv("DROPWAY_TOKEN", "shpd_test")
+	t.Setenv("DROPWAY_API_KEY", "shpd_test")
 	factory := func(string, string) api.Client { return newFakeClient(nil) }
 	_, err := runDeploy(t, factory, dir, "--send")
 	if err == nil || !strings.Contains(err.Error(), "site-id") {

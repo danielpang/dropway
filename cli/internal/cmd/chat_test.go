@@ -128,7 +128,7 @@ func chatFactoryOf(c api.ChatClient) func(string, string) api.ChatClient {
 
 func runChat(t *testing.T, client api.ChatClient, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("DROPWAY_TOKEN", "test-token") // auth.Token short-circuits to this
+	t.Setenv("DROPWAY_API_KEY", "test-token") // auth.Token short-circuits to this
 	cmd := newChatCmd(chatFactoryOf(client))
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

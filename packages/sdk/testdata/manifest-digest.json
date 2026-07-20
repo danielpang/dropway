@@ -1,0 +1,23 @@
+{
+  "//": "Shared deploy-digest parity vectors. Each `digest` was produced by the Go server's internal/manifest.Digest over its `files`; the SDK's digest() must reproduce it byte-for-byte, and the Go parity test (internal/manifest/parity_test.go) pins the SAME values. The `non-ascii` vector deliberately mixes a supplementary-plane filename (emoji) with a high-BMP one so it catches a UTF-16-vs-UTF-8 sort divergence; regenerate BOTH sides together if the digest contract ever changes.",
+  "vectors": [
+    {
+      "name": "ascii",
+      "files": [
+        { "path": "index.html", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+        { "path": "app.js", "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" },
+        { "path": "assets/style.css", "sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9" }
+      ],
+      "digest": "182826e14d30b208c6ffabf124c4d576726b9c093997adf6de510ff2a5fe9734"
+    },
+    {
+      "name": "non-ascii",
+      "files": [
+        { "path": "a.txt", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+        { "path": "Ａ.txt", "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" },
+        { "path": "😀.txt", "sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9" }
+      ],
+      "digest": "38ce7b72fbd462471bdbdf90c7d97ffb14f9e1c1eb34b13c88790a47ac5bb820"
+    }
+  ]
+}
