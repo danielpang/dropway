@@ -33,5 +33,6 @@ Environment variables:
 
 Store the key as a repository secret and set it as `DROPWAY_API_KEY` in the job
 environment — the SDK picks it up automatically. See
-[`.github/workflows/sdk-smoke.yml`](../../.github/workflows/sdk-smoke.yml) for a
-working GitHub Actions example.
+[`.github/workflows/sdk-cli-e2e.yml`](../../.github/workflows/sdk-cli-e2e.yml) for
+a working GitHub Actions example (it deploys and then deletes a site through both
+the SDK and the CLI).
