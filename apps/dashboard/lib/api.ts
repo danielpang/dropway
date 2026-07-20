@@ -337,10 +337,7 @@ export async function mintApiToken(): Promise<string | null> {
 
 // ---- Core fetch wrapper ---------------------------------------------------
 
-async function apiFetch<T>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await bearerToken();
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -417,6 +414,29 @@ async function apiFetchPublic<T>(
  * request-scoped), so a later navigation always re-reads fresh data.
  */
 const apiGet = cache((path: string): Promise<unknown> => apiFetch(path));
+
+/**
+ * An org-scoped API key as the management surface sees it — metadata + the
+ * non-secret display prefix, never the hash and never the secret. `revoked_at`
+ * is set once the key is revoked (a revoked key 401s on its next request).
+ */
+export type ApiKey = {
+  id: string;
+  name: string;
+  key_prefix: string;
+  created_by: string;
+  scopes?: string[];
+  last_used_at?: string;
+  expires_at?: string;
+  created_at: string;
+  revoked_at?: string;
+};
+
+/**
+ * The create response — the ONLY place the full secret (`key`) ever appears. It
+ * is shown once and never returned again; the server keeps only its hash.
+ */
+export type ApiKeyCreated = ApiKey & { key: string };
 
 // ---- Typed endpoints (Phase 1 + Phase 2 surface; mirrors openapi.yaml) -----
 
@@ -578,7 +598,10 @@ export const api = {
    * A feed post's comment thread (site or skill), oldest first. Keyed by kind —
    * sites and skills each have their own comments route.
    */
-  async listPostComments(kind: "site" | "skill", id: string): Promise<SiteComment[]> {
+  async listPostComments(
+    kind: "site" | "skill",
+    id: string,
+  ): Promise<SiteComment[]> {
     const base = kind === "skill" ? "skills" : "sites";
     const body = (await apiGet(`/v1/${base}/${id}/comments`)) as {
       comments?: SiteComment[];
@@ -650,7 +673,10 @@ export const api = {
    * Publish (or roll back to) a version: flips the site's live-version pointer.
    * Rollback is just publishing an older version_id.
    */
-  publish(siteId: string, input: { version_id: string }): Promise<PublishResult> {
+  publish(
+    siteId: string,
+    input: { version_id: string },
+  ): Promise<PublishResult> {
     return apiFetch<PublishResult>(`/v1/sites/${siteId}/publish`, {
       method: "POST",
       body: JSON.stringify(input),
@@ -710,7 +736,10 @@ export const api = {
    * Set a site's access mode + policy (admin/owner only → 403 otherwise). The
    * Go API hashes any password server-side and rewrites the edge RouteValue.
    */
-  setSiteAccess(siteId: string, input: SetAccessInput): Promise<SetAccessResult> {
+  setSiteAccess(
+    siteId: string,
+    input: SetAccessInput,
+  ): Promise<SetAccessResult> {
     return apiFetch<SetAccessResult>(`/v1/sites/${siteId}/access`, {
       method: "PUT",
       body: JSON.stringify(input),
@@ -737,7 +766,10 @@ export const api = {
   },
 
   /** Remove an email from a site's allowlist (admin/owner only). */
-  removeAllowlistEntry(siteId: string, email: string): Promise<{ removed?: string }> {
+  removeAllowlistEntry(
+    siteId: string,
+    email: string,
+  ): Promise<{ removed?: string }> {
     return apiFetch<{ removed?: string }>(`/v1/sites/${siteId}/allowlist`, {
       method: "DELETE",
       body: JSON.stringify({ email }),
@@ -778,10 +810,15 @@ export const api = {
    * can render the toggle in its true state instead of a hardcoded default (H10).
    * Any member may read it.
    */
-  getOrgPolicy(): Promise<{ allow_external_sharing: boolean; mcp_enabled: boolean }> {
+  getOrgPolicy(): Promise<{
+    allow_external_sharing: boolean;
+    mcp_enabled: boolean;
+    api_keys_enabled: boolean;
+  }> {
     return apiGet("/v1/orgs/policy") as Promise<{
       allow_external_sharing: boolean;
       mcp_enabled: boolean;
+      api_keys_enabled: boolean;
     }>;
   },
 
@@ -804,6 +841,43 @@ export const api = {
    */
   setMcpEnabled(enabled: boolean): Promise<{ mcp_enabled: boolean }> {
     return apiFetch<{ mcp_enabled: boolean }>("/v1/orgs/mcp", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  /** List the org's API keys, newest first (owner/admin only → 403). */
+  listApiKeys(): Promise<ApiKey[]> {
+    return (apiGet("/v1/api-keys") as Promise<{ keys: ApiKey[] }>).then(
+      (r) => r.keys ?? [],
+    );
+  },
+
+  /**
+   * Mint an org-scoped API key (owner/admin only → 403). The response is the ONLY
+   * place the full secret appears — show it once, then it is unrecoverable.
+   */
+  createApiKey(name: string): Promise<ApiKeyCreated> {
+    return apiFetch<ApiKeyCreated>("/v1/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  /** Revoke a key by id (owner/admin only → 403). Idempotent; immediate. */
+  revokeApiKey(id: string): Promise<ApiKey> {
+    return apiFetch<ApiKey>(`/v1/api-keys/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  /**
+   * Flip the org-wide API-keys kill switch (owner/admin only → 403). The key auth
+   * boundary re-checks the flag per request, so disabling 401s every org key at
+   * once; management (list/revoke) keeps working.
+   */
+  setApiKeysEnabled(enabled: boolean): Promise<{ api_keys_enabled: boolean }> {
+    return apiFetch<{ api_keys_enabled: boolean }>("/v1/orgs/api-keys", {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     });
@@ -912,7 +986,9 @@ export const api = {
    * TODO(phase4): replace the manual querystring + shape once /v1/audit is in
    * openapi.yaml (operationId `listAudit`).
    */
-  async listAudit(params: { limit?: number; offset?: number } = {}): Promise<AuditPage> {
+  async listAudit(
+    params: { limit?: number; offset?: number } = {},
+  ): Promise<AuditPage> {
     const q = new URLSearchParams();
     if (params.limit != null) q.set("limit", String(params.limit));
     if (params.offset != null) q.set("offset", String(params.offset));
@@ -941,7 +1017,10 @@ export const api = {
    * TODO(phase4): replace path/shape once /v1/orgs/revoke-access (or the Go
    * agent's chosen route) lands in openapi.yaml.
    */
-  revokeAccess(input: { kind: "user" | "org" | "site"; id: string }): Promise<RevokeResult> {
+  revokeAccess(input: {
+    kind: "user" | "org" | "site";
+    id: string;
+  }): Promise<RevokeResult> {
     return apiFetch<RevokeResult>("/v1/orgs/revoke-access", {
       method: "POST",
       body: JSON.stringify(input),
@@ -966,7 +1045,10 @@ export const api = {
    * admin/owner only → 403. Best-effort: the invitation already exists, so the
    * caller treats a failure (or a 404 on an older API build) as non-fatal.
    */
-  recordMemberInvite(input: { email: string; role: string }): Promise<{ recorded: boolean }> {
+  recordMemberInvite(input: {
+    email: string;
+    role: string;
+  }): Promise<{ recorded: boolean }> {
     return apiFetch<{ recorded: boolean }>("/v1/members/invites", {
       method: "POST",
       body: JSON.stringify(input),
@@ -989,13 +1071,17 @@ export const api = {
   // ---- Org-wide skill sharing ----------------------------------------------
 
   /** List/search the org's shared skills (q, folder slug, presets-only). */
-  async listSkills(opts: { q?: string; folder?: string; presets?: boolean } = {}): Promise<Skill[]> {
+  async listSkills(
+    opts: { q?: string; folder?: string; presets?: boolean } = {},
+  ): Promise<Skill[]> {
     const params = new URLSearchParams();
     if (opts.q) params.set("q", opts.q);
     if (opts.folder) params.set("folder", opts.folder);
     if (opts.presets) params.set("presets", "true");
     const qs = params.toString();
-    const body = (await apiGet(`/v1/skills${qs ? `?${qs}` : ""}`)) as { skills?: Skill[] };
+    const body = (await apiGet(`/v1/skills${qs ? `?${qs}` : ""}`)) as {
+      skills?: Skill[];
+    };
     return body.skills ?? [];
   },
 
@@ -1006,7 +1092,11 @@ export const api = {
   },
 
   /** Register a skill (metadata; content arrives via the upload flow). */
-  async createSkill(input: { slug: string; title?: string; folders?: string[] }): Promise<Skill> {
+  async createSkill(input: {
+    slug: string;
+    title?: string;
+    folders?: string[];
+  }): Promise<Skill> {
     const body = await apiFetch<{ skill?: Skill }>("/v1/skills", {
       method: "POST",
       body: JSON.stringify(input),
@@ -1016,7 +1106,9 @@ export const api = {
 
   /** Delete a skill (owner or org admin). */
   deleteSkill(id: string): Promise<{ deleted?: boolean }> {
-    return apiFetch<{ deleted?: boolean }>(`/v1/skills/${id}`, { method: "DELETE" });
+    return apiFetch<{ deleted?: boolean }>(`/v1/skills/${id}`, {
+      method: "DELETE",
+    });
   },
 
   /** Replace a skill's folder memberships (owner or admin). */
@@ -1042,11 +1134,17 @@ export const api = {
   },
 
   /** Skill upload step 1: validate + missing blobs + presigned PUT URLs. */
-  prepareSkillUpload(id: string, manifest: ManifestFile[]): Promise<PrepareDeploymentResult> {
-    return apiFetch<PrepareDeploymentResult>(`/v1/skills/${id}/uploads/prepare`, {
-      method: "POST",
-      body: JSON.stringify({ manifest }),
-    });
+  prepareSkillUpload(
+    id: string,
+    manifest: ManifestFile[],
+  ): Promise<PrepareDeploymentResult> {
+    return apiFetch<PrepareDeploymentResult>(
+      `/v1/skills/${id}/uploads/prepare`,
+      {
+        method: "POST",
+        body: JSON.stringify({ manifest }),
+      },
+    );
   },
 
   /** Skill upload step 3: finalize (server-verifies; finalize publishes). */
@@ -1073,12 +1171,17 @@ export const api = {
 
   /** The org's skill folders (with item counts). */
   async listSkillFolders(): Promise<SkillFolder[]> {
-    const body = (await apiGet("/v1/skill-folders")) as { folders?: SkillFolder[] };
+    const body = (await apiGet("/v1/skill-folders")) as {
+      folders?: SkillFolder[];
+    };
     return body.folders ?? [];
   },
 
   /** Create a skill folder (admin/owner). */
-  async createSkillFolder(input: { slug: string; title?: string }): Promise<SkillFolder> {
+  async createSkillFolder(input: {
+    slug: string;
+    title?: string;
+  }): Promise<SkillFolder> {
     const body = await apiFetch<{ folder?: SkillFolder }>("/v1/skill-folders", {
       method: "POST",
       body: JSON.stringify(input),
@@ -1088,16 +1191,21 @@ export const api = {
 
   /** Retitle a folder (admin/owner; the slug is stable). */
   async renameSkillFolder(id: string, title: string): Promise<SkillFolder> {
-    const body = await apiFetch<{ folder?: SkillFolder }>(`/v1/skill-folders/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title }),
-    });
+    const body = await apiFetch<{ folder?: SkillFolder }>(
+      `/v1/skill-folders/${id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      },
+    );
     return body.folder ?? {};
   },
 
   /** Delete a folder (admin/owner). Its skills survive. */
   deleteSkillFolder(id: string): Promise<{ deleted?: boolean }> {
-    return apiFetch<{ deleted?: boolean }>(`/v1/skill-folders/${id}`, { method: "DELETE" });
+    return apiFetch<{ deleted?: boolean }>(`/v1/skill-folders/${id}`, {
+      method: "DELETE",
+    });
   },
 
   /** Add a skill to a folder (admin any + preset flag; owners their own skill). */
@@ -1105,17 +1213,26 @@ export const api = {
     folderId: string,
     input: { skill_id: string; is_preset?: boolean },
   ): Promise<{ added?: boolean }> {
-    return apiFetch<{ added?: boolean }>(`/v1/skill-folders/${folderId}/items`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
+    return apiFetch<{ added?: boolean }>(
+      `/v1/skill-folders/${folderId}/items`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
   },
 
   /** Remove a skill from a folder (admin or the skill's owner). */
-  removeSkillFolderItem(folderId: string, skillId: string): Promise<{ removed?: boolean }> {
-    return apiFetch<{ removed?: boolean }>(`/v1/skill-folders/${folderId}/items/${skillId}`, {
-      method: "DELETE",
-    });
+  removeSkillFolderItem(
+    folderId: string,
+    skillId: string,
+  ): Promise<{ removed?: boolean }> {
+    return apiFetch<{ removed?: boolean }>(
+      `/v1/skill-folders/${folderId}/items/${skillId}`,
+      {
+        method: "DELETE",
+      },
+    );
   },
 
   /** Flip a folder membership's preset flag (admin/owner). */
@@ -1124,10 +1241,13 @@ export const api = {
     skillId: string,
     isPreset: boolean,
   ): Promise<{ is_preset?: boolean }> {
-    return apiFetch<{ is_preset?: boolean }>(`/v1/skill-folders/${folderId}/items/${skillId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ is_preset: isPreset }),
-    });
+    return apiFetch<{ is_preset?: boolean }>(
+      `/v1/skill-folders/${folderId}/items/${skillId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ is_preset: isPreset }),
+      },
+    );
   },
 
   // ---- Shared chat logs ("Share This Session") -----------------------------
@@ -1184,7 +1304,9 @@ export const api = {
     if (opts.afterSeq != null) params.set("after_seq", String(opts.afterSeq));
     if (opts.limit != null) params.set("limit", String(opts.limit));
     const qs = params.toString();
-    const body = (await apiGet(`/v1/chats/${id}/messages${qs ? `?${qs}` : ""}`)) as {
+    const body = (await apiGet(
+      `/v1/chats/${id}/messages${qs ? `?${qs}` : ""}`,
+    )) as {
       messages?: ChatMessage[];
     };
     return body.messages ?? [];
@@ -1192,7 +1314,9 @@ export const api = {
 
   /** Delete one message by seq (mistakes, pasted secrets). 204 on success. */
   async deleteChatMessage(id: string, seq: number): Promise<void> {
-    await apiFetch<void>(`/v1/chats/${id}/messages/${seq}`, { method: "DELETE" });
+    await apiFetch<void>(`/v1/chats/${id}/messages/${seq}`, {
+      method: "DELETE",
+    });
   },
 
   /**
@@ -1200,19 +1324,25 @@ export const api = {
    * per site — attaching to an occupied site returns 409.
    */
   async setChatSite(id: string, siteId: string | null): Promise<ChatLog> {
-    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/site`, {
-      method: "PUT",
-      body: JSON.stringify({ site_id: siteId }),
-    });
+    const body = await apiFetch<{ chat_log?: ChatLog }>(
+      `/v1/chats/${id}/site`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ site_id: siteId }),
+      },
+    );
     return body.chat_log ?? {};
   },
 
   /** Toggle whether the attached site serves the "How this was made" panel. */
   async setChatPanel(id: string, enabled: boolean): Promise<ChatLog> {
-    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/panel`, {
-      method: "PUT",
-      body: JSON.stringify({ enabled }),
-    });
+    const body = await apiFetch<{ chat_log?: ChatLog }>(
+      `/v1/chats/${id}/panel`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      },
+    );
     return body.chat_log ?? {};
   },
 
@@ -1222,10 +1352,13 @@ export const api = {
    * Flipping it is creator-or-admin → 403 otherwise.
    */
   async setChatCollab(id: string, allowMemberEdits: boolean): Promise<ChatLog> {
-    const body = await apiFetch<{ chat_log?: ChatLog }>(`/v1/chats/${id}/collab`, {
-      method: "PUT",
-      body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
-    });
+    const body = await apiFetch<{ chat_log?: ChatLog }>(
+      `/v1/chats/${id}/collab`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ allow_member_edits: allowMemberEdits }),
+      },
+    );
     return body.chat_log ?? {};
   },
 
@@ -1235,7 +1368,10 @@ export const api = {
   },
 
   /** Append to a site's attached log, creating one bound to the site if absent. */
-  appendSiteChat(siteId: string, input: ChatAppendInput): Promise<ChatAppendResult> {
+  appendSiteChat(
+    siteId: string,
+    input: ChatAppendInput,
+  ): Promise<ChatAppendResult> {
     return apiFetch<ChatAppendResult>(`/v1/sites/${siteId}/chat`, {
       method: "POST",
       body: JSON.stringify(input),

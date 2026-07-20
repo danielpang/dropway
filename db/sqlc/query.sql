@@ -33,7 +33,7 @@ VALUES ($1)
 ON CONFLICT (org_id) DO NOTHING;
 
 -- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd, api_keys_enabled
 FROM app.org_meta
 WHERE id = $1;
 
@@ -577,6 +577,15 @@ WHERE id = $1;
 -- request, so disabling takes effect immediately even for already-issued tokens.
 UPDATE app.org_meta
 SET mcp_enabled = $2
+WHERE id = $1;
+
+-- name: SetApiKeysEnabled :exec
+-- Flip the org-wide API-keys kill switch (admin/owner only, enforced in Go). The
+-- key auth boundary re-checks org_meta.api_keys_enabled on every keyed request, so
+-- disabling 401s every org key immediately; management endpoints keep working so
+-- admins can still list and revoke.
+UPDATE app.org_meta
+SET api_keys_enabled = $2
 WHERE id = $1;
 
 -- name: ListPublicSitesForOrg :many

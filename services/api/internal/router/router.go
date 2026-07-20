@@ -264,6 +264,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Get("/", api.ListAPIKeys)
 			r.Delete("/{id}", api.RevokeAPIKey)
 		})
+		// Org API-keys kill switch (admin/owner only, re-checked in the handler;
+		// mirrors /orgs/mcp). The read is on GET /orgs/policy.
+		r.Patch("/orgs/api-keys", api.SetApiKeysEnabled)
 
 		// Poll a custom domain's verification status (drives the state machine).
 		r.Get("/domains/{domainID}/status", api.GetDomainStatus)

@@ -68,6 +68,7 @@ type SiteStore interface {
 	GetOrgPolicy(ctx context.Context, t store.Tenant) (store.OrgPolicy, error)
 	SetAllowExternalSharing(ctx context.Context, t store.Tenant, enabled bool) (store.ReconcileResult, error)
 	SetMcpEnabled(ctx context.Context, t store.Tenant, enabled bool) (store.OrgPolicy, error)
+	SetAPIKeysEnabled(ctx context.Context, t store.Tenant, enabled bool) (store.OrgPolicy, error)
 
 	MemberRole(ctx context.Context, orgID, userID string) (string, error)
 	ListMembers(ctx context.Context, orgID string) ([]store.Member, error)

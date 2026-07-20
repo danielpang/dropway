@@ -427,6 +427,11 @@ type Querier interface {
 	// ===========================================================================
 	// Toggle the org's external-sharing policy (admin/owner only, enforced in Go).
 	SetAllowExternalSharing(ctx context.Context, arg SetAllowExternalSharingParams) error
+	// Flip the org-wide API-keys kill switch (admin/owner only, enforced in Go). The
+	// key auth boundary re-checks org_meta.api_keys_enabled on every keyed request, so
+	// disabling 401s every org key immediately; management endpoints keep working so
+	// admins can still list and revoke.
+	SetApiKeysEnabled(ctx context.Context, arg SetApiKeysEnabledParams) error
 	SetChatLogAllowMemberEdits(ctx context.Context, arg SetChatLogAllowMemberEditsParams) (AppChatLog, error)
 	SetChatLogPanelEnabled(ctx context.Context, arg SetChatLogPanelEnabledParams) (AppChatLog, error)
 	// Attach ($2 = site id), detach ($2 = NULL), or move a log. The partial unique
