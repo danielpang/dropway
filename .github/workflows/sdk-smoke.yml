@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Opt-in prod canary: deploy a fixture to a live URL via @dropway/sdk against the
+# REAL hosted API. PR-time e2e lives in ci.yml's `e2e` job (self-host stack); this
+# proves the published package still works end to end. Needs repository secrets:
+#   DROPWAY_API_KEY : an org-scoped key (dw_live_...) for a throwaway/dev org.
+#   DROPWAY_API     : (optional) API base URL; defaults to the hosted API.
+
+name: sdk-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: "Site slug to deploy to (a dev org)"
+        required: false
+        default: "sdk-smoke"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: SDK · deploy a fixture to a live URL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build @dropway/sdk
+        run: pnpm --filter @dropway/sdk build
+
+      - name: guard — require the API key secret
+        env:
+          DROPWAY_API_KEY: ${{ secrets.DROPWAY_API_KEY }}
+        run: |
+          if [ -z "${DROPWAY_API_KEY:-}" ]; then
+            echo "::error::DROPWAY_API_KEY secret is not set; add it to run this smoke test."
+            exit 1
+          fi
+
+      - name: deploy the synthwave-sunset fixture via the SDK
+        id: deploy
+        env:
+          DROPWAY_API_KEY: ${{ secrets.DROPWAY_API_KEY }}
+          DROPWAY_API: ${{ secrets.DROPWAY_API }}
+          SITE_SLUG: ${{ github.event.inputs.slug }}
+        run: |
+          node --input-type=module <<'JS' | tee deploy.out
+          import { fileURLToPath } from "node:url";
+          import { Dropway, DropwayError } from "./packages/sdk/dist/index.js";
+
+          const slug = process.env.SITE_SLUG || "sdk-smoke";
+          const dir = fileURLToPath(new URL("./examples/synthwave-sunset", import.meta.url));
+          const dw = new Dropway({ baseUrl: process.env.DROPWAY_API || undefined });
+
+          async function ensureSite() {
+            try {
+              return await dw.sites.create({ slug });
+            } catch (err) {
+              if (err instanceof DropwayError && err.status === 400) {
+                const s = (await dw.sites.list()).find((x) => x.slug === slug);
+                if (s) return s;
+              }
+              throw err;
+            }
+          }
+
+          const site = await ensureSite();
+          const res = await dw.sites.deploy(site.id, { dir });
+          if (!res.published || !res.liveUrl) {
+            console.error("deploy did not publish a live URL:", res);
+            process.exit(1);
+          }
+          console.log("LIVE_URL=" + res.liveUrl);
+          JS
+          grep '^LIVE_URL=' deploy.out >> "$GITHUB_OUTPUT"
+
+      - name: verify the live URL serves 200
+        run: |
+          url="${{ steps.deploy.outputs.LIVE_URL }}"
+          echo "Checking $url"
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
+            [ "$code" = "200" ] && { echo "live URL serves 200"; exit 0; }
+            echo "attempt $i: $code"; sleep 3
+          done
+          echo "::error::live URL never returned 200"; exit 1
