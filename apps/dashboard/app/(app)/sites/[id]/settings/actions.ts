@@ -268,16 +268,17 @@ export async function deleteSiteAction(input: {
   try {
     await api.deleteSite(input.siteId);
   } catch (err) {
-    if (err instanceof ApiError) {
-      return {
-        ok: false,
-        message: apiErrorMessage(err, "Could not delete this site.", {
-          403: "You don't have permission to delete this site. Only the site's owner or an org admin can.",
-          404: "This site no longer exists.",
-        }),
-      };
-    }
-    throw err;
+    // Return a result for every failure (never rethrow): the client has no
+    // try/finally around this call, so a throw would leave the dialog stuck
+    // pending. Matches the sibling actions in this file.
+    const message =
+      err instanceof ApiError
+        ? apiErrorMessage(err, "Could not delete this site.", {
+            403: "You don't have permission to delete this site. Only the site's owner or an org admin can.",
+            404: "This site no longer exists.",
+          })
+        : "Could not delete this site. Please try again.";
+    return { ok: false, message };
   }
   revalidatePath("/dashboard");
   return { ok: true };

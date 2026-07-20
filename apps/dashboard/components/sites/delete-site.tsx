@@ -44,15 +44,25 @@ export function DeleteSite({ siteId, slug }: { siteId: string; slug: string }) {
     if (!confirmed || pending) return;
     setPending(true);
     setError(null);
-    const res = await deleteSiteAction({ siteId });
-    if (!res.ok) {
-      setError(res.message);
+    try {
+      const res = await deleteSiteAction({ siteId });
+      if (!res.ok) {
+        setError(res.message);
+        setPending(false);
+        return;
+      }
+    } catch {
+      // deleteSiteAction returns {ok:false} for known failures; this only fires
+      // on an unexpected throw. Reset so the dialog isn't stuck (Cancel is
+      // disabled and onOpenChange no-ops while pending).
+      setError("Could not delete this site. Please try again.");
       setPending(false);
       return;
     }
     // The site no longer exists; leave the (now-404) detail route for the list.
+    // No router.refresh(): deleteSiteAction's revalidatePath already re-renders
+    // the dashboard, and a refresh on top races that apply (see rollback-dialog).
     router.replace("/dashboard");
-    router.refresh();
   }
 
   return (

@@ -65,10 +65,6 @@ export default async function SiteAccessSettingsPage({
   const canToggleFeed = manage || isOwner;
   const feedVisible = site.feed_visible ?? true;
 
-  // Delete mirrors the Go API's requireSiteEditor: the owner or an org admin
-  // always, plus any member when the site allows member edits (collaboration on).
-  const canDelete = manage || isOwner || (site.allow_member_edits ?? true);
-
   // Only fetch the allowlist when it's relevant (allowlist mode), and tolerate
   // a non-admin 403 by degrading to an empty list.
   let allowlist: AllowlistEntry[] = [];
@@ -213,9 +209,10 @@ export default async function SiteAccessSettingsPage({
         </Card>
       )}
 
-      {/* Danger zone: permanent delete. Shown only to those the API lets delete —
-          the site owner or an org admin (same gate as the feed/collab toggles). */}
-      {canDelete && site.slug && (
+      {/* Danger zone: permanent delete. Shown to the site owner or an org admin
+          (the same creator-or-admin gate as the feed/collab toggles, which
+          mirrors the Go API's requireSiteOwnerOrAdmin). */}
+      {canToggleFeed && site.slug && (
         <Card className="border-destructive/30">
           <CardHeader>
             <CardTitle className="text-base text-destructive">
