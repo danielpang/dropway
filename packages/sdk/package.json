@@ -4,7 +4,7 @@
   "license": "FSL-1.1-Apache-2.0",
   "description": "Official TypeScript SDK for Dropway — create and deploy sites over the /v1 API with an org-scoped API key.",
   "keywords": ["dropway", "sdk", "deploy", "static-site", "hosting"],
-  "homepage": "https://github.com/danielpang/dropway/tree/main/packages/sdk#readme",
+  "homepage": "https://dropway.dev",
   "bugs": "https://github.com/danielpang/dropway/issues",
   "repository": {
     "type": "git",
