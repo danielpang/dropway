@@ -50,7 +50,10 @@ export async function setAccessAction(input: {
   const unlisted = selection === "unlisted";
 
   if (mode === "password" && !input.password) {
-    return { ok: false, message: "Set a password for password-protected access." };
+    return {
+      ok: false,
+      message: "Set a password for password-protected access.",
+    };
   }
 
   // Normalize an empty expiry to "no expiry"; otherwise pass RFC3339.
@@ -81,7 +84,10 @@ export async function setAccessAction(input: {
     return { ok: true, result };
   } catch (err) {
     if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not update access. Try again.") };
+      return {
+        ok: false,
+        message: messageFor(err, "Could not update access. Try again."),
+      };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }
@@ -110,7 +116,10 @@ export async function setFeedVisibilityAction(input: {
     return { ok: true, feedVisible: res.feed_visible ?? input.visible };
   } catch (err) {
     if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not update feed sharing. Try again.") };
+      return {
+        ok: false,
+        message: messageFor(err, "Could not update feed sharing. Try again."),
+      };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }
@@ -135,7 +144,10 @@ export async function setFeedMetaAction(input: {
     return { ok: false, message: "Title must be at most 120 characters." };
   }
   if (description.length > 500) {
-    return { ok: false, message: "Description must be at most 500 characters." };
+    return {
+      ok: false,
+      message: "Description must be at most 500 characters.",
+    };
   }
   try {
     const res = await api.setSiteFeedMeta(input.siteId, { title, description });
@@ -149,7 +161,10 @@ export async function setFeedMetaAction(input: {
     };
   } catch (err) {
     if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not update feed details. Try again.") };
+      return {
+        ok: false,
+        message: messageFor(err, "Could not update feed details. Try again."),
+      };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }
@@ -174,7 +189,10 @@ export async function addAllowlistAction(input: {
     return { ok: true, entry };
   } catch (err) {
     if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not add that email. Try again.") };
+      return {
+        ok: false,
+        message: messageFor(err, "Could not add that email. Try again."),
+      };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }
@@ -191,7 +209,10 @@ export async function removeAllowlistAction(input: {
     return { ok: true };
   } catch (err) {
     if (err instanceof ApiError) {
-      return { ok: false, message: messageFor(err, "Could not remove that email. Try again.") };
+      return {
+        ok: false,
+        message: messageFor(err, "Could not remove that email. Try again."),
+      };
     }
     return { ok: false, message: "Could not reach the API. Try again." };
   }
@@ -220,9 +241,44 @@ export async function setSiteCollabAction(input: {
   } catch (err) {
     return {
       ok: false,
-      message: apiErrorMessage(err, "Could not update the collaboration setting.", {
-        403: "Only the creator or an admin can change this.",
-      }),
+      message: apiErrorMessage(
+        err,
+        "Could not update the collaboration setting.",
+        {
+          403: "Only the creator or an admin can change this.",
+        },
+      ),
     };
   }
+}
+
+export type DeleteSiteActionResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/**
+ * Permanently delete a site (DELETE /v1/sites/{id}). The Go API re-checks that
+ * the caller owns the site or is an org admin. On success the site (and every
+ * version, route, and domain) is gone, so the client sends the user back to the
+ * dashboard; we revalidate it so the deleted site drops out of the list.
+ */
+export async function deleteSiteAction(input: {
+  siteId: string;
+}): Promise<DeleteSiteActionResult> {
+  try {
+    await api.deleteSite(input.siteId);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return {
+        ok: false,
+        message: apiErrorMessage(err, "Could not delete this site.", {
+          403: "You don't have permission to delete this site. Only the site's owner or an org admin can.",
+          404: "This site no longer exists.",
+        }),
+      };
+    }
+    throw err;
+  }
+  revalidatePath("/dashboard");
+  return { ok: true };
 }

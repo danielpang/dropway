@@ -8,6 +8,7 @@ import { CollabToggle } from "@/components/collab-toggle";
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { AccessSettingsForm } from "@/components/sites/access-settings-form";
 import { AllowlistManager } from "@/components/sites/allowlist-manager";
+import { DeleteSite } from "@/components/sites/delete-site";
 import { FeedMetaForm } from "@/components/sites/feed-meta-form";
 import { FeedVisibilityToggle } from "@/components/sites/feed-visibility-toggle";
 import {
@@ -64,6 +65,10 @@ export default async function SiteAccessSettingsPage({
   const canToggleFeed = manage || isOwner;
   const feedVisible = site.feed_visible ?? true;
 
+  // Delete mirrors the Go API's requireSiteEditor: the owner or an org admin
+  // always, plus any member when the site allows member edits (collaboration on).
+  const canDelete = manage || isOwner || (site.allow_member_edits ?? true);
+
   // Only fetch the allowlist when it's relevant (allowlist mode), and tolerate
   // a non-admin 403 by degrading to an empty list.
   let allowlist: AllowlistEntry[] = [];
@@ -107,7 +112,10 @@ export default async function SiteAccessSettingsPage({
             className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             {liveUrl}
-            <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden />
+            <ExternalLink
+              className="size-3.5 text-muted-foreground"
+              aria-hidden
+            />
           </a>
         </CardContent>
       </Card>
@@ -201,6 +209,24 @@ export default async function SiteAccessSettingsPage({
               initialEntries={allowlist}
               disabled={!manage}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Danger zone: permanent delete. Shown only to those the API lets delete —
+          the site owner or an org admin (same gate as the feed/collab toggles). */}
+      {canDelete && site.slug && (
+        <Card className="border-destructive/30">
+          <CardHeader>
+            <CardTitle className="text-base text-destructive">
+              Danger zone
+            </CardTitle>
+            <CardDescription>
+              Irreversible actions for this site.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DeleteSite siteId={id} slug={site.slug} />
           </CardContent>
         </Card>
       )}
