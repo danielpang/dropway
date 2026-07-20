@@ -24,8 +24,8 @@ func deleteRouter(a *API, userID, role string) http.Handler {
 	return r
 }
 
-// A member who OWNS the site can delete it (the requireSiteEditor owner path
-// drops to requireOrgMember) — this is the same path an API key acting as its
+// A member who OWNS the site can delete it (requireSiteOwnerOrAdmin's owner
+// branch drops to requireOrgMember) — the same path an API key acting as its
 // creator takes, so a key can clean up the sites it made. Delete removes the row
 // and de-projects the edge route.
 func TestDeleteSite_OwnerMember(t *testing.T) {
@@ -53,8 +53,9 @@ func TestDeleteSite_OwnerMember(t *testing.T) {
 	}
 }
 
-// A member who does NOT own the site needs org admin (requireSiteEditor falls
-// through to requireAdmin) — so a plain member gets 403 and the site survives.
+// A member who does NOT own the site needs org admin (requireSiteOwnerOrAdmin
+// falls through to requireAdmin) — so a plain member gets 403 and the site
+// survives.
 func TestDeleteSite_NonOwnerMemberForbidden(t *testing.T) {
 	fs := newFakeStore()
 	fs.p2().members["user_1"] = store.RoleMember
@@ -68,6 +69,29 @@ func TestDeleteSite_NonOwnerMemberForbidden(t *testing.T) {
 	}
 	if _, ok := fs.sites[id]; !ok {
 		t.Fatal("site was deleted despite 403")
+	}
+}
+
+// Deletion is creator-or-admin REGARDLESS of the collaboration toggle: a
+// non-owner member must NOT be able to delete a site even when it allows member
+// edits (collaboration lets them change content, not destroy the site). Guards
+// against a regression to requireSiteEditor.
+func TestDeleteSite_CollaboratorForbidden(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleMember
+	const id = "55555555-5555-5555-5555-555555555555"
+	fs.sites[id] = store.Site{
+		ID: id, OrgID: "org_1", Slug: "shared", OwnerUserID: "user_2",
+		AccessMode: projection.AccessPublic, AllowMemberEdits: true,
+	}
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+
+	rr := do(t, deleteRouter(a, "user_1", "member"), http.MethodDelete, "/v1/sites/"+id, "")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := fs.sites[id]; !ok {
+		t.Fatal("collaborator was able to delete a site they don't own")
 	}
 }
 
