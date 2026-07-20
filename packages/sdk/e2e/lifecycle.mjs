@@ -20,7 +20,9 @@ const slug = process.env.E2E_SLUG ?? `sdk-e2e-${Date.now()}`;
 // passing an empty string (which would throw) or undefined.
 const dw = new Dropway({ baseUrl: process.env.DROPWAY_API || DEFAULT_BASE_URL });
 
-const site = await dw.sites.create({ slug });
+// Create it public: the org's default visibility is org_only, which the edge
+// gates behind auth, so the live URL would never serve the fixture below.
+const site = await dw.sites.create({ slug, accessMode: "public" });
 console.log(`created ${slug} (${site.id})`);
 
 const res = await dw.sites.deploy(site.id, { dir: FIXTURE });
