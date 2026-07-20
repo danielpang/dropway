@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Publish @dropway/sdk to npm on an `sdk-v*` tag (e.g. `git tag sdk-v0.1.0`).
+# Builds + tests, then publishes with provenance. Requires an npm automation
+# token in the NPM_TOKEN secret; id-token: write lets npm attach a provenance
+# attestation (the "Built and signed on GitHub Actions" badge).
+
+name: sdk-release
+
+on:
+  push:
+    tags:
+      - "sdk-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Build, test & publish @dropway/sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build + test
+        run: |
+          pnpm --filter @dropway/sdk build
+          pnpm --filter @dropway/sdk test
+
+      # `pnpm run build` also runs via prepack; --access public + publishConfig
+      # make the scoped package public. --no-git-checks: the tag is the trigger.
+      - name: publish to npm
+        run: pnpm --filter @dropway/sdk publish --access public --provenance --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
