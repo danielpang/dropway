@@ -15,7 +15,9 @@ const FIXTURE = fileURLToPath(
 );
 const slug = process.env.E2E_SLUG ?? `sdk-e2e-${Date.now()}`;
 
-const dw = new Dropway({ baseUrl: process.env.DROPWAY_API ?? undefined });
+// `||` not `??`: DROPWAY_API is set to "" (not unset) when the environment has
+// no such secret, and an empty baseUrl would override the default hosted API.
+const dw = new Dropway({ baseUrl: process.env.DROPWAY_API || undefined });
 
 const site = await dw.sites.create({ slug });
 console.log(`created ${slug} (${site.id})`);
