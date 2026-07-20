@@ -35,8 +35,13 @@ console.log(
     `(${res.filesUploaded} new blob(s))`,
 );
 
-await waitFor(res.liveUrl, 200, "live URL never served 200");
-console.log("live URL serves 200");
+// Verify BOTH fixture files actually deployed and serve — a content check that
+// (unlike the upload count) doesn't depend on whether the org already had the
+// blobs. Root serves index.html with its title; style.css serves 200.
+await waitForServed(res.liveUrl, "Synthwave Sunset");
+const cssUrl = res.liveUrl.replace(/\/$/, "") + "/style.css";
+assert.equal(await statusOf(cssUrl), 200, "style.css was not served");
+console.log("live URL serves index.html + style.css");
 
 await dw.sites.delete(site.id);
 console.log("deleted");
@@ -54,14 +59,22 @@ assert.equal(
 );
 console.log("confirmed: site no longer exists");
 
-/** Poll url until it returns want, or throw after ~60s. */
-async function waitFor(url, want, msg) {
+/** Wait until url serves 200 with a body containing marker (throws after ~60s).
+ *  Tolerates edge propagation lag right after publish. */
+async function waitForServed(url, marker) {
   for (let i = 0; i < 20; i++) {
-    const code = await fetch(url)
-      .then((r) => r.status)
-      .catch(() => 0);
-    if (code === want) return;
+    const body = await fetch(url)
+      .then((r) => (r.ok ? r.text() : null))
+      .catch(() => null);
+    if (body?.includes(marker)) return;
     await new Promise((r) => setTimeout(r, 3000));
   }
-  throw new Error(msg);
+  throw new Error(`live URL never served a body containing "${marker}"`);
+}
+
+/** One-shot HTTP status for url (0 on network error). */
+async function statusOf(url) {
+  return fetch(url)
+    .then((r) => r.status)
+    .catch(() => 0);
 }
