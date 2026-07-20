@@ -65,6 +65,10 @@ export default async function SiteAccessSettingsPage({
   const canToggleFeed = manage || isOwner;
   const feedVisible = site.feed_visible ?? true;
 
+  // Same owner-or-admin gate, named for what it guards: deletes are never
+  // toggle-gated, so this must not widen to allow_member_edits.
+  const canDelete = canToggleFeed;
+
   // Only fetch the allowlist when it's relevant (allowlist mode), and tolerate
   // a non-admin 403 by degrading to an empty list.
   let allowlist: AllowlistEntry[] = [];
@@ -212,7 +216,7 @@ export default async function SiteAccessSettingsPage({
       {/* Danger zone: permanent delete. Shown to the site owner or an org admin
           (the same creator-or-admin gate as the feed/collab toggles, which
           mirrors the Go API's requireSiteOwnerOrAdmin). */}
-      {canToggleFeed && site.slug && (
+      {canDelete && site.slug && (
         <Card className="border-destructive/30">
           <CardHeader>
             <CardTitle className="text-base text-destructive">

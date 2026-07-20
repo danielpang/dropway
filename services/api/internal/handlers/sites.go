@@ -237,11 +237,13 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteSite permanently removes a site (DELETE /v1/sites/{id}). Gated by
-// requireSiteEditor: the site owner (or, for a site they don't own, an org
-// admin) — the same member-level gate as preview delete, so an API key can
-// clean up the sites it created. The DB cascade removes the site's versions,
-// routes, domains, access policy, and allowlist; the freed blobs are reclaimed
-// by the background GC. Returns 204.
+// requireSiteOwnerOrAdmin: the site owner or an org admin, NOT requireSiteEditor
+// — destructive deletes stay creator-or-admin regardless of the collaboration
+// toggle (see the contract note above requireSiteEditor and migration 0014).
+// A site is owned by whoever created it, so an API key still cleans up the sites
+// it made. The DB cascade removes the site's versions, routes, domains, access
+// policy, and allowlist; the freed blobs are reclaimed by the background GC.
+// Returns 204.
 func (a *API) DeleteSite(w http.ResponseWriter, r *http.Request) {
 	t, ok := tenant(r.Context())
 	if !ok {
@@ -257,7 +259,7 @@ func (a *API) DeleteSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if !a.requireSiteEditor(w, r, t, site) {
+	if !a.requireSiteOwnerOrAdmin(w, r, t, site) {
 		return
 	}
 
