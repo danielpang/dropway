@@ -17,6 +17,7 @@ func (f *fakeMeClient) ListSites(context.Context) (*api.SitesResponse, error) {
 	return &api.SitesResponse{}, nil
 }
 func (f *fakeMeClient) Me(context.Context) (*api.MeResponse, error) { return &f.me, nil }
+func (f *fakeMeClient) DeleteSite(context.Context, string) error    { return nil }
 
 func TestWhoami_ReportsIdentityAndAPIKeySource(t *testing.T) {
 	t.Setenv("DROPWAY_API_KEY", "dw_live_test") // auth.Token short-circuits to this

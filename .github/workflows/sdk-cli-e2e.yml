@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: FSL-1.1-Apache-2.0
+#
+# Live SDK + CLI end-to-end against a real API with an org-scoped key. Each path
+# creates a site, deploys files, then deletes it and confirms it's gone — proving
+# the full lifecycle, cleanup included, works headlessly.
+#
+# Opt-in: needs a real key, so it runs on demand (or nightly), never on a PR. The
+# `sdk-e2e` GitHub Environment supplies:
+#   DROPWAY_API_KEY : an org-scoped key (dw_live_...) for a throwaway/dev org.
+#   DROPWAY_API     : (optional) API base URL; defaults to the hosted API.
+
+name: sdk-cli-e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * *" # nightly
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: SDK + CLI · create, deploy, delete
+    runs-on: ubuntu-latest
+    environment: sdk-e2e
+    env:
+      DROPWAY_API_KEY: ${{ secrets.DROPWAY_API_KEY }}
+      DROPWAY_API: ${{ secrets.DROPWAY_API }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build @dropway/sdk
+        run: pnpm --filter @dropway/sdk build
+
+      - name: build the dropway CLI
+        run: go build -o dropway ./cli/cmd/dropway
+
+      - name: require the API key secret
+        run: |
+          if [ -z "${DROPWAY_API_KEY:-}" ]; then
+            echo "::error::DROPWAY_API_KEY is not set on the sdk-e2e environment."
+            exit 1
+          fi
+
+      - name: SDK lifecycle (create, deploy dir, delete, confirm gone)
+        env:
+          E2E_SLUG: sdk-e2e-${{ github.run_id }}
+        run: node packages/sdk/e2e/lifecycle.mjs
+
+      - name: CLI lifecycle (deploy --new, delete, confirm gone)
+        run: |
+          set -euo pipefail
+          slug="cli-e2e-${{ github.run_id }}"
+          api=(${DROPWAY_API:+--api "$DROPWAY_API"})
+
+          ./dropway deploy examples/synthwave-sunset --new --site "$slug" --send "${api[@]}"
+          ./dropway sites --all "${api[@]}" | grep -F "$slug"
+
+          ./dropway sites delete "$slug" --yes "${api[@]}"
+
+          if ./dropway sites --all "${api[@]}" | grep -F "$slug"; then
+            echo "::error::site $slug still present after delete"; exit 1
+          fi
+          echo "CLI lifecycle ok: $slug created, deployed, and deleted"

@@ -30,6 +30,8 @@ type SiteStore interface {
 	CreateSite(ctx context.Context, t store.Tenant, slug, accessMode string) (store.Site, error)
 	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
 	GetSite(ctx context.Context, t store.Tenant, id string) (store.Site, error)
+	// DeleteSite removes a site and returns the edge hosts to de-project.
+	DeleteSite(ctx context.Context, t store.Tenant, id string) ([]string, error)
 
 	// Org feed: ListFeedSites / ListFeedSkills list the active org's non-private
 	// sites / skills (newest first, each with vote score / the caller's vote /

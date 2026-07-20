@@ -510,6 +510,21 @@ paths:
               schema: { $ref: "#/components/schemas/Site" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a site
+      description: >
+        Permanently deletes the site and everything under it (versions, routes,
+        domains, access policy, allowlist). The site owner may delete their own
+        site; deleting a site owned by someone else requires an org admin. This
+        cannot be undone.
+      operationId: deleteSite
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /v1/sites/{id}/versions:
     get:

@@ -109,6 +109,13 @@ type Querier interface {
 	// Drop a version's preview routes, returning the hosts so the caller can also
 	// delete the KV keys (publish and explicit preview deletion).
 	DeletePreviewRoutesForVersion(ctx context.Context, arg DeletePreviewRoutesForVersionParams) ([]string, error)
+	// Remove a site. Its versions, host_routes, domains, access policy, allowlist,
+	// AI sessions, and site-scoped API keys cascade at the DB level; comments/votes
+	// (polymorphic) are cleaned separately in the same tx. RETURNING detects an
+	// RLS-invisible / absent row as a no-rows miss (-> ErrNotFound). Orphaned blobs
+	// are reclaimed by the background GC (the deleted versions drop out of its
+	// retained set), the same path that prunes old versions.
+	DeleteSite(ctx context.Context, arg DeleteSiteParams) (string, error)
 	// Drop a site's preview routes except the one pinning keep_version_id, returning
 	// the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
 	// AI draft removes the earlier drafts' previews (pass the new version to keep).

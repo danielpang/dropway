@@ -529,6 +529,37 @@ func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) 
 	return out, err
 }
 
+// DeleteSite permanently removes a site and returns the edge hosts that were
+// registered for it, so the caller can de-project them from the KV route table.
+// Child rows (versions, host_routes, domains, access policy, allowlist, AI
+// sessions, site-scoped API keys) cascade at the DB level; the polymorphic
+// feed-social rows (votes + comments) are cleaned in the same tx. Orphaned blobs
+// and the org storage total are reconciled by the background GC — the deleted
+// versions simply fall out of its retained set, exactly as pruned versions do.
+func (s *Store) DeleteSite(ctx context.Context, t Tenant, id string) ([]string, error) {
+	var hosts []string
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		routes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: id, OrgID: t.OrgID})
+		if err != nil {
+			return err
+		}
+		for _, rt := range routes {
+			hosts = append(hosts, rt.Host)
+		}
+		if _, err := q.DeleteSite(ctx, db.DeleteSiteParams{ID: id, OrgID: t.OrgID}); err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		return deletePostSubjectTx(ctx, q, t.OrgID, SubjectSite, id)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return hosts, nil
+}
+
 func siteFromDB(r db.AppSite) Site {
 	s := Site{
 		ID:               r.ID,

@@ -106,6 +106,18 @@ export class Sites {
     );
   }
 
+  /**
+   * Permanently delete a site and everything under it (versions, routes, domains,
+   * access policy). You may delete a site you own; deleting someone else's needs an
+   * org admin. Irreversible. Resolves when the server returns 204.
+   */
+  async delete(id: string): Promise<void> {
+    await this.http.request<void>(
+      "DELETE",
+      `/v1/sites/${encodeURIComponent(id)}`,
+    );
+  }
+
   /** Set a site's access mode ("public" | "org_only" | "password" | "allowlist"). */
   setAccess(
     id: string,

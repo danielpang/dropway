@@ -58,6 +58,15 @@ have (directly to object storage), finalizes (the server re-verifies every byte)
 and publishes. Pass `publish: false` to stage a version without going live, then
 `dw.sites.publish(site.id, { versionId })` later (also how you roll back).
 
+## Delete a site
+
+```ts
+await dw.sites.delete(site.id);
+```
+
+Permanently removes the site and every version. You can delete a site you own;
+deleting someone else's needs an org admin. Irreversible.
+
 ## Errors
 
 Non-2xx responses throw typed errors:

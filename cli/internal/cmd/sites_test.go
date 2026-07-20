@@ -11,9 +11,11 @@ import (
 
 // fakeReadClient is a canned ReadClient for the sites/read command tests.
 type fakeReadClient struct {
-	sites  []api.Site
-	userID string
-	err    error
+	sites     []api.Site
+	userID    string
+	err       error
+	deleted   []string // site ids passed to DeleteSite
+	deleteErr error
 }
 
 func (f *fakeReadClient) ListSites(context.Context) (*api.SitesResponse, error) {
@@ -28,6 +30,14 @@ func (f *fakeReadClient) Me(context.Context) (*api.MeResponse, error) {
 		return nil, f.err
 	}
 	return &api.MeResponse{UserID: f.userID}, nil
+}
+
+func (f *fakeReadClient) DeleteSite(_ context.Context, siteID string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deleted = append(f.deleted, siteID)
+	return nil
 }
 
 func readFactoryOf(c api.ReadClient) func(string, string) api.ReadClient {
@@ -113,5 +123,68 @@ func TestOwnerLabel(t *testing.T) {
 	}
 	if got := ownerLabel("user_0123456789abc", "user_me"); got != "user_01234…" {
 		t.Errorf("long owner id: got %q", got)
+	}
+}
+
+// runSitesDelete drives `dropway sites delete` with the given stdin + args.
+func runSitesDelete(t *testing.T, client api.ReadClient, stdin string, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("DROPWAY_API_KEY", "test-token")
+	cmd := newSitesCmd(readFactoryOf(client))
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetArgs(append([]string{"delete"}, args...))
+	err := cmd.Execute()
+	return buf.String(), err
+}
+
+func TestSitesDelete_BySlugConfirmed(t *testing.T) {
+	fc := newSitesFixture()
+	out, err := runSitesDelete(t, fc, "y\n", "alpha")
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(fc.deleted) != 1 || fc.deleted[0] != "s2" {
+		t.Fatalf("expected s2 deleted, got %v", fc.deleted)
+	}
+	if !strings.Contains(out, `Deleted site "alpha"`) {
+		t.Errorf("missing confirmation line:\n%s", out)
+	}
+}
+
+func TestSitesDelete_AbortsWhenNotConfirmed(t *testing.T) {
+	fc := newSitesFixture()
+	out, err := runSitesDelete(t, fc, "n\n", "alpha")
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(fc.deleted) != 0 {
+		t.Fatalf("site deleted despite declining: %v", fc.deleted)
+	}
+	if !strings.Contains(out, "Aborted") {
+		t.Errorf("expected abort message:\n%s", out)
+	}
+}
+
+func TestSitesDelete_YesSkipsPromptAndAcceptsID(t *testing.T) {
+	fc := newSitesFixture()
+	// No stdin at all — --yes must not block on a prompt (the CI path).
+	if _, err := runSitesDelete(t, fc, "", "s1", "--yes"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(fc.deleted) != 1 || fc.deleted[0] != "s1" {
+		t.Fatalf("expected s1 deleted by id, got %v", fc.deleted)
+	}
+}
+
+func TestSitesDelete_UnknownSite(t *testing.T) {
+	fc := newSitesFixture()
+	_, err := runSitesDelete(t, fc, "", "does-not-exist", "--yes")
+	if err == nil {
+		t.Fatal("expected an error for an unknown site")
+	}
+	if len(fc.deleted) != 0 {
+		t.Fatalf("nothing should be deleted, got %v", fc.deleted)
 	}
 }
