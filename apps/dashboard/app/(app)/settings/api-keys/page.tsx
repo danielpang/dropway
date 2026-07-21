@@ -111,7 +111,7 @@ export default async function ApiKeysPage() {
             Tip
           </Badge>
           Set the key as <code className="font-mono">DROPWAY_API_KEY</code> in
-          your CI environment — the SDK and CLI pick it up automatically.
+          your environment. The SDK and CLI pick it up automatically.
         </p>
       )}
     </div>
