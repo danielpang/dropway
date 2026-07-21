@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -72,9 +71,8 @@ export default async function ApiKeysPage() {
             API keys
           </h1>
           <p className="text-muted-foreground">
-            Programmatic access for CI, scripts, the SDK, and the CLI. A key
-            acts as the member who created it and can&rsquo;t manage the
-            organization.
+            Programmatic access for CI, scripts, the SDK, and the CLI. An API
+            key can create, upload, and delete sites.
           </p>
         </div>
       </div>
@@ -84,10 +82,6 @@ export default async function ApiKeysPage() {
           <CardTitle className="text-base">
             Keys for {org.name ?? "your organization"}
           </CardTitle>
-          <CardDescription>
-            Treat keys like passwords — the secret is shown only once. Keys work
-            until revoked or the member who created them leaves.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {manage ? (
