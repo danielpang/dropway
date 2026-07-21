@@ -670,6 +670,15 @@ export const api = {
   },
 
   /**
+   * Permanently delete a site (DELETE /v1/sites/{id}). The Go API is the authz
+   * boundary: it re-checks that the caller is the site owner or an org admin,
+   * cascades the versions/routes/domains, and de-projects the edge routes.
+   */
+  async deleteSite(id: string): Promise<void> {
+    await apiFetch<void>(`/v1/sites/${id}`, { method: "DELETE" });
+  },
+
+  /**
    * Publish (or roll back to) a version: flips the site's live-version pointer.
    * Rollback is just publishing an older version_id.
    */

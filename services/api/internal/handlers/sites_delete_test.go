@@ -24,10 +24,10 @@ func deleteRouter(a *API, userID, role string) http.Handler {
 	return r
 }
 
-// A member who OWNS the site can delete it (the requireSiteEditor owner path
-// drops to requireOrgMember) — this is the same path an API key acting as its
-// creator takes, so a key can clean up the sites it made. Delete removes the row
-// and de-projects the edge route.
+// A member who OWNS the site can delete it (the requireSiteOwnerOrAdmin owner
+// path drops to requireOrgMember) — this is the same path an API key acting as
+// its creator takes, so a key can clean up the sites it made. Delete removes the
+// row and de-projects the edge route.
 func TestDeleteSite_OwnerMember(t *testing.T) {
 	fs := newFakeStore()
 	fs.p2().members["user_1"] = store.RoleMember
@@ -53,13 +53,39 @@ func TestDeleteSite_OwnerMember(t *testing.T) {
 	}
 }
 
-// A member who does NOT own the site needs org admin (requireSiteEditor falls
-// through to requireAdmin) — so a plain member gets 403 and the site survives.
+// A member who does NOT own the site needs org admin (requireSiteOwnerOrAdmin
+// falls through to requireAdmin) — so a plain member gets 403 and the site
+// survives.
 func TestDeleteSite_NonOwnerMemberForbidden(t *testing.T) {
 	fs := newFakeStore()
 	fs.p2().members["user_1"] = store.RoleMember
 	const id = "22222222-2222-2222-2222-222222222222"
 	fs.sites[id] = store.Site{ID: id, OrgID: "org_1", Slug: "notmine", OwnerUserID: "user_2", AccessMode: projection.AccessPublic}
+	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
+
+	rr := do(t, deleteRouter(a, "user_1", "member"), http.MethodDelete, "/v1/sites/"+id, "")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := fs.sites[id]; !ok {
+		t.Fatal("site was deleted despite 403")
+	}
+}
+
+// The collaboration toggle governs CONTENT edits only: destructive deletes stay
+// creator-or-admin regardless (collab.go's contract note, migration 0014). This
+// pins the case the other tests miss — allow_member_edits is true by DEFAULT in
+// the DB, while a zero-valued store.Site leaves it false, so a gate that used
+// requireSiteEditor here would pass every other test and still let any org
+// member delete any site in production.
+func TestDeleteSite_NonOwnerMemberForbiddenWhenMemberEditsAllowed(t *testing.T) {
+	fs := newFakeStore()
+	fs.p2().members["user_1"] = store.RoleMember
+	const id = "55555555-5555-5555-5555-555555555555"
+	fs.sites[id] = store.Site{
+		ID: id, OrgID: "org_1", Slug: "collab", OwnerUserID: "user_2",
+		AllowMemberEdits: true, AccessMode: projection.AccessPublic,
+	}
 	a := NewFull(quota.Unlimited{}, fs, nil, projection.NewLocal())
 
 	rr := do(t, deleteRouter(a, "user_1", "member"), http.MethodDelete, "/v1/sites/"+id, "")
