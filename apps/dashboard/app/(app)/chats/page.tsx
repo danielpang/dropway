@@ -46,9 +46,7 @@ export default async function ChatsPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
-          <p className="text-sm text-muted-foreground">
-            Shared AI sessions — the conversations behind your team&rsquo;s sites.
-          </p>
+          <p className="text-sm text-muted-foreground">Shared AI sessions</p>
         </div>
         {!disabled && (
           <Button asChild>
