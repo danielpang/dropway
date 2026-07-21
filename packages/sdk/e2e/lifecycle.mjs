@@ -8,26 +8,42 @@
 
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { Dropway, NotFoundError } from "../dist/index.js";
+import { Dropway, DEFAULT_BASE_URL, NotFoundError } from "../dist/index.js";
 
 const FIXTURE = fileURLToPath(
   new URL("../../../examples/synthwave-sunset", import.meta.url),
 );
 const slug = process.env.E2E_SLUG ?? `sdk-e2e-${Date.now()}`;
 
-const dw = new Dropway({ baseUrl: process.env.DROPWAY_API ?? undefined });
+// Explicit default: DROPWAY_API is set to "" (not unset) when the environment
+// has no such secret, so `||` falls back to a concrete base URL rather than
+// passing an empty string (which would throw) or undefined.
+const dw = new Dropway({ baseUrl: process.env.DROPWAY_API || DEFAULT_BASE_URL });
 
-const site = await dw.sites.create({ slug });
+// Create it public: the org's default visibility is org_only, which the edge
+// gates behind auth, so the live URL would never serve the fixture below.
+const site = await dw.sites.create({ slug, accessMode: "public" });
 console.log(`created ${slug} (${site.id})`);
 
 const res = await dw.sites.deploy(site.id, { dir: FIXTURE });
 assert.equal(res.published, true, "deploy did not publish");
 assert.ok(res.liveUrl, "deploy returned no live URL");
-assert.equal(res.filesUploaded, 2, "expected 2 files uploaded"); // index.html + style.css
-console.log(`deployed v${res.versionNo ?? res.versionId} -> ${res.liveUrl}`);
+assert.ok(res.versionId, "deploy returned no version id");
+// NOT asserting filesUploaded: blobs are content-addressed and shared per org,
+// so a reused org already has the fixture's blobs and uploads 0. The deploy
+// still publishes; serving the live URL below is the real proof of content.
+console.log(
+  `deployed v${res.versionNo ?? res.versionId} -> ${res.liveUrl} ` +
+    `(${res.filesUploaded} new blob(s))`,
+);
 
-await waitFor(res.liveUrl, 200, "live URL never served 200");
-console.log("live URL serves 200");
+// Verify BOTH fixture files actually deployed and serve — a content check that
+// (unlike the upload count) doesn't depend on whether the org already had the
+// blobs. Root serves index.html with its title; style.css serves 200.
+await waitForServed(res.liveUrl, "Synthwave Sunset");
+const cssUrl = res.liveUrl.replace(/\/$/, "") + "/style.css";
+assert.equal(await statusOf(cssUrl), 200, "style.css was not served");
+console.log("live URL serves index.html + style.css");
 
 await dw.sites.delete(site.id);
 console.log("deleted");
@@ -45,14 +61,22 @@ assert.equal(
 );
 console.log("confirmed: site no longer exists");
 
-/** Poll url until it returns want, or throw after ~60s. */
-async function waitFor(url, want, msg) {
+/** Wait until url serves 200 with a body containing marker (throws after ~60s).
+ *  Tolerates edge propagation lag right after publish. */
+async function waitForServed(url, marker) {
   for (let i = 0; i < 20; i++) {
-    const code = await fetch(url)
-      .then((r) => r.status)
-      .catch(() => 0);
-    if (code === want) return;
+    const body = await fetch(url)
+      .then((r) => (r.ok ? r.text() : null))
+      .catch(() => null);
+    if (body?.includes(marker)) return;
     await new Promise((r) => setTimeout(r, 3000));
   }
-  throw new Error(msg);
+  throw new Error(`live URL never served a body containing "${marker}"`);
+}
+
+/** One-shot HTTP status for url (0 on network error). */
+async function statusOf(url) {
+  return fetch(url)
+    .then((r) => r.status)
+    .catch(() => 0);
 }
