@@ -120,8 +120,7 @@ export default async function SiteAccessSettingsPage({
               aria-hidden
             />
             <p className="text-muted-foreground">
-              Only owners and admins can change a site&rsquo;s access. Ask an
-              admin if you need to share this site differently.
+              Only owners and admins can change a site&rsquo;s access.
             </p>
           </CardContent>
         </Card>

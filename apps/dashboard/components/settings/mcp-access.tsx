@@ -92,8 +92,7 @@ export function McpAccess({
             )}
           </p>
           <p className="text-sm text-muted-foreground">
-            Add Dropway as an MCP connector in Claude, Cursor, or Codex to let it
-            browse and read this organization&rsquo;s sites.
+            Add Dropway as an MCP connector in Claude, Cursor, or Codex.
           </p>
         </div>
         <Button
@@ -115,9 +114,8 @@ export function McpAccess({
               Allow MCP access
             </p>
             <p id="mcp-desc" className="text-sm text-muted-foreground">
-              When on, members can connect AI tools through the Dropway MCP
-              server. Turning it off blocks all MCP access for the organization
-              immediately.
+              Members can connect AI tools through the MCP server. Turning it
+              off blocks all access immediately.
             </p>
           </div>
           <div className="pt-0.5">
@@ -182,9 +180,8 @@ export function McpAccess({
           </div>
           <DialogTitle>Disable MCP access?</DialogTitle>
           <DialogDescription>
-            Every AI tool connected to this organization will immediately lose
-            access through the Dropway MCP server. Existing OAuth grants stop
-            working at once. You can re-enable it any time.
+            Every connected AI tool immediately loses access. Existing OAuth
+            grants stop working. You can re-enable it any time.
           </DialogDescription>
         </DialogHeader>
         <DialogBody />

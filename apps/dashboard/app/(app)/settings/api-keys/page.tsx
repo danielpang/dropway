@@ -73,8 +73,7 @@ export default async function ApiKeysPage() {
           </h1>
           <p className="text-muted-foreground">
             Programmatic access for CI, scripts, the SDK, and the CLI. A key
-            acts as the member who created it, and is limited to member-level
-            actions — it can create and deploy sites, but not manage the
+            acts as the member who created it and can&rsquo;t manage the
             organization.
           </p>
         </div>
@@ -86,10 +85,8 @@ export default async function ApiKeysPage() {
             Keys for {org.name ?? "your organization"}
           </CardTitle>
           <CardDescription>
-            Treat keys like passwords: the secret is shown only once at
-            creation, and a leaked key should be revoked. Keys keep working
-            until revoked or until the member who created them leaves the
-            organization.
+            Treat keys like passwords — the secret is shown only once. Keys work
+            until revoked or the member who created them leaves.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -106,8 +103,7 @@ export default async function ApiKeysPage() {
                   Only owners and admins can manage API keys.
                 </p>
                 <p className="text-muted-foreground">
-                  Ask an organization owner or admin if you need a key for CI or
-                  a script.
+                  Ask an owner or admin if you need a key.
                 </p>
               </div>
             </div>

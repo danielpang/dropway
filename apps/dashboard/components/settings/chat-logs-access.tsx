@@ -56,9 +56,8 @@ export function ChatLogsAccess({
               Allow shared chat logs
             </p>
             <p id="chat-logs-desc" className="text-sm text-muted-foreground">
-              When on, members can share AI sessions to the chat library and show
-              them on their sites. Turning it off blocks the feature for the
-              organization right away; existing logs are kept.
+              Members can share AI sessions to the chat library and their sites.
+              Turning it off blocks it immediately; existing logs are kept.
             </p>
           </div>
           <div className="pt-0.5">

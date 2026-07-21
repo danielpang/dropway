@@ -56,9 +56,8 @@ export function AiBuilderAccess({
               Allow the AI builder
             </p>
             <p id="ai-desc" className="text-sm text-muted-foreground">
-              When on, members can create and edit sites by chatting with AI.
-              Turning it off blocks new builder sessions for the organization
-              right away.
+              Members can build and edit sites with AI. Turning it off blocks
+              new sessions immediately.
             </p>
           </div>
           <div className="pt-0.5">
