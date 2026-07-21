@@ -116,6 +116,9 @@ var (
 	// ErrHostTaken is returned when publishing to a host already owned by a
 	// different site (the global host registry guard; see projection.HostForSite).
 	ErrHostTaken = errors.New("store: host already owned by another site")
+	// ErrVanityExists is returned when a site that already holds a vanity host
+	// tries to claim a second one (release the current one first).
+	ErrVanityExists = errors.New("store: site already has a vanity host")
 	// ErrExternalSharingDisabled is returned when an action would create external/
 	// public sharing while the org's allow_external_sharing policy is false — the
 	// DB external-sharing trigger (migration 0004) rejected it in depth.

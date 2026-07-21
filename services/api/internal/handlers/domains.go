@@ -270,8 +270,10 @@ func mapDomainStatus(s customdomains.StatusResult) (verify, tls string) {
 //
 //   - the platform content domain itself and any subdomain of it. Otherwise a
 //     tenant could squat another tenant's future canonical host (e.g.
-//     "victim--blog.dropwaycontent.com") before its host_routes row exists, so the
-//     global unique constraint can't fire yet.
+//     "victim-blog.dropwaycontent.com") before its host_routes row exists, so the
+//     global unique constraint can't fire yet. (Vanity platform subdomains have
+//     their own registration path with slug + reserved-word validation; they are
+//     deliberately NOT accepted here.)
 //   - bare IPv4/IPv6 literals (a custom domain must be a name, not an address).
 //   - single-label hosts (no dot), which can't be a real custom domain.
 //   - labels with a leading/trailing dot or hyphen (malformed DNS names).

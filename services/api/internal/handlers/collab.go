@@ -95,7 +95,12 @@ func (a *API) SetSiteCollab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bytes, _ := a.Store.SiteStorageBytes(r.Context(), t, siteID)
-	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
+	vanityBySite, err := a.Store.VanityHostsForOrg(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes, vanityBySite[siteID]))
 }
 
 // requireSiteOwnerOrAdmin gates a site meta-mutation to its creator (who must

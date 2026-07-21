@@ -275,7 +275,7 @@ func TestSetSiteAccess_Admin_OK(t *testing.T) {
 		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
 	}
 	// The route was rewritten to org_only (org-namespaced canonical host).
-	rv, ok := proj.Get("org--s.dropwaycontent.com")
+	rv, ok := proj.Get("org-s.dropwaycontent.com")
 	if !ok || rv.AccessMode != projection.AccessOrgOnly {
 		t.Fatalf("route not rewritten: %+v ok=%v", rv, ok)
 	}

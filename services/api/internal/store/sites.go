@@ -111,8 +111,9 @@ func IsReservedSlug(slug string) bool {
 // the shared slug package — the single source of truth for the grammar that the
 // CLI and MCP also use to normalize input — so the server's accept rule and the
 // clients' slugifier can never drift. The slug is interpolated into a DNS label
-// (`<orgSlug>--<slug>.<ContentDomain>`) and into the Cloudflare KV REST path, so
-// it must be a single lowercase DNS label with no `--` run.
+// (`<orgSlug>-<slug>.<ContentDomain>`) and into the Cloudflare KV REST path, so
+// it must be a single lowercase DNS label with no `--` run (`--` marks legacy
+// pre-migration hosts, which the serving path 301s to the single-dash form).
 func ValidSlug(s string) bool { return slug.Valid(s) }
 
 // uniqueViolation reports whether err is a Postgres unique-constraint violation

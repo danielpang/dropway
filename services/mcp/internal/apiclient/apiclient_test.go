@@ -143,7 +143,7 @@ func TestDeploy_FullLoop(t *testing.T) {
 	mux.HandleFunc("/v1/sites/s1/publish", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		publishBody = string(b)
-		_ = json.NewEncoder(w).Encode(map[string]any{"live_url": "https://acme--docs.x", "version_id": "ver-1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"live_url": "https://acme-docs.x", "version_id": "ver-1"})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

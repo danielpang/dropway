@@ -67,6 +67,15 @@ type SiteStore interface {
 	RemoveAllowlistEntry(ctx context.Context, t store.Tenant, siteID, email string) error
 	ListAllowlistEntries(ctx context.Context, t store.Tenant, siteID string) ([]store.AllowlistEntry, error)
 
+	// Vanity platform subdomains: an optional bare `<slug>.<ContentDomain>` per
+	// site (first come, first served; single label, so the platform wildcard
+	// cert covers it — no Cloudflare provisioning involved).
+	RegisterVanityHost(ctx context.Context, t store.Tenant, siteID, label string) (store.VanityRegisterResult, error)
+	ReleaseVanityHost(ctx context.Context, t store.Tenant, siteID string) (string, error)
+	// VanityHostsForOrg maps siteID → vanity host for the active org (one
+	// batched read; used to prefer vanity hosts in displayed live URLs).
+	VanityHostsForOrg(ctx context.Context, t store.Tenant) (map[string]string, error)
+
 	GetOrgPolicy(ctx context.Context, t store.Tenant) (store.OrgPolicy, error)
 	SetAllowExternalSharing(ctx context.Context, t store.Tenant, enabled bool) (store.ReconcileResult, error)
 	SetMcpEnabled(ctx context.Context, t store.Tenant, enabled bool) (store.OrgPolicy, error)

@@ -33,6 +33,26 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "cleaner-site-urls",
+    date: "2026-07-20",
+    label: "Improved",
+    title: "Cleaner site URLs and claimable subdomains",
+    summary:
+      "Site addresses now use a single dash between your org and site name, and every site can claim a short subdomain of its own. Old double dash links keep working and redirect to the new address.",
+    changes: [
+      {
+        id: "single-dash-hosts",
+        title: "Single dash addresses",
+        body: "New and existing sites are served at org-site.dropwaycontent.com instead of org--site.dropwaycontent.com. Nothing to do on your side: existing sites moved automatically, and any old double dash link redirects permanently to the new address, so bookmarks and shared links keep working.",
+      },
+      {
+        id: "vanity-subdomains",
+        title: "Claim a short subdomain",
+        body: "Every site can claim a bare name like readme.dropwaycontent.com from its Domains page. Names are first come, first served, live the moment you claim them, and free on every plan. When a site has one, it becomes the address shown across the dashboard and CLI, and the standard address keeps serving too. Release a name any time to free it up.",
+      },
+    ],
+  },
+  {
     id: "api-keys",
     date: "2026-07-19",
     label: "New",

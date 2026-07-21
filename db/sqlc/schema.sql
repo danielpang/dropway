@@ -295,11 +295,19 @@ CREATE TABLE app.host_routes (
     created_at timestamptz NOT NULL DEFAULT now(),
     -- Preview routes (migration 0010): kind='preview' rows pin the draft
     -- version they serve and expire at expires_at (edge 410s past it).
+    -- Vanity routes (migration 0017): kind='vanity' rows are an org-claimed bare
+    -- <slug>.<ContentDomain> platform subdomain (first come, first served).
     kind       text NOT NULL DEFAULT 'canonical'
-                   CHECK (kind IN ('canonical', 'custom', 'preview')),
+                   CHECK (kind IN ('canonical', 'custom', 'preview', 'vanity')),
     version_id uuid REFERENCES app.site_versions (id) ON DELETE CASCADE,
     expires_at timestamptz
 );
+
+-- One vanity host per site (migration 0017); the global label race is
+-- arbitrated by the host PRIMARY KEY.
+CREATE UNIQUE INDEX host_routes_one_vanity_per_site
+    ON app.host_routes (site_id)
+    WHERE kind = 'vanity';
 
 -- ai_sessions: one AI-builder chat per site edit stream (migration 0010). The
 -- sandbox id/expiry are cached so a dead machine is lazily recreated on the

@@ -1049,6 +1049,26 @@ func (q *Queries) DeleteSkillFolderItemsForSkill(ctx context.Context, arg Delete
 	return err
 }
 
+const deleteVanityHostForSite = `-- name: DeleteVanityHostForSite :one
+DELETE FROM app.host_routes
+WHERE site_id = $1 AND org_id = $2 AND kind = 'vanity'
+RETURNING host
+`
+
+type DeleteVanityHostForSiteParams struct {
+	SiteID string
+	OrgID  string
+}
+
+// Release a site's vanity host, RETURNING it for edge-KV cleanup. No-rows =
+// the site has none (→ ErrNotFound).
+func (q *Queries) DeleteVanityHostForSite(ctx context.Context, arg DeleteVanityHostForSiteParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteVanityHostForSite, arg.SiteID, arg.OrgID)
+	var host string
+	err := row.Scan(&host)
+	return host, err
+}
+
 const ensureOrgMeta = `-- name: EnsureOrgMeta :exec
 
 
@@ -2048,6 +2068,30 @@ func (q *Queries) InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (i
 	var size_bytes int64
 	err := row.Scan(&size_bytes)
 	return size_bytes, err
+}
+
+const insertVanityHostRoute = `-- name: InsertVanityHostRoute :exec
+
+INSERT INTO app.host_routes (host, org_id, site_id, kind)
+VALUES ($1, $2, $3, 'vanity')
+`
+
+type InsertVanityHostRouteParams struct {
+	Host   string
+	OrgID  string
+	SiteID string
+}
+
+// ===========================================================================
+// vanity hosts — an org-claimed bare <slug>.<ContentDomain> platform subdomain
+// ===========================================================================
+// Claim a vanity host for a site, first come first served: NO upsert — the PK
+// on host raises 23505 when ANY row (any org, any kind) already holds the
+// label (→ ErrHostTaken), and host_routes_one_vanity_per_site raises when the
+// site already has one (→ ErrVanityExists).
+func (q *Queries) InsertVanityHostRoute(ctx context.Context, arg InsertVanityHostRouteParams) error {
+	_, err := q.db.Exec(ctx, insertVanityHostRoute, arg.Host, arg.OrgID, arg.SiteID)
+	return err
 }
 
 const listAIMessages = `-- name: ListAIMessages :many
@@ -3400,6 +3444,39 @@ func (q *Queries) ListUnreportedAIUsage(ctx context.Context, arg ListUnreportedA
 			&i.ReportedToBillingAt,
 			&i.CreatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVanityHostsForOrg = `-- name: ListVanityHostsForOrg :many
+SELECT host, site_id
+FROM app.host_routes
+WHERE org_id = $1 AND kind = 'vanity'
+`
+
+type ListVanityHostsForOrgRow struct {
+	Host   string
+	SiteID string
+}
+
+// Every vanity host in the active org (site_id → host), one batched read so
+// ListSites can prefer vanity hosts in live_url without an N+1.
+func (q *Queries) ListVanityHostsForOrg(ctx context.Context, orgID string) ([]ListVanityHostsForOrgRow, error) {
+	rows, err := q.db.Query(ctx, listVanityHostsForOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVanityHostsForOrgRow{}
+	for rows.Next() {
+		var i ListVanityHostsForOrgRow
+		if err := rows.Scan(&i.Host, &i.SiteID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

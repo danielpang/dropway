@@ -39,9 +39,14 @@ type Site struct {
 
 // siteCols is the shared SELECT list: site fields + one representative host.
 // The host subselect pins hr.org_id to the site's org so a (hypothetical)
-// cross-org route row can never surface here.
+// cross-org route row can never surface here. Preview rows are excluded (they
+// are ephemeral draft hosts); a claimed vanity host wins over the canonical
+// one, matching the live_url preference in the Go API's site responses.
 const siteCols = `s.id, s.slug, s.access_mode, s.current_version_id,
-	(SELECT hr.host FROM app.host_routes hr WHERE hr.site_id = s.id AND hr.org_id = s.org_id ORDER BY hr.host LIMIT 1)`
+	(SELECT hr.host FROM app.host_routes hr
+	 WHERE hr.site_id = s.id AND hr.org_id = s.org_id AND hr.kind <> 'preview'
+	 ORDER BY CASE hr.kind WHEN 'vanity' THEN 0 WHEN 'canonical' THEN 1 ELSE 2 END, hr.host
+	 LIMIT 1)`
 
 // ErrNotFound is returned when a site slug doesn't resolve under the tenant.
 var ErrNotFound = errors.New("mcp/store: not found")

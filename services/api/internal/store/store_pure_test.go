@@ -74,8 +74,8 @@ func TestValidSlug(t *testing.T) {
 		"a%2e",                  // percent → KV-key escaping
 		"a#x",                   // fragment
 		"a?x",                   // query
-		"victimorg--victimsite", // doubled hyphen → org/app host-namespace collision
-		"a--b",                  // any `--` run
+		"victimorg--victimsite", // `--` reserved: legacy hosts redirect on it
+		"a--b",                  // any `--` run (legacy-redirect invariant)
 		strings.Repeat("a", 64), // too long (max DNS label is 63)
 		"a\tb",                  // control char
 	}

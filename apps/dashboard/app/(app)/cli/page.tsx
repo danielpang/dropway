@@ -229,7 +229,7 @@ export default function CliReferencePage() {
         <p>
           This creates the <Code>my-docs</Code> site, uploads the folder, and
           prints something like{" "}
-          <Code>https://my-org--my-docs.dropwaycontent.com</Code>.
+          <Code>https://my-org-my-docs.dropwaycontent.com</Code>.
         </p>
 
         <p className="pt-2 text-foreground">
@@ -277,7 +277,7 @@ dropway sites --all    # every site in the org`}
         <CodeBlock
           label="terminal"
           code={`dropway read my-docs
-dropway read https://my-org--my-docs.dropwaycontent.com`}
+dropway read https://my-org-my-docs.dropwaycontent.com`}
         />
         <p>
           Public sites need no sign-in. A gated site returns its sign-in page

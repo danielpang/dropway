@@ -4,27 +4,46 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // TestHostForSite asserts the ORG-NAMESPACED single-label content host scheme:
-// <org>--<app>.dropwaycontent.com (the Worker wildcard matches exactly one
-// label, and the `--` separator keeps org+app on that single label).
+// <org>-<app>.dropwaycontent.com (the Worker wildcard matches exactly one
+// label, and the single-dash separator keeps org+app on that single label; the
+// org/app boundary is intentionally not recoverable from the host — uniqueness
+// lives in the host_routes PRIMARY KEY).
 func TestHostForSite(t *testing.T) {
-	if got := HostForSite("acme", "blog"); got != "acme--blog.dropwaycontent.com" {
+	if got := HostForSite("acme", "blog"); got != "acme-blog.dropwaycontent.com" {
 		t.Errorf("HostForSite = %q", got)
 	}
-	if got := HostForSite("acme", "my-cool-site"); got != "acme--my-cool-site."+ContentDomain {
+	// Hyphenated slugs on both sides stay a single label; the rendered host makes
+	// no claim about where org ends and app begins.
+	if got := HostForSite("acme-inc", "my-cool-site"); got != "acme-inc-my-cool-site."+ContentDomain {
 		t.Errorf("HostForSite = %q", got)
 	}
 	// The host is a SINGLE DNS label before the domain (one dot-segment ahead of
 	// ContentDomain): the wildcard cert matches exactly one label.
-	if got := HostForSite("acme", "blog"); got != "acme--blog."+ContentDomain {
+	if got := HostForSite("acme", "blog"); got != "acme-blog."+ContentDomain {
 		t.Errorf("HostForSite single-label = %q", got)
 	}
+	// A current-format host never contains `--` (slug.Valid rejects it) — the
+	// legacy-redirect middleware depends on this invariant.
+	if got := HostForSite("acme-inc", "my-cool-site"); strings.Contains(got, "--") {
+		t.Errorf("HostForSite must never contain a double dash, got %q", got)
+	}
 	// RouteKey + HostForSite compose to the global KV key.
-	if got := RouteKey(HostForSite("acme", "blog")); got != "route:acme--blog.dropwaycontent.com" {
+	if got := RouteKey(HostForSite("acme", "blog")); got != "route:acme-blog.dropwaycontent.com" {
 		t.Errorf("RouteKey(HostForSite) = %q", got)
+	}
+}
+
+// TestPreviewHostForSite pins the preview host shape: the 8-hex version label
+// leads, joined to the canonical host with the same single-dash separator.
+func TestPreviewHostForSite(t *testing.T) {
+	got := PreviewHostForSite("deadbeef-1234-5678-9abc-def012345678", "acme", "blog")
+	if got != "deadbeef-acme-blog.dropwaycontent.com" {
+		t.Errorf("PreviewHostForSite = %q", got)
 	}
 }
 

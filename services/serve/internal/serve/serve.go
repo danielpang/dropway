@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielpang/dropway/internal/projection"
@@ -138,6 +139,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt, err := h.resolver.Resolve(ctx, host)
 	if err != nil {
 		if errors.Is(err, ErrHostNotFound) {
+			// LEGACY HOSTS: pre-migration hosts used `--` as the org/app
+			// separator; current hosts never contain `--` (slug grammar). On a
+			// miss only, retry the single-dash rewrite and 301 to it when that
+			// route exists — old links keep working forever. Any resolver error
+			// on the retry (including not-found) falls through to the 404: a
+			// legacy probe must not become a 500.
+			if strings.Contains(host, "--") {
+				newHost := strings.ReplaceAll(host, "--", "-")
+				if _, rerr := h.resolver.Resolve(ctx, newHost); rerr == nil {
+					w.Header().Set("Cache-Control", "public, max-age=3600")
+					w.Header().Set("Location", h.contentURL(newHost, rawPathAndQuery(r)))
+					w.WriteHeader(http.StatusMovedPermanently)
+					return
+				}
+			}
 			h.notFound(w, r, nil, nil, false)
 			return
 		}

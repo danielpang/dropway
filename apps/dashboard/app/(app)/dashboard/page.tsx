@@ -48,7 +48,7 @@ export default async function DashboardPage() {
   const readOnly =
     billing.status === "fulfilled" ? billing.value.readOnly : false;
 
-  // Org slug for the "New site" URL preview (<org-slug>--<site-slug>.dropwaycontent.com).
+  // Org slug for the "New site" URL preview (<org-slug>-<site-slug>.dropwaycontent.com).
   const orgSlug =
     activeOrg.status === "fulfilled" ? (activeOrg.value?.slug ?? null) : null;
 

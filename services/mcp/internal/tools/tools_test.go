@@ -239,7 +239,7 @@ var tnt = store.Tenant{OrgID: "org-1", UserID: "user-1"}
 
 func TestListSites(t *testing.T) {
 	svc := &Service{Store: &fakeStore{sites: []store.Site{
-		{Slug: "docs", AccessMode: "public", CurrentVersionID: ptr("v1"), Host: ptr("acme--docs.dropwaycontent.com")},
+		{Slug: "docs", AccessMode: "public", CurrentVersionID: ptr("v1"), Host: ptr("acme-docs.dropwaycontent.com")},
 		{Slug: "draft", AccessMode: "org_only", CurrentVersionID: nil, Host: nil},
 	}}}
 
@@ -250,7 +250,7 @@ func TestListSites(t *testing.T) {
 	if len(out.Sites) != 2 {
 		t.Fatalf("want 2 sites, got %d", len(out.Sites))
 	}
-	if s := out.Sites[0]; s.Slug != "docs" || s.AccessMode != "public" || !s.Live || s.URL != "https://acme--docs.dropwaycontent.com" {
+	if s := out.Sites[0]; s.Slug != "docs" || s.AccessMode != "public" || !s.Live || s.URL != "https://acme-docs.dropwaycontent.com" {
 		t.Errorf("site[0] wrong: %+v", s)
 	}
 	if s := out.Sites[1]; !(s.Slug == "draft" && !s.Live && s.URL == "") {
@@ -431,7 +431,7 @@ func TestDownloadSite_NotLive(t *testing.T) {
 // --- create_site ------------------------------------------------------------
 
 func TestCreateSite_ForwardsAndMaps(t *testing.T) {
-	api := &fakeAPI{createResp: apiclient.Site{Slug: "blog", AccessMode: "org_only", URL: "https://acme--blog.dropwaycontent.com"}}
+	api := &fakeAPI{createResp: apiclient.Site{Slug: "blog", AccessMode: "org_only", URL: "https://acme-blog.dropwaycontent.com"}}
 	svc := &Service{API: api}
 	out, err := svc.CreateSite(context.Background(), "tok-123", "blog", "org_only")
 	if err != nil {
@@ -531,7 +531,7 @@ func TestSetAccess_PasswordForwarded(t *testing.T) {
 
 func TestDeploySite_DecodesAndForwards(t *testing.T) {
 	api := &fakeAPI{deployResp: apiclient.DeployResult{
-		VersionID: "v1", LiveURL: "https://acme--docs.dropwaycontent.com", FilesUploaded: 2, Published: true,
+		VersionID: "v1", LiveURL: "https://acme-docs.dropwaycontent.com", FilesUploaded: 2, Published: true,
 	}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
@@ -1054,7 +1054,7 @@ func TestShareChat_ResolvesSiteAndMaps(t *testing.T) {
 	}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{
-			"docs": {ID: "site-1", Slug: "docs", Host: ptr("acme--docs.dropwaycontent.com")},
+			"docs": {ID: "site-1", Slug: "docs", Host: ptr("acme-docs.dropwaycontent.com")},
 		}},
 		API: api,
 	}
@@ -1093,7 +1093,7 @@ func TestShareChat_ResolvesSiteAndMaps(t *testing.T) {
 	if out.ChatID != "chat-1" || out.Site != "docs" || out.Appended != 3 || out.Pruned != 1 || out.Window != 50 || out.Dropped != 2 {
 		t.Errorf("result not mapped: %+v", out)
 	}
-	if !strings.Contains(out.ViewerHint, "How this was made") || !strings.Contains(out.ViewerHint, "acme--docs.dropwaycontent.com") {
+	if !strings.Contains(out.ViewerHint, "How this was made") || !strings.Contains(out.ViewerHint, "acme-docs.dropwaycontent.com") {
 		t.Errorf("viewer hint should name the panel and the site URL: %q", out.ViewerHint)
 	}
 }

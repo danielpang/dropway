@@ -759,3 +759,66 @@ func TestOrgStatusFailsOpenOnError(t *testing.T) {
 		t.Fatalf("org-status read error should fail OPEN (serve), got %d", rec.Code)
 	}
 }
+
+// --- Legacy `--` host redirects ---------------------------------------------
+//
+// Hosts minted before the single-dash migration used `--` as the org/app
+// separator. The serving path 301s an unresolved `--` host to its single-dash
+// rewrite when (and only when) that rewrite resolves.
+
+func TestLegacyHost_RedirectsToSingleDash(t *testing.T) {
+	store := storage.NewFake()
+	h := serve.New(fakeResolver{map[string]serve.Route{"acme-blog.dropwaycontent.com": publicRoute()}},
+		store, nil, ratelimit.New(0, 0), nil,
+		serve.Config{ContentScheme: "http", ContentPort: "8090"})
+
+	rec := doRequest(h, http.MethodGet, "acme--blog.dropwaycontent.com", "/some/page?q=1", nil, "")
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("legacy host with live counterpart should 301, got %d", rec.Code)
+	}
+	// Location preserves path+query and uses the CONFIGURED scheme/port (the
+	// request's Host header carries no usable scheme).
+	want := "http://acme-blog.dropwaycontent.com:8090/some/page?q=1"
+	if got := rec.Header().Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
+func TestLegacyHost_NoCounterpart404(t *testing.T) {
+	store := storage.NewFake()
+	h := newHandler(fakeResolver{map[string]serve.Route{}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, "ghost--site.dropwaycontent.com", "/", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("legacy host with no counterpart should 404, got %d", rec.Code)
+	}
+}
+
+func TestLegacyHost_OwnRouteServesWithoutRedirect(t *testing.T) {
+	// A host that CONTAINS `--` but has its own route (e.g. a custom domain)
+	// resolves on the primary lookup and must never be rewritten.
+	store := storage.NewFake()
+	stageVersion(t, store, []fileSpec{
+		{path: "index.html", body: []byte("mine"), contentType: "text/html; charset=utf-8"},
+	})
+	h := newHandler(fakeResolver{map[string]serve.Route{"my--legacy.example.com": publicRoute()}},
+		store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, "my--legacy.example.com", "/", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("host with its own route should serve, got %d", rec.Code)
+	}
+	if rec.Body.String() != "mine" {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+func TestPlainMissWithoutDoubleDash404(t *testing.T) {
+	store := storage.NewFake()
+	h := newHandler(fakeResolver{map[string]serve.Route{}}, store, nil, nil)
+
+	rec := doRequest(h, http.MethodGet, "nope.dropwaycontent.com", "/", nil, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("plain miss should 404, got %d", rec.Code)
+	}
+}

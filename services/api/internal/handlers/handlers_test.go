@@ -13,6 +13,7 @@ import (
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/slug"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -45,9 +46,14 @@ type fakeStore struct {
 	createErr error
 
 	// orgSlug is the slug OrgSlug returns; defaults to "org" so the canonical host
-	// is "org--<slug>.dropwaycontent.com" in tests that don't override it.
+	// is "org-<slug>.dropwaycontent.com" in tests that don't override it.
 	orgSlug    string
 	orgSlugErr error
+
+	// vanity maps siteID → claimed vanity host; vanityTaken forces the global
+	// "label already claimed" collision (ErrHostTaken) regardless of the label.
+	vanity      map[string]string
+	vanityTaken bool
 
 	lastTenant  store.Tenant
 	provisioned bool
@@ -71,7 +77,65 @@ func newFakeStore() *fakeStore {
 		versions: map[string]store.SiteVersion{},
 		comments: map[string][]store.PostComment{},
 		votes:    map[string]map[string]int{},
+		vanity:   map[string]string{},
 	}
+}
+
+// RegisterVanityHost mirrors the real store: slug grammar + reserved list, one
+// per site, global first-come-first-served (vanityTaken simulates the loss).
+func (f *fakeStore) RegisterVanityHost(_ context.Context, t store.Tenant, siteID, label string) (store.VanityRegisterResult, error) {
+	f.lastTenant = t
+	if !slug.Valid(label) {
+		return store.VanityRegisterResult{}, store.ErrInvalidSlug
+	}
+	if store.IsReservedSlug(label) {
+		return store.VanityRegisterResult{}, store.ErrReservedSlug
+	}
+	s, ok := f.sites[siteID]
+	if !ok {
+		return store.VanityRegisterResult{}, store.ErrNotFound
+	}
+	if _, exists := f.vanity[siteID]; exists {
+		return store.VanityRegisterResult{}, store.ErrVanityExists
+	}
+	host := label + "." + projection.ContentDomain
+	if f.vanityTaken {
+		return store.VanityRegisterResult{}, store.ErrHostTaken
+	}
+	for _, h := range f.vanity {
+		if h == host {
+			return store.VanityRegisterResult{}, store.ErrHostTaken
+		}
+	}
+	f.vanity[siteID] = host
+	res := store.VanityRegisterResult{Host: host}
+	if s.CurrentVersionID != nil {
+		res.Registered = true
+		res.Route = projection.RouteValue{
+			OrgID: s.OrgID, SiteID: s.ID, VersionID: *s.CurrentVersionID,
+			AccessMode: s.AccessMode, SchemaVersion: projection.SchemaVersion,
+		}
+	}
+	return res, nil
+}
+
+func (f *fakeStore) ReleaseVanityHost(_ context.Context, t store.Tenant, siteID string) (string, error) {
+	f.lastTenant = t
+	host, ok := f.vanity[siteID]
+	if !ok {
+		return "", store.ErrNotFound
+	}
+	delete(f.vanity, siteID)
+	return host, nil
+}
+
+func (f *fakeStore) VanityHostsForOrg(_ context.Context, t store.Tenant) (map[string]string, error) {
+	f.lastTenant = t
+	out := make(map[string]string, len(f.vanity))
+	for k, v := range f.vanity {
+		out[k] = v
+	}
+	return out, nil
 }
 
 // postKey composes the fake's polymorphic subject key (mirrors the real store's
@@ -358,7 +422,7 @@ func TestCreateSite_Unlimited_201(t *testing.T) {
 	if body.OrgID != "org_1" || body.OwnerID != "user_1" || body.Slug != "my-site" {
 		t.Errorf("site = %+v", body)
 	}
-	if body.LiveURL != "https://org--my-site.dropwaycontent.com" {
+	if body.LiveURL != "https://org-my-site.dropwaycontent.com" {
 		t.Errorf("live_url = %q", body.LiveURL)
 	}
 	// RLS tenant was derived from the verified claims.

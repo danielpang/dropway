@@ -54,13 +54,20 @@ Published sites are served by the **content server** (`services/serve`, the
 Cloudflare-free serving plane) at an **org-namespaced host**:
 
 ```
-<org-slug>--<app-slug>.<CONTENT_DOMAIN>
+<org-slug>-<app-slug>.<CONTENT_DOMAIN>
 ```
 
-Putting the org slug in the host keeps the global route namespace unambiguous: two
-orgs can both deploy an app named `blog` and each still gets its own origin. The double
-dash (`--`) keeps it a **single DNS label**, so one wildcard cert (`*.<CONTENT_DOMAIN>`)
-covers every site.
+Putting the org slug in the host means two orgs can both deploy an app named `blog`
+and each still gets its own origin. The dash separator keeps it a **single DNS
+label**, so one wildcard cert (`*.<CONTENT_DOMAIN>`) covers every site. Host
+uniqueness is enforced by the route registry (a second org/app pair that would
+render the same host is rejected at creation), not by the separator. Hosts created
+before the single-dash migration used `--` as the separator; the serving path
+permanently redirects those to the current form.
+
+A site can also claim an optional **vanity host**, a bare `<slug>.<CONTENT_DOMAIN>`
+(first come, first served, one per site) from the site's Domains page. It is a
+single label too, so the same wildcard cert covers it.
 
 Three vars in [`.env`](./.env.example) decide the URL the dashboard and CLI hand back:
 
@@ -72,7 +79,7 @@ Three vars in [`.env`](./.env.example) decide the URL the dashboard and CLI hand
 
 **Why `localhost` locally:** `*.localhost` resolves to `127.0.0.1` in every browser with
 **zero DNS setup**, so a deploy's live URL is a clickable
-`http://<org>--<app>.localhost:8090/` out of the box, with nothing to add to `/etc/hosts`.
+`http://<org>-<app>.localhost:8090/` out of the box, with nothing to add to `/etc/hosts`.
 
 **Pointing it at your own domain:** set `CONTENT_DOMAIN` to a domain you control, give it
 a **wildcard DNS record + TLS cert** (`*.your-domain` → the content server), and switch

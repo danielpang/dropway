@@ -19,6 +19,7 @@ const (
 	RouteKindCanonical = "canonical"
 	RouteKindCustom    = "custom"
 	RouteKindPreview   = "preview"
+	RouteKindVanity    = "vanity"
 )
 
 // PreviewResult is returned by CreatePreviewRoute: the preview host, the route

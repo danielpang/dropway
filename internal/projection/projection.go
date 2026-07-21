@@ -127,7 +127,7 @@ func (v RouteValue) Validate() error {
 // from Postgres (the DR drill / drift reconciler).
 type Writer interface {
 	// PutRoute upserts the route value for host (e.g.
-	// "<org>--<app>.dropwaycontent.com").
+	// "<org>-<app>.dropwaycontent.com").
 	PutRoute(ctx context.Context, host string, val RouteValue) error
 	// DeleteRoute removes a host's route (unshare / delete).
 	DeleteRoute(ctx context.Context, host string) error
@@ -182,31 +182,39 @@ func OrgStatusKey(orgID string) string { return "org_status:" + orgID }
 const OrgStatusActive = "active"
 
 // HostForSite returns the canonical content host for a site — the ORG-NAMESPACED
-// single DNS label under the content domain: `<orgSlug>--<appSlug>.<ContentDomain>`
-// (e.g. acme/blog → "acme--blog.dropwaycontent.com").
+// single DNS label under the content domain: `<orgSlug>-<appSlug>.<ContentDomain>`
+// (e.g. acme/blog → "acme-blog.dropwaycontent.com").
 //
 // HOST SCHEME (documented decision): putting the ORG in the host (org first, then
-// the app slug, separated by a DOUBLE dash) makes the global KV route namespace
-// unambiguous — app.sites is UNIQUE(org_id, slug), so two orgs may both publish a
-// site named "blog"; the org-namespaced host keeps each on its own origin and
-// off-limits to the other. It MUST remain a SINGLE DNS label before the domain:
-// the serving Worker's `*.<ContentDomain>` wildcard cert matches exactly one
-// label, so `--` (not `.`) separates the two slugs. `--` is collision-free because
-// slugify collapses dash runs, so neither slug can itself contain `--`. The
-// publish path still treats route:<host> as the global host registry and refuses
-// to overwrite a host owned by another org/site (see store.Store.Publish and the
-// reserved-slug list).
+// the app slug, separated by a dash) keeps two orgs that both publish a site named
+// "blog" on distinct origins — app.sites is UNIQUE(org_id, slug), not globally
+// unique. The host MUST remain a SINGLE DNS label before the domain: the serving
+// Worker's `*.<ContentDomain>` wildcard cert matches exactly one label, so a dash
+// (not `.`) separates the two slugs. Because slugs may themselves contain dashes,
+// the org/app boundary is NOT syntactically recoverable from the host and two
+// (org, app) pairs can render the same label ("dpang-studios"/"readme" vs
+// "dpang"/"studios-readme"); global uniqueness is enforced by the app.host_routes
+// PRIMARY KEY instead — the loser of the race gets ErrHostTaken (409), exactly
+// like the reserved-slug list (see store.Store.Publish).
+//
+// LEGACY: hosts created before migration 0017 used `--` as the separator. Slugs
+// can never contain `--` (slugify collapses dash runs and slug.Valid rejects it),
+// so a current-format host NEVER contains `--` — that invariant is what lets the
+// serving path 301 any unresolved `--` host to its single-dash rewrite without
+// ambiguity. Do not relax the `--` slug rejection.
 func HostForSite(orgSlug, appSlug string) string {
-	return orgSlug + "--" + appSlug + "." + ContentDomain
+	return orgSlug + "-" + appSlug + "." + ContentDomain
 }
 
 // PreviewHostForSite returns the time-limited preview host for one site
-// VERSION: `<shortVersionID>--<orgSlug>--<appSlug>.<ContentDomain>`. Like
+// VERSION: `<shortVersionID>-<orgSlug>-<appSlug>.<ContentDomain>`. Like
 // HostForSite it stays a SINGLE DNS label (wildcard-cert constraint); the
-// version label goes FIRST so a preview host can never collide with a
-// canonical `<org>--<app>` host (slugs are slugified, the label is hex).
+// version label goes FIRST so a preview host is visibly distinct from a
+// canonical host. A canonical host CAN in principle render the same label (an
+// org slug that equals the 8-hex preview label); the host_routes PRIMARY KEY
+// resolves that vanishingly rare race as ErrHostTaken rather than a takeover.
 func PreviewHostForSite(versionID, orgSlug, appSlug string) string {
-	return PreviewLabel(versionID) + "--" + HostForSite(orgSlug, appSlug)
+	return PreviewLabel(versionID) + "-" + HostForSite(orgSlug, appSlug)
 }
 
 // PreviewLabel is the short, URL-safe version-id prefix used as the leading

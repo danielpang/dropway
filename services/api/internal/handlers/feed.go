@@ -102,6 +102,11 @@ func (a *API) ListFeed(w http.ResponseWriter, r *http.Request) {
 	for _, s := range storage {
 		bytesBySite[s.SiteID] = s.Bytes
 	}
+	vanityBySite, err := a.Store.VanityHostsForOrg(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 
 	skills, err := a.Store.ListFeedSkills(r.Context(), t)
 	if err != nil {
@@ -111,7 +116,7 @@ func (a *API) ListFeed(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]feedPostResponse, 0, len(sites)+len(skills))
 	for _, s := range sites {
-		sr := a.toSiteResponse(s.Site, orgSlug, bytesBySite[s.ID])
+		sr := a.toSiteResponse(s.Site, orgSlug, bytesBySite[s.ID], vanityBySite[s.ID])
 		out = append(out, feedPostResponse{
 			Kind:             "site",
 			ID:               sr.ID,

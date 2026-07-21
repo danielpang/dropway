@@ -32,7 +32,11 @@ type siteResponse struct {
 	AccessMode       string  `json:"access_mode"`
 	CurrentVersionID *string `json:"current_version_id,omitempty"`
 	LiveURL          string  `json:"live_url"`
-	StorageBytes     int64   `json:"storage_bytes"`
+	// VanityHost is the site's claimed bare `<slug>.<ContentDomain>` platform
+	// subdomain, empty when none. When set, LiveURL is built from it (the
+	// canonical org-namespaced host keeps serving too).
+	VanityHost   string `json:"vanity_host,omitempty"`
+	StorageBytes int64  `json:"storage_bytes"`
 	// FeedVisible is the org-feed discovery flag: true (default) shares the site to
 	// teammates' feed; false keeps it private (off the feed). Orthogonal to access.
 	FeedVisible bool `json:"feed_visible"`
@@ -49,9 +53,15 @@ type siteResponse struct {
 // toSiteResponse renders a site for the API. orgSlug is the org half of the
 // canonical content host (projection.HostForSite); the display LiveURL is built
 // from the configured scheme/port (API.ContentURL). All sites in one request
-// share the active tenant's org, so the caller resolves orgSlug once. storageBytes
-// is the site's logical size (0 for a just-created site with no live version).
-func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) siteResponse {
+// share the active tenant's org, so the caller resolves orgSlug once (and the
+// org's vanity-host map, one batched read). storageBytes is the site's logical
+// size (0 for a just-created site with no live version). vanityHost, when
+// non-empty, becomes the displayed LiveURL — the canonical host still serves.
+func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64, vanityHost string) siteResponse {
+	liveHost := projection.HostForSite(orgSlug, s.Slug)
+	if vanityHost != "" {
+		liveHost = vanityHost
+	}
 	return siteResponse{
 		ID:               s.ID,
 		OrgID:            s.OrgID,
@@ -59,7 +69,8 @@ func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) s
 		OwnerID:          s.OwnerUserID,
 		AccessMode:       s.AccessMode,
 		CurrentVersionID: s.CurrentVersionID,
-		LiveURL:          a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
+		LiveURL:          a.ContentURL(liveHost),
+		VanityHost:       vanityHost,
 		StorageBytes:     storageBytes,
 		FeedVisible:      s.FeedVisible,
 		Title:            s.Title,
@@ -165,8 +176,9 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 			Groups: map[string]string{"organization": t.OrgID},
 		})
 	}
-	// A just-created site has no live version yet → 0 logical bytes.
-	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0))
+	// A just-created site has no live version yet → 0 logical bytes, and it
+	// cannot have a vanity host yet.
+	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0, ""))
 }
 
 // ListSites returns the caller org's sites.
@@ -200,9 +212,14 @@ func (a *API) ListSites(w http.ResponseWriter, r *http.Request) {
 	for _, s := range storage {
 		bytesBySite[s.SiteID] = s.Bytes
 	}
+	vanityBySite, err := a.Store.VanityHostsForOrg(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	out := make([]siteResponse, len(sites))
 	for i, s := range sites {
-		out[i] = a.toSiteResponse(s, orgSlug, bytesBySite[s.ID])
+		out[i] = a.toSiteResponse(s, orgSlug, bytesBySite[s.ID], vanityBySite[s.ID])
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": out})
 }
@@ -233,7 +250,12 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
+	vanityBySite, err := a.Store.VanityHostsForOrg(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes, vanityBySite[site.ID]))
 }
 
 // DeleteSite permanently removes a site (DELETE /v1/sites/{id}). Gated by
@@ -379,6 +401,9 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		// another org/site — a cross-tenant collision. 409 Conflict, not 400:
 		// the request is well-formed, the resource just isn't available.
 		httpx.WriteError(w, fmt.Errorf("%w: site slug/host already in use", httpx.ErrConflict))
+	case errors.Is(err, store.ErrVanityExists):
+		// One vanity host per site: release the current one first.
+		httpx.WriteError(w, fmt.Errorf("%w: site already has a vanity subdomain; release it first", httpx.ErrConflict))
 	case errors.Is(err, store.ErrSiteHasChatLog):
 		// One attached chat log per site: detach/move the existing one first.
 		httpx.WriteError(w, fmt.Errorf("%w: site already has an attached chat log", httpx.ErrConflict))

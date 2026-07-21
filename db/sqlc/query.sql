@@ -553,6 +553,32 @@ WHERE app.host_routes.org_id = EXCLUDED.org_id;
 DELETE FROM app.host_routes WHERE host = $1 AND org_id = $2;
 
 -- ===========================================================================
+-- vanity hosts — an org-claimed bare <slug>.<ContentDomain> platform subdomain
+-- ===========================================================================
+
+-- name: InsertVanityHostRoute :exec
+-- Claim a vanity host for a site, first come first served: NO upsert — the PK
+-- on host raises 23505 when ANY row (any org, any kind) already holds the
+-- label (→ ErrHostTaken), and host_routes_one_vanity_per_site raises when the
+-- site already has one (→ ErrVanityExists).
+INSERT INTO app.host_routes (host, org_id, site_id, kind)
+VALUES ($1, $2, $3, 'vanity');
+
+-- name: DeleteVanityHostForSite :one
+-- Release a site's vanity host, RETURNING it for edge-KV cleanup. No-rows =
+-- the site has none (→ ErrNotFound).
+DELETE FROM app.host_routes
+WHERE site_id = $1 AND org_id = $2 AND kind = 'vanity'
+RETURNING host;
+
+-- name: ListVanityHostsForOrg :many
+-- Every vanity host in the active org (site_id → host), one batched read so
+-- ListSites can prefer vanity hosts in live_url without an N+1.
+SELECT host, site_id
+FROM app.host_routes
+WHERE org_id = $1 AND kind = 'vanity';
+
+-- ===========================================================================
 -- host resolution (Phase 2) — resolve a content host → owning site (for /authz)
 -- ===========================================================================
 

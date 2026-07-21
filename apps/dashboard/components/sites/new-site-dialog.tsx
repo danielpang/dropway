@@ -57,7 +57,7 @@ export function NewSiteDialog({
   orgSlug = null,
 }: {
   readOnly?: boolean;
-  /** The active org's slug, content hosts are `<org-slug>--<site-slug>.dropwaycontent.com`. */
+  /** The active org's slug, content hosts are `<org-slug>-<site-slug>.dropwaycontent.com`. */
   orgSlug?: string | null;
 }) {
   const router = useRouter();
@@ -178,7 +178,7 @@ export function NewSiteDialog({
               <div className="flex items-center gap-1.5">
                 {orgSlug ? (
                   <span className="shrink-0 whitespace-nowrap font-mono text-sm text-muted-foreground">
-                    {orgSlug}--
+                    {orgSlug}-
                   </span>
                 ) : null}
                 <Input

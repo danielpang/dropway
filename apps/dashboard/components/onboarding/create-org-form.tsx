@@ -175,7 +175,7 @@ export function CreateOrgForm({
             <p className="text-xs text-muted-foreground">
               Every project you deploy is served at{" "}
               <span className="font-mono text-foreground">
-                {slug || "your-org"}--your-app.dropwaycontent.com
+                {slug || "your-org"}-your-app.dropwaycontent.com
               </span>
               . Your org slug goes in all your project URLs, so pick it carefully
               (it&rsquo;s hard to change later).

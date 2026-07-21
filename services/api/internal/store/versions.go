@@ -329,6 +329,11 @@ type PublishResult struct {
 	// published, removed in the publish tx ("publishing deletes the preview").
 	// The handler must also delete their route:<host> KV keys.
 	DeletedPreviewHosts []string
+	// VanityHost is the site's claimed bare `<slug>.<ContentDomain>` platform
+	// subdomain (empty when none) — the handler prefers it in the displayed
+	// live_url. Captured here because the publish tx already lists every host
+	// route for the site.
+	VanityHost string
 }
 
 // Publish flips a site's current_version_id to versionID (publish OR rollback —
@@ -446,6 +451,9 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		for _, hr := range hostRoutes {
 			if hr.Kind == RouteKindPreview {
 				continue
+			}
+			if hr.Kind == RouteKindVanity {
+				res.VanityHost = hr.Host
 			}
 			res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: newRoute()})
 		}

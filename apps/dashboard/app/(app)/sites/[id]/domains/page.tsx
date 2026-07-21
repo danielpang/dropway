@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { ArrowLeft, ShieldAlert } from "lucide-react";
 
 import { DomainsManager } from "@/components/sites/domains-manager";
+import { VanityManager } from "@/components/sites/vanity-manager";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -12,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { api, ApiError, type Domain, type PlanTier, type Site } from "@/lib/api";
+import { CONTENT_SUFFIX } from "@/lib/authz-host";
 import { customDomainsEntitled } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
@@ -61,14 +64,13 @@ export default async function SiteDomainsPage({
   const enabled = me?.custom_domains_enabled ?? false;
 
   // Custom domains are a PAID feature on the HOSTED build (the server enforces it
-  // with a 402). When billing exists and the org is on the free tier, send them to
-  // the upgrade page rather than a page whose actions would 402. `plan == null`
-  // means billing isn't available on this deployment (OSS/self-host is UNLIMITED,
-  // mirroring the server's Unlimited provider) — so we must NOT redirect a
-  // self-hoster to a nonexistent billing page.
-  if (enabled && plan != null && !customDomainsEntitled((plan.plan_tier ?? "free") as PlanTier)) {
-    redirect("/billing");
-  }
+  // with a 402). `plan == null` means billing isn't available on this deployment
+  // (OSS/self-host is UNLIMITED, mirroring the server's Unlimited provider). The
+  // page itself must render for everyone: the vanity subdomain card below is
+  // available on every plan and every deployment, so an unentitled org gets an
+  // upgrade nudge in the custom-domains section instead of a redirect.
+  const entitled =
+    plan == null || customDomainsEntitled((plan.plan_tier ?? "free") as PlanTier);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -81,14 +83,48 @@ export default async function SiteDomainsPage({
       </Link>
 
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Custom domains</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Domains</h1>
         <p className="text-muted-foreground">
-          Serve{" "}
-          <span className="font-medium text-foreground">{site.slug}</span> from
-          your own domain, e.g.{" "}
-          <span className="font-mono text-foreground">docs.acme.com</span>.
+          Choose how{" "}
+          <span className="font-medium text-foreground">{site.slug}</span> is
+          reached: a short platform subdomain, your own custom domain, or both.
         </p>
       </div>
+
+      {!manage && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="flex items-start gap-3 pt-6 text-sm">
+            <ShieldAlert
+              className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
+              aria-hidden
+            />
+            <p className="text-muted-foreground">
+              Only owners and admins can change domains. This page is read-only
+              for you.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Platform subdomain</CardTitle>
+          <CardDescription>
+            Claim a short {CONTENT_SUFFIX} address for this site. First come,
+            first served, and live immediately. Your standard address keeps
+            working alongside it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <VanityManager
+            siteId={id}
+            vanityHost={site.vanity_host ?? null}
+            contentDomain={CONTENT_SUFFIX.slice(1)}
+            liveUrl={site.vanity_host ? (site.live_url ?? null) : null}
+            disabled={!manage}
+          />
+        </CardContent>
+      </Card>
 
       {!enabled ? (
         <Card>
@@ -108,40 +144,39 @@ export default async function SiteDomainsPage({
             </p>
           </CardContent>
         </Card>
+      ) : !entitled ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Custom domains</CardTitle>
+            <CardDescription>
+              Serve this site from your own domain, e.g.{" "}
+              <span className="font-mono">docs.acme.com</span>. Custom domains
+              are available on paid plans.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href="/billing">Upgrade to add a custom domain</Link>
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
-        <>
-          {!manage && (
-            <Card className="border-amber-500/30 bg-amber-500/5">
-              <CardContent className="flex items-start gap-3 pt-6 text-sm">
-                <ShieldAlert
-                  className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"
-                  aria-hidden
-                />
-                <p className="text-muted-foreground">
-                  Only owners and admins can add or verify custom domains. The
-                  list below is read-only for you.
-                </p>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Domains</CardTitle>
-              <CardDescription>
-                Add a domain, create the DNS record we show you, then verify. DNS
-                can take a few minutes to propagate.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <DomainsManager
-                siteId={id}
-                initialDomains={domains}
-                disabled={!manage}
-              />
-            </CardContent>
-          </Card>
-        </>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Custom domains</CardTitle>
+            <CardDescription>
+              Add a domain, create the DNS record we show you, then verify. DNS
+              can take a few minutes to propagate.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DomainsManager
+              siteId={id}
+              initialDomains={domains}
+              disabled={!manage}
+            />
+          </CardContent>
+        </Card>
       )}
     </div>
   );

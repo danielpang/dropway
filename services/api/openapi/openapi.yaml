@@ -1262,6 +1262,57 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  /v1/sites/{id}/vanity:
+    post:
+      summary: Claim a vanity platform subdomain for a site (admin/owner only)
+      description: >
+        Claims a bare <slug>.<content-domain> for the site, first come first
+        served (one per site). The label follows the site-slug grammar and the
+        reserved-word blocklist. Unlike custom domains there is nothing to
+        verify or provision (the platform wildcard cert covers a single label),
+        so this works on self-host too and is not plan-gated. 409 when the label
+        is taken by anyone or the site already holds one.
+      operationId: registerVanity
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, example: readme }
+      responses:
+        "201":
+          description: Vanity subdomain claimed (serving immediately when the site is live)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vanity_host: { type: string, example: readme.dropwaycontent.com }
+                  live_url: { type: string, format: uri }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      summary: Release a site's vanity platform subdomain (admin/owner only)
+      description: >
+        Removes the site's vanity host; the label becomes claimable again
+        immediately. 404 when the site holds none.
+      operationId: releaseVanity
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "204": { description: Vanity subdomain released }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # ===========================================================================
   # Billing (CLOUD-ONLY / PROPRIETARY).
   #
@@ -2666,6 +2717,12 @@ components:
         access_mode: { type: string, enum: [public, password, allowlist, org_only] }
         current_version_id: { type: string, format: uuid, nullable: true }
         live_url: { type: string, format: uri }
+        vanity_host:
+          type: string
+          description: >
+            The site's claimed vanity platform subdomain (a bare
+            <slug>.<content-domain>), absent when none. When set, live_url is
+            built from it; the canonical org-namespaced host keeps serving too.
         storage_bytes:
           type: integer
           format: int64
