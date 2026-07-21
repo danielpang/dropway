@@ -59,13 +59,16 @@ export function SiteDetailTabs({
   // Roving arrow-key navigation across the tablist (WAI-ARIA tabs pattern).
   function onKeyDown(e: React.KeyboardEvent) {
     const idx = ORDER.indexOf(tab);
+    let nextIdx: number | null = null;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-      e.preventDefault();
-      setTab(ORDER[(idx + 1) % ORDER.length]);
+      nextIdx = (idx + 1) % ORDER.length;
     } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-      e.preventDefault();
-      setTab(ORDER[(idx - 1 + ORDER.length) % ORDER.length]);
+      nextIdx = (idx - 1 + ORDER.length) % ORDER.length;
     }
+    if (nextIdx === null) return;
+    e.preventDefault();
+    const next = ORDER[nextIdx];
+    if (next) setTab(next);
   }
 
   return (
