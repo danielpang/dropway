@@ -402,8 +402,14 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		"version_id": req.VersionID,
 		"host":       res.Host,
 	})
+	// Prefer the vanity host in the displayed live URL when the site holds one
+	// (the canonical host serves too; site responses make the same choice).
+	liveHost := res.Host
+	if res.VanityHost != "" {
+		liveHost = res.VanityHost
+	}
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
-		LiveURL:   a.ContentURL(res.Host),
+		LiveURL:   a.ContentURL(liveHost),
 		VersionID: req.VersionID,
 	})
 }

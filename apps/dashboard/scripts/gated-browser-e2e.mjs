@@ -20,7 +20,7 @@ const EMAIL = `gate-${S}@example.com`;
 const PASS = "gate-pass-123";
 const ORG = `gate${S}`;
 const APP = `site${S}`;
-const CONTENT = `http://${ORG}--${APP}.localhost:8090/`;
+const CONTENT = `http://${ORG}-${APP}.localhost:8090/`;
 
 const ctype = (p) =>
   p.endsWith(".html") ? "text/html; charset=utf-8"
@@ -105,7 +105,7 @@ console.log(JSON.stringify({ start: CONTENT, navHops: hops, finalUrl, status, ti
   contentHostCookies: cookies.map((c) => c.name), edgeCookieStored: !!edgeCookie }, null, 2));
 await browser.close();
 
-const onContentHost = finalUrl.startsWith(`http://${ORG}--${APP}.localhost:8090`);
+const onContentHost = finalUrl.startsWith(`http://${ORG}-${APP}.localhost:8090`);
 if (navErr) { console.error(`FAIL: navigation error — ${navErr.message}`); process.exit(1); }
 if (status === 200 && onContentHost && /dropway|synthwave|<!doctype|deploy/i.test(snippet + title)) {
   console.log("PASS: signed-in org member loaded the org_only site over http (gated flow completed)");

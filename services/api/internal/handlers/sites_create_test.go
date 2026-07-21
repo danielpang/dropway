@@ -74,7 +74,7 @@ func TestCreateSite_RejectsMalformedSlug(t *testing.T) {
 		`{"slug":"a%2e"}`,                  // percent → KV-key escaping
 		`{"slug":"a#x"}`,                   // fragment
 		`{"slug":"Acme"}`,                  // uppercase
-		`{"slug":"victimorg--victimsite"}`, // doubled hyphen → host-namespace collision
+		`{"slug":"victimorg--victimsite"}`, // `--` reserved: legacy hosts redirect on it
 		`{"slug":"-lead"}`,                 // leading hyphen
 		`{"slug":"trail-"}`,                // trailing hyphen
 	}

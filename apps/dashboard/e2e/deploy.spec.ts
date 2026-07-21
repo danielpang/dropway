@@ -73,7 +73,7 @@ test("new user: sign up → org → site → drag-and-drop deploy goes live", as
   // domain/scheme/port vary by environment (localhost in dev, the content domain in
   // prod), so match the org-namespaced slug rather than a fixed URL.
   await expect(
-    page.locator(`a[href*="--${siteSlug}."]`).first(),
+    page.locator(`a[href*="-${siteSlug}."]`).first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Live", { exact: true })).toBeVisible({
     timeout: 30_000,

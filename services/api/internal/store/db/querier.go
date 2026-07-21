@@ -129,6 +129,9 @@ type Querier interface {
 	// Replace-memberships helper: clear a skill's memberships before re-inserting
 	// the new set (PUT /skills/{id}/folders semantics), preserving nothing.
 	DeleteSkillFolderItemsForSkill(ctx context.Context, arg DeleteSkillFolderItemsForSkillParams) error
+	// Release a site's vanity host, RETURNING it for edge-KV cleanup. No-rows =
+	// the site has none (→ ErrNotFound).
+	DeleteVanityHostForSite(ctx context.Context, arg DeleteVanityHostForSiteParams) (string, error)
 	// SPDX-License-Identifier: FSL-1.1-Apache-2.0
 	//
 	// db/sqlc/query.sql
@@ -240,6 +243,14 @@ type Querier interface {
 	// yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
 	// the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
 	InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (int64, error)
+	// ===========================================================================
+	// vanity hosts — an org-claimed bare <slug>.<ContentDomain> platform subdomain
+	// ===========================================================================
+	// Claim a vanity host for a site, first come first served: NO upsert — the PK
+	// on host raises 23505 when ANY row (any org, any kind) already holds the
+	// label (→ ErrHostTaken), and host_routes_one_vanity_per_site raises when the
+	// site already has one (→ ErrVanityExists).
+	InsertVanityHostRoute(ctx context.Context, arg InsertVanityHostRouteParams) error
 	// The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
 	// pass 0 for the full history).
 	ListAIMessages(ctx context.Context, arg ListAIMessagesParams) ([]AppAiMessage, error)
@@ -334,6 +345,9 @@ type Querier interface {
 	// Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
 	// NULL), oldest first, for the per-row meter send + the ops retry sweep.
 	ListUnreportedAIUsage(ctx context.Context, arg ListUnreportedAIUsageParams) ([]AppAiUsage, error)
+	// Every vanity host in the active org (site_id → host), one batched read so
+	// ListSites can prefer vanity hosts in live_url without an N+1.
+	ListVanityHostsForOrg(ctx context.Context, orgID string) ([]ListVanityHostsForOrgRow, error)
 	// ===========================================================================
 	// R2 version GC (Phase 4) — versions to retain per org
 	// ===========================================================================

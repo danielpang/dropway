@@ -238,7 +238,7 @@ func TestIntegration_Phase1(t *testing.T) {
 		t.Fatalf("org A acme host = %q, want %q", resAcme.Host, acmeHostA)
 	}
 
-	// Org B publishes the SAME slug → succeeds, on its OWN host (orgb--acme), and
+	// Org B publishes the SAME slug → succeeds, on its OWN host (orgb-acme), and
 	// org A's route is completely untouched.
 	siteAcmeB, err := st.CreateSite(ctx, tB, "acme", projection.AccessPublic)
 	if err != nil {

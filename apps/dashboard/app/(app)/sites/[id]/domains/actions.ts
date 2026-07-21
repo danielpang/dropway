@@ -105,6 +105,101 @@ async function recordDomainAdded(
   }
 }
 
+export type VanityResult =
+  | { ok: true; vanityHost: string; liveUrl: string }
+  | { ok: false; message: string };
+
+/** The site-slug grammar (single lowercase DNS label; the Go API is authoritative
+ * and additionally rejects reserved words and `--` runs). */
+const VANITY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Claim a vanity platform subdomain for a site (POST /v1/sites/{id}/vanity).
+ * First come, first served; the Go API re-checks owner/admin and returns 409
+ * when the label is taken (by anyone) or the site already holds one.
+ */
+export async function registerVanityAction(input: {
+  siteId: string;
+  slug: string;
+}): Promise<VanityResult> {
+  const slug = input.slug.trim().toLowerCase();
+  if (!VANITY_SLUG_RE.test(slug) || slug.includes("--")) {
+    return {
+      ok: false,
+      message: "Use lowercase letters, numbers, and single hyphens.",
+    };
+  }
+  try {
+    const res = await api.registerVanity(input.siteId, slug);
+    revalidatePath(`/sites/${input.siteId}/domains`);
+    revalidatePath(`/sites/${input.siteId}`);
+    revalidatePath("/dashboard");
+    return { ok: true, vanityHost: res.vanity_host, liveUrl: res.live_url };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      if (err.status === 409) {
+        return {
+          ok: false,
+          message: apiMsg?.includes("release")
+            ? "This site already has a subdomain. Release it first."
+            : "That subdomain is already taken.",
+        };
+      }
+      if (err.status === 400) {
+        return {
+          ok: false,
+          message: apiMsg ?? "That subdomain isn't allowed.",
+        };
+      }
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can claim a subdomain.",
+        };
+      }
+      return { ok: false, message: "Could not claim the subdomain. Try again." };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
+export type ReleaseVanityResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Release a site's vanity subdomain (DELETE /v1/sites/{id}/vanity). The label
+ * becomes claimable again immediately.
+ */
+export async function releaseVanityAction(input: {
+  siteId: string;
+}): Promise<ReleaseVanityResult> {
+  try {
+    await api.releaseVanity(input.siteId);
+    revalidatePath(`/sites/${input.siteId}/domains`);
+    revalidatePath(`/sites/${input.siteId}`);
+    revalidatePath("/dashboard");
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 404) {
+        // Already gone; treat as success so the card clears.
+        return { ok: true };
+      }
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can release a subdomain.",
+        };
+      }
+      return {
+        ok: false,
+        message: "Could not release the subdomain. Try again.",
+      };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 export type RemoveDomainResult = { ok: true } | { ok: false; message: string };
 
 /**

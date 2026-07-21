@@ -55,6 +55,21 @@ export function routeKey(host: string): string {
 }
 
 /**
+ * Legacy-host rewrite candidate. Hosts minted before the single-dash migration
+ * used `--` as the org/app separator (`acme--blog.<domain>`); the current
+ * format never contains `--` (the slug grammar rejects it). When a host
+ * lookup MISSES and the host contains `--`, the single-dash rewrite is the
+ * only place its route can live now — the caller retries the lookup there and
+ * 301s on a hit. Returns null for hosts with no `--` (nothing to rewrite).
+ * Purely syntactic: custom domains that legitimately contain `--` resolve on
+ * the primary lookup and never reach this path.
+ */
+export function legacyHostCandidate(host: string): string | null {
+  if (!host.includes("--")) return null;
+  return host.replaceAll("--", "-");
+}
+
+/**
  * Normalize a request Host header into a stable KV lookup key:
  *  - strip any `:port` suffix (dev / non-443 origins),
  *  - lowercase (hostnames are case-insensitive),

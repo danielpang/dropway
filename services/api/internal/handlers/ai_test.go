@@ -37,7 +37,7 @@ func (f *fakeRunner) RunTurn(ctx context.Context, _ store.Tenant, _ store.AISess
 	if f.err != nil {
 		return f.err
 	}
-	emit(aipkg.Event{Type: "draft_ready", VersionID: "ver_1", PreviewURL: contentURL("abc--org--site.dropwaycontent.com")})
+	emit(aipkg.Event{Type: "draft_ready", VersionID: "ver_1", PreviewURL: contentURL("abc-org-site.dropwaycontent.com")})
 	return nil
 }
 

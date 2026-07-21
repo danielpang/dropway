@@ -165,6 +165,12 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/{id}/domains", api.AddDomain)
 			r.Get("/{id}/domains", api.ListDomains)
 
+			// Vanity platform subdomain (bare <slug>.<ContentDomain>, one per
+			// site, first come first served). No Cloudflare dependency, so no
+			// requireDomains gate — available on self-host too.
+			r.Post("/{id}/vanity", api.RegisterVanity)
+			r.Delete("/{id}/vanity", api.ReleaseVanity)
+
 			// Site-scoped chat-log convenience: read the attached "How this
 			// was made" log, or append to it (creating one if absent) — the
 			// one-call agent flow after a deploy.

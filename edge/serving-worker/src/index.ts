@@ -25,6 +25,8 @@ import {
   cleanPath,
   diagnoseRouteParseFailure,
   isRouteExpired,
+  legacyHostCandidate,
+  normalizeHost,
   parseRouteValue,
   routeKey,
 } from "./route";
@@ -394,6 +396,27 @@ export async function serve(
     if (raw !== null) {
       reportRejectedRoute(env, url.host, raw, opts);
       return projectionError();
+    }
+    // LEGACY HOSTS: pre-migration hosts used `--` as the org/app separator;
+    // current hosts never contain `--` (slug grammar). On a miss only, retry
+    // the single-dash rewrite and 301 to it when that route exists — old links
+    // keep working forever at the cost of one extra KV read on a 404 path.
+    // A custom domain that legitimately contains `--` has its own route and
+    // resolves above, never reaching this branch.
+    const candidate = legacyHostCandidate(normalizeHost(url.host));
+    if (candidate !== null) {
+      const candidateRaw = await env.ROUTES.get(routeKey(candidate), "json");
+      if (parseRouteValue(candidateRaw) !== null) {
+        const port = url.port ? `:${url.port}` : "";
+        return new Response(null, {
+          status: 301,
+          headers: {
+            Location: `${url.protocol}//${candidate}${port}${url.pathname}${url.search}`,
+            "Cache-Control": "public, max-age=3600",
+            ...securityHeaders(),
+          },
+        });
+      }
     }
     return notFound("route_not_found", {
       request,

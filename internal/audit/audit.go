@@ -54,6 +54,12 @@ const (
 	// ActionDomainRemove records a custom domain removed
 	// (DELETE /v1/domains/{id}).
 	ActionDomainRemove Action = "domain.remove"
+	// ActionVanityAdd records a vanity platform subdomain claimed
+	// (POST /v1/sites/{id}/vanity).
+	ActionVanityAdd Action = "vanity.add"
+	// ActionVanityRemove records a vanity platform subdomain released
+	// (DELETE /v1/sites/{id}/vanity).
+	ActionVanityRemove Action = "vanity.remove"
 	// ActionAllowExternalSharing records the org allow_external_sharing toggle
 	// (PUT /v1/orgs/allow-external-sharing).
 	ActionAllowExternalSharing Action = "org.allow_external_sharing"

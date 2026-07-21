@@ -1,10 +1,10 @@
 // Real-browser proof that a deployed site is reachable on local/self-host via
 // its org-namespaced `*.localhost:8090` URL — exercising the EXACT port-bearing
-// Host header a browser sends (`<org>--<app>.localhost:8090`), which the curl
+// Host header a browser sends (`<org>-<app>.localhost:8090`), which the curl
 // E2E (port-less Host) never exercised. Drives bundled Chromium directly.
 import { chromium } from "@playwright/test";
 
-const url = process.argv[2] || "http://acme1781565175--blog1781565175.localhost:8090/";
+const url = process.argv[2] || "http://acme1781565175-blog1781565175.localhost:8090/";
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
@@ -23,7 +23,7 @@ const h1 = await page.locator("h1, header, body").first().innerText().catch(() =
 
 console.log(JSON.stringify({
   url,
-  topNavHost: reqHosts[0],          // proves the browser sent <org>--<app>.localhost:8090
+  topNavHost: reqHosts[0],          // proves the browser sent <org>-<app>.localhost:8090
   status,                            // want 200
   title,
   bodyLen,

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanPath,
   diagnoseRouteParseFailure,
+  legacyHostCandidate,
   normalizeHost,
   parseRouteValue,
   routeKey,
@@ -186,6 +187,86 @@ describe("normalizeHost", () => {
   it("builds the route key", () => {
     expect(routeKey("Acme.dropwaycontent.com")).toBe(
       "route:acme.dropwaycontent.com",
+    );
+  });
+});
+
+// --- legacyHostCandidate + legacy `--` host redirects ------------------------
+//
+// Hosts minted before the single-dash migration used `--` as the org/app
+// separator. On a route MISS only, the Worker retries the single-dash rewrite
+// and 301s when that route exists.
+
+describe("legacyHostCandidate", () => {
+  it("rewrites every `--` run to a single dash", () => {
+    expect(legacyHostCandidate("acme--blog.dropwaycontent.com")).toBe(
+      "acme-blog.dropwaycontent.com",
+    );
+    expect(legacyHostCandidate("v1--acme--blog.dropwaycontent.com")).toBe(
+      "v1-acme-blog.dropwaycontent.com",
+    );
+  });
+
+  it("returns null when there is nothing to rewrite", () => {
+    expect(legacyHostCandidate("acme-blog.dropwaycontent.com")).toBeNull();
+    expect(legacyHostCandidate("acme.dropwaycontent.com")).toBeNull();
+  });
+});
+
+describe("legacy host redirect", () => {
+  it("301s a `--` host to its single-dash rewrite when that route exists", async () => {
+    const env: Env = {
+      ROUTES: mockRoutes({
+        [routeKey("acme-blog.dropwaycontent.com")]: PUBLIC_ROUTE,
+      }),
+      BUCKET: mockBucket({}),
+    };
+    const res = await serveNoCache(
+      get("acme--blog.dropwaycontent.com", "/some/page?q=1"),
+      env,
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("Location")).toBe(
+      "https://acme-blog.dropwaycontent.com/some/page?q=1",
+    );
+    // Hardened like every other platform response.
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+
+  it("404s a `--` host whose rewrite has no route", async () => {
+    const env: Env = { ROUTES: mockRoutes({}), BUCKET: mockBucket({}) };
+    const res = await serveNoCache(
+      get("ghost--site.dropwaycontent.com", "/"),
+      env,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("serves a `--` host that has its OWN route without redirecting", async () => {
+    // e.g. a custom domain that legitimately contains `--`.
+    const { objects } = deploy({
+      "index.html": { body: "<h1>mine</h1>", content_type: "text/html" },
+    });
+    const env = envFor(PUBLIC_ROUTE, "my--legacy.example.com", objects);
+    const res = await serveNoCache(get("my--legacy.example.com", "/"), env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("mine");
+  });
+
+  it("preserves an explicit port in the redirect Location", async () => {
+    const env: Env = {
+      ROUTES: mockRoutes({
+        [routeKey("acme-blog.localhost")]: PUBLIC_ROUTE,
+      }),
+      BUCKET: mockBucket({}),
+    };
+    const res = await serveNoCache(
+      new Request("http://acme--blog.localhost:8787/p?x=1", { method: "GET" }),
+      env,
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("Location")).toBe(
+      "http://acme-blog.localhost:8787/p?x=1",
     );
   });
 });

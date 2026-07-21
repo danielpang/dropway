@@ -354,7 +354,11 @@ export interface paths {
         get: operations["getSite"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a site
+         * @description Permanently deletes the site and everything under it (versions, routes, domains, access policy, allowlist). The site owner may delete their own site; deleting a site owned by someone else requires an org admin. This cannot be undone.
+         */
+        delete: operations["deleteSite"];
         options?: never;
         head?: never;
         patch?: never;
@@ -737,6 +741,30 @@ export interface paths {
          */
         post: operations["addDomain"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/vanity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim a vanity platform subdomain for a site (admin/owner only)
+         * @description Claims a bare <slug>.<content-domain> for the site, first come first served (one per site). The label follows the site-slug grammar and the reserved-word blocklist. Unlike custom domains there is nothing to verify or provision (the platform wildcard cert covers a single label), so this works on self-host too and is not plan-gated. 409 when the label is taken by anyone or the site already holds one.
+         */
+        post: operations["registerVanity"];
+        /**
+         * Release a site's vanity platform subdomain (admin/owner only)
+         * @description Removes the site's vanity host; the label becomes claimable again immediately. 404 when the site holds none.
+         */
+        delete: operations["releaseVanity"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1474,6 +1502,8 @@ export interface components {
             current_version_id?: string | null;
             /** Format: uri */
             live_url?: string;
+            /** @description The site's claimed vanity platform subdomain (a bare <slug>.<content-domain>), absent when none. When set, live_url is built from it; the canonical org-namespaced host keeps serving too. */
+            vanity_host?: string;
             /**
              * Format: int64
              * @description The site's LOGICAL storage in bytes: the size of its current live version (0 before the first deploy). "Logical" means NOT deduplicated across sites/versions — the per-folder size you'd expect from Dropbox or Drive, not the org's billed footprint.
@@ -2414,6 +2444,30 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listVersions: {
         parameters: {
             query?: never;
@@ -3312,6 +3366,70 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    registerVanity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example readme */
+                    slug: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Vanity subdomain claimed (serving immediately when the site is live) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example readme.dropwaycontent.com */
+                        vanity_host?: string;
+                        /** Format: uri */
+                        live_url?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    releaseVanity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Vanity subdomain released */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     stripeWebhook: {

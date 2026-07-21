@@ -128,7 +128,7 @@ COMPOSE_PROFILES= DATABASE_URL=postgres://… S3_ENDPOINT=https://… \
 
 ### Where your sites are served (the content domain)
 
-Published sites are served at `<org-slug>--<app-slug>.<CONTENT_DOMAIN>`, which is org-namespaced,
+Published sites are served at `<org-slug>-<app-slug>.<CONTENT_DOMAIN>`, which is org-namespaced,
 so two orgs can both have an app named `blog` without colliding. Three vars in
 `deploy/.env` control the URL the dashboard and CLI hand back:
 
@@ -138,7 +138,7 @@ so two orgs can both have an app named `blog` without colliding. Three vars in
 | `CONTENT_SCHEME` | `http` | `https` |
 | `CONTENT_PORT` | `8090` | *(empty, standard `:443`)* |
 
-The local defaults make every deploy a clickable **`http://<org>--<app>.localhost:8090/`**.
+The local defaults make every deploy a clickable **`http://<org>-<app>.localhost:8090/`**.
 `*.localhost` resolves to `127.0.0.1` in every browser with no DNS setup. To serve
 on your own domain, point a wildcard DNS record and TLS cert (`*.your-domain`) at the
 content server and set:

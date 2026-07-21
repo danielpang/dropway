@@ -815,6 +815,26 @@ export const api = {
   },
 
   /**
+   * Claim a vanity platform subdomain (<slug>.dropwaycontent.com) for a site
+   * (admin/owner only). First come, first served: 409 when the label is taken
+   * or the site already holds one; 400 for invalid/reserved labels.
+   */
+  registerVanity(
+    siteId: string,
+    slug: string,
+  ): Promise<{ vanity_host: string; live_url: string }> {
+    return apiFetch<{ vanity_host: string; live_url: string }>(
+      `/v1/sites/${siteId}/vanity`,
+      { method: "POST", body: JSON.stringify({ slug }) },
+    );
+  },
+
+  /** Release a site's vanity subdomain (admin/owner). 204 on success. */
+  async releaseVanity(siteId: string): Promise<void> {
+    await apiFetch<void>(`/v1/sites/${siteId}/vanity`, { method: "DELETE" });
+  },
+
+  /**
    * Read the org's sharing policy (the live allow_external_sharing value) so the UI
    * can render the toggle in its true state instead of a hardcoded default (H10).
    * Any member may read it.
