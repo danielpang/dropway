@@ -30,6 +30,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { CopyButton } from "@/components/ui/copy-button";
 import { api, ApiError, type PlanTier, type Site, type SiteComment } from "@/lib/api";
 import { customDomainsEntitled, embedBadgeRemovable } from "@/lib/billing";
 import { MCP_URL } from "@/lib/env";
@@ -246,15 +247,18 @@ export default async function SiteDetailPage({
               </CardHeader>
               <CardContent>
                 {isLive ? (
-                  <a
-                    href={liveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                  >
-                    <span className="min-w-0 break-all">{liveUrl}</span>
-                    <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  </a>
+                  <div className="flex max-w-full items-center gap-2">
+                    <a
+                      href={liveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                      <span className="min-w-0 break-all">{liveUrl}</span>
+                      <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    </a>
+                    <CopyButton value={liveUrl} label="Copy live URL" />
+                  </div>
                 ) : (
                   <div className="break-all rounded-md border border-dashed border-border px-3 py-2 font-mono text-sm text-muted-foreground">
                     {liveUrl}
