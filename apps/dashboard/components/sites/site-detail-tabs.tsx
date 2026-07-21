@@ -77,7 +77,7 @@ export function SiteDetailTabs({
         role="tablist"
         aria-label="Site sections"
         onKeyDown={onKeyDown}
-        className="flex items-center gap-1 overflow-x-auto border-b border-border"
+        className="flex items-center gap-1 overflow-x-auto shadow-[inset_0_-1px_0_0_hsl(var(--border))]"
       >
         {tabs.map((t) => {
           const Icon = t.icon;
@@ -93,7 +93,7 @@ export function SiteDetailTabs({
               tabIndex={active ? 0 : -1}
               onClick={() => setTab(t.key)}
               className={cn(
-                "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 active
                   ? "border-foreground text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground",
