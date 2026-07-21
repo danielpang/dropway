@@ -179,7 +179,7 @@ export default async function OrgSettingsPage() {
             Shared chat logs
           </CardTitle>
           <CardDescription>
-            Let members share the AI conversations behind their sites — to the
+            Let members share the AI conversations behind their sites, to the
             chat library and as a &ldquo;How this was made&rdquo; panel.
           </CardDescription>
         </CardHeader>
