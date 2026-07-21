@@ -273,12 +273,12 @@ export function SkillsView(props: {
             const mine = skill.owner_id === myUserId;
             const canEdit = manage || mine;
             return (
-              <Card key={skill.id} className="flex flex-wrap items-center gap-3 p-4">
+              <Card key={skill.id} className="relative flex flex-wrap items-center gap-3 p-4 transition-colors hover:border-foreground/20">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <Link
                       href={`/skills/${skill.id}`}
-                      className="font-medium hover:underline focus-visible:underline"
+                      className="font-medium hover:underline focus-visible:underline after:absolute after:inset-0"
                     >
                       {skill.title || skill.slug}
                     </Link>
@@ -300,7 +300,7 @@ export function SkillsView(props: {
                     {skill.size_bytes ? <> · {formatBytes(skill.size_bytes)}</> : null}
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="relative z-10 flex items-center gap-1.5">
                   <Button
                     variant="outline"
                     size="sm"

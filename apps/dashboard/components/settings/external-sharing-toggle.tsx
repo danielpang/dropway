@@ -138,10 +138,9 @@ export function ExternalSharingToggle({
           </div>
           <DialogTitle>Disable external sharing?</DialogTitle>
           <DialogDescription>
-            This downgrades every public site in your organization to org-only
-            and revokes any external (non-org) allowlist grants. Already-shared
-            external links will stop working. This can&rsquo;t be undone
-            automatically. You&rsquo;d re-share each site.
+            This downgrades every public site to org-only and revokes external
+            allowlist grants. Shared external links stop working, and you&rsquo;d
+            re-share each site.
           </DialogDescription>
         </DialogHeader>
         <DialogBody />

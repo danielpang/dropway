@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Check, Code2, Copy, ExternalLink, Lock, Share2 } from "lucide-react";
+import { Code2, ExternalLink, Lock, Share2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import {
   Dialog,
   DialogBody,
@@ -15,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { buildEmbedSnippet, buildEmbedUrl } from "@/lib/embed";
-import { cn } from "@/lib/utils";
 
 /**
  * "Share → Embed" for a site. A trigger button opens a dialog that offers two ways
@@ -191,51 +191,3 @@ export function ShareEmbedDialog({
   );
 }
 
-/** A copy-to-clipboard button with a transient check state. */
-function CopyButton({
-  value,
-  label,
-  full,
-}: {
-  value: string;
-  label: string;
-  full?: boolean;
-}) {
-  const [copied, setCopied] = React.useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard blocked (permissions / insecure context) — the field is
-      // selectable, so the user can still copy manually. Nothing to surface.
-    }
-  }
-
-  if (full) {
-    return (
-      <Button type="button" variant="outline" size="sm" onClick={copy} className="w-full">
-        {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-        {copied ? "Copied" : label}
-      </Button>
-    );
-  }
-
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="icon"
-      onClick={copy}
-      aria-label={label}
-    >
-      {copied ? (
-        <Check className={cn("size-4", "text-emerald-500")} aria-hidden />
-      ) : (
-        <Copy className="size-4" aria-hidden />
-      )}
-    </Button>
-  );
-}

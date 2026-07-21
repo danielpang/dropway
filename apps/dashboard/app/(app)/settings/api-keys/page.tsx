@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -72,10 +71,8 @@ export default async function ApiKeysPage() {
             API keys
           </h1>
           <p className="text-muted-foreground">
-            Programmatic access for CI, scripts, the SDK, and the CLI. A key
-            acts as the member who created it, and is limited to member-level
-            actions — it can create and deploy sites, but not manage the
-            organization.
+            Programmatic access for CI, scripts, the SDK, and the CLI. An API
+            key can create, upload, and delete sites.
           </p>
         </div>
       </div>
@@ -85,12 +82,6 @@ export default async function ApiKeysPage() {
           <CardTitle className="text-base">
             Keys for {org.name ?? "your organization"}
           </CardTitle>
-          <CardDescription>
-            Treat keys like passwords: the secret is shown only once at
-            creation, and a leaked key should be revoked. Keys keep working
-            until revoked or until the member who created them leaves the
-            organization.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           {manage ? (
@@ -106,8 +97,7 @@ export default async function ApiKeysPage() {
                   Only owners and admins can manage API keys.
                 </p>
                 <p className="text-muted-foreground">
-                  Ask an organization owner or admin if you need a key for CI or
-                  a script.
+                  Ask an owner or admin if you need a key.
                 </p>
               </div>
             </div>
@@ -121,7 +111,7 @@ export default async function ApiKeysPage() {
             Tip
           </Badge>
           Set the key as <code className="font-mono">DROPWAY_API_KEY</code> in
-          your CI environment — the SDK and CLI pick it up automatically.
+          your environment. The SDK and CLI pick it up automatically.
         </p>
       )}
     </div>

@@ -46,9 +46,7 @@ export default async function ChatsPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
-          <p className="text-sm text-muted-foreground">
-            Shared AI sessions — the conversations behind your team&rsquo;s sites.
-          </p>
+          <p className="text-sm text-muted-foreground">Shared AI sessions</p>
         </div>
         {!disabled && (
           <Button asChild>
@@ -103,12 +101,12 @@ export default async function ChatsPage() {
 function ChatRow({ chat, siteSlug }: { chat: ChatLog; siteSlug?: string }) {
   const count = chat.message_count ?? 0;
   return (
-    <Card className="p-4 transition-colors hover:border-foreground/20">
+    <Card className="relative p-4 transition-colors hover:border-foreground/20">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <Link
             href={`/chats/${chat.id}`}
-            className="block truncate text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            className="block truncate text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm after:absolute after:inset-0"
           >
             {chat.title || "Untitled session"}
           </Link>
@@ -127,7 +125,7 @@ function ChatRow({ chat, siteSlug }: { chat: ChatLog; siteSlug?: string }) {
             <>
               <Link
                 href={`/sites/${chat.site_id}`}
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+                className="relative z-10 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
               >
                 <Globe className="size-3.5" aria-hidden />
                 {siteSlug || "Attached site"}

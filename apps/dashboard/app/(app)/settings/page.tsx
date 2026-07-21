@@ -102,9 +102,8 @@ export default async function OrgSettingsPage() {
             External sharing
           </CardTitle>
           <CardDescription>
-            Controls whether sites in this organization can be shared publicly
-            or with people outside your verified domains. New organizations
-            start fully internal.
+            Whether sites can be shared publicly or with people outside your
+            verified domains.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -132,11 +131,10 @@ export default async function OrgSettingsPage() {
             LLM access (MCP)
           </CardTitle>
           <CardDescription>
-            Let AI tools reach this organization&rsquo;s sites through the
-            Dropway MCP server. Public sites are also readable by crawlers via{" "}
+            Let AI tools reach your sites through the Dropway MCP server. Public
+            sites are also crawlable via{" "}
             <code className="font-mono text-xs">/llms.txt</code>; gated sites
-            stay private and are reachable only through an authorized MCP
-            connection.
+            stay private.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -158,8 +156,7 @@ export default async function OrgSettingsPage() {
             </CardTitle>
             <CardDescription>
               Let members create and edit sites by chatting with AI. Usage is
-              billed on your plan at the model provider&rsquo;s cost. On by
-              default; admins can turn it off for the whole organization.
+              billed at the provider&rsquo;s cost.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -182,9 +179,8 @@ export default async function OrgSettingsPage() {
             Shared chat logs
           </CardTitle>
           <CardDescription>
-            Let members share the AI conversations behind their sites — to the
-            org&rsquo;s chat library and, per site, to viewers as a &ldquo;How
-            this was made&rdquo; panel.
+            Let members share the AI conversations behind their sites, to the
+            chat library and as a &ldquo;How this was made&rdquo; panel.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -200,9 +196,7 @@ export default async function OrgSettingsPage() {
             API keys
           </CardTitle>
           <CardDescription>
-            Programmatic access for CI, scripts, the SDK, and the CLI. Create
-            and revoke org-scoped keys, or turn key access off for the whole
-            organization.
+            Programmatic access for CI, scripts, the SDK, and the CLI.
           </CardDescription>
         </CardHeader>
         <CardContent>
