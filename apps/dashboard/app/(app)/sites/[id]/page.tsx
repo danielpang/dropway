@@ -17,6 +17,7 @@ import { sourceToolLabel } from "@/components/chats/source-tools";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployTabs } from "@/components/sites/deploy-tabs";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
+import { SiteDetailTabs } from "@/components/sites/site-detail-tabs";
 import { ShareEmbedDialog } from "@/components/sites/share-embed-dialog";
 import { addCommentAction } from "@/app/(app)/sites/[id]/actions";
 import { SiteComments, type CommentMember } from "@/components/sites/site-comments";
@@ -53,6 +54,10 @@ export async function generateMetadata({
  * re-publishes an earlier version. Versions aren't listed in the Phase 1 API
  * surface, so the live version is shown directly and rollback takes a version id
  * (the value the CLI prints on each deploy).
+ *
+ * The always-on header (identity + action bar) sits above a tabbed body
+ * (Overview / Deploy / Comments): each section is rendered here server-side and
+ * handed to SiteDetailTabs as a slot, which owns only the active-tab state.
  */
 export default async function SiteDetailPage({
   params,
@@ -225,140 +230,151 @@ export default async function SiteDetailPage({
         </div>
       </div>
 
-      {/* Live URL */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Live URL</CardTitle>
-          <CardDescription>
-            {isLive
-              ? "The current published version is served here."
-              : "Deploy a version to bring this URL online."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLive ? (
-            <a
-              href={liveUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            >
-              <span className="min-w-0 break-all">{liveUrl}</span>
-              <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            </a>
-          ) : (
-            <div className="break-all rounded-md border border-dashed border-border px-3 py-2 font-mono text-sm text-muted-foreground">
-              {liveUrl}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <SiteDetailTabs
+        commentCount={comments.length}
+        deploy={
+          <>
+            {/* Live URL */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Live URL</CardTitle>
+                <CardDescription>
+                  {isLive
+                    ? "The current published version is served here."
+                    : "Deploy a version to bring this URL online."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLive ? (
+                  <a
+                    href={liveUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
+                    <span className="min-w-0 break-all">{liveUrl}</span>
+                    <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  </a>
+                ) : (
+                  <div className="break-all rounded-md border border-dashed border-border px-3 py-2 font-mono text-sm text-muted-foreground">
+                    {liveUrl}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-      {/* Current version */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Current version</CardTitle>
-          <CardDescription>
-            The immutable deploy this site is pointed at. Roll back by publishing
-            an earlier version id.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <Detail label="Version id" value={site.current_version_id ?? "None"} mono />
-          <Detail label="Site id" value={site.id ?? id} mono />
-          {/* Logical storage = this site's current-version size (not deduplicated
-              across sites). 0 before the first deploy. */}
-          <Detail label="Storage" value={formatBytes(site.storage_bytes ?? 0)} />
-          <Detail
-            label="Created"
-            value={
-              site.created_at
-                ? new Date(site.created_at).toLocaleString()
-                : "Unknown"
-            }
-          />
-        </CardContent>
-      </Card>
+            {/* Deploy: drag-and-drop a folder (drop → live) */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Deploy</CardTitle>
+                <CardDescription>
+                  Drag &amp; drop a folder of static files to {isLive ? "ship a new version" : "go live"}.
+                  Only changed files upload, and your folder is live the moment it finishes.
+                  Prefer the terminal? Upload the same folder with the CLI below.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DeployDropzone siteId={site.id ?? id} isLive={isLive} />
+              </CardContent>
+            </Card>
 
-      {/* Deploy: drag-and-drop a folder (drop → live) */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Deploy</CardTitle>
-          <CardDescription>
-            Drag &amp; drop a folder of static files to {isLive ? "ship a new version" : "go live"}.
-            Only changed files upload, and your folder is live the moment it finishes.
-            Prefer the terminal? Upload the same folder with the CLI below.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DeployDropzone siteId={site.id ?? id} isLive={isLive} />
-        </CardContent>
-      </Card>
-
-      {/* Or deploy via MCP / CLI (tabbed; MCP-first for non-technical users) */}
-      <DeployTabs
-        slug={site.slug ?? id}
-        mcpConnectorUrl={`${MCP_URL.replace(/\/$/, "")}/mcp`}
-      />
-
-      {/* How this was made: the site's attached chat log, when one exists. */}
-      {siteChat?.chat_log?.id ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <MessageSquareText className="size-4 text-muted-foreground" aria-hidden />
-              How this was made
-            </CardTitle>
-            <CardDescription>
-              The AI conversation behind this site —{" "}
-              {siteChat.chat_log.message_count ?? siteChat.messages?.length ?? 0}{" "}
-              {(siteChat.chat_log.message_count ?? siteChat.messages?.length ?? 0) === 1
-                ? "message"
-                : "messages"}{" "}
-              from {sourceToolLabel(siteChat.chat_log.source_tool)}.{" "}
-              <Link
-                href={`/chats/${siteChat.chat_log.id}`}
-                className="font-medium text-foreground underline-offset-4 hover:underline"
-              >
-                Read the transcript
-              </Link>
-              .
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChatPanelToggle
-              chatId={siteChat.chat_log.id}
-              initialEnabled={siteChat.chat_log.panel_enabled ?? false}
-              disabled={
-                !(
-                  (org && canManage(org.myRole)) ||
-                  (!!org?.myUserId && siteChat.chat_log.created_by === org.myUserId)
-                )
-              }
-              hasSite
+            {/* Or deploy via MCP / CLI (tabbed; MCP-first for non-technical users) */}
+            <DeployTabs
+              slug={site.slug ?? id}
+              mcpConnectorUrl={`${MCP_URL.replace(/\/$/, "")}/mcp`}
             />
-          </CardContent>
-        </Card>
-      ) : null}
+          </>
+        }
+        details={
+          <>
+            {/* Current version */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Current version</CardTitle>
+                <CardDescription>
+                  The immutable deploy this site is pointed at. Roll back by
+                  publishing an earlier version id.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Detail label="Version id" value={site.current_version_id ?? "None"} mono />
+                <Detail label="Site id" value={site.id ?? id} mono />
+                {/* Logical storage = this site's current-version size (not
+                    deduplicated across sites). 0 before the first deploy. */}
+                <Detail label="Storage" value={formatBytes(site.storage_bytes ?? 0)} />
+                <Detail
+                  label="Created"
+                  value={
+                    site.created_at
+                      ? new Date(site.created_at).toLocaleString()
+                      : "Unknown"
+                  }
+                />
+              </CardContent>
+            </Card>
 
-      {/* Comments: org-internal discussion, with @mentions of teammates. */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Comments</CardTitle>
-          <CardDescription>
-            Discuss this site with your team. Tag a teammate to loop them in.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <SiteComments
-            siteId={site.id ?? id}
-            initialComments={comments}
-            members={commentMembers}
-            currentUserId={org?.myUserId ?? null}
-            addAction={addCommentAction}
-          />
-        </CardContent>
-      </Card>
+            {/* How this was made: the site's attached chat log, when one exists. */}
+            {siteChat?.chat_log?.id ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <MessageSquareText className="size-4 text-muted-foreground" aria-hidden />
+                    How this was made
+                  </CardTitle>
+                  <CardDescription>
+                    The AI conversation behind this site —{" "}
+                    {siteChat.chat_log.message_count ?? siteChat.messages?.length ?? 0}{" "}
+                    {(siteChat.chat_log.message_count ?? siteChat.messages?.length ?? 0) === 1
+                      ? "message"
+                      : "messages"}{" "}
+                    from {sourceToolLabel(siteChat.chat_log.source_tool)}.{" "}
+                    <Link
+                      href={`/chats/${siteChat.chat_log.id}`}
+                      className="font-medium text-foreground underline-offset-4 hover:underline"
+                    >
+                      Read the transcript
+                    </Link>
+                    .
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ChatPanelToggle
+                    chatId={siteChat.chat_log.id}
+                    initialEnabled={siteChat.chat_log.panel_enabled ?? false}
+                    disabled={
+                      !(
+                        (org && canManage(org.myRole)) ||
+                        (!!org?.myUserId && siteChat.chat_log.created_by === org.myUserId)
+                      )
+                    }
+                    hasSite
+                  />
+                </CardContent>
+              </Card>
+            ) : null}
+          </>
+        }
+        comments={
+          /* Comments: org-internal discussion, with @mentions of teammates. */
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Comments</CardTitle>
+              <CardDescription>
+                Discuss this site with your team. Tag a teammate to loop them in.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SiteComments
+                siteId={site.id ?? id}
+                initialComments={comments}
+                members={commentMembers}
+                currentUserId={org?.myUserId ?? null}
+                addAction={addCommentAction}
+              />
+            </CardContent>
+          </Card>
+        }
+      />
     </div>
   );
 }
