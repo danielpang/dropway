@@ -1380,3 +1380,154 @@ UPDATE app.api_keys
 SET last_used_at = now()
 WHERE id = $1 AND org_id = $2
   AND (last_used_at IS NULL OR last_used_at < now() - interval '5 minutes');
+
+-- ===========================================================================
+-- org memory — durable per-org facts + extraction watermarks + content chunks
+-- (migration 0017). Embeddings travel as text ('[f1,f2,...]') behind ::vector
+-- casts; the API never scans them back.
+-- ===========================================================================
+
+-- name: LockOrgMemoryQuota :exec
+-- Serialize concurrent memory creates for the SAME org (the same COUNT →
+-- policy → INSERT critical section the site/skill/chat caps use).
+SELECT pg_advisory_xact_lock(hashtext($1::text || ':org_memories'));
+
+-- name: CountOrgMemories :one
+SELECT COUNT(*) FROM app.org_memories
+WHERE org_id = $1;
+
+-- name: UpsertOrgMemory :one
+-- Insert a memory, or — when the same normalized content already exists for
+-- the org — refresh its updated_at/source instead. Never resurrects a
+-- disabled row (the flag survives the upsert). `inserted` distinguishes a
+-- genuinely new fact from a refresh (xmax = 0 only on freshly inserted rows).
+INSERT INTO app.org_memories (org_id, kind, content, content_hash, embedding, embedding_model, source_kind, source_id, source_tool, created_by)
+VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8, $9, $10)
+ON CONFLICT (org_id, content_hash) DO UPDATE
+SET updated_at = now(), source_kind = EXCLUDED.source_kind, source_id = EXCLUDED.source_id
+RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at, (xmax = 0) AS inserted;
+
+-- name: GetOrgMemory :one
+SELECT id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at
+FROM app.org_memories
+WHERE id = $1 AND org_id = $2;
+
+-- name: ListOrgMemories :many
+-- Filterable list for the dashboard/CLI: empty kind/query match everything;
+-- pinned_only/include_disabled narrow or widen. Pinned rows sort first.
+SELECT id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at
+FROM app.org_memories
+WHERE org_id = $1
+  AND ($2::text = '' OR kind = $2::text)
+  AND ($3::text = '' OR content ILIKE '%' || $3::text || '%')
+  AND (NOT $4::boolean OR pinned)
+  AND ($5::boolean OR NOT disabled)
+ORDER BY pinned DESC, updated_at DESC
+LIMIT $6 OFFSET $7;
+
+-- name: ListPinnedOrgMemories :many
+-- The always-injected set (pinned, not disabled), newest first.
+SELECT id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at
+FROM app.org_memories
+WHERE org_id = $1 AND pinned AND NOT disabled
+ORDER BY updated_at DESC
+LIMIT $2;
+
+-- name: SearchOrgMemories :many
+-- Cosine ANN over the org's enabled, embedded rows produced by the active
+-- embedding model. Pinned rows are excluded here (fetched separately, always
+-- included) so the k budget goes to genuinely retrieved memories.
+SELECT id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at,
+       (embedding <=> $2::vector)::float8 AS distance
+FROM app.org_memories
+WHERE org_id = $1 AND NOT disabled AND NOT pinned
+  AND embedding IS NOT NULL AND embedding_model = $3
+ORDER BY embedding <=> $2::vector
+LIMIT $4;
+
+-- name: UpdateOrgMemoryContent :one
+-- Admin edit: new content implies a new hash + embedding (the caller
+-- re-embeds before calling).
+UPDATE app.org_memories
+SET content = $3, content_hash = $4, embedding = $5::vector, embedding_model = $6, kind = $7, updated_at = now()
+WHERE id = $1 AND org_id = $2
+RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at;
+
+-- name: SetOrgMemoryPinned :one
+UPDATE app.org_memories
+SET pinned = $3, updated_at = now()
+WHERE id = $1 AND org_id = $2
+RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at;
+
+-- name: SetOrgMemoryDisabled :one
+UPDATE app.org_memories
+SET disabled = $3, updated_at = now()
+WHERE id = $1 AND org_id = $2
+RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at;
+
+-- name: DeleteOrgMemory :execrows
+DELETE FROM app.org_memories
+WHERE id = $1 AND org_id = $2;
+
+-- name: TouchOrgMemoriesUsed :exec
+-- Best-effort retrieval stamp for the dashboard's "last used" column.
+UPDATE app.org_memories
+SET last_used_at = now()
+WHERE org_id = $1 AND id = ANY($2::uuid[]);
+
+-- name: GetMemoryEnabled :one
+SELECT memory_enabled FROM app.org_meta WHERE id = $1;
+
+-- name: SetMemoryEnabled :exec
+-- Org-level memory kill switch (owner/admin only, enforced in Go), the exact
+-- analog of SetAIEnabled.
+UPDATE app.org_meta
+SET memory_enabled = $2
+WHERE id = $1;
+
+-- name: GetMemoryIngest :one
+SELECT org_id, source_kind, source_id, through_seq, updated_at
+FROM app.org_memory_ingests
+WHERE org_id = $1 AND source_kind = $2 AND source_id = $3;
+
+-- name: UpsertMemoryIngest :exec
+-- Advance an extraction watermark. GREATEST keeps it monotonic under races.
+INSERT INTO app.org_memory_ingests (org_id, source_kind, source_id, through_seq)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (org_id, source_kind, source_id) DO UPDATE
+SET through_seq = GREATEST(app.org_memory_ingests.through_seq, EXCLUDED.through_seq), updated_at = now();
+
+-- name: DeleteContentChunksForVersion :execrows
+DELETE FROM app.org_content_chunks
+WHERE org_id = $1 AND version_id = $2;
+
+-- name: DeleteContentChunksForSkill :execrows
+DELETE FROM app.org_content_chunks
+WHERE org_id = $1 AND skill_id = $2;
+
+-- name: InsertContentChunk :exec
+INSERT INTO app.org_content_chunks (org_id, source_kind, version_id, site_id, skill_id, path, chunk_seq, content, embedding, embedding_model)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10)
+ON CONFLICT DO NOTHING;
+
+-- name: SearchContentChunks :many
+-- Cosine ANN over the org's content chunks, labeled with the owning site or
+-- skill slug so retrieval output can say where a passage came from. Site
+-- chunks are limited to each site's CURRENT version (stale drafts and old
+-- publishes don't pollute retrieval).
+SELECT c.id, c.source_kind, c.path, c.chunk_seq, c.content,
+       s.slug AS site_slug, sk.slug AS skill_slug,
+       (c.embedding <=> $2::vector)::float8 AS distance
+FROM app.org_content_chunks c
+LEFT JOIN app.sites s ON s.id = c.site_id
+LEFT JOIN app.skills sk ON sk.id = c.skill_id
+WHERE c.org_id = $1 AND c.embedding IS NOT NULL AND c.embedding_model = $3
+  AND (c.source_kind <> 'site_version' OR s.current_version_id = c.version_id)
+ORDER BY c.embedding <=> $2::vector
+LIMIT $4;
+
+-- name: GetOrgMemoryByHash :one
+-- The quota check's refresh probe: at cap, an upsert may still refresh an
+-- existing row (same hash) but must not insert a new one.
+SELECT id FROM app.org_memories
+WHERE org_id = $1 AND content_hash = $2;
