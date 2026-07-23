@@ -518,6 +518,12 @@ existing convention (never in `fly.toml`).
    edit/pin/delete stay admin-only.
 6. **Remaining P2 items** — the extraction backfill job over historical
    transcripts and the `memory_used` builder-UI indicator.
+7. **Graph memory** — DECIDED (2026-07-23): not now; keep flat memory +
+   content chunks. If/when built, it will be entities + typed edges as
+   ordinary RLS-scoped Postgres rows with embedding-based entity linking (the
+   shallow-graph shape Mem0 itself retreated to after removing Neo4j from
+   OSS), not a graph database. The current schema and extraction pipeline
+   don't block it.
 
 ## 13. Delivery phases
 
