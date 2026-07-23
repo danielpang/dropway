@@ -11,6 +11,7 @@ import { CollabToggle } from "@/components/collab-toggle";
 import { api, ApiError, type Skill, type SkillDownload } from "@/lib/api";
 import { canManage, loadActiveOrg } from "@/lib/org";
 import { isSafeSkillPath } from "@/lib/skills-shared";
+import { isUuid } from "@/lib/utils";
 import { SkillDetailActions } from "@/components/skills/skill-detail-actions";
 import { SkillFeedToggle } from "@/components/skills/skill-feed-toggle";
 
@@ -20,6 +21,8 @@ export async function generateMetadata(props: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await props.params;
+  // Skip the API round-trip for non-id path segments (favicon/crawler probes).
+  if (!isUuid(id)) return { title: "Skill" };
   try {
     const skill = await api.getSkill(id);
     return { title: `${skill.title || skill.slug} · Skills` };
@@ -43,6 +46,11 @@ export default async function SkillDetailPage(props: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await props.params;
+
+  // A skill id is always a UUID; a non-UUID segment is a stray probe (e.g. a
+  // favicon fetched relative to this URL) — 404 before any authenticated read so
+  // its 401 is never rethrown as a server error (noisy error tracking).
+  if (!isUuid(id)) notFound();
 
   let skill: Skill;
   try {

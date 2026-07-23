@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/card";
 import { api, ApiError, type ChatLog, type ChatMessage, type Site } from "@/lib/api";
 import { canManage as roleCanManage, loadActiveOrg } from "@/lib/org";
+import { isUuid } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,8 @@ export async function generateMetadata(props: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await props.params;
+  // Skip the API round-trip for non-id path segments (favicon/crawler probes).
+  if (!isUuid(id)) return { title: "Chat" };
   try {
     const chat = await api.getChat(id);
     return { title: `${chat.title || "Untitled session"} · Chats` };
@@ -45,6 +48,11 @@ export default async function ChatDetailPage(props: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await props.params;
+
+  // A chat id is always a UUID; a non-UUID segment is a stray probe (e.g. a
+  // favicon fetched relative to this URL) — 404 before any authenticated read so
+  // its 401 is never rethrown as a server error (noisy error tracking).
+  if (!isUuid(id)) notFound();
 
   let chat: ChatLog;
   try {
