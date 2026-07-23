@@ -197,6 +197,61 @@ export type SetAccessResult =
 export type AllowExternalResult =
   operations["setAllowExternalSharing"]["responses"]["200"]["content"]["application/json"];
 
+// ---- Company memory (org-wide durable AI memory) ---------------------------
+//
+// NOTE: like the Phase-4 audit types above, the /v1/orgs/memory and
+// /v1/ai/memories endpoints are NOT YET in services/api/openapi/openapi.yaml,
+// so these shapes are hand-written to the Go API's contract.
+//
+// TODO(memory): once the memory endpoints land in openapi.yaml, run
+// `pnpm gen:api` and replace these with components["schemas"]["Memory"] etc.
+
+/** Where a memory came from: extracted from AI builds / shared chats / site deploys, or typed in by hand. */
+export type MemorySourceKind =
+  | "ai_session"
+  | "chat_log"
+  | "site_version"
+  | "manual";
+
+/** The writable memory kinds (the API also accepts/returns future kinds as plain strings). */
+export type MemoryKind = "fact" | "preference" | "style" | "correction" | "manual";
+
+/** One durable org memory (a fact/preference/style note the AI recalls in future builds). */
+export interface Memory {
+  id: string;
+  /** Categorization ("fact" | "preference" | "style" | "correction" | "manual" today). */
+  kind: string;
+  content: string;
+  source_kind: MemorySourceKind;
+  /** Id of the originating session/chat/version, when source_kind isn't "manual". */
+  source_id?: string;
+  /** The tool that recorded it (e.g. the MCP tool name), when set. */
+  source_tool?: string;
+  /** Pinned memories are always injected (surfaced first in search, no distance). */
+  pinned: boolean;
+  /** Disabled memories are kept but never recalled. */
+  disabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string;
+  /** Vector distance to the search query (absent for pinned rows in search results). */
+  distance?: number;
+}
+
+/** The org's memory settings + usage (GET/PATCH /v1/orgs/memory). */
+export interface MemorySettings {
+  memory_enabled: boolean;
+  /** Memories currently stored for the org. */
+  count: number;
+  /** The org's memory cap; 0/absent = unlimited. */
+  max?: number;
+  /**
+   * False when the org's plan tier excludes memory (free on hosted Dropway) —
+   * render the upgrade prompt instead of the toggle. Always true self-host.
+   */
+  plan_allowed: boolean;
+}
+
 // ---- Shared error envelope ------------------------------------------------
 
 /**
@@ -1400,6 +1455,120 @@ export const api = {
     return apiFetch<{ enabled: boolean }>("/v1/orgs/chat-logs", {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
+    });
+  },
+
+  // ---- Company memory (org-wide durable AI memory) --------------------------
+  //
+  // The /v1/ai/memories routes are gated on the org memory_enabled flag (403
+  // when off) and 503 when the deployment has no embeddings configured. The
+  // settings routes work even when the org flag is off, so the settings page
+  // can always render the toggle; only the 503 hides the feature entirely.
+
+  /**
+   * The org's memory settings: the enabled toggle plus stored count and cap
+   * (max 0/absent = unlimited). Any member may read it. 503 (ApiError) when the
+   * deployment has no embeddings configured — callers hide the feature then.
+   */
+  getMemorySettings(): Promise<MemorySettings> {
+    return apiGet("/v1/orgs/memory") as Promise<MemorySettings>;
+  },
+
+  /**
+   * Toggle whether company memory is available to this org (owner/admin only →
+   * 403). Enforced on every /v1/ai/memories call, so disabling stops recall and
+   * writes immediately; stored memories are kept, not deleted.
+   */
+  setMemoryEnabled(enabled: boolean): Promise<MemorySettings> {
+    return apiFetch<MemorySettings>("/v1/orgs/memory", {
+      method: "PATCH",
+      body: JSON.stringify({ memory_enabled: enabled }),
+    });
+  },
+
+  /**
+   * List/filter the org's memories (any member). `q` is a plain list filter;
+   * use searchMemories for semantic recall. 403 when the org flag is off.
+   */
+  async listMemories(
+    opts: {
+      kind?: string;
+      q?: string;
+      pinned?: boolean;
+      disabled?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<Memory[]> {
+    const params = new URLSearchParams();
+    if (opts.kind) params.set("kind", opts.kind);
+    if (opts.q) params.set("q", opts.q);
+    if (opts.pinned) params.set("pinned", "true");
+    if (opts.disabled) params.set("disabled", "true");
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    const body = (await apiGet(`/v1/ai/memories${qs ? `?${qs}` : ""}`)) as {
+      memories?: Memory[];
+    };
+    return body.memories ?? [];
+  },
+
+  /**
+   * Record a memory by hand (any member). Deduplicated server-side: `created`
+   * is false when an equivalent memory already existed. 422 with body
+   * `{error:"quota"}` when the org is at its memory cap.
+   */
+  async createMemory(input: {
+    content: string;
+    kind?: MemoryKind;
+  }): Promise<{ memory: Memory; created: boolean }> {
+    const body = await apiFetch<{ memory: Memory; created?: boolean }>(
+      "/v1/ai/memories",
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    return { memory: body.memory, created: body.created ?? true };
+  },
+
+  /**
+   * Semantic search over the org's memories (any member): pinned memories first
+   * (no distance), then the k nearest by embedding distance.
+   */
+  async searchMemories(query: string, k?: number): Promise<Memory[]> {
+    const body = await apiFetch<{ memories?: Memory[] }>(
+      "/v1/ai/memories/search",
+      {
+        method: "POST",
+        body: JSON.stringify(k != null ? { query, k } : { query }),
+      },
+    );
+    return body.memories ?? [];
+  },
+
+  /**
+   * Edit a memory: content/kind rewrites, pin/unpin, disable/enable (any subset
+   * of fields). Admin-only → 403 otherwise.
+   */
+  async patchMemory(
+    id: string,
+    input: {
+      content?: string;
+      kind?: string;
+      pinned?: boolean;
+      disabled?: boolean;
+    },
+  ): Promise<Memory> {
+    const body = await apiFetch<{ memory: Memory }>(
+      `/v1/ai/memories/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+    );
+    return body.memory;
+  },
+
+  /** Permanently delete a memory (admin-only → 403). 204 on success. */
+  async deleteMemory(id: string): Promise<void> {
+    await apiFetch<void>(`/v1/ai/memories/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     });
   },
 };
