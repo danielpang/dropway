@@ -88,9 +88,42 @@ func (a *API) extractChatMemoriesAsync(r *http.Request, t store.Tenant, logID st
 // maxMemoryContentBytes bounds one memory's content (~2 KB per the scope doc).
 const maxMemoryContentBytes = 2048
 
+// MemoryGate decides whether an org may use org memory beyond the org-level
+// memory_enabled switch. The cloud build gates it to Pro and above; OSS
+// leaves it nil (allow all — self-host is BYO embeddings key). Same shape as
+// AIGate; the cloud adapter satisfies both.
+type MemoryGate interface {
+	AllowMemory(ctx context.Context, t store.Tenant) (allowed bool, reason string, err error)
+}
+
+// memoryPlanRequiredMessage is the upgrade message every gated surface (API,
+// and therefore MCP tools and the CLI, which relay the API's error body)
+// shows a free org.
+const memoryPlanRequiredMessage = "org memory requires a Pro plan or above; upgrade your plan in billing to use memory"
+
+// requireMemoryPlan runs only the plan gate (used by the settings PATCH,
+// which must be reachable to READ state but not toggleable on free).
+func (a *API) requireMemoryPlan(w http.ResponseWriter, r *http.Request, t store.Tenant) bool {
+	if a.MemoryGate == nil {
+		return true
+	}
+	allowed, _, err := a.MemoryGate.AllowMemory(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return false
+	}
+	if !allowed {
+		httpx.WriteJSON(w, http.StatusPaymentRequired,
+			httpx.ErrorBody{Error: "plan_required", Message: memoryPlanRequiredMessage})
+		return false
+	}
+	return true
+}
+
 // requireMemory guards the memory routes: the feature must be wired
-// (Memory + MemoryEmbedder set) and, unless settingsOnly, the org's
-// memory_enabled flag on. Mirrors requireAI's shape.
+// (Memory + MemoryEmbedder set), the org's plan must allow it (Pro+ on the
+// hosted build), and, unless settingsOnly, the org's memory_enabled flag on.
+// Mirrors requireAI's shape.
 func (a *API) requireMemory(w http.ResponseWriter, r *http.Request, t store.Tenant, settingsOnly bool) bool {
 	if a.Memory == nil || a.MemoryEmbedder == nil {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable,
@@ -98,7 +131,12 @@ func (a *API) requireMemory(w http.ResponseWriter, r *http.Request, t store.Tena
 		return false
 	}
 	if settingsOnly {
+		// GET settings stays readable on any plan so the dashboard can render
+		// the upgrade state; writes go through requireMemoryPlan explicitly.
 		return true
+	}
+	if !a.requireMemoryPlan(w, r, t) {
+		return false
 	}
 	enabled, err := a.Memory.MemoryEnabled(r.Context(), t)
 	if err != nil {
@@ -450,6 +488,10 @@ type memorySettingsResponse struct {
 	Enabled bool  `json:"memory_enabled"`
 	Count   int64 `json:"count"`
 	Max     int   `json:"max,omitempty"`
+	// PlanAllowed is false when the org's plan tier excludes memory (free on
+	// the hosted build) — the dashboard renders an upgrade prompt instead of
+	// the toggle. Always true on OSS/self-host.
+	PlanAllowed bool `json:"plan_allowed"`
 }
 
 func (a *API) GetMemorySettings(w http.ResponseWriter, r *http.Request) {
@@ -461,6 +503,15 @@ func (a *API) GetMemorySettings(w http.ResponseWriter, r *http.Request) {
 	if !a.requireMemory(w, r, t, true) {
 		return
 	}
+	planAllowed := true
+	if a.MemoryGate != nil {
+		allowed, _, err := a.MemoryGate.AllowMemory(r.Context(), t)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		planAllowed = allowed
+	}
 	enabled, err := a.Memory.MemoryEnabled(r.Context(), t)
 	if err != nil {
 		writeStoreError(w, err)
@@ -471,7 +522,9 @@ func (a *API) GetMemorySettings(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, memorySettingsResponse{Enabled: enabled, Count: count, Max: a.MemoryMaxPerOrg})
+	httpx.WriteJSON(w, http.StatusOK, memorySettingsResponse{
+		Enabled: enabled, Count: count, Max: a.MemoryMaxPerOrg, PlanAllowed: planAllowed,
+	})
 }
 
 type patchMemorySettingsRequest struct {
@@ -485,6 +538,10 @@ func (a *API) PatchMemorySettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.requireMemory(w, r, t, true) {
+		return
+	}
+	// A free org can READ the settings (upgrade prompt) but not enable memory.
+	if !a.requireMemoryPlan(w, r, t) {
 		return
 	}
 	if !a.requireAdmin(w, r, t) {

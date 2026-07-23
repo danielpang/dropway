@@ -63,6 +63,8 @@ type Runner struct {
 	MemoryExtractModel string
 	MemoryTopK         int
 	MemoryMaxPerOrg    int
+	// MemoryGate plan-gates memory (cloud: Pro+; nil → allow all).
+	MemoryGate MemoryGate
 	// Logger receives the async transcript writer's warnings/errors (writes
 	// happen off the request path, so there is no request logger to use).
 	// Nil → slog.Default().

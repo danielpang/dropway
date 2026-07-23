@@ -165,6 +165,12 @@ func (g cloudAIGate) AllowAI(ctx context.Context, t store.Tenant) (bool, string,
 	return g.meter.AllowAIForOrg(ctx, t.OrgID)
 }
 
+// AllowMemory makes the same adapter satisfy handlers.MemoryGate and
+// ai.MemoryGate (org memory is Pro+ on the hosted build).
+func (g cloudAIGate) AllowMemory(ctx context.Context, t store.Tenant) (bool, string, error) {
+	return g.meter.AllowMemoryForOrg(ctx, t.OrgID)
+}
+
 func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	if deps.Pool == nil {
 		slog.Warn("cloud billing NOT mounted: no DATABASE_URL (billing requires Postgres)")
@@ -183,6 +189,10 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	if deps.API != nil {
 		meter := cloudbilling.NewAIMeter(deps.Pool, deps.Cfg.StripeSecretKey)
 		deps.API.AIGate = cloudAIGate{meter: meter}
+		// Org memory is Pro+ on the hosted build: gate the /v1/ai/memories +
+		// /v1/orgs/memory surface AND the runner's in-loop/async paths
+		// (extraction, content indexing) with the same tier check.
+		deps.API.MemoryGate = cloudAIGate{meter: meter}
 		// Align the AI spend window (cap enforcement AND the dashboard usage
 		// display) to the org's exact Stripe billing period, so the number the user
 		// sees reconciles with the invoice period and can't disagree with a 402.
@@ -199,6 +209,7 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 		if deps.AIRunner != nil {
 			deps.AIRunner.UsageReporter = meter
 			deps.AIRunner.PeriodStart = billingPeriodStart
+			deps.AIRunner.MemoryGate = cloudAIGate{meter: meter}
 			slog.Info("cloud AI metering wired (pass-through OpenRouter cost + 3% fee, billing-period-aligned)")
 		}
 	}

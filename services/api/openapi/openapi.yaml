@@ -906,6 +906,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MemorySettings" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503": { $ref: "#/components/responses/Unavailable" }
     patch:
       summary: Update the org memory kill switch (admin/owner)
@@ -926,6 +931,11 @@ paths:
               schema: { $ref: "#/components/schemas/MemorySettings" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
@@ -947,6 +957,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MemoryList" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/Unavailable" }
     post:
@@ -980,6 +995,11 @@ paths:
               schema: { $ref: "#/components/schemas/MemoryWrite" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422":
           description: Org memory cap reached
@@ -1014,6 +1034,11 @@ paths:
               schema: { $ref: "#/components/schemas/MemoryList" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "502":
           description: Embeddings provider unavailable
@@ -1050,6 +1075,11 @@ paths:
                   memory: { $ref: "#/components/schemas/Memory" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
@@ -1061,6 +1091,11 @@ paths:
       responses:
         "204": { description: Deleted }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: Plan does not include org memory (Pro+ required)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/Unavailable" }
@@ -2832,6 +2867,12 @@ components:
         memory_enabled: { type: boolean }
         count: { type: integer, format: int64, description: Memory rows stored for the org. }
         max: { type: integer, description: Per-org row cap (absent/0 = unlimited). }
+        plan_allowed:
+          type: boolean
+          description: >
+            False when the org's plan tier excludes memory (free on hosted
+            Dropway; memory is Pro and above). Gated endpoints return 402
+            plan_required. Always true on OSS/self-host.
 
     Memory:
       type: object

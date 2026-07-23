@@ -158,6 +158,8 @@ type API struct {
 	Memory          MemoryStore
 	MemoryEmbedder  MemoryEmbedder
 	MemoryMaxPerOrg int
+	// MemoryGate plan-gates the memory surface (cloud: Pro+; nil → allow all).
+	MemoryGate MemoryGate
 	// MemoryExtract runs async extraction over shared chat logs (*ai.Runner).
 	// nil → chat shares/appends don't feed memory.
 	MemoryExtract MemoryExtractor

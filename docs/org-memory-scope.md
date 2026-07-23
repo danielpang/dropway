@@ -502,9 +502,15 @@ existing convention (never in `fly.toml`).
    recoverable via the per-row `embedding_model` tag and the §3.5 procedure.
 2. **Retrieval latency budget** — DECIDED (default taken): hard 2 s timeout,
    fail-open memory-less.
-3. **Cloud tier gating** — DECIDED (default taken): no extra tier gate at
-   launch beyond the per-org `memory_enabled` flag; cloud gating can be added
-   in mountCloud later without schema changes.
+3. **Cloud tier gating** — DECIDED (revised 2026-07-23): memory is **Pro and
+   above** on the hosted build. A `MemoryGate` (same adapter as the AI
+   builder's plan gate, reading `billing.subscriptions.plan_tier`) guards the
+   API surface — free orgs get `402 plan_required` with "org memory requires a
+   Pro plan or above; upgrade your plan in billing to use memory", which the
+   MCP tools and CLI relay verbatim — and the runner's retrieval/extraction/
+   indexing paths. `GET /v1/orgs/memory` stays readable on any plan and
+   reports `plan_allowed` so the dashboard renders an upgrade prompt. OSS
+   self-host is ungated (nil gate).
 4. **Extraction sources** — DECIDED: builder sessions, shared chat logs
    (extraction fires on share/append), AND published site + skill content
    (chunk indexing, §6.4) are all in P1.

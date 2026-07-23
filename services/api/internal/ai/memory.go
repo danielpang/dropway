@@ -20,6 +20,14 @@ type Embedder interface {
 	ModelID() string
 }
 
+// MemoryGate plan-gates org memory (the cloud build requires Pro+; OSS leaves
+// it nil = allowed). The same cloud adapter satisfies the handlers' gate, so
+// the loop's retrieval/extraction/indexing can never run for an org the API
+// surface refuses.
+type MemoryGate interface {
+	AllowMemory(ctx context.Context, t store.Tenant) (allowed bool, reason string, err error)
+}
+
 // Memory tuning defaults; overridable via the Runner fields.
 const (
 	defaultMemoryTopK = 8
@@ -50,10 +58,18 @@ func (r *Runner) memoryTopK() int32 {
 }
 
 // memoryEnabled reports whether memory should run for this org: the feature
-// must be wired (Embedder set) AND the org's memory_enabled flag on.
+// must be wired (Embedder set), the org's plan must allow it (fail-closed on
+// gate errors — memory is an enhancement, never worth a wrong grant), AND the
+// org's memory_enabled flag on.
 func (r *Runner) memoryEnabled(ctx context.Context, t store.Tenant) bool {
 	if r.Embedder == nil {
 		return false
+	}
+	if r.MemoryGate != nil {
+		allowed, _, err := r.MemoryGate.AllowMemory(ctx, t)
+		if err != nil || !allowed {
+			return false
+		}
 	}
 	enabled, err := r.Store.MemoryEnabled(ctx, t)
 	if err != nil {
