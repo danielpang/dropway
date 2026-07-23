@@ -17,7 +17,7 @@ learned. The org's activity already produces the raw material — full transcrip
 in `app.ai_messages`, shared chats in `app.chat_messages`, published site
 content in R2 (`app.site_versions`) — but none of it feeds forward.
 
-This feature adds an **org-scoped memory store** with three moving parts:
+This feature adds an **org-scoped memory store** with four moving parts:
 
 1. **Extraction** — after each builder turn, an async LLM pass distills durable
    facts (brand voice, palette, product names, structural preferences,
@@ -26,6 +26,11 @@ This feature adds an **org-scoped memory store** with three moving parts:
    pinned ones) are injected into the system context of the agent loop.
 3. **Curation** — a dashboard Memory page where org admins view, pin, edit,
    disable, and delete what Dropway has learned.
+4. **External agent access** — the same memory is exposed through the Dropway
+   MCP server and CLI, so outside coding agents (Cursor, Claude Code, Codex,
+   …) building for the org can read — and contribute to — company memory, not
+   just the built-in AI builder. Dropway becomes the org's memory provider
+   across tools.
 
 ### Goals
 
@@ -35,6 +40,9 @@ This feature adds an **org-scoped memory store** with three moving parts:
 - Memory is visible, editable, and deletable per org (trust + compliance).
 - Memory is strictly org-isolated with the same guarantees as every other
   tenant table.
+- Memory follows the user into external coding agents: MCP tools
+  (`search_memory`, `add_memory`, …) and `dropway memory` CLI commands give
+  Cursor / Claude Code / Codex the same org context the builder gets.
 
 ### Non-goals (this phase)
 
@@ -83,7 +91,18 @@ builder turn (ai.Runner.RunTurn)
        turn transcript → LLM extraction prompt → candidate memories
        → embed → dedupe (content hash + similarity) → upsert org_memories
        → cost recorded to ai_usage (same ledger/meter as generations)
+
+external agents (Cursor / Claude Code / Codex / CLI)
+  ├─ MCP tools (services/mcp) ──┐   search_memory / list_memories / add_memory
+  └─ dropway memory … (cli/) ───┴─→ Go API /v1/ai/memories* endpoints
+                                     (API owns the embedder; MCP/CLI never
+                                      embed — one vendor seam, one quota path)
 ```
+
+The Go API is the **only** component that talks to the embeddings provider and
+the only writer of memory rows. The MCP server and CLI are thin clients of the
+API's memory endpoints (§7.1), exactly like the MCP write tools forward to the
+API today (`services/mcp/internal/apiclient`).
 
 ## 3. Database changes — migration `db/migrations/app/0017_org_memory.sql`
 
@@ -111,8 +130,9 @@ Prod note: on Supabase the extension must be enabled for the database
 | `content` | `text NOT NULL` | the memory sentence(s); bounded (~2 KB) at the store layer |
 | `content_hash` | `text NOT NULL` | sha256 of normalized content; `UNIQUE (org_id, content_hash)` for cheap exact dedupe |
 | `embedding` | `vector(1536)` | dimension pinned by the chosen embedding model (§5); nullable so a failed embed can be repaired by sweep |
-| `source_kind` | `text NOT NULL CHECK (source_kind IN ('ai_session','chat_log','site_version','manual'))` | provenance for the UI |
+| `source_kind` | `text NOT NULL CHECK (source_kind IN ('ai_session','chat_log','site_version','manual'))` | provenance for the UI; MCP/CLI-authored rows are `manual` |
 | `source_id` | `uuid` | no FK — sources may be GC'd while the memory persists |
+| `source_tool` | `text` | attribution for externally added memories (`'cursor'`, `'claude-code'`, `'cli'`, …), mirroring `chat_logs.source_tool`; NULL for extracted/dashboard rows |
 | `pinned` | `boolean NOT NULL DEFAULT false` | pinned memories are always injected |
 | `disabled` | `boolean NOT NULL DEFAULT false` | user-suppressed; never retrieved, kept so extraction dedupe doesn't resurrect it |
 | `created_by` | `uuid` | NULL for extracted, user id for manual |
@@ -308,30 +328,90 @@ site content indexed, not just conversation. Deferred to P2 within this scope:
 
 P1 ships conversation-derived memory only; the schema above doesn't block P2.
 
-## 7. HTTP API — memory CRUD
+## 7. Memory access surfaces — HTTP API, MCP, CLI
 
-New handler file `services/api/internal/handlers/aimemory.go`, mounted under the
-existing authenticated `/v1` router; all admin-gated writes re-check live
-membership like other org-settings endpoints:
+The Go API is the single memory authority; the MCP server and CLI are clients
+of it. This keeps one embeddings seam, one quota/rate-limit path, one audit
+trail, and preserves the existing invariant that the API is the only writer
+(`services/mcp/internal/apiclient` doc comment).
+
+### 7.1 HTTP API — `services/api/internal/handlers/aimemory.go`
+
+Mounted under the existing authenticated `/v1` router; all admin-gated writes
+re-check live membership like other org-settings endpoints:
 
 | method & path | behavior |
 |---|---|
 | `GET /v1/ai/memories` | list (filter: kind, pinned, disabled, text query; paginated) — member |
-| `POST /v1/ai/memories` | create `manual` memory (server embeds; 422 over size cap) — admin |
+| `POST /v1/ai/memories/search` | **semantic search**: `{query, k?}` → ranked memories (server embeds the query; pinned included) — member. Shared by dashboard, MCP, and CLI |
+| `POST /v1/ai/memories` | create `manual` memory (server embeds; 422 over size cap; accepts optional `source_tool`) — member (see §12.5) |
 | `PATCH /v1/ai/memories/{id}` | edit content (re-embed), pin/unpin, disable/enable — admin |
 | `DELETE /v1/ai/memories/{id}` | hard delete — admin |
 | `GET /v1/ai/memory/settings` · `PATCH …` | `memory_enabled` toggle + usage (count vs quota) — admin write |
+
+Auth: accepted principals are dashboard JWTs, **MCP-audience OAuth tokens**
+(the API already accepts these when `MCP_PUBLIC_URL` is set — `config.go`
+`MCPAudience`), and **org API keys** (so headless agents/CI can use memory;
+rides the existing per-key rate limits, `APIKEY_RATELIMIT_*`). Search gets a
+modest additional per-principal rate limit since each call costs an embedding
+request.
 
 503 when the feature is unwired (no embeddings config), 403-style policy error
 when `memory_enabled=false`, matching the AI routes' conventions. Audit-log
 writes (`store/audit.go`) for create/edit/delete/toggle.
 
+### 7.2 MCP tools — `services/mcp/internal/tools/tools.go`
+
+New tools on the existing OAuth 2.1-protected MCP server, registered only when
+the control-plane client is configured (same conditional-registration pattern
+as the current write tools) and gated per org on `memory_enabled` **and**
+`mcp_enabled`:
+
+| tool | maps to | notes |
+|---|---|---|
+| `search_memory` | `POST /v1/ai/memories/search` | input `{query, k?}`; output: ranked `{content, kind, pinned, updated_at}` list. Tool description tells the agent to call it at task start ("fetch this organization's brand, style, and preference memory before building") |
+| `list_memories` | `GET /v1/ai/memories` | browse/paginate, e.g. to show the user what's known |
+| `add_memory` | `POST /v1/ai/memories` | input `{content, kind?, source_tool?}`; lets an external agent record a durable fact it learned while working ("their production domain is …"). Server-side dedupe applies, so over-eager agents converge instead of duplicating |
+
+All three go through the API (§7.1) rather than reading the DB directly —
+unlike the read-only site/skill tools — because search needs the embedder and
+writes must stay on the API's quota/audit path. The tenant comes from the
+validated OAuth token as today (`auth.TenantFromContext`); the forwarded
+bearer token authenticates the API call, identical to `create_site` et al.
+Scope coverage extends `cmd/mcp/main_scopes_test.go`.
+
+This is the headline external-agent integration: a user connects the Dropway
+MCP server in Cursor / Claude Code / Codex once, and every session in those
+tools can pull org memory before generating and deposit new facts after.
+
+### 7.3 CLI — `dropway memory` command group
+
+New cobra commands (`cli/internal/cmd/memory.go`) over a new
+`cli/internal/api/memory.go` client, using the CLI's existing OAuth login (or
+an org API key, once the CLI grows key auth):
+
+```
+dropway memory search "<query>" [-k 8] [--json]
+dropway memory list [--kind …] [--pinned] [--json]
+dropway memory add "<content>" [--kind preference] # stamps source_tool=cli
+dropway memory pin <id> | unpin <id> | rm <id>
+dropway memory context [--budget 1500] # top memories rendered as a ready-to-
+                                       # paste <company_memory> block
+```
+
+`--json` output and `memory context` are the agent-facing affordances: a
+coding agent (or a user's shell script / pre-commit hook / agent config) can
+inject `dropway memory context` into a prompt, and agents that prefer shelling
+out over MCP get the same data. Rendering reuses the same block format as §6.2
+so context looks identical regardless of which surface produced it.
+
 ## 8. Dashboard — `apps/dashboard`
 
 - **Memory page** (org settings → "Company memory", `components/ai/` +
   `app/(dashboard)/settings/memory` per the app's routing): table of memories
-  with kind badge, provenance (source_kind + link where the source still
-  exists), pinned toggle, disable toggle, inline edit, delete with confirm,
+  with kind badge, provenance (source_kind, `source_tool` attribution for
+  externally added rows, and a link where the source still exists), pinned
+  toggle, disable toggle, inline edit, delete with confirm,
   search box; "Add memory" for manual entries; empty/disabled states explaining
   the feature.
 - **Settings toggle**: `memory_enabled` switch beside the existing AI toggle,
@@ -394,19 +474,24 @@ existing convention (never in `fly.toml`).
    Affects only mountCloud gating, not the schema.
 4. **Extraction trigger for chat_logs** — turns are the natural trigger for
    `ai_sessions`; shared chat logs have no "turn end". Proposal: extract on
-   `append_chat`/`share_chat` MCP writes, watermarked the same way. Confirm
-   product wants chat logs in scope for P1.
-5. **P2 items in or out of first release train** — site-content chunks (§6.4)
-   and MCP `search_memory`/`add_memory` tools on the MCP server
-   (`services/mcp/`); both additive.
+   `append_chat`/`share_chat` MCP writes, watermarked the same way. External
+   agents sharing chats via MCP makes this the main path by which *their*
+   sessions feed memory, so proposal: in scope for P1.
+5. **Who may `add_memory`?** — Proposal: any org **member** (via dashboard,
+   MCP, or CLI), with admin-only edit/pin/delete, since external-agent
+   deposits are the point of the MCP surface and dedupe + quota bound the
+   blast radius. Alternative: admin-only writes everywhere, agents read-only.
+   Affects the §7.1 authz table only.
+6. **P2 items in or out of first release train** — site-content chunks (§6.4)
+   and the extraction backfill job; both additive.
 
 ## 13. Delivery phases
 
 | phase | contents | prerequisite decisions |
 |---|---|---|
 | **P0** | Migration 0017, store + sqlc, `internal/embeddings`, RLS tests | §12.1 |
-| **P1** | Retrieval + extraction in the agent loop, CRUD API, dashboard Memory page + toggle, quotas/metering, rollout steps 1–3 | §12.2–3 |
-| **P2** | Site-content chunk indexing, MCP memory tools, backfill job, `memory_used` UI polish | §12.4–5 |
+| **P1** | Retrieval + extraction in the agent loop; CRUD + search API (§7.1); MCP memory tools (§7.2); `dropway memory` CLI (§7.3); dashboard Memory page + toggle; quotas/metering; rollout steps 1–3 | §12.2–5 |
+| **P2** | Site-content chunk indexing, extraction backfill job, `memory_used` UI polish | §12.6 |
 
 Each phase is independently shippable; P0/P1 together deliver the user-visible
-"agent knows your company" loop.
+"agent knows your company" loop across the builder, MCP, and CLI.
