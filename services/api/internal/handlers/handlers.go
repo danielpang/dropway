@@ -149,6 +149,22 @@ type API struct {
 	// PeriodStart uses).
 	AISpendPeriodStart func(ctx context.Context, t store.Tenant) time.Time
 
+	// Org memory wiring (docs/org-memory-scope.md). Both optional: when either
+	// is nil the /v1/ai/memories + /v1/orgs/memory routes return 503 (self-host
+	// without an EMBEDDINGS_API_KEY, or a DB-less API). Memory is the data
+	// surface (*store.Store; separate from SiteStore like Keys); MemoryEmbedder
+	// is the embeddings client; MemoryMaxPerOrg caps rows per org (0 →
+	// unlimited).
+	Memory          MemoryStore
+	MemoryEmbedder  MemoryEmbedder
+	MemoryMaxPerOrg int
+	// MemoryExtract runs async extraction over shared chat logs (*ai.Runner).
+	// nil → chat shares/appends don't feed memory.
+	MemoryExtract MemoryExtractor
+	// MemoryIndex chunks + embeds published site/skill content for retrieval
+	// (*ai.Runner). nil → publishes aren't indexed.
+	MemoryIndex MemoryIndexer
+
 	// seededOrgs is a process-local set of org ids already observed as
 	// skills-seeded, so ensureSkillsSeeded can skip its per-request DB round-trip
 	// on the hot path (skills_seeded is monotonic, so a cached "seeded" never goes

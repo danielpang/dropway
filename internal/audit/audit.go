@@ -60,6 +60,15 @@ const (
 	// ActionMcpToggle records the org mcp_enabled toggle (PATCH /v1/orgs/mcp) —
 	// enabling/disabling the Dropway MCP server for the org.
 	ActionMcpToggle Action = "org.mcp_toggle"
+	// ActionMemoryToggle records the org memory_enabled toggle
+	// (PATCH /v1/orgs/memory).
+	ActionMemoryToggle Action = "org.memory_toggle"
+	// ActionMemoryCreate / Update / Delete record manual writes to the org's
+	// memory (POST/PATCH/DELETE /v1/ai/memories...). Extraction writes are NOT
+	// audited (they are machine-generated at conversation rate).
+	ActionMemoryCreate Action = "memory.create"
+	ActionMemoryUpdate Action = "memory.update"
+	ActionMemoryDelete Action = "memory.delete"
 	// ActionMemberRevoke records an admin revoking a member's edge tokens /
 	// removing them (POST /v1/members/{userId}/revoke).
 	ActionMemberRevoke Action = "member.revoke"

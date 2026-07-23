@@ -895,6 +895,176 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/orgs/memory:
+    get:
+      summary: Get the org memory settings (kill switch + row count/cap)
+      operationId: getMemorySettings
+      responses:
+        "200":
+          description: Memory settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemorySettings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    patch:
+      summary: Update the org memory kill switch (admin/owner)
+      operationId: patchMemorySettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory_enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemorySettings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/ai/memories:
+    get:
+      summary: List the org's memories (pinned first, then most recently updated)
+      operationId: listMemories
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [fact, preference, style, correction, manual] } }
+        - { name: q, in: query, schema: { type: string }, description: Substring filter over content. }
+        - { name: pinned, in: query, schema: { type: boolean }, description: Only pinned entries. }
+        - { name: disabled, in: query, schema: { type: boolean }, description: Include disabled entries (curation UI). }
+        - { name: limit, in: query, schema: { type: integer, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Memories
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemoryList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      summary: Record a memory (member)
+      description: >
+        Records one durable fact about the organization. Content dedupes per org
+        on its normalized hash — a repeat refreshes the existing entry instead
+        of inserting (created=false). 422 when the org is at its memory cap.
+      operationId: createMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, maxLength: 2048 }
+                kind: { type: string, enum: [fact, preference, style, correction, manual] }
+                source_tool: { type: string, description: "Recording agent, e.g. claude-code, cursor, cli." }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemoryWrite" }
+        "200":
+          description: Deduped (existing entry refreshed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemoryWrite" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Org memory cap reached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/ai/memories/search:
+    post:
+      summary: Semantic memory search (member)
+      description: >
+        Returns the org's pinned memories plus the top-k entries closest to the
+        query by cosine distance. The query is embedded server-side. Shared by
+        the dashboard, the MCP search_memory tool, and the CLI.
+      operationId: searchMemories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                k: { type: integer, maximum: 50 }
+      responses:
+        "200":
+          description: Pinned + retrieved memories
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemoryList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502":
+          description: Embeddings provider unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/ai/memories/{id}:
+    patch:
+      summary: Edit / pin / disable a memory (admin/owner)
+      operationId: patchMemory
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string, maxLength: 2048 }
+                kind: { type: string, enum: [fact, preference, style, correction, manual] }
+                pinned: { type: boolean }
+                disabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated memory
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memory: { $ref: "#/components/schemas/Memory" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      summary: Delete a memory (admin/owner)
+      operationId: deleteMemory
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
   /v1/sites/{id}/access:
     put:
       summary: Set a site's access mode + policy (admin/owner only)
@@ -2655,6 +2825,42 @@ components:
         ai_enabled: { type: boolean }
         ai_monthly_cap_usd: { type: number }
         spent_usd: { type: number, description: AI spend so far in the current calendar month (USD). }
+
+    MemorySettings:
+      type: object
+      properties:
+        memory_enabled: { type: boolean }
+        count: { type: integer, format: int64, description: Memory rows stored for the org. }
+        max: { type: integer, description: Per-org row cap (absent/0 = unlimited). }
+
+    Memory:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [fact, preference, style, correction, manual] }
+        content: { type: string }
+        source_kind: { type: string, enum: [ai_session, chat_log, site_version, manual] }
+        source_id: { type: string, format: uuid, nullable: true }
+        source_tool: { type: string, description: "Recording agent for externally added rows (claude-code, cursor, cli, …)." }
+        pinned: { type: boolean, description: Pinned memories are always injected into builder context. }
+        disabled: { type: boolean, description: Suppressed — never retrieved, kept so re-extraction can't resurrect it. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        distance: { type: number, description: Cosine distance to the query (search results only; lower = closer). }
+
+    MemoryList:
+      type: object
+      properties:
+        memories:
+          type: array
+          items: { $ref: "#/components/schemas/Memory" }
+
+    MemoryWrite:
+      type: object
+      properties:
+        memory: { $ref: "#/components/schemas/Memory" }
+        created: { type: boolean, description: False when the content deduped against an existing entry (refreshed instead). }
 
     Site:
       type: object
