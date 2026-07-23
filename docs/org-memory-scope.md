@@ -130,6 +130,7 @@ Prod note: on Supabase the extension must be enabled for the database
 | `content` | `text NOT NULL` | the memory sentence(s); bounded (~2 KB) at the store layer |
 | `content_hash` | `text NOT NULL` | sha256 of normalized content; `UNIQUE (org_id, content_hash)` for cheap exact dedupe |
 | `embedding` | `vector(1536)` | dimension pinned by the chosen embedding model (§5); nullable so a failed embed can be repaired by sweep |
+| `embedding_model` | `text NOT NULL` | which model produced `embedding` (e.g. `text-embedding-3-small`); makes a future model switch a lazy re-embed instead of a big-bang migration (§3.5) |
 | `source_kind` | `text NOT NULL CHECK (source_kind IN ('ai_session','chat_log','site_version','manual'))` | provenance for the UI; MCP/CLI-authored rows are `manual` |
 | `source_id` | `uuid` | no FK — sources may be GC'd while the memory persists |
 | `source_tool` | `text` | attribution for externally added memories (`'cursor'`, `'claude-code'`, `'cli'`, …), mirroring `chat_logs.source_tool`; NULL for extracted/dashboard rows |
@@ -177,6 +178,33 @@ Mirrors `ai_enabled` / `mcp_enabled` kill-switch pattern, but **defaults false**
 (opt-in rollout; flip the default in a later migration once stable). Surfaced
 through the same org-settings read path as `GetAISettings`
 (`services/api/internal/store/ai.go`, `orgpolicy.go`).
+
+### 3.5 Changing embedding models
+
+Vectors from different models are not comparable, so all stored embeddings and
+every query must come from the same model — which is why `EMBEDDINGS_MODEL` /
+`EMBEDDINGS_DIMENSIONS` are pinned config and every row records its
+`embedding_model`. If we later switch models (better quality, provider change,
+self-host divergence), the procedure is:
+
+1. **Same dimension** (e.g. 1536 → 1536): deploy the new `EMBEDDINGS_MODEL`.
+   Retrieval temporarily filters to rows whose `embedding_model` matches the
+   active model; a background sweep re-embeds rows `WHERE embedding_model !=
+   current` in batches (content is small — the whole corpus re-embeds for
+   cents). Pinned rows first, so the always-injected set recovers immediately.
+2. **Different dimension**: same sweep, but via a migration that adds a second
+   vector column (`embedding_v2 vector(N)` + its HNSW index), backfills, then
+   drops the old column and index once the sweep completes. The `vector(n)`
+   type is fixed-width, so a dimension change is always a column swap, not an
+   in-place update.
+3. Self-host note: OSS deployments choosing a local model (e.g. Ollama
+   `nomic-embed-text`, 768 dims) set `EMBEDDINGS_DIMENSIONS` before first
+   migration; the migration templates the column width from it. Their
+   `embedding_model` values simply differ from cloud — nothing else changes.
+
+During a sweep, retrieval quality degrades gracefully (un-re-embedded rows are
+invisible to search but still listed/pinned in the UI); nothing is ever lost
+because `content` is the source of truth and embeddings are derived data.
 
 ## 4. Store layer — `services/api/internal/store/memory.go` + sqlc
 
@@ -468,6 +496,8 @@ existing convention (never in `fly.toml`).
 1. **Embedding provider & model** — proposal: OpenAI `text-embedding-3-small`,
    1536 dims. Locks the column dimension; also decides whether self-host OSS
    users need an OpenAI key (they can point `EMBEDDINGS_BASE_URL` at Ollama).
+   A later switch is recoverable via the per-row `embedding_model` tag and the
+   §3.5 procedure, so this decision is important but not irreversible.
 2. **Retrieval latency budget** — proposal: hard 2 s timeout, fail-open
    memory-less. Alternative: prefetch embeddings at message-received time.
 3. **Cloud tier gating** — is memory available on free/Pro, or Business+ only?
