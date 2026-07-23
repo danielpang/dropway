@@ -342,19 +342,22 @@ loop.go:140-144):
    overlap harmless anyway). Failures log and leave the watermark unmoved —
    self-healing on the next turn.
 
-### 6.4 Site-content indexing (phase 2 of this scope)
+### 6.4 Site- and skill-content indexing (decided: in P1)
 
 Cross-site awareness ("like our launch site's pricing section") needs published
-site content indexed, not just conversation. Deferred to P2 within this scope:
+site content indexed, not just conversation. Per the July 2026 scope decision,
+sites AND skills feed memory in the first release:
 
-- New table `app.org_content_chunks` (`org_id`, `site_id`, `version_id`, `path`,
-  `chunk_seq`, `content`, `embedding`, RLS as above), populated on publish by
-  hooking the ingest path (`services/api/internal/ai/ingest.go` and the deploy
-  ingest), text-extracting HTML → ~1 KB chunks.
-- Retrieval extends §6.2 with a second search over chunks (own token budget).
-- GC rows when versions are GC'd (`store/gc.go`).
-
-P1 ships conversation-derived memory only; the schema above doesn't block P2.
+- New table `app.org_content_chunks` (`org_id`, `source_kind`
+  `'site_version'|'skill'`, `version_id`/`skill_id` FKs with `ON DELETE
+  CASCADE`, `path`, `chunk_seq`, `content`, `embedding`, RLS as above),
+  populated asynchronously on site publish and skill-upload finalize
+  (handler hooks → `ai.Runner.IndexSiteVersion` / `IndexSkill`), reading the
+  version's manifest + blobs, stripping HTML, chunking to ~1 KB.
+- Retrieval extends §6.2 with a second search over chunks (site chunks limited
+  to each site's CURRENT version via the search query's join).
+- Chunk rows are reclaimed automatically when versions are GC'd or skills
+  deleted (the CASCADE FKs — no extra sweep).
 
 ## 7. Memory access surfaces — HTTP API, MCP, CLI
 
@@ -491,37 +494,32 @@ existing convention (never in `fly.toml`).
 6. **Rollback**: feature-off is config-only (unset embeddings vars or toggle
    org flag); tables are additive and inert when off.
 
-## 12. Open decisions (need answers before implementation starts)
+## 12. Decisions (resolved 2026-07-23)
 
-1. **Embedding provider & model** — proposal: OpenAI `text-embedding-3-small`,
-   1536 dims. Locks the column dimension; also decides whether self-host OSS
-   users need an OpenAI key (they can point `EMBEDDINGS_BASE_URL` at Ollama).
-   A later switch is recoverable via the per-row `embedding_model` tag and the
-   §3.5 procedure, so this decision is important but not irreversible.
-2. **Retrieval latency budget** — proposal: hard 2 s timeout, fail-open
-   memory-less. Alternative: prefetch embeddings at message-received time.
-3. **Cloud tier gating** — is memory available on free/Pro, or Business+ only?
-   Affects only mountCloud gating, not the schema.
-4. **Extraction trigger for chat_logs** — turns are the natural trigger for
-   `ai_sessions`; shared chat logs have no "turn end". Proposal: extract on
-   `append_chat`/`share_chat` MCP writes, watermarked the same way. External
-   agents sharing chats via MCP makes this the main path by which *their*
-   sessions feed memory, so proposal: in scope for P1.
-5. **Who may `add_memory`?** — Proposal: any org **member** (via dashboard,
-   MCP, or CLI), with admin-only edit/pin/delete, since external-agent
-   deposits are the point of the MCP surface and dedupe + quota bound the
-   blast radius. Alternative: admin-only writes everywhere, agents read-only.
-   Affects the §7.1 authz table only.
-6. **P2 items in or out of first release train** — site-content chunks (§6.4)
-   and the extraction backfill job; both additive.
+1. **Embedding provider & model** — DECIDED: OpenAI `text-embedding-3-small`,
+   1536 dims (`vector(1536)`). Self-host OSS users may point
+   `EMBEDDINGS_BASE_URL` at any OpenAI-compatible server. A later switch is
+   recoverable via the per-row `embedding_model` tag and the §3.5 procedure.
+2. **Retrieval latency budget** — DECIDED (default taken): hard 2 s timeout,
+   fail-open memory-less.
+3. **Cloud tier gating** — DECIDED (default taken): no extra tier gate at
+   launch beyond the per-org `memory_enabled` flag; cloud gating can be added
+   in mountCloud later without schema changes.
+4. **Extraction sources** — DECIDED: builder sessions, shared chat logs
+   (extraction fires on share/append), AND published site + skill content
+   (chunk indexing, §6.4) are all in P1.
+5. **Who may `add_memory`** — DECIDED: any org member (dashboard, MCP, CLI);
+   edit/pin/delete stay admin-only.
+6. **Remaining P2 items** — the extraction backfill job over historical
+   transcripts and the `memory_used` builder-UI indicator.
 
 ## 13. Delivery phases
 
-| phase | contents | prerequisite decisions |
+| phase | contents | status |
 |---|---|---|
-| **P0** | Migration 0017, store + sqlc, `internal/embeddings`, RLS tests | §12.1 |
-| **P1** | Retrieval + extraction in the agent loop; CRUD + search API (§7.1); MCP memory tools (§7.2); `dropway memory` CLI (§7.3); dashboard Memory page + toggle; quotas/metering; rollout steps 1–3 | §12.2–5 |
-| **P2** | Site-content chunk indexing, extraction backfill job, `memory_used` UI polish | §12.6 |
+| **P0** | Migration 0017, store + sqlc, `internal/embeddings`, RLS tests | implemented |
+| **P1** | Retrieval + extraction in the agent loop; chat-log extraction; site + skill content indexing (§6.4); CRUD + search API (§7.1); MCP memory tools (§7.2); `dropway memory` CLI (§7.3); dashboard Memory page + toggle; quotas/metering | implemented |
+| **P2** | Extraction backfill job over historical transcripts, `memory_used` UI polish | future |
 
-Each phase is independently shippable; P0/P1 together deliver the user-visible
-"agent knows your company" loop across the builder, MCP, and CLI.
+Rollout steps 1–3 of §11 (enable pgvector on Supabase, deploy dark, internal
+validation) remain the operational path to production.
