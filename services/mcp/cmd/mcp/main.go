@@ -26,6 +26,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	coreauth "github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
@@ -105,22 +106,37 @@ func main() {
 	st := store.New(pool)
 	svc := &tools.Service{Store: st, Skills: st, Chats: st, Blobs: objStore}
 
+	// Product analytics over the same shared posthog client as error tracking.
+	// Nil when PostHog is unconfigured → auth rejections are logged only.
+	var emitter analytics.Emitter
+	if ph := analytics.NewPostHogFromClient(phClient, log); ph != nil {
+		emitter = ph
+	}
+
 	// Control-plane WRITE tools (create_site, set_site_access) call the Go API,
-	// forwarding the user's token (the API accepts the MCP audience). Without an
-	// API_URL the server stays read-only and those tools are not registered.
+	// forwarding the caller's credential (the API accepts the MCP audience AND
+	// dw_live_ keys). The same client also backs the gate's API-key validation
+	// (GET /v1/me), so header-auth clients (Claude Code CLI, Cursor, CI) can use
+	// an org API key instead of OAuth. Without an API_URL the server stays
+	// read-only, those tools are not registered, and keys are not accepted.
+	var keys mcpauth.KeyValidator
 	if apiURL := os.Getenv("API_URL"); apiURL != "" {
 		// Presigned blob URLs come back signed against the browser-facing public
 		// endpoint (S3_PUBLIC_ENDPOINT, e.g. localhost:9000), which this server —
 		// uploading server-side from inside the compose network — can't reach. Route
 		// uploads to the internal object-store endpoint (S3_ENDPOINT, e.g. minio:9000)
 		// while preserving the signed Host header so the signature still verifies.
-		svc.API = apiclient.New(apiURL, apiclient.WithUploadEndpoint(os.Getenv("S3_ENDPOINT")))
-		log.Info("control-plane write tools enabled", "api_url", apiURL)
+		api := apiclient.New(apiURL,
+			apiclient.WithUploadEndpoint(os.Getenv("S3_ENDPOINT")),
+			apiclient.WithAnalytics(emitter))
+		svc.API = api
+		keys = mcpauth.NewAPIKeyValidator(api, 0)
+		log.Info("control-plane write tools + API-key auth enabled", "api_url", apiURL)
 	} else {
-		log.Info("API_URL not set — MCP server is read-only (no create_site/set_site_access)")
+		log.Info("API_URL not set — MCP server is read-only (no write tools, no API-key auth)")
 	}
 
-	mux := newMux(verifier, st, svc, publicURL, dashboardURL)
+	mux := newMux(verifier, st, svc, publicURL, dashboardURL, emitter, keys)
 
 	srv := &http.Server{
 		Addr: ":" + port,
@@ -160,10 +176,11 @@ func main() {
 }
 
 // newMux wires the HTTP surface: /healthz, the RFC 9728 protected-resource
-// metadata, and the OAuth-gated + mcp_enabled-gated /mcp Streamable-HTTP handler.
+// metadata, and the auth-gated + mcp_enabled-gated /mcp Streamable-HTTP handler.
 // Extracted from main so the integration test can stand the server up in-process
-// against a test JWKS + a real Postgres-backed store.
-func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, publicURL, dashboardURL string) http.Handler {
+// against a test JWKS + a real Postgres-backed store. emitter (nil ok) receives
+// the gate's auth_rejected events; keys (nil ok) enables dw_live_ API-key auth.
+func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, publicURL, dashboardURL string, emitter analytics.Emitter, keys mcpauth.KeyValidator) http.Handler {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "dropway", Version: "v1"}, nil)
 	tools.Register(server, svc)
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(
@@ -190,18 +207,24 @@ func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, pu
 	mux.HandleFunc("/.well-known/oauth-protected-resource",
 		protectedResourceMetadata(publicURL, dashboardURL))
 
-	// /mcp: validate the OAuth token (→ tenant) → enforce the org mcp_enabled
-	// switch → hand to the MCP Streamable-HTTP handler.
-	protected := mcpauth.Middleware(verifier, resourceMetaURL,
-		requireMCPEnabled(st, mcpHandler))
+	// /mcp: authenticate the credential (OAuth token or dw_live_ key → tenant) →
+	// enforce the org mcp_enabled switch → hand to the MCP Streamable-HTTP handler.
+	protected := mcpauth.Gate(mcpauth.Config{
+		Verifier:            verifier,
+		ResourceMetadataURL: resourceMetaURL,
+		Emitter:             emitter,
+		Keys:                keys,
+	}, requireMCPEnabled(st, emitter, mcpHandler))
 	mux.Handle("/mcp", protected)
 	mux.Handle("/mcp/", protected)
 	return mux
 }
 
 // requireMCPEnabled rejects requests for an org whose admin/owner has turned MCP
-// off — re-checked per request so a disable takes effect immediately.
-func requireMCPEnabled(st *store.Store, next http.Handler) http.Handler {
+// off — re-checked per request so a disable takes effect immediately. Both 403
+// outcomes are captured to analytics (step org_lookup / mcp_disabled) so an
+// "MCP suddenly broken" report is debuggable from events step by step.
+func requireMCPEnabled(st *store.Store, emitter analytics.Emitter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t, ok := mcpauth.TenantFromContext(r.Context())
 		if !ok {
@@ -226,6 +249,10 @@ func requireMCPEnabled(st *store.Store, next http.Handler) http.Handler {
 			// missing-row case above. Log it so it's diagnosable rather than a silent 403.
 			slog.Warn("mcp auth: org_meta check failed (returning 403)",
 				"err", err.Error(), "org_id", t.OrgID, "user_id", t.UserID, "path", r.URL.Path)
+			analytics.CaptureAuthRejected(r.Context(), emitter, analytics.AuthRejection{
+				Surface: "mcp", Kind: "authz", Step: "org_lookup",
+				Reason: err.Error(), Method: r.Method, Path: r.URL.Path,
+			})
 			http.Error(w, "403 Forbidden: could not resolve organization access.",
 				http.StatusForbidden)
 			return
@@ -233,6 +260,10 @@ func requireMCPEnabled(st *store.Store, next http.Handler) http.Handler {
 			// Explicit admin/owner kill-switch.
 			slog.Warn("mcp auth: MCP disabled for org (returning 403)",
 				"org_id", t.OrgID, "path", r.URL.Path)
+			analytics.CaptureAuthRejected(r.Context(), emitter, analytics.AuthRejection{
+				Surface: "mcp", Kind: "authz", Step: "mcp_disabled",
+				Reason: "org kill switch: mcp_enabled=false", Method: r.Method, Path: r.URL.Path,
+			})
 			http.Error(w, "403 Forbidden: MCP access is disabled for this organization.",
 				http.StatusForbidden)
 			return

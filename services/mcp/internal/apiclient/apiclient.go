@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/contenttype"
 	"github.com/danielpang/dropway/internal/manifest"
 )
@@ -37,6 +38,12 @@ type Client struct {
 	// — can't reach. uploadBlob then dials this host instead while preserving the
 	// original (signed) Host header. Nil → upload to the URL exactly as signed.
 	uploadEndpoint *url.URL
+
+	// emitter, when set, receives an `auth_rejected` event (step=forwarded_write)
+	// every time the API answers a forwarded call with 401/403 — the exact hop
+	// where "reads work but create_site 401s" lives. One hook here covers every
+	// write tool (sites, deploys, access, skills, chats). Nil → no capture.
+	emitter analytics.Emitter
 }
 
 // Option configures a Client.
@@ -56,6 +63,13 @@ func WithUploadEndpoint(base string) Option {
 			c.uploadEndpoint = u
 		}
 	}
+}
+
+// WithAnalytics captures forwarded-call auth failures (API 401/403 responses) as
+// `auth_rejected` events so the MCP→API bridge is debuggable from PostHog. A nil
+// emitter is a no-op.
+func WithAnalytics(e analytics.Emitter) Option {
+	return func(c *Client) { c.emitter = e }
 }
 
 // New builds a Client for the API base URL (e.g. http://api:8080).
@@ -90,6 +104,22 @@ func (e *Error) Error() string {
 		return fmt.Sprintf("api %d: %s", e.Status, e.Message)
 	}
 	return fmt.Sprintf("api %d", e.Status)
+}
+
+// Me calls GET /v1/me under the given bearer credential and returns the resolved
+// identity. Used by the MCP gate's API-key validator: presenting a dw_live_ key
+// here runs the API's full fail-closed key policy (liveness, kill switch,
+// creator-membership re-check, rate limits) without the MCP server reimplementing
+// any of it.
+func (c *Client) Me(ctx context.Context, token string) (userID, orgID string, err error) {
+	var me struct {
+		UserID string `json:"user_id"`
+		OrgID  string `json:"org_id"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/me", token, nil, &me); err != nil {
+		return "", "", err
+	}
+	return me.UserID, me.OrgID, nil
 }
 
 // CreateSite calls POST /v1/sites. accessMode "" lets the API inherit the org
@@ -477,17 +507,27 @@ func (c *Client) uploadBlob(ctx context.Context, rawURL string, data []byte) err
 }
 
 // do issues a JSON request with the bearer token and decodes a 2xx JSON body into
-// out (nil to ignore). Non-2xx → *Error with the API's message.
+// out (nil to ignore). Non-2xx → *Error with the API's message. A 401/403 answer
+// is additionally captured as an `auth_rejected` analytics event
+// (step=forwarded_write): the API refused the credential the MCP server forwarded
+// — the exact hop where "reads work but writes 401" lives, and otherwise visible
+// only in the tool result the agent sees.
 func (c *Client) do(ctx context.Context, method, path, token string, body, out any) error {
-	buf, err := json.Marshal(body)
+	var reqBody io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reqBody = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(buf))
-	if err != nil {
-		return err
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -510,7 +550,18 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 				msg = e.Error
 			}
 		}
-		return &Error{Status: resp.StatusCode, Message: msg}
+		apiErr := &Error{Status: resp.StatusCode, Message: msg}
+		// /v1/me is the gate's key-validation probe, not a forwarded write — its
+		// rejection is captured by the gate itself as step=api_key_auth, so don't
+		// double-report it under the wrong step here.
+		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) &&
+			path != "/v1/me" {
+			analytics.CaptureAuthRejected(ctx, c.emitter, analytics.AuthRejection{
+				Surface: "mcp", Kind: "forwarded", Step: "forwarded_write",
+				Reason: apiErr.Error(), Method: method, Path: path,
+			})
+		}
+		return apiErr
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {

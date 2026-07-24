@@ -343,3 +343,26 @@ func TestVerify_AcceptsMCPResourceForms(t *testing.T) {
 		t.Fatal("a non-canonical MCP audience must still be rejected")
 	}
 }
+
+// UnverifiedAudIss extracts aud/iss without verification (diagnostic logging),
+// and degrades to empty strings on garbage input.
+func TestUnverifiedAudIss(t *testing.T) {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"aud":"https://mcp.dropway.test/mcp/","iss":"https://app.dropway.test"}`))
+	aud, iss := UnverifiedAudIss("eyJhbGciOiJFZERTQSJ9." + payload + ".sig")
+	if aud != `"https://mcp.dropway.test/mcp/"` || iss != "https://app.dropway.test" {
+		t.Errorf("UnverifiedAudIss = (%q, %q)", aud, iss)
+	}
+
+	// Array-form aud comes back as raw JSON.
+	payload = base64.RawURLEncoding.EncodeToString([]byte(`{"aud":["a","b"],"iss":"i"}`))
+	aud, iss = UnverifiedAudIss("h." + payload + ".s")
+	if aud != `["a","b"]` || iss != "i" {
+		t.Errorf("array aud: UnverifiedAudIss = (%q, %q)", aud, iss)
+	}
+
+	for _, bad := range []string{"", "not-a-jwt", "a.!!!.c", "a." + base64.RawURLEncoding.EncodeToString([]byte("not json")) + ".c"} {
+		if aud, iss := UnverifiedAudIss(bad); aud != "" || iss != "" {
+			t.Errorf("UnverifiedAudIss(%q) = (%q, %q), want empty", bad, aud, iss)
+		}
+	}
+}

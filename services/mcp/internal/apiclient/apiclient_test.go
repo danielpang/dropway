@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/danielpang/dropway/internal/analytics"
 )
 
 func TestCreateSite_PostsAndForwardsToken(t *testing.T) {
@@ -298,5 +300,88 @@ func TestErrorMapping(t *testing.T) {
 	}
 	if apiErr.Status != http.StatusForbidden || apiErr.Message != "admin/owner role required" {
 		t.Errorf("error not mapped: %+v", apiErr)
+	}
+}
+
+// captureEmitter records analytics events for the forwarded-auth-failure hook.
+type captureEmitter struct{ events []analytics.Event }
+
+func (c *captureEmitter) Capture(_ context.Context, ev analytics.Event) {
+	c.events = append(c.events, ev)
+}
+
+// Me forwards the bearer to GET /v1/me and returns the resolved identity.
+func TestMe(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotPath = r.Header.Get("Authorization"), r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"user_id": "u1", "org_id": "o1", "role": "member"})
+	}))
+	defer srv.Close()
+
+	userID, orgID, err := New(srv.URL).Me(context.Background(), "dw_live_secret")
+	if err != nil {
+		t.Fatalf("Me: %v", err)
+	}
+	if gotPath != "/v1/me" || gotAuth != "Bearer dw_live_secret" {
+		t.Errorf("path = %q auth = %q", gotPath, gotAuth)
+	}
+	if userID != "u1" || orgID != "o1" {
+		t.Errorf("identity = (%q, %q)", userID, orgID)
+	}
+}
+
+// A 401 on a forwarded write is captured as auth_rejected step=forwarded_write
+// (with the API path + reason), while a 401 on the /v1/me validation probe is
+// NOT (the gate reports that one itself under step=api_key_auth).
+func TestDo_CapturesForwardedAuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+	}))
+	defer srv.Close()
+
+	em := &captureEmitter{}
+	c := New(srv.URL, WithAnalytics(em))
+
+	if _, err := c.CreateSite(context.Background(), "tok", "blog", ""); err == nil {
+		t.Fatal("expected an error from the 401")
+	}
+	if len(em.events) != 1 {
+		t.Fatalf("captured %d events, want 1", len(em.events))
+	}
+	p := em.events[0].Properties
+	if em.events[0].Event != "auth_rejected" || p["step"] != "forwarded_write" ||
+		p["surface"] != "mcp" || p["kind"] != "forwarded" || p["path"] != "/v1/sites" {
+		t.Errorf("event = %+v", em.events[0])
+	}
+	if reason, _ := p["reason"].(string); !strings.Contains(reason, "401") {
+		t.Errorf("reason = %q, want the API status", reason)
+	}
+
+	// The key-validation probe must not double-report under the wrong step.
+	if _, _, err := c.Me(context.Background(), "dw_live_bad"); err == nil {
+		t.Fatal("expected an error from the 401")
+	}
+	if len(em.events) != 1 {
+		t.Errorf("captured %d events after Me, want still 1 (no /v1/me capture)", len(em.events))
+	}
+}
+
+// A 400 (non-auth) forwarded failure is NOT captured as auth_rejected.
+func TestDo_NoCaptureOnNonAuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	em := &captureEmitter{}
+	if _, err := New(srv.URL, WithAnalytics(em)).CreateSite(context.Background(), "tok", "b", ""); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(em.events) != 0 {
+		t.Errorf("captured %d events for a 400, want 0", len(em.events))
 	}
 }

@@ -698,6 +698,22 @@ export const auth = betterAuth({
     oauthProvider({
       loginPage: "/sign-in",
       consentPage: "/oauth/consent",
+      // MCP connections must be LONG-LIVED: a connector should never force the
+      // user to re-authorize just because time passed. Refresh tokens ROTATE on
+      // every use with a fresh full TTL, so with a 1-year window any connection
+      // used at least once a year effectively never expires; only truly
+      // abandoned grants do. (Access tokens stay short — accessTokenExpiresIn
+      // default 1h — and are refreshed silently.)
+      //
+      // INVARIANT (verified against @better-auth/oauth-provider@1.6.23): OAuth
+      // grants survive dashboard sign-out. The refresh grant never checks the
+      // linked session (oauthRefreshToken.sessionId is set-null on session
+      // delete and only carried as the `sid` claim), so signing out of the
+      // dashboard does NOT disconnect MCP clients. Re-verify this on plugin
+      // upgrades — an upstream "fix" tying refresh to session liveness would
+      // silently break every connector on sign-out. To intentionally disconnect
+      // a client, delete its consent (/oauth2/delete-consent), not the session.
+      refreshTokenExpiresIn: 60 * 60 * 24 * 365,
       // After login, BEFORE consent, force a user with no organization through
       // onboarding so the minted token always carries org_id. The dashboard's
       // (app) layout has its own onboarding gate, but the OAuth authorize flow

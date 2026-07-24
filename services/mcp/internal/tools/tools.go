@@ -103,6 +103,48 @@ type Service struct {
 // (should be impossible behind the auth middleware).
 var ErrNoTenant = errors.New("mcp/tools: no authenticated tenant")
 
+// authHint401 / authHint403 are appended to a forwarded-write failure so the
+// CALLING LLM — which is what reads a tool error — can explain to the user what
+// happened and how to recover, instead of surfacing a bare "api 401". The 401
+// text deliberately explains the refresh-token "family revocation" case: reusing
+// an already-rotated refresh token (e.g. a client retrying a refresh that
+// actually succeeded, or restoring stale state) revokes EVERY token of that
+// client+user pair as a security measure, so reads may keep working on a cached
+// access token while writes fail — exactly the confusing "reads work, create
+// 401s" shape. Only re-authorizing mints a fresh grant.
+const authHint401 = "The Dropway API rejected this MCP connection's credential, so the " +
+	"write was refused. This usually means the connection's tokens are no longer valid — " +
+	"commonly because the OAuth refresh token was revoked after a reuse was detected " +
+	"(replaying an already-rotated refresh token revokes ALL of this connection's tokens " +
+	"as a security measure, called refresh-token family revocation), or the credential " +
+	"expired or was revoked. Reads can keep working briefly while writes fail. " +
+	"To fix it, ask the user to re-authorize the Dropway connection in their client " +
+	"(in Claude: Settings → Connectors → Dropway → reconnect; in other MCP clients, " +
+	"re-run the OAuth connect flow). Header-auth clients (CLI/CI) can instead use an " +
+	"org API key from the Dropway dashboard under Settings → API keys."
+
+const authHint403 = "The credential was valid but the Dropway API refused this action. " +
+	"Likely causes: it requires an org admin/owner role, the org's kill switch for this " +
+	"feature is off, or access was revoked. Ask the user to check their role and the org " +
+	"settings in the Dropway dashboard."
+
+// writeAuthHint appends the LLM-actionable recovery guidance above when a
+// forwarded write failed with the API's 401/403; every other error passes
+// through unchanged.
+func writeAuthHint(err error) error {
+	var apiErr *apiclient.Error
+	if err == nil || !errors.As(err, &apiErr) {
+		return err
+	}
+	switch apiErr.Status {
+	case 401:
+		return fmt.Errorf("%w. %s", err, authHint401)
+	case 403:
+		return fmt.Errorf("%w. %s", err, authHint403)
+	}
+	return err
+}
+
 // ErrNoToken means a write tool ran without the forwardable bearer token (should be
 // impossible behind the auth middleware, which stashes it).
 var ErrNoToken = errors.New("mcp/tools: no bearer token to forward")
@@ -518,7 +560,7 @@ func (svc *Service) CreateSite(ctx context.Context, token, rawSlug, accessMode s
 	}
 	site, err := svc.API.CreateSite(ctx, token, normalized, accessMode)
 	if err != nil {
-		return createSiteOut{}, err
+		return createSiteOut{}, writeAuthHint(err)
 	}
 	return createSiteOut{Slug: site.Slug, AccessMode: site.AccessMode, URL: site.URL}, nil
 }
@@ -533,7 +575,7 @@ func (svc *Service) SetAccess(ctx context.Context, t store.Tenant, token, slug, 
 		return setAccessOut{}, err
 	}
 	if err := svc.API.SetAccess(ctx, token, site.ID, mode, password); err != nil {
-		return setAccessOut{}, err
+		return setAccessOut{}, writeAuthHint(err)
 	}
 	return setAccessOut{Slug: slug, Mode: mode}, nil
 }
@@ -568,7 +610,7 @@ func (svc *Service) DeploySite(ctx context.Context, t store.Tenant, token, slug 
 
 	res, err := svc.API.Deploy(ctx, token, site.ID, df, publish)
 	if err != nil {
-		return deploySiteOut{}, err
+		return deploySiteOut{}, writeAuthHint(err)
 	}
 	return deploySiteOut{
 		Site:          slug,
@@ -757,7 +799,7 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 	case errors.Is(err, store.ErrNotFound):
 		c, cerr := svc.API.CreateSkill(ctx, token, name, in.Title, nil)
 		if cerr != nil {
-			return uploadSkillOut{}, cerr
+			return uploadSkillOut{}, writeAuthHint(cerr)
 		}
 		skillID = c.ID
 		created = true
@@ -767,7 +809,7 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 
 	res, err := svc.API.UploadSkill(ctx, token, skillID, files)
 	if err != nil {
-		return uploadSkillOut{}, err
+		return uploadSkillOut{}, writeAuthHint(err)
 	}
 
 	// File a newly-created skill into the requested folders. Resolving slugs → ids
@@ -796,7 +838,7 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 			folderIDs = append(folderIDs, id)
 		}
 		if err := svc.API.SetSkillFolders(ctx, token, skillID, folderIDs); err != nil {
-			return uploadSkillOut{}, err
+			return uploadSkillOut{}, writeAuthHint(err)
 		}
 	}
 
@@ -834,7 +876,7 @@ func (svc *Service) ShareChat(ctx context.Context, t store.Tenant, token string,
 	res, err := svc.API.CreateChatLog(ctx, token, in.Title, in.SourceTool, siteID,
 		toChatImport(in.Transcript, in.Format, in.DeriveActions, in.Messages))
 	if err != nil {
-		return shareChatOut{}, err
+		return shareChatOut{}, writeAuthHint(err)
 	}
 	out := shareChatOut{
 		ChatID:   res.ChatLog.ID,
@@ -882,7 +924,7 @@ func (svc *Service) AppendChat(ctx context.Context, t store.Tenant, token string
 		res, err = svc.API.AppendChatMessages(ctx, token, in.ChatID, imp)
 	}
 	if err != nil {
-		return appendChatOut{}, err
+		return appendChatOut{}, writeAuthHint(err)
 	}
 	return appendChatOut{
 		ChatID:   in.ChatID,

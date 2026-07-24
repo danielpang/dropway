@@ -114,7 +114,17 @@ reachable by an LLM **only** through an authorized MCP connection.
 `mcp` on `:8092` alongside the rest. Users connect their AI tool from the dashboard
 (**Settings → LLM access (MCP) → Connect**). The first connection runs a browser OAuth
 2.1 flow (Dynamic Client Registration → sign in → "Authorize MCP access") against the
-dashboard, which is the authorization server. No API keys are exchanged.
+dashboard, which is the authorization server.
+
+**API keys work too.** Besides OAuth, the MCP server accepts an org **API key**
+(`dw_live_…`, minted under **Settings → API keys**) as the bearer token — for
+header-auth clients that don't drive a browser flow (Claude Code CLI via
+`--header "Authorization: Bearer dw_live_…"`, Cursor, CI). The key is validated
+through the Go API (the single implementation of the key policy: liveness, org
+kill switch, creator-membership re-check, rate limits), with a short in-process
+cache; write tools forward the key to the API, which re-authenticates it on every
+call. Key auth requires `API_URL` to be set on the `mcp` service — a read-only
+deployment (no `API_URL`) rejects keys with a clear 401.
 
 **Env contract** (in [`.env.example`](./.env.example)). The audience/issuer must line up
 across services or token verification fails:
