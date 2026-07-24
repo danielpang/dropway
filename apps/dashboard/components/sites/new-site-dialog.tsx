@@ -175,31 +175,26 @@ export function NewSiteDialog({
           <DialogBody>
             <div className="space-y-2">
               <Label htmlFor="site-slug">Slug</Label>
-              <div className="flex items-center gap-1.5">
-                {orgSlug ? (
-                  <span className="shrink-0 whitespace-nowrap font-mono text-sm text-muted-foreground">
-                    {orgSlug}--
-                  </span>
-                ) : null}
-                <Input
-                  ref={inputRef}
-                  id="site-slug"
-                  name="site-slug"
-                  placeholder="my-docs"
-                  value={slug}
-                  onChange={onSlugChange}
-                  aria-invalid={touched && !slugValid}
-                  aria-describedby="slug-help"
-                  className="min-w-0 flex-1 font-mono"
-                  autoFocus
-                  disabled={pending}
-                />
-                <span className="shrink-0 whitespace-nowrap font-mono text-sm text-muted-foreground">
+              <Input
+                ref={inputRef}
+                id="site-slug"
+                name="site-slug"
+                placeholder="my-docs"
+                value={slug}
+                onChange={onSlugChange}
+                aria-invalid={touched && !slugValid}
+                aria-describedby="slug-help"
+                className="font-mono"
+                autoFocus
+                disabled={pending}
+              />
+              <p id="slug-help" className="text-xs text-muted-foreground">
+                Lowercase letters, numbers, and hyphens. Your site will be at{" "}
+                <span className="break-all font-mono text-foreground">
+                  {orgSlug ? `${orgSlug}--` : ""}
+                  {slug || "my-docs"}
                   .dropwaycontent.com
                 </span>
-              </div>
-              <p id="slug-help" className="text-xs text-muted-foreground">
-                Lowercase letters, numbers, and hyphens.
               </p>
               {touched && !slugValid && (
                 <p className="text-xs text-destructive">
