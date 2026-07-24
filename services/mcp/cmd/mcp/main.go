@@ -26,6 +26,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	coreauth "github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
@@ -120,7 +121,14 @@ func main() {
 		log.Info("API_URL not set — MCP server is read-only (no create_site/set_site_access)")
 	}
 
-	mux := newMux(verifier, st, svc, publicURL, dashboardURL)
+	// Product analytics over the same shared posthog client as error tracking.
+	// Nil when PostHog is unconfigured → auth rejections are logged only.
+	var emitter analytics.Emitter
+	if ph := analytics.NewPostHogFromClient(phClient, log); ph != nil {
+		emitter = ph
+	}
+
+	mux := newMux(verifier, st, svc, publicURL, dashboardURL, emitter)
 
 	srv := &http.Server{
 		Addr: ":" + port,
@@ -162,8 +170,9 @@ func main() {
 // newMux wires the HTTP surface: /healthz, the RFC 9728 protected-resource
 // metadata, and the OAuth-gated + mcp_enabled-gated /mcp Streamable-HTTP handler.
 // Extracted from main so the integration test can stand the server up in-process
-// against a test JWKS + a real Postgres-backed store.
-func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, publicURL, dashboardURL string) http.Handler {
+// against a test JWKS + a real Postgres-backed store. emitter (nil ok) receives
+// the gate's auth_rejected events.
+func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, publicURL, dashboardURL string, emitter analytics.Emitter) http.Handler {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "dropway", Version: "v1"}, nil)
 	tools.Register(server, svc)
 	mcpHandler := mcpsdk.NewStreamableHTTPHandler(
@@ -192,7 +201,7 @@ func newMux(verifier *coreauth.Verifier, st *store.Store, svc *tools.Service, pu
 
 	// /mcp: validate the OAuth token (→ tenant) → enforce the org mcp_enabled
 	// switch → hand to the MCP Streamable-HTTP handler.
-	protected := mcpauth.Middleware(verifier, resourceMetaURL,
+	protected := mcpauth.MiddlewareObserved(verifier, resourceMetaURL, emitter,
 		requireMCPEnabled(st, mcpHandler))
 	mux.Handle("/mcp", protected)
 	mux.Handle("/mcp/", protected)

@@ -210,7 +210,7 @@ func TestMCPServer_Endpoints(t *testing.T) {
 	st := store.New(appPool)
 	svc := &tools.Service{Store: st, Skills: st, Chats: st, Blobs: stubBlobs{}}
 
-	ts := httptest.NewServer(newMux(verifier, st, svc, itResource, itIssuer))
+	ts := httptest.NewServer(newMux(verifier, st, svc, itResource, itIssuer, nil))
 	defer ts.Close()
 
 	// 1) health

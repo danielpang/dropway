@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	coreauth "github.com/danielpang/dropway/internal/auth"
 )
 
@@ -104,5 +105,55 @@ func TestMiddleware_ValidTokenInjectsTenant(t *testing.T) {
 	// The raw token must be stashed for the write tools to forward to the Go API.
 	if seen.token != "the-token" {
 		t.Errorf("token should be in context for forwarding; got %q", seen.token)
+	}
+}
+
+// fakeEmitter records captured analytics events.
+type fakeEmitter struct{ events []analytics.Event }
+
+func (f *fakeEmitter) Capture(_ context.Context, ev analytics.Event) { f.events = append(f.events, ev) }
+
+// A rejected token is captured to analytics as auth_rejected (surface mcp); the
+// credential-less 401 challenge that starts every OAuth connect is NOT captured.
+func TestMiddlewareObserved_CapturesRejections(t *testing.T) {
+	em := &fakeEmitter{}
+	var seen store_Tenant
+	h := MiddlewareObserved(fakeVerifier{err: errors.New("token is expired")}, resourceMeta, em, nextRecorder(&seen))
+
+	// Credential-less challenge → no event.
+	if rec := do(h, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("challenge status = %d, want 401", rec.Code)
+	}
+	if len(em.events) != 0 {
+		t.Fatalf("captured %d events for the OAuth challenge, want 0", len(em.events))
+	}
+
+	// A presented-but-invalid token → one auth_rejected event.
+	if rec := do(h, "Bearer bad.token.sig"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("rejection status = %d, want 401", rec.Code)
+	}
+	if len(em.events) != 1 {
+		t.Fatalf("captured %d events, want 1", len(em.events))
+	}
+	ev := em.events[0]
+	if ev.Event != "auth_rejected" || ev.DistinctID != "system" {
+		t.Errorf("event = %q distinct_id = %q", ev.Event, ev.DistinctID)
+	}
+	if ev.Properties["surface"] != "mcp" || ev.Properties["kind"] != "jwt" || ev.Properties["reason"] != "token is expired" {
+		t.Errorf("properties = %+v", ev.Properties)
+	}
+}
+
+// A verified token with no org_id is captured too (it is a rejected credential).
+func TestMiddlewareObserved_NoOrgCaptured(t *testing.T) {
+	em := &fakeEmitter{}
+	var seen store_Tenant
+	h := MiddlewareObserved(fakeVerifier{claims: &coreauth.Claims{}}, resourceMeta, em, nextRecorder(&seen))
+
+	if rec := do(h, "Bearer some.token.sig"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if len(em.events) != 1 || em.events[0].Properties["reason"] != "token has no organization" {
+		t.Errorf("events = %+v", em.events)
 	}
 }
