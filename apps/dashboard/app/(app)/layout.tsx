@@ -70,7 +70,10 @@ export default async function AppLayout({
           organization={activeOrgId}
         />
       ) : null}
-      <header className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur">
+      {/* z-40 keeps the sticky header (and mobile hamburger menu) above page
+          content that uses relative z-10 for nested clickable regions, while
+          staying below portaled dialogs/sheets at z-50. */}
+      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
         <div className="container flex h-14 items-center justify-between">
           <Link
             href="/dashboard"
