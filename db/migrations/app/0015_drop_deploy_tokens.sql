@@ -4,7 +4,7 @@
 --
 -- Drop app.deploy_tokens. The table was scoped as the "CLI / CI deploy path"
 -- credential, but only the client half of that feature was ever built (the
--- CLI's DROPWAY_TOKEN env var and the audit_log.actor_token provenance
+-- CLI's DROPWAY_API_KEY env var and the audit_log.actor_token provenance
 -- column); no server code has ever minted, verified, read, or written a row,
 -- so this drop is a no-op on every real database. Org-scoped API keys
 -- (docs/typescript-sdk-api-keys.md) supersede the design with their own
