@@ -21,39 +21,6 @@ import (
 	"github.com/danielpang/dropway/internal/logx"
 )
 
-// CaptureAuthRejected emits the best-effort `auth_rejected` product event: a
-// PRESENTED credential (a JWT or an API key) was rejected at an auth boundary.
-// This is the PostHog-visible record of every 401 the services hand out for a
-// bad credential — queryable by surface (api/mcp), kind (jwt/api_key), path, and
-// the token's unverified aud/iss — so an auth regression (audience drift, JWKS
-// trouble, expired-token storms) shows up in analytics, not only in service
-// logs. Exported so the MCP gate emits the same event shape. Requests carrying
-// NO credential are deliberately not captured: an unauthenticated probe (or the
-// OAuth challenge that legitimately starts every MCP connect) is noise, not an
-// auth error. distinct_id "system" mirrors the dashboard's convention for events
-// with no verified acting user; the aud/iss hints are UNVERIFIED and diagnostic
-// only. A nil emitter is a no-op.
-func CaptureAuthRejected(ctx context.Context, emitter analytics.Emitter, surface, kind, reason, tokenAud, tokenIss, method, path string) {
-	if emitter == nil {
-		return
-	}
-	emitter.Capture(ctx, analytics.Event{
-		DistinctID: "system",
-		Event:      "auth_rejected",
-		Properties: map[string]any{
-			"surface":   surface,
-			"kind":      kind,
-			"reason":    reason,
-			"token_aud": tokenAud,
-			"token_iss": tokenIss,
-			"method":    method,
-			"path":      path,
-			// Infra event with no person behind it — don't create person profiles.
-			"$process_person_profile": false,
-		},
-	})
-}
-
 // claimsKey is the unexported context key under which verified claims are
 // stored. Unexported so only this package can write it — callers read via
 // ClaimsFromContext.
@@ -158,8 +125,10 @@ func AuthWithKeysObserved(v Verifier, keys KeyAuthenticator, emitter analytics.E
 					// reason is logged + captured server-side only.
 					logx.FromContext(r.Context()).Warn("auth: api key rejected",
 						"err", err.Error(), "path", r.URL.Path)
-					CaptureAuthRejected(r.Context(), emitter, "api", "api_key",
-						err.Error(), "", "", r.Method, r.URL.Path)
+					analytics.CaptureAuthRejected(r.Context(), emitter, analytics.AuthRejection{
+						Surface: "api", Kind: "api_key", Step: "api_key_auth",
+						Reason: err.Error(), Method: r.Method, Path: r.URL.Path,
+					})
 					httpx.WriteError(w, wrapUnauthorized("invalid token"))
 					return
 				}
@@ -179,8 +148,11 @@ func AuthWithKeysObserved(v Verifier, keys KeyAuthenticator, emitter analytics.E
 				aud, iss := auth.UnverifiedAudIss(token)
 				logx.FromContext(r.Context()).Warn("auth: token verification failed",
 					"err", err.Error(), "token_aud", aud, "token_iss", iss, "path", r.URL.Path)
-				CaptureAuthRejected(r.Context(), emitter, "api", "jwt",
-					err.Error(), aud, iss, r.Method, r.URL.Path)
+				analytics.CaptureAuthRejected(r.Context(), emitter, analytics.AuthRejection{
+					Surface: "api", Kind: "jwt", Step: "jwt_verify",
+					Reason: err.Error(), TokenAud: aud, TokenIss: iss,
+					Method: r.Method, Path: r.URL.Path,
+				})
 				httpx.WriteError(w, wrapUnauthorized("invalid token"))
 				return
 			}

@@ -316,6 +316,7 @@ func TestAuthWithKeysObserved_JWTRejection_CapturesEvent(t *testing.T) {
 	for k, want := range map[string]any{
 		"surface":   "api",
 		"kind":      "jwt",
+		"step":      "jwt_verify",
 		"reason":    "token has invalid audience",
 		"token_aud": `"https://mcp.dropway.test/mcp/"`,
 		"token_iss": "https://app.dropway.test",
@@ -346,7 +347,8 @@ func TestAuthWithKeysObserved_KeyRejection_CapturesEvent(t *testing.T) {
 		t.Fatalf("captured %d events, want 1", len(em.events))
 	}
 	ev := em.events[0]
-	if ev.Event != "auth_rejected" || ev.Properties["kind"] != "api_key" || ev.Properties["reason"] != "key revoked" {
+	if ev.Event != "auth_rejected" || ev.Properties["kind"] != "api_key" ||
+		ev.Properties["step"] != "api_key_auth" || ev.Properties["reason"] != "key revoked" {
 		t.Errorf("event = %+v", ev)
 	}
 }
