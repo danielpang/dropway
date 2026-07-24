@@ -107,6 +107,43 @@ export async function setAiBuilderEnabledAction(input: {
   }
 }
 
+export type MemoryEnabledActionResult =
+  | { ok: true; memoryEnabled: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Toggle whether company memory is available to this org (owner/admin only →
+ * the Go API re-checks the role and 403s otherwise). Enforced on every
+ * /v1/ai/memories call, so disabling stops recall and new memories immediately;
+ * stored memories are kept, not deleted.
+ */
+export async function setMemoryEnabledAction(input: {
+  enabled: boolean;
+}): Promise<MemoryEnabledActionResult> {
+  try {
+    const result = await api.setMemoryEnabled(input.enabled);
+    revalidatePath("/settings");
+    revalidatePath("/settings/memory");
+    return { ok: true, memoryEnabled: result.memory_enabled };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const apiMsg = (err.body as { message?: string } | null)?.message;
+      if (apiMsg) return { ok: false, message: apiMsg };
+      if (err.status === 403) {
+        return {
+          ok: false,
+          message: "Only owners and admins can change the memory setting.",
+        };
+      }
+      return {
+        ok: false,
+        message: "Could not update the memory setting. Try again.",
+      };
+    }
+    return { ok: false, message: "Could not reach the API. Try again." };
+  }
+}
+
 export type ChatLogsActionResult =
   | { ok: true; enabled: boolean }
   | { ok: false; message: string };

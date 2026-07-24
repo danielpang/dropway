@@ -187,11 +187,27 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/sessions/{id}/messages", api.PostAIMessage)
 			r.Get("/sessions/{id}/events", api.GetAIEvents)
 			r.Get("/models", api.ListAIModels)
+
+			// Org memory ("your agent knows your company"): the curation list,
+			// manual create, semantic search (shared by the dashboard, the MCP
+			// search_memory tool, and the CLI), and admin edit/delete.
+			r.Route("/memories", func(r chi.Router) {
+				r.Get("/", api.ListMemories)
+				r.Post("/", api.CreateMemory)
+				r.Post("/search", api.SearchMemories)
+				r.Patch("/{id}", api.PatchMemory)
+				r.Delete("/{id}", api.DeleteMemory)
+			})
 		})
 
 		// Org AI settings: the kill switch + spend cap + current-period spend.
 		r.Get("/orgs/ai", api.GetAIOrgSettings)
 		r.Patch("/orgs/ai", api.PatchAIOrgSettings)
+
+		// Org memory settings: the memory kill switch + row count/cap. Reachable
+		// while the flag is off (that's how it gets turned on).
+		r.Get("/orgs/memory", api.GetMemorySettings)
+		r.Patch("/orgs/memory", api.PatchMemorySettings)
 
 		// Shared chat logs (Share This Session): append-only conversation
 		// histories with optional site attachment. The attached log serves as

@@ -47,3 +47,13 @@ sql:
             go_type:
               type: "float64"
               pointer: true
+          # pgvector embeddings (migration 0017). Queries pass vectors as their
+          # text form ('[f1,f2,...]') behind explicit ::vector casts and never
+          # scan the column back, so plain strings suffice — no pgvector-go dep.
+          - db_type: "vector"
+            go_type: "string"
+          - db_type: "vector"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true

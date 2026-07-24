@@ -85,6 +85,12 @@ type ControlPlane interface {
 	CreateChatLog(ctx context.Context, token, title, sourceTool, siteID string, imp apiclient.ChatImport) (apiclient.ChatCreateResult, error)
 	AppendChatMessages(ctx context.Context, token, chatID string, imp apiclient.ChatImport) (apiclient.ChatAppendResult, error)
 	AppendSiteChat(ctx context.Context, token, siteID string, imp apiclient.ChatImport) (apiclient.ChatAppendResult, error)
+	// Org memory: reads AND writes go through the API (search needs the API's
+	// embedder; writes need its quota/audit path), unlike the store-backed
+	// read tools above.
+	SearchMemory(ctx context.Context, token, query string, k int) ([]apiclient.Memory, error)
+	ListMemories(ctx context.Context, token string, limit int) ([]apiclient.Memory, error)
+	AddMemory(ctx context.Context, token, content, kind, sourceTool string) (apiclient.Memory, bool, error)
 }
 
 // Service holds the tool dependencies.
@@ -1033,6 +1039,116 @@ func parseManifest(raw []byte) (map[string]manifestEntry, error) {
 	return parsed.Files, nil
 }
 
+// --- Org memory tools --------------------------------------------------------
+
+type searchMemoryIn struct {
+	Query string `json:"query" jsonschema:"what you are about to build or need context for, e.g. 'brand colors and tone for a landing page'"`
+	K     int    `json:"k,omitempty" jsonschema:"how many memories to retrieve (default 8, max 50)"`
+}
+
+// MemoryInfo is one memory entry in a tool response.
+type MemoryInfo struct {
+	Kind       string   `json:"kind" jsonschema:"fact | preference | style | correction | manual"`
+	Content    string   `json:"content"`
+	Pinned     bool     `json:"pinned,omitempty" jsonschema:"pinned memories always apply"`
+	SourceTool string   `json:"source_tool,omitempty" jsonschema:"which tool recorded it, for externally added memories"`
+	UpdatedAt  string   `json:"updated_at,omitempty"`
+	Distance   *float64 `json:"distance,omitempty" jsonschema:"cosine distance to the query (lower = closer); absent on pinned rows"`
+}
+
+type memoryListOut struct {
+	Memories []MemoryInfo `json:"memories"`
+}
+
+type listMemoriesIn struct {
+	Limit int `json:"limit,omitempty" jsonschema:"max entries to return (default 50)"`
+}
+
+type addMemoryIn struct {
+	Content    string `json:"content" jsonschema:"one self-contained sentence stating the durable fact, e.g. 'The production API base URL is api.acme.dev'"`
+	Kind       string `json:"kind,omitempty" jsonschema:"fact | preference | style | correction (default manual)"`
+	SourceTool string `json:"source_tool,omitempty" jsonschema:"the agent recording this, e.g. 'claude-code', 'cursor', 'codex'"`
+}
+
+type addMemoryOut struct {
+	ID      string `json:"id"`
+	Created bool   `json:"created" jsonschema:"false when the same content already existed (the entry was refreshed instead)"`
+}
+
+func toMemoryInfos(rows []apiclient.Memory) []MemoryInfo {
+	out := make([]MemoryInfo, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, MemoryInfo{
+			Kind: m.Kind, Content: m.Content, Pinned: m.Pinned,
+			SourceTool: m.SourceTool, UpdatedAt: m.UpdatedAt, Distance: m.Distance,
+		})
+	}
+	return out
+}
+
+// SearchMemory retrieves the org's pinned + top-k relevant memories for a task.
+func (svc *Service) SearchMemory(ctx context.Context, token, query string, k int) (memoryListOut, error) {
+	if strings.TrimSpace(query) == "" {
+		return memoryListOut{}, fmt.Errorf("query is required")
+	}
+	rows, err := svc.API.SearchMemory(ctx, token, query, k)
+	if err != nil {
+		return memoryListOut{}, err
+	}
+	return memoryListOut{Memories: toMemoryInfos(rows)}, nil
+}
+
+// ListMemories browses the org's memory (pinned first, then most recent).
+func (svc *Service) ListMemories(ctx context.Context, token string, limit int) (memoryListOut, error) {
+	rows, err := svc.API.ListMemories(ctx, token, limit)
+	if err != nil {
+		return memoryListOut{}, err
+	}
+	return memoryListOut{Memories: toMemoryInfos(rows)}, nil
+}
+
+// AddMemory records a durable fact an external agent learned while working.
+func (svc *Service) AddMemory(ctx context.Context, token, content, kind, sourceTool string) (addMemoryOut, error) {
+	if strings.TrimSpace(content) == "" {
+		return addMemoryOut{}, fmt.Errorf("content is required")
+	}
+	mem, created, err := svc.API.AddMemory(ctx, token, content, kind, sourceTool)
+	if err != nil {
+		return addMemoryOut{}, err
+	}
+	return addMemoryOut{ID: mem.ID, Created: created}, nil
+}
+
+func (svc *Service) searchMemoryHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in searchMemoryIn) (*mcpsdk.CallToolResult, memoryListOut, error) {
+	logTool(ctx, "search_memory", "k", in.K)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, memoryListOut{}, ErrNoToken
+	}
+	out, err := svc.SearchMemory(ctx, token, in.Query, in.K)
+	return nil, out, err
+}
+
+func (svc *Service) listMemoriesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in listMemoriesIn) (*mcpsdk.CallToolResult, memoryListOut, error) {
+	logTool(ctx, "list_memories", "limit", in.Limit)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, memoryListOut{}, ErrNoToken
+	}
+	out, err := svc.ListMemories(ctx, token, in.Limit)
+	return nil, out, err
+}
+
+func (svc *Service) addMemoryHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in addMemoryIn) (*mcpsdk.CallToolResult, addMemoryOut, error) {
+	logTool(ctx, "add_memory", "kind", in.Kind, "source_tool", in.SourceTool)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, addMemoryOut{}, ErrNoToken
+	}
+	out, err := svc.AddMemory(ctx, token, in.Content, in.Kind, in.SourceTool)
+	return nil, out, err
+}
+
 // --- SDK registration -------------------------------------------------------
 
 // inputSchema builds the JSON Schema for a tool input and collapses nilable Go
@@ -1172,6 +1288,22 @@ func Register(server *mcpsdk.Server, svc *Service) {
 		// Explicit schema so `messages` (and nested `paths`) are plain arrays.
 		InputSchema: inputSchema[appendChatIn](),
 	}, svc.appendChatHandler)
+	// Org memory: reads and writes both ride the API (search embeds server-side;
+	// writes stay on the API's quota/audit path), so all three register behind
+	// the same control-plane gate as the write tools. Orgs that haven't enabled
+	// memory get a clear 403 from the API.
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "search_memory",
+		Description: "Fetch this Dropway organization's remembered brand, style, and preference context BEFORE building or editing anything for it. Returns pinned company facts plus the memories most relevant to your query (e.g. 'brand colors and tone for a pricing page'). Args: query, k (optional).",
+	}, svc.searchMemoryHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "list_memories",
+		Description: "Browse everything Dropway remembers about this organization (pinned first, then most recently updated). Args: limit (optional, default 50).",
+	}, svc.listMemoriesHandler)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "add_memory",
+		Description: "Record a durable fact about this organization that future builds should know (brand voice, color palette, product names, structural preferences, standing corrections). One self-contained sentence per call; duplicates dedupe server-side. Args: content, kind (optional: fact|preference|style|correction), source_tool (optional: your agent name, e.g. 'claude-code').",
+	}, svc.addMemoryHandler)
 }
 
 // logTool emits a structured record of a tool invocation — the authenticated

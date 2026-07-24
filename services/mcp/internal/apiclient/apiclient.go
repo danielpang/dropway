@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -518,4 +519,75 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Org memory ("your agent knows your company") — the memory tools call the
+// API's /v1/ai/memories surface so search embedding, quota, RLS scoping, and
+// audit all stay on the API (the MCP server never touches vectors itself).
+// ---------------------------------------------------------------------------
+
+// Memory is one org-memory entry as the API returns it.
+type Memory struct {
+	ID         string   `json:"id"`
+	Kind       string   `json:"kind"`
+	Content    string   `json:"content"`
+	SourceKind string   `json:"source_kind"`
+	SourceTool string   `json:"source_tool,omitempty"`
+	Pinned     bool     `json:"pinned"`
+	Disabled   bool     `json:"disabled"`
+	UpdatedAt  string   `json:"updated_at"`
+	Distance   *float64 `json:"distance,omitempty"`
+}
+
+type memoryListResponse struct {
+	Memories []Memory `json:"memories"`
+}
+
+// SearchMemory calls POST /v1/ai/memories/search: pinned entries + the top-k
+// semantically closest memories for the query.
+func (c *Client) SearchMemory(ctx context.Context, token, query string, k int) ([]Memory, error) {
+	body := map[string]any{"query": query}
+	if k > 0 {
+		body["k"] = k
+	}
+	var out memoryListResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/ai/memories/search", token, body, &out); err != nil {
+		return nil, err
+	}
+	return out.Memories, nil
+}
+
+// ListMemories calls GET /v1/ai/memories (curation order: pinned first, then
+// most recently refreshed).
+func (c *Client) ListMemories(ctx context.Context, token string, limit int) ([]Memory, error) {
+	path := "/v1/ai/memories"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var out memoryListResponse
+	if err := c.do(ctx, http.MethodGet, path, token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Memories, nil
+}
+
+// AddMemory calls POST /v1/ai/memories. created=false means the content
+// deduped against an existing entry (which was refreshed instead).
+func (c *Client) AddMemory(ctx context.Context, token, content, kind, sourceTool string) (Memory, bool, error) {
+	body := map[string]string{"content": content}
+	if kind != "" {
+		body["kind"] = kind
+	}
+	if sourceTool != "" {
+		body["source_tool"] = sourceTool
+	}
+	var out struct {
+		Memory  Memory `json:"memory"`
+		Created bool   `json:"created"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/ai/memories", token, body, &out); err != nil {
+		return Memory{}, false, err
+	}
+	return out.Memory, out.Created, nil
 }

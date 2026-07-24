@@ -54,6 +54,17 @@ type Runner struct {
 	// event (pass-through cost + card fee). Nil in OSS (self-host is BYO key, no
 	// pass-through billing).
 	UsageReporter UsageReporter
+	// Embedder enables org memory (retrieval into the turn + post-turn
+	// extraction). Nil → memory off; turns run exactly as before.
+	Embedder Embedder
+	// MemoryExtractModel is the OpenRouter model for the post-turn extraction
+	// pass (a cheap tier; empty falls back to the session model). MemoryTopK
+	// bounds retrieved memories per turn; MemoryMaxPerOrg caps stored rows.
+	MemoryExtractModel string
+	MemoryTopK         int
+	MemoryMaxPerOrg    int
+	// MemoryGate plan-gates memory (cloud: Pro+; nil → allow all).
+	MemoryGate MemoryGate
 	// Logger receives the async transcript writer's warnings/errors (writes
 	// happen off the request path, so there is no request logger to use).
 	// Nil → slog.Default().
@@ -187,7 +198,15 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 		return persistFailed(fmt.Errorf("sandbox: %w", err))
 	}
 
-	messages := append([]openrouter.Message{{Role: "system", Content: r.systemPrompt()}}, history...)
+	// Org memory: retrieve the relevant company context and append it to the
+	// system prompt for THIS turn only. The block is never persisted into the
+	// transcript, so it stays current as memory evolves and history rebuilds
+	// are unaffected. Fail-open: an empty block means the turn runs memory-less.
+	sysPrompt := r.systemPrompt()
+	if block := r.memoryBlock(ctx, t, userText); block != "" {
+		sysPrompt += "\n\n" + block
+	}
+	messages := append([]openrouter.Message{{Role: "system", Content: sysPrompt}}, history...)
 	messages = append(messages, userMsg)
 
 	tools := builderTools()
@@ -258,6 +277,17 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 	// failed, rather than publishing a draft for a conversation that was lost.
 	if err := tw.Flush(); err != nil {
 		return persistFailed(nil)
+	}
+
+	// 5b. Post-turn memory extraction, off the request path on a detached
+	// context (the turn's outcome never depends on it; failures only log and
+	// the watermark makes the next turn retry).
+	if r.memoryEnabled(ctx, t) {
+		extractCtx, cancelExtract := context.WithTimeout(context.WithoutCancel(ctx), extractTimeout)
+		go func() {
+			defer cancelExtract()
+			r.extractSessionMemories(extractCtx, t, sess)
+		}()
 	}
 
 	// 6. Export the result and deploy it as an AI draft version + preview.
@@ -461,13 +491,19 @@ const AITurnSpendLimit = quotaResourceAITurnSpend
 // It returns true only when the ledger GENUINELY recorded a NEW row (dedup on
 // the generation id), so the caller counts the cost toward the cap exactly once.
 func (r *Runner) recordUsage(ctx context.Context, t store.Tenant, sessionID, model string, u *openrouter.Usage) (recorded bool) {
-	sid := sessionID
+	// An empty session id (e.g. chat-log memory extraction) books the cost to
+	// the org with no session attribution — the column is nullable for exactly
+	// this (billing rows outlive conversations).
+	var sessPtr *string
+	if sessionID != "" {
+		sessPtr = &sessionID
+	}
 	genID := u.GenerationID
 	if genID == "" {
 		return false // nothing to reconcile against; skip (free/unpriced)
 	}
 	recorded, err := r.Store.RecordAIUsage(ctx, t, store.AIUsageRow{
-		SessionID:              &sid,
+		SessionID:              sessPtr,
 		Model:                  model,
 		OpenrouterGenerationID: genID,
 		PromptTokens:           u.PromptTokens,

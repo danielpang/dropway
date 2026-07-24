@@ -230,6 +230,7 @@ func (a *API) FinalizeSkillUpload(w http.ResponseWriter, r *http.Request) {
 		"version_no": ver.VersionNo,
 		"size_bytes": totalSize,
 	})
+	a.indexSkillAsync(r, t, skillID, ver.ID)
 	httpx.WriteJSON(w, http.StatusCreated, skillFinalizeResponse{
 		VersionID: ver.ID,
 		VersionNo: ver.VersionNo,

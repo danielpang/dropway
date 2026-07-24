@@ -402,6 +402,7 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		"version_id": req.VersionID,
 		"host":       res.Host,
 	})
+	a.indexSiteVersionAsync(r, t, siteID, req.VersionID)
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
 		LiveURL:   a.ContentURL(res.Host),
 		VersionID: req.VersionID,
