@@ -14,14 +14,14 @@ export default function DashboardLoading() {
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="space-y-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
           <p className="text-muted-foreground">
             Deploy a folder, get a live, access-controlled URL.
           </p>
         </div>
-        {/* "New site" depends on billing/org state. */}
-        <Skeleton className="h-9 w-28" />
+        {/* "New site" depends on billing/org state; ml-auto mirrors page.tsx wrap alignment. */}
+        <Skeleton className="ml-auto h-9 w-28 shrink-0" />
       </div>
 
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
