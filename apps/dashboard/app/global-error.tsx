@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import posthog from "posthog-js";
 
+import { captureClientException } from "@/lib/analytics-client";
+
 /**
  * Last-resort error boundary. Unlike app/error.tsx, this catches errors thrown
  * by the ROOT layout itself, and therefore REPLACES it — so it must render its
@@ -21,9 +23,14 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error(error);
+    // Error tracking goes through the vendor-neutral seam (best-effort; no-ops if
+    // the SDK never initialized because the root failed early).
+    captureClientException(error);
+    // The product-analytics "error page reached" funnel metric: the sibling
+    // boundaries emit this via <ErrorPageMetric>, but this last-resort boundary
+    // REPLACES the root layout, so the provider that renders that component isn't
+    // mounted here — capture it directly on the singleton instead.
     try {
-      // Best-effort: posthog may not have initialized if the root failed early.
-      posthog?.captureException?.(error);
       posthog?.capture?.("error_page_viewed", { status: 500 });
     } catch {
       /* never mask the original error */
