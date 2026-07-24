@@ -175,10 +175,10 @@ export function SkillsView(props: {
           ) : null}
           <Button variant="outline" asChild>
             <Link href="/skills/new">
-              <Pencil className="mr-1.5 h-4 w-4" /> Write a skill
+              <Pencil className="mr-1.5 h-4 w-4" /> Write
             </Link>
           </Button>
-          <Button onClick={() => setUploadOpen(true)}>Upload skill</Button>
+          <Button onClick={() => setUploadOpen(true)}>Upload</Button>
         </div>
       </div>
 
@@ -259,11 +259,11 @@ export function SkillsView(props: {
           <div className="flex items-center justify-center gap-2">
             <Button variant="outline" size="sm" asChild>
               <Link href="/skills/new">
-                <Pencil className="mr-1.5 h-4 w-4" /> Write a skill
+                <Pencil className="mr-1.5 h-4 w-4" /> Write
               </Link>
             </Button>
             <Button size="sm" onClick={() => setUploadOpen(true)}>
-              Upload skill
+              Upload
             </Button>
           </div>
         </Card>
