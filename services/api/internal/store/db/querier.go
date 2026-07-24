@@ -417,6 +417,11 @@ type Querier interface {
 	// folder; see quota.ResourceSkillPerFolder).
 	LockSkillFolderQuota(ctx context.Context, dollar_1 string) error
 	MarkAIUsageReported(ctx context.Context, arg MarkAIUsageReportedParams) error
+	// The extraction dedupe probe: nearest neighbor over ALL rows — pinned and
+	// disabled INCLUDED (unlike SearchOrgMemories) — so a reworded restatement of
+	// a pinned fact can't duplicate it and a disabled fact can't sneak back in
+	// under new wording.
+	NearestOrgMemory(ctx context.Context, arg NearestOrgMemoryParams) (NearestOrgMemoryRow, error)
 	NextSkillVersionNo(ctx context.Context, arg NextSkillVersionNoParams) (int32, error)
 	// ===========================================================================
 	// site_versions

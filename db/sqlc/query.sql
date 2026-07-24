@@ -1402,7 +1402,7 @@ WHERE org_id = $1;
 -- disabled row (the flag survives the upsert). `inserted` distinguishes a
 -- genuinely new fact from a refresh (xmax = 0 only on freshly inserted rows).
 INSERT INTO app.org_memories (org_id, kind, content, content_hash, embedding, embedding_model, source_kind, source_id, source_tool, created_by)
-VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, NULLIF($5::text, '')::vector, $6, $7, $8, $9, $10)
 ON CONFLICT (org_id, content_hash) DO UPDATE
 SET updated_at = now(), source_kind = EXCLUDED.source_kind, source_id = EXCLUDED.source_id
 RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at, (xmax = 0) AS inserted;
@@ -1449,7 +1449,7 @@ LIMIT $4;
 -- Admin edit: new content implies a new hash + embedding (the caller
 -- re-embeds before calling).
 UPDATE app.org_memories
-SET content = $3, content_hash = $4, embedding = $5::vector, embedding_model = $6, kind = $7, updated_at = now()
+SET content = $3, content_hash = $4, embedding = NULLIF($5::text, '')::vector, embedding_model = $6, kind = $7, updated_at = now()
 WHERE id = $1 AND org_id = $2
 RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at;
 
@@ -1507,7 +1507,7 @@ WHERE org_id = $1 AND skill_id = $2;
 
 -- name: InsertContentChunk :exec
 INSERT INTO app.org_content_chunks (org_id, source_kind, version_id, site_id, skill_id, path, chunk_seq, content, embedding, embedding_model)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9::text, '')::vector, $10)
 ON CONFLICT DO NOTHING;
 
 -- name: SearchContentChunks :many
@@ -1531,3 +1531,14 @@ LIMIT $4;
 -- existing row (same hash) but must not insert a new one.
 SELECT id FROM app.org_memories
 WHERE org_id = $1 AND content_hash = $2;
+
+-- name: NearestOrgMemory :one
+-- The extraction dedupe probe: nearest neighbor over ALL rows — pinned and
+-- disabled INCLUDED (unlike SearchOrgMemories) — so a reworded restatement of
+-- a pinned fact can't duplicate it and a disabled fact can't sneak back in
+-- under new wording.
+SELECT id, (embedding <=> $2::vector)::float8 AS distance
+FROM app.org_memories
+WHERE org_id = $1 AND embedding IS NOT NULL AND embedding_model = $3
+ORDER BY embedding <=> $2::vector
+LIMIT 1;

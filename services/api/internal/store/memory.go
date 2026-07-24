@@ -189,6 +189,28 @@ func (s *Store) SearchOrgMemories(ctx context.Context, t Tenant, embedding []flo
 	return out, err
 }
 
+// NearestOrgMemoryDistance returns the cosine distance to the org's closest
+// memory — pinned and disabled INCLUDED, unlike SearchOrgMemories — for the
+// extraction dedupe probe. found is false when the org has no embedded rows.
+func (s *Store) NearestOrgMemoryDistance(ctx context.Context, t Tenant, embedding []float32, model string) (found bool, distance float64, err error) {
+	err = s.withTx(ctx, t, func(q *db.Queries) error {
+		r, qerr := q.NearestOrgMemory(ctx, db.NearestOrgMemoryParams{
+			OrgID:          t.OrgID,
+			Column2:        VectorText(embedding),
+			EmbeddingModel: model,
+		})
+		if qerr != nil {
+			if isNoRows(qerr) {
+				return nil
+			}
+			return qerr
+		}
+		found, distance = true, r.Distance
+		return nil
+	})
+	return found, distance, err
+}
+
 // ListPinnedOrgMemories returns the always-injected set (pinned, enabled).
 func (s *Store) ListPinnedOrgMemories(ctx context.Context, t Tenant, limit int32) ([]OrgMemory, error) {
 	var out []OrgMemory

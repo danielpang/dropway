@@ -2132,7 +2132,7 @@ func (q *Queries) InsertChatMessage(ctx context.Context, arg InsertChatMessagePa
 
 const insertContentChunk = `-- name: InsertContentChunk :exec
 INSERT INTO app.org_content_chunks (org_id, source_kind, version_id, site_id, skill_id, path, chunk_seq, content, embedding, embedding_model)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9::text, '')::vector, $10)
 ON CONFLICT DO NOTHING
 `
 
@@ -3991,6 +3991,36 @@ func (q *Queries) MarkAIUsageReported(ctx context.Context, arg MarkAIUsageReport
 	return err
 }
 
+const nearestOrgMemory = `-- name: NearestOrgMemory :one
+SELECT id, (embedding <=> $2::vector)::float8 AS distance
+FROM app.org_memories
+WHERE org_id = $1 AND embedding IS NOT NULL AND embedding_model = $3
+ORDER BY embedding <=> $2::vector
+LIMIT 1
+`
+
+type NearestOrgMemoryParams struct {
+	OrgID          string
+	Column2        string
+	EmbeddingModel string
+}
+
+type NearestOrgMemoryRow struct {
+	ID       string
+	Distance float64
+}
+
+// The extraction dedupe probe: nearest neighbor over ALL rows — pinned and
+// disabled INCLUDED (unlike SearchOrgMemories) — so a reworded restatement of
+// a pinned fact can't duplicate it and a disabled fact can't sneak back in
+// under new wording.
+func (q *Queries) NearestOrgMemory(ctx context.Context, arg NearestOrgMemoryParams) (NearestOrgMemoryRow, error) {
+	row := q.db.QueryRow(ctx, nearestOrgMemory, arg.OrgID, arg.Column2, arg.EmbeddingModel)
+	var i NearestOrgMemoryRow
+	err := row.Scan(&i.ID, &i.Distance)
+	return i, err
+}
+
 const nextSkillVersionNo = `-- name: NextSkillVersionNo :one
 SELECT COALESCE(MAX(version_no), 0) + 1 AS next_version_no
 FROM app.skill_versions
@@ -5250,7 +5280,7 @@ func (q *Queries) UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatus
 
 const updateOrgMemoryContent = `-- name: UpdateOrgMemoryContent :one
 UPDATE app.org_memories
-SET content = $3, content_hash = $4, embedding = $5::vector, embedding_model = $6, kind = $7, updated_at = now()
+SET content = $3, content_hash = $4, embedding = NULLIF($5::text, '')::vector, embedding_model = $6, kind = $7, updated_at = now()
 WHERE id = $1 AND org_id = $2
 RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at
 `
@@ -5420,7 +5450,7 @@ func (q *Queries) UpsertMemoryIngest(ctx context.Context, arg UpsertMemoryIngest
 
 const upsertOrgMemory = `-- name: UpsertOrgMemory :one
 INSERT INTO app.org_memories (org_id, kind, content, content_hash, embedding, embedding_model, source_kind, source_id, source_tool, created_by)
-VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, NULLIF($5::text, '')::vector, $6, $7, $8, $9, $10)
 ON CONFLICT (org_id, content_hash) DO UPDATE
 SET updated_at = now(), source_kind = EXCLUDED.source_kind, source_id = EXCLUDED.source_id
 RETURNING id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at, (xmax = 0) AS inserted

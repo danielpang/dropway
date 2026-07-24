@@ -327,9 +327,10 @@ func (r *Runner) extractInto(ctx context.Context, t store.Tenant, sourceKind, so
 	for i, c := range candidates {
 		// Semantic dedupe: a near-identical existing memory means this
 		// candidate adds nothing (the exact-hash upsert path handles literal
-		// repeats and refreshes updated_at).
-		near, err := r.Store.SearchOrgMemories(ctx, t, vecs[i], embModel, 1)
-		if err == nil && len(near) > 0 && near[0].Distance <= nearDupDistance {
+		// repeats and refreshes updated_at). The probe covers pinned AND
+		// disabled rows, so a reworded pinned fact isn't duplicated and a
+		// disabled fact can't sneak back in under new wording.
+		if found, dist, err := r.Store.NearestOrgMemoryDistance(ctx, t, vecs[i], embModel); err == nil && found && dist <= nearDupDistance {
 			continue
 		}
 		_, _, err = r.Store.UpsertOrgMemory(ctx, t, store.NewMemoryInput{
