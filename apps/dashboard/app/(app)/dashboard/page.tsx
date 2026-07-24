@@ -55,13 +55,16 @@ export default async function DashboardPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="space-y-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">My Sites</h1>
           <p className="text-muted-foreground">
             Deploy a folder, get a live, access-controlled URL.
           </p>
         </div>
-        <NewSiteDialog readOnly={readOnly} orgSlug={orgSlug} />
+        {/* ml-auto keeps the control right-aligned when the header wraps on narrow viewports. */}
+        <div className="ml-auto shrink-0">
+          <NewSiteDialog readOnly={readOnly} orgSlug={orgSlug} />
+        </div>
       </div>
 
       {loadError ? (
