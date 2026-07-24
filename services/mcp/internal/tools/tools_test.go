@@ -1343,3 +1343,38 @@ func TestUploadSkill_SchemaHasPlainTypes(t *testing.T) {
 		t.Fatalf("folders type = %q / %v, want plain \"array\"", folders.Type, folders.Types)
 	}
 }
+
+// writeAuthHint appends the LLM-actionable recovery guidance on the API's
+// 401/403 (including the family-revocation explanation on 401) and leaves every
+// other error untouched.
+func TestWriteAuthHint(t *testing.T) {
+	e401 := writeAuthHint(&apiclient.Error{Status: 401, Message: "unauthorized"})
+	for _, want := range []string{"api 401", "family revocation", "re-authorize", "Settings → Connectors"} {
+		if !strings.Contains(e401.Error(), want) {
+			t.Errorf("401 hint missing %q; got: %s", want, e401.Error())
+		}
+	}
+	// The original error stays unwrappable (callers can still errors.As it).
+	var apiErr *apiclient.Error
+	if !errors.As(e401, &apiErr) || apiErr.Status != 401 {
+		t.Error("wrapped 401 must still unwrap to *apiclient.Error")
+	}
+
+	e403 := writeAuthHint(&apiclient.Error{Status: 403, Message: "admin only"})
+	if !strings.Contains(e403.Error(), "admin/owner") {
+		t.Errorf("403 hint missing role guidance; got: %s", e403.Error())
+	}
+
+	// Non-auth API errors and non-API errors pass through unchanged.
+	e400 := &apiclient.Error{Status: 400, Message: "bad slug"}
+	if got := writeAuthHint(e400); got != error(e400) {
+		t.Errorf("400 must pass through unchanged; got: %v", got)
+	}
+	plain := errors.New("network sadness")
+	if got := writeAuthHint(plain); got != plain {
+		t.Errorf("plain error must pass through unchanged; got: %v", got)
+	}
+	if writeAuthHint(nil) != nil {
+		t.Error("nil must pass through")
+	}
+}

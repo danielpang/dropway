@@ -304,3 +304,19 @@ func TestAPIKeyValidator(t *testing.T) {
 		t.Errorf("failed validations should not be cached; upstream calls = %d, want 2", mcBad.calls)
 	}
 }
+
+// The gate's invalid-token 401 body carries the recovery guidance (including the
+// family-revocation explanation) so the MCP client's LLM can instruct the user.
+func TestGate_InvalidToken_BodyExplainsRecovery(t *testing.T) {
+	var seen store_Tenant
+	h := Middleware(fakeVerifier{err: errors.New("token is expired")}, resourceMeta, nextRecorder(&seen))
+	rec := do(h, "Bearer some.jwt.token")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	for _, want := range []string{"family revocation", "re-authorize", "refresh"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("401 body missing %q; got: %s", want, rec.Body.String())
+		}
+	}
+}

@@ -76,6 +76,35 @@ type Config struct {
 	Keys                KeyValidator
 }
 
+// The gate's 401 bodies are written for the READER of the error — the MCP
+// client's LLM and its user — not just for logs: they say what was rejected and
+// how to recover. detailInvalidToken covers the refresh-token "family
+// revocation" case explicitly: replaying an already-rotated refresh token
+// revokes ALL of a connection's tokens as a security measure, after which every
+// access token is rejected here until the user re-authorizes — the client
+// cannot fix that with a silent refresh.
+const (
+	detailInvalidToken = "invalid token. The access token was rejected (expired, revoked, " +
+		"or minted for the wrong audience). Your MCP client should refresh it automatically; " +
+		"if this error persists, the connection's refresh token has likely been revoked — " +
+		"for example after a refresh-token reuse triggered a security revocation of ALL of " +
+		"this connection's tokens (family revocation) — and the user must re-authorize the " +
+		"Dropway connection (in Claude: Settings → Connectors → Dropway → reconnect; in other " +
+		"clients, re-run the OAuth connect flow)."
+
+	detailNoOrg = "token has no organization. The user signed in but has no active " +
+		"organization, so no tenant can be resolved. Ask the user to open the Dropway " +
+		"dashboard, create or select an organization, then reconnect this MCP connection."
+
+	detailKeyRejected = "invalid token. The API key was rejected — it may be revoked, " +
+		"expired, disabled by the org's API-keys kill switch, or unknown. Ask a Dropway " +
+		"dashboard admin to check Settings → API keys and mint a new key if needed."
+
+	detailKeysNotAccepted = "api keys are not accepted by this server (it runs read-only, " +
+		"with no API_URL configured). Connect with OAuth instead, or ask the operator to " +
+		"set API_URL on the MCP service to enable API-key auth."
+)
+
 // Middleware is Gate without analytics or API-key support (rejections are still
 // logged). Kept as the back-compatible constructor for tests.
 func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) http.Handler {
@@ -121,7 +150,7 @@ func Gate(cfg Config, next http.Handler) http.Handler {
 					Reason: "api keys not accepted (server has no API_URL)",
 					Method: r.Method, Path: r.URL.Path,
 				})
-				unauthorized(w, cfg.ResourceMetadataURL, "api keys are not accepted by this server")
+				unauthorized(w, cfg.ResourceMetadataURL, detailKeysNotAccepted)
 				return
 			}
 			t, err := cfg.Keys.ValidateAPIKey(r.Context(), tok)
@@ -132,7 +161,7 @@ func Gate(cfg Config, next http.Handler) http.Handler {
 					Surface: "mcp", Kind: "api_key", Step: "api_key_auth",
 					Reason: err.Error(), Method: r.Method, Path: r.URL.Path,
 				})
-				unauthorized(w, cfg.ResourceMetadataURL, "invalid token")
+				unauthorized(w, cfg.ResourceMetadataURL, detailKeyRejected)
 				return
 			}
 			slog.Info("mcp auth: api key verified",
@@ -154,7 +183,7 @@ func Gate(cfg Config, next http.Handler) http.Handler {
 				Reason: err.Error(), TokenAud: aud, TokenIss: iss,
 				Method: r.Method, Path: r.URL.Path,
 			})
-			unauthorized(w, cfg.ResourceMetadataURL, "invalid token")
+			unauthorized(w, cfg.ResourceMetadataURL, detailInvalidToken)
 			return
 		}
 		t := store.Tenant{OrgID: claims.OrgID, UserID: claims.UserID()}
@@ -165,7 +194,7 @@ func Gate(cfg Config, next http.Handler) http.Handler {
 				Surface: "mcp", Kind: "jwt", Step: "org_claim",
 				Reason: "token has no organization", Method: r.Method, Path: r.URL.Path,
 			})
-			unauthorized(w, cfg.ResourceMetadataURL, "token has no organization")
+			unauthorized(w, cfg.ResourceMetadataURL, detailNoOrg)
 			return
 		}
 		slog.Info("mcp auth: token verified",
