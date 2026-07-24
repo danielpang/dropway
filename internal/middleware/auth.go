@@ -17,6 +17,7 @@ import (
 	"github.com/danielpang/dropway/internal/apikey"
 	"github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/logx"
 )
 
 // claimsKey is the unexported context key under which verified claims are
@@ -109,7 +110,10 @@ func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Han
 						return
 					}
 					// Uniform 401 for unknown / revoked / expired / disabled-org /
-					// creator-departed — no oracle distinguishing them.
+					// creator-departed — no oracle distinguishing them. The real
+					// reason is logged server-side only.
+					logx.FromContext(r.Context()).Warn("auth: api key rejected",
+						"err", err.Error(), "path", r.URL.Path)
 					httpx.WriteError(w, wrapUnauthorized("invalid token"))
 					return
 				}
@@ -122,7 +126,13 @@ func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Han
 			claims, err := v.Verify(r.Context(), token)
 			if err != nil {
 				// Don't echo the verifier error verbatim (it can hint at why a
-				// forged token failed); use a generic unauthorized message.
+				// forged token failed); use a generic unauthorized message. Log WHY
+				// server-side (with the token's unverified aud/iss) so a rejected
+				// token — e.g. an MCP-forwarded write whose audience the API doesn't
+				// accept — is diagnosable instead of a silent 401.
+				aud, iss := auth.UnverifiedAudIss(token)
+				logx.FromContext(r.Context()).Warn("auth: token verification failed",
+					"err", err.Error(), "token_aud", aud, "token_iss", iss, "path", r.URL.Path)
 				httpx.WriteError(w, wrapUnauthorized("invalid token"))
 				return
 			}

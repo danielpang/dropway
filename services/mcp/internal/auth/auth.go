@@ -10,8 +10,6 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -73,7 +71,7 @@ func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) 
 		if err != nil {
 			// Log WHY (and the token's unverified aud/iss) so an audience/issuer
 			// mismatch is diagnosable — the gate is otherwise a silent 401.
-			aud, iss := unverifiedAudIss(tok)
+			aud, iss := coreauth.UnverifiedAudIss(tok)
 			slog.Warn("mcp auth: token verification failed",
 				"err", err.Error(), "token_aud", aud, "token_iss", iss, "path", r.URL.Path)
 			unauthorized(w, resourceMetadataURL, "invalid token")
@@ -105,29 +103,6 @@ func bearer(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(h[len(prefix):])
-}
-
-// unverifiedAudIss decodes a JWT payload WITHOUT verifying the signature, returning
-// the `aud` and `iss` claims for DIAGNOSTIC LOGGING ONLY (never an authz decision).
-// Lets an audience/issuer mismatch be read straight from the logs. Returns empty
-// strings when the token can't be parsed.
-func unverifiedAudIss(token string) (aud, iss string) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return "", ""
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", ""
-	}
-	var p struct {
-		Aud json.RawMessage `json:"aud"` // string or []string — logged as-is
-		Iss string          `json:"iss"`
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", ""
-	}
-	return string(p.Aud), p.Iss
 }
 
 func unauthorized(w http.ResponseWriter, resourceMetadataURL, detail string) {
