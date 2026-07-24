@@ -71,6 +71,17 @@ export type AiMessage = {
   created_at: string;
 };
 
+/**
+ * A session's newest AI draft while its preview is still live (mirrors the
+ * draft_ready SSE event), so the builder can rehydrate the preview panel.
+ */
+export type AiDraft = {
+  version_id: string;
+  preview_url: string;
+  expires_at?: string;
+  access_mode?: string;
+};
+
 // ---- Org-wide skill sharing shapes -----------------------------------------
 
 /** An org-shared Claude skill (SKILL.md + supporting files, latest-only versions). */
@@ -492,20 +503,30 @@ export const api = {
   },
 
   /**
-   * One AI session plus its persisted transcript, so the builder can rehydrate a
-   * conversation the user returns to. Best-effort (empty transcript on error).
+   * One AI session plus its persisted transcript and (when its preview is still
+   * live) the newest draft, so the builder can rehydrate a conversation AND the
+   * preview panel the user returns to. Best-effort (empty transcript on error).
    */
   async aiSession(
     id: string,
-  ): Promise<{ session: AiSession | null; messages: AiMessage[] }> {
+  ): Promise<{
+    session: AiSession | null;
+    messages: AiMessage[];
+    draft: AiDraft | null;
+  }> {
     try {
       const body = (await apiGet(`/v1/ai/sessions/${id}`)) as {
         session?: AiSession;
         messages?: AiMessage[];
+        draft?: AiDraft;
       };
-      return { session: body.session ?? null, messages: body.messages ?? [] };
+      return {
+        session: body.session ?? null,
+        messages: body.messages ?? [],
+        draft: body.draft ?? null,
+      };
     } catch {
-      return { session: null, messages: [] };
+      return { session: null, messages: [], draft: null };
     }
   },
 

@@ -774,6 +774,18 @@ paths:
                 properties:
                   session: { $ref: "#/components/schemas/AISession" }
                   messages: { type: array, items: { type: object } }
+                  draft:
+                    type: object
+                    description: >
+                      The session's newest AI draft while its preview is still
+                      live (omitted otherwise). Mirrors the draft_ready SSE
+                      event so the client can rehydrate the preview panel on
+                      reload or reconnect.
+                    properties:
+                      version_id: { type: string, format: uuid }
+                      preview_url: { type: string }
+                      expires_at: { type: string, format: date-time }
+                      access_mode: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
