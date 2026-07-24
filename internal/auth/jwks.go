@@ -102,6 +102,30 @@ func MCPResourceAudiences(publicURL string) []string {
 	return []string{base, base + "/", base + "/mcp", base + "/mcp/"}
 }
 
+// UnverifiedAudIss decodes a JWT payload WITHOUT verifying the signature,
+// returning the `aud` and `iss` claims for DIAGNOSTIC LOGGING ONLY (never an
+// authz decision). It lets an audience/issuer mismatch be read straight from the
+// logs when a token is rejected — the difference between a diagnosable 401 and a
+// silent one. Returns empty strings when the token can't be parsed.
+func UnverifiedAudIss(token string) (aud, iss string) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", ""
+	}
+	var p struct {
+		Aud json.RawMessage `json:"aud"` // string or []string — logged as-is
+		Iss string          `json:"iss"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return "", ""
+	}
+	return string(p.Aud), p.Iss
+}
+
 // NewVerifier builds a Verifier for the given JWKS URL, expected issuer and
 // audience. issuer/audience are enforced on every token.
 func NewVerifier(jwksURL, issuer, audience string, opts ...Option) *Verifier {

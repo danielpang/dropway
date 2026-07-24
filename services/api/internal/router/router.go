@@ -64,7 +64,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// nil in a DB-less/dev build → JWT only). A keyed request resolves to
 		// synthesized claims, so it flows through the same tenant context, quota,
 		// and handlers as a session — subject to the member-level role ceiling.
-		r.Use(middleware.AuthWithKeys(verifier, api.KeyAuth))
+		// Rejections of a presented credential are captured to analytics as
+		// `auth_rejected` events (api.Analytics nil → logs only).
+		r.Use(middleware.AuthWithKeysObserved(verifier, api.KeyAuth, api.Analytics))
 		// Attribute any downstream exception to the authenticated user (runs after
 		// Auth, before EnsureOrgProvisioned, so even provisioning errors carry the id).
 		r.Use(attributeErrors)

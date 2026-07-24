@@ -1,13 +1,19 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/logx"
 )
 
 // fakeVerifier lets us drive Auth without a live JWKS endpoint.
@@ -217,5 +223,149 @@ func TestAuthWithKeys_NoAuthenticator_KeyFallsToJWT(t *testing.T) {
 	}
 	if !fv.called {
 		t.Error("with no key authenticator, the JWT verifier should be consulted")
+	}
+}
+
+// A rejected JWT logs WHY server-side (with the token's unverified aud/iss) while
+// the client still gets the generic 401 — the diagnosability contract for e.g. an
+// MCP-forwarded write whose audience the API doesn't accept.
+func TestAuth_VerifyFailure_LogsReasonWithAudIss(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	fv := &fakeVerifier{wantToken: "never", err: errors.New("token has invalid audience")}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"aud":"https://mcp.dropway.test/mcp/","iss":"https://app.dropway.test"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sites", nil)
+	req = req.WithContext(logx.WithLogger(req.Context(), log))
+	req.Header.Set("Authorization", "Bearer eyJhbGciOiJFZERTQSJ9."+payload+".sig")
+	rr := httptest.NewRecorder()
+
+	Auth(fv)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	out := buf.String()
+	for _, want := range []string{"token verification failed", "token has invalid audience", "mcp.dropway.test/mcp/", "app.dropway.test"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log output missing %q; got: %s", want, out)
+		}
+	}
+	// The response body must stay generic — no verifier detail leaks to the client.
+	if strings.Contains(rr.Body.String(), "audience") {
+		t.Errorf("response leaked verifier detail: %s", rr.Body.String())
+	}
+}
+
+// A rejected API key logs the real reason server-side; the client keeps the
+// uniform 401 (no revoked/unknown/expired oracle).
+func TestAuthWithKeys_KeyFailure_LogsReason(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	ka := &fakeKeyAuth{err: errors.New("key revoked")}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req = req.WithContext(logx.WithLogger(req.Context(), log))
+	req.Header.Set("Authorization", "Bearer dw_live_abc123")
+	rr := httptest.NewRecorder()
+	AuthWithKeys(&fakeVerifier{}, ka)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if !strings.Contains(buf.String(), "api key rejected") || !strings.Contains(buf.String(), "key revoked") {
+		t.Errorf("log output missing key-rejection reason; got: %s", buf.String())
+	}
+	if strings.Contains(rr.Body.String(), "revoked") {
+		t.Errorf("response leaked key-auth detail: %s", rr.Body.String())
+	}
+}
+
+// fakeEmitter records captured analytics events.
+type fakeEmitter struct{ events []analytics.Event }
+
+func (f *fakeEmitter) Capture(_ context.Context, ev analytics.Event) { f.events = append(f.events, ev) }
+
+// A rejected JWT is captured to analytics as auth_rejected with the surface,
+// kind, reason, and the token's unverified aud/iss.
+func TestAuthWithKeysObserved_JWTRejection_CapturesEvent(t *testing.T) {
+	em := &fakeEmitter{}
+	fv := &fakeVerifier{wantToken: "never", err: errors.New("token has invalid audience")}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"aud":"https://mcp.dropway.test/mcp/","iss":"https://app.dropway.test"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer h."+payload+".s")
+	rr := httptest.NewRecorder()
+	AuthWithKeysObserved(fv, nil, em)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if len(em.events) != 1 {
+		t.Fatalf("captured %d events, want 1", len(em.events))
+	}
+	ev := em.events[0]
+	if ev.Event != "auth_rejected" || ev.DistinctID != "system" {
+		t.Errorf("event = %q distinct_id = %q", ev.Event, ev.DistinctID)
+	}
+	for k, want := range map[string]any{
+		"surface":   "api",
+		"kind":      "jwt",
+		"reason":    "token has invalid audience",
+		"token_aud": `"https://mcp.dropway.test/mcp/"`,
+		"token_iss": "https://app.dropway.test",
+		"method":    http.MethodPost,
+		"path":      "/v1/sites",
+	} {
+		if got := ev.Properties[k]; got != want {
+			t.Errorf("property %s = %v, want %v", k, got, want)
+		}
+	}
+}
+
+// A rejected API key is captured as auth_rejected kind=api_key.
+func TestAuthWithKeysObserved_KeyRejection_CapturesEvent(t *testing.T) {
+	em := &fakeEmitter{}
+	ka := &fakeKeyAuth{err: errors.New("key revoked")}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer dw_live_abc123")
+	rr := httptest.NewRecorder()
+	AuthWithKeysObserved(&fakeVerifier{}, ka, em)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if len(em.events) != 1 {
+		t.Fatalf("captured %d events, want 1", len(em.events))
+	}
+	ev := em.events[0]
+	if ev.Event != "auth_rejected" || ev.Properties["kind"] != "api_key" || ev.Properties["reason"] != "key revoked" {
+		t.Errorf("event = %+v", ev)
+	}
+}
+
+// A request with NO credential is challenged but NOT captured — the credential-less
+// 401 (bots, or the OAuth challenge that starts every MCP connect) is not an auth
+// error.
+func TestAuthWithKeysObserved_MissingCredential_NotCaptured(t *testing.T) {
+	em := &fakeEmitter{}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sites", nil)
+	rr := httptest.NewRecorder()
+	AuthWithKeysObserved(&fakeVerifier{}, nil, em)(next).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	if len(em.events) != 0 {
+		t.Errorf("captured %d events for a credential-less request, want 0", len(em.events))
 	}
 }

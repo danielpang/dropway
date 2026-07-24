@@ -10,13 +10,13 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	coreauth "github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
 )
 
@@ -53,11 +53,20 @@ func TokenFromContext(ctx context.Context) (string, bool) {
 	return tok, ok
 }
 
-// Middleware validates the bearer token and injects the tenant, then calls next.
-// resourceMetadataURL is the absolute URL of this server's
-// /.well-known/oauth-protected-resource, advertised on a 401 (RFC 9728) so MCP
-// clients can discover the authorization server and begin the OAuth flow.
+// Middleware is MiddlewareObserved without analytics (rejections are still
+// logged). Kept as the back-compatible constructor for tests.
 func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) http.Handler {
+	return MiddlewareObserved(v, resourceMetadataURL, nil, next)
+}
+
+// MiddlewareObserved validates the bearer token and injects the tenant, then calls
+// next. resourceMetadataURL is the absolute URL of this server's
+// /.well-known/oauth-protected-resource, advertised on a 401 (RFC 9728) so MCP
+// clients can discover the authorization server and begin the OAuth flow. Every
+// rejection of a PRESENTED token is captured to analytics as an `auth_rejected`
+// event (emitter nil → logs only); the credential-less 401 challenge that starts
+// every OAuth connect is logged but NOT captured (it isn't an error).
+func MiddlewareObserved(v tokenVerifier, resourceMetadataURL string, emitter analytics.Emitter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := bearer(r)
 		if tok == "" {
@@ -73,9 +82,11 @@ func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) 
 		if err != nil {
 			// Log WHY (and the token's unverified aud/iss) so an audience/issuer
 			// mismatch is diagnosable — the gate is otherwise a silent 401.
-			aud, iss := unverifiedAudIss(tok)
+			aud, iss := coreauth.UnverifiedAudIss(tok)
 			slog.Warn("mcp auth: token verification failed",
 				"err", err.Error(), "token_aud", aud, "token_iss", iss, "path", r.URL.Path)
+			middleware.CaptureAuthRejected(r.Context(), emitter, "mcp", "jwt",
+				err.Error(), aud, iss, r.Method, r.URL.Path)
 			unauthorized(w, resourceMetadataURL, "invalid token")
 			return
 		}
@@ -83,6 +94,8 @@ func Middleware(v tokenVerifier, resourceMetadataURL string, next http.Handler) 
 		if t.OrgID == "" {
 			slog.Warn("mcp auth: verified token has no org_id",
 				"sub", claims.UserID(), "path", r.URL.Path)
+			middleware.CaptureAuthRejected(r.Context(), emitter, "mcp", "jwt",
+				"token has no organization", "", "", r.Method, r.URL.Path)
 			unauthorized(w, resourceMetadataURL, "token has no organization")
 			return
 		}
@@ -105,29 +118,6 @@ func bearer(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(h[len(prefix):])
-}
-
-// unverifiedAudIss decodes a JWT payload WITHOUT verifying the signature, returning
-// the `aud` and `iss` claims for DIAGNOSTIC LOGGING ONLY (never an authz decision).
-// Lets an audience/issuer mismatch be read straight from the logs. Returns empty
-// strings when the token can't be parsed.
-func unverifiedAudIss(token string) (aud, iss string) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return "", ""
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", ""
-	}
-	var p struct {
-		Aud json.RawMessage `json:"aud"` // string or []string — logged as-is
-		Iss string          `json:"iss"`
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", ""
-	}
-	return string(p.Aud), p.Iss
 }
 
 func unauthorized(w http.ResponseWriter, resourceMetadataURL, detail string) {

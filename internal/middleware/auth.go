@@ -14,10 +14,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/apikey"
 	"github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/logx"
 )
+
+// CaptureAuthRejected emits the best-effort `auth_rejected` product event: a
+// PRESENTED credential (a JWT or an API key) was rejected at an auth boundary.
+// This is the PostHog-visible record of every 401 the services hand out for a
+// bad credential — queryable by surface (api/mcp), kind (jwt/api_key), path, and
+// the token's unverified aud/iss — so an auth regression (audience drift, JWKS
+// trouble, expired-token storms) shows up in analytics, not only in service
+// logs. Exported so the MCP gate emits the same event shape. Requests carrying
+// NO credential are deliberately not captured: an unauthenticated probe (or the
+// OAuth challenge that legitimately starts every MCP connect) is noise, not an
+// auth error. distinct_id "system" mirrors the dashboard's convention for events
+// with no verified acting user; the aud/iss hints are UNVERIFIED and diagnostic
+// only. A nil emitter is a no-op.
+func CaptureAuthRejected(ctx context.Context, emitter analytics.Emitter, surface, kind, reason, tokenAud, tokenIss, method, path string) {
+	if emitter == nil {
+		return
+	}
+	emitter.Capture(ctx, analytics.Event{
+		DistinctID: "system",
+		Event:      "auth_rejected",
+		Properties: map[string]any{
+			"surface":   surface,
+			"kind":      kind,
+			"reason":    reason,
+			"token_aud": tokenAud,
+			"token_iss": tokenIss,
+			"method":    method,
+			"path":      path,
+			// Infra event with no person behind it — don't create person profiles.
+			"$process_person_profile": false,
+		},
+	})
+}
 
 // claimsKey is the unexported context key under which verified claims are
 // stored. Unexported so only this package can write it — callers read via
@@ -79,16 +114,26 @@ func Auth(v Verifier) func(http.Handler) http.Handler {
 	return AuthWithKeys(v, nil)
 }
 
-// AuthWithKeys returns middleware that requires either a valid Bearer EdDSA JWT or
-// a valid Bearer API key. A token carrying the API-key prefix is routed to the key
-// authenticator (when configured); everything else is verified as a JWT. On success
-// it injects the verified/synthesized *auth.Claims into the request context (and,
-// for a keyed request, the key id marker); on any failure it renders 401/429 and
-// does NOT call the next handler.
+// AuthWithKeys is AuthWithKeysObserved without analytics (rejections are still
+// logged). Kept as the back-compatible constructor for tests and surfaces that
+// don't emit product events.
+func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Handler {
+	return AuthWithKeysObserved(v, keys, nil)
+}
+
+// AuthWithKeysObserved returns middleware that requires either a valid Bearer
+// EdDSA JWT or a valid Bearer API key. A token carrying the API-key prefix is
+// routed to the key authenticator (when configured); everything else is verified
+// as a JWT. On success it injects the verified/synthesized *auth.Claims into the
+// request context (and, for a keyed request, the key id marker); on any failure it
+// renders 401/429 and does NOT call the next handler. Every rejection of a
+// presented credential is logged with its real reason and captured to analytics
+// as an `auth_rejected` event (see CaptureAuthRejected; emitter nil → logs only) —
+// the client-facing body stays a uniform generic 401 either way.
 //
 // The public serve path carries no credential and must never be wrapped by this —
 // only the control-plane (api.dropway.dev) routes are.
-func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Handler {
+func AuthWithKeysObserved(v Verifier, keys KeyAuthenticator, emitter analytics.Emitter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, ok := bearerToken(r)
@@ -109,7 +154,12 @@ func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Han
 						return
 					}
 					// Uniform 401 for unknown / revoked / expired / disabled-org /
-					// creator-departed — no oracle distinguishing them.
+					// creator-departed — no oracle distinguishing them. The real
+					// reason is logged + captured server-side only.
+					logx.FromContext(r.Context()).Warn("auth: api key rejected",
+						"err", err.Error(), "path", r.URL.Path)
+					CaptureAuthRejected(r.Context(), emitter, "api", "api_key",
+						err.Error(), "", "", r.Method, r.URL.Path)
 					httpx.WriteError(w, wrapUnauthorized("invalid token"))
 					return
 				}
@@ -122,7 +172,15 @@ func AuthWithKeys(v Verifier, keys KeyAuthenticator) func(http.Handler) http.Han
 			claims, err := v.Verify(r.Context(), token)
 			if err != nil {
 				// Don't echo the verifier error verbatim (it can hint at why a
-				// forged token failed); use a generic unauthorized message.
+				// forged token failed); use a generic unauthorized message. Log WHY
+				// server-side (with the token's unverified aud/iss) so a rejected
+				// token — e.g. an MCP-forwarded write whose audience the API doesn't
+				// accept — is diagnosable instead of a silent 401.
+				aud, iss := auth.UnverifiedAudIss(token)
+				logx.FromContext(r.Context()).Warn("auth: token verification failed",
+					"err", err.Error(), "token_aud", aud, "token_iss", iss, "path", r.URL.Path)
+				CaptureAuthRejected(r.Context(), emitter, "api", "jwt",
+					err.Error(), aud, iss, r.Method, r.URL.Path)
 				httpx.WriteError(w, wrapUnauthorized("invalid token"))
 				return
 			}
