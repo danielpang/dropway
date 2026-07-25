@@ -13,7 +13,11 @@ import {
   Tablet,
 } from "lucide-react";
 
+import { ChatMarkdown } from "@/components/ai/chat-markdown";
 import { ModelPicker } from "@/components/ai/model-picker";
+import { ToolCard } from "@/components/ai/tool-card";
+import type { ChatItem, RawTranscriptMessage, ToolItem } from "@/components/ai/transcript";
+import { itemsFromTranscript, maxSeq, parseToolArgs } from "@/components/ai/transcript";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AiModel } from "@/lib/api";
@@ -23,18 +27,20 @@ import { cn } from "@/lib/utils";
 /**
  * The AI builder chat + live preview. It talks to the Go API through the
  * dashboard's SSE proxy (`/api/ai/...`), which adds the session JWT. A turn is a
- * single streamed POST: token deltas render live, tool activity shows as status
- * lines, and a final draft_ready swaps the preview iframe to the new draft URL.
+ * single streamed POST: token deltas render live as markdown, tool activity
+ * shows as expandable cards, and a final draft_ready swaps the preview iframe
+ * to the new draft URL.
+ *
+ * The stream is not the source of truth — the persisted transcript is. When the
+ * stream drops mid-turn (flaky network, proxy timeout) the turn keeps running
+ * server-side, so instead of failing the UI enters recovery: it polls the
+ * session's status and incrementally replays the persisted transcript from the
+ * events endpoint (Last-Event-ID = message seq) until the turn ends, then picks
+ * up the draft from the session response. A page loaded while a turn is already
+ * running enters the same recovery path.
  *
  * Copy note: no em or en dashes in user-facing text.
  */
-
-type ChatRole = "user" | "assistant" | "tool" | "status";
-
-interface ChatMessage {
-  role: ChatRole;
-  text: string;
-}
 
 interface DraftInfo {
   versionId: string;
@@ -51,11 +57,21 @@ interface BuilderChatProps {
   initialModel: string;
   models: AiModel[];
   onPublish: (versionId: string) => Promise<{ ok: boolean; message?: string }>;
-  // The most recent session for this site and its persisted transcript, so the
-  // chat resumes where the user left off instead of starting blank each visit.
+  // The most recent session for this site and its persisted transcript (raw
+  // message shapes), so the chat resumes where the user left off instead of
+  // starting blank each visit.
   initialSessionId?: string | null;
-  initialMessages?: ChatMessage[];
+  initialTranscript?: RawTranscriptMessage[];
+  // The session's still-previewable draft, so a reload doesn't lose the preview.
+  initialDraft?: DraftInfo | null;
+  // The session's status at load time; "running" enters recovery immediately.
+  initialStatus?: string | null;
 }
+
+// How long recovery keeps polling before giving up. The server bounds a turn at
+// 10 minutes; this adds slack for the final draft build + clock skew.
+const RECOVERY_DEADLINE_MS = 12 * 60 * 1000;
+const RECOVERY_POLL_MS = 2500;
 
 export function BuilderChat({
   siteId,
@@ -63,22 +79,36 @@ export function BuilderChat({
   models,
   onPublish,
   initialSessionId = null,
-  initialMessages = [],
+  initialTranscript = [],
+  initialDraft = null,
+  initialStatus = null,
 }: BuilderChatProps) {
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [model, setModel] = useState(initialModel);
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [items, setItems] = useState<ChatItem[]>(() =>
+    itemsFromTranscript(initialTranscript),
+  );
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
-  const [draft, setDraft] = useState<DraftInfo | null>(null);
+  const [draft, setDraft] = useState<DraftInfo | null>(initialDraft);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // The persisted-transcript mirror recovery rebuilds from: every raw message
+  // we have seen (initial hydration + events replays) and the highest seq, so a
+  // replay resumes incrementally instead of re-downloading the conversation.
+  const rawRef = useRef<RawTranscriptMessage[]>(initialTranscript);
+  const lastSeqRef = useRef(maxSeq(initialTranscript));
+  const liveToolSeq = useRef(0);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+  }, [items]);
+
+  const pushStatus = useCallback((text: string) => {
+    setItems((it) => [...it, { kind: "status", text }]);
+  }, []);
 
   // Lazily create the session on the first send.
   const ensureSession = useCallback(async (): Promise<string> => {
@@ -94,15 +124,141 @@ export function BuilderChat({
     }
     const body = (await res.json()) as { id: string };
     setSessionId(body.id);
+    rawRef.current = [];
+    lastSeqRef.current = 0;
     return body.id;
   }, [sessionId, siteId, model]);
+
+  // syncTranscript replays the persisted transcript after our highest seen seq
+  // (the events endpoint honors Last-Event-ID) into rawRef, and re-renders the
+  // items from it. Incremental: a long conversation is never re-downloaded.
+  const syncTranscript = useCallback(async (id: string): Promise<void> => {
+    const res = await fetch(`/api/ai/sessions/${id}/events`, {
+      headers: {
+        Accept: "text/event-stream",
+        "Last-Event-ID": String(lastSeqRef.current),
+      },
+    });
+    if (!res.ok) throw new Error(`replay failed (${res.status})`);
+    // The replay is finite (it ends after replay_done), so read it whole.
+    const text = await res.text();
+    for (const frame of text.split("\n\n")) {
+      let seq = 0;
+      let data = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("id:")) seq = Number(line.slice(3).trim()) || 0;
+        else if (line.startsWith("data:")) data = line.slice(5).trim();
+      }
+      if (!data) continue;
+      let ev: { type?: string; role?: string; content?: unknown };
+      try {
+        ev = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (ev.type !== "message" || !ev.role || seq <= lastSeqRef.current) continue;
+      rawRef.current = [...rawRef.current, { seq, role: ev.role, content: ev.content }];
+      lastSeqRef.current = seq;
+    }
+    setItems(itemsFromTranscript(rawRef.current));
+  }, []);
+
+  // sessionStatus reads the session's current status from the (transcript-free)
+  // list endpoint, so recovery polling stays cheap. A vanished session counts
+  // as ended.
+  const sessionStatus = useCallback(
+    async (id: string): Promise<string> => {
+      const res = await fetch(
+        `/api/ai/sessions?site_id=${encodeURIComponent(siteId)}`,
+      );
+      if (!res.ok) throw new Error(`status check failed (${res.status})`);
+      const body = (await res.json()) as {
+        sessions?: { id: string; status: string }[];
+      };
+      return body.sessions?.find((s) => s.id === id)?.status ?? "active";
+    },
+    [siteId],
+  );
+
+  // recoverTurn is the reconnect path: poll status + replay the transcript
+  // until the turn ends, then pick the draft off the session response. Network
+  // errors while polling are retried until the deadline (the connection may
+  // still be down); only the deadline itself surfaces as an error.
+  const recoverTurn = useCallback(
+    async (id: string): Promise<void> => {
+      pushStatus("Connection lost. Reconnecting...");
+      const deadline = Date.now() + RECOVERY_DEADLINE_MS;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, RECOVERY_POLL_MS));
+        if (Date.now() > deadline) {
+          setError(
+            "Could not reconnect to this turn. Reload the page to see where it ended up.",
+          );
+          return;
+        }
+        let status: string;
+        try {
+          status = await sessionStatus(id);
+          await syncTranscript(id);
+        } catch {
+          continue; // still offline; keep trying until the deadline
+        }
+        if (status === "running") continue;
+
+        // Turn ended: one full session read for the draft (and final state).
+        try {
+          const res = await fetch(`/api/ai/sessions/${id}`);
+          if (res.ok) {
+            const body = (await res.json()) as {
+              draft?: {
+                version_id: string;
+                preview_url: string;
+                expires_at?: string;
+                access_mode?: string;
+              };
+            };
+            if (body.draft) {
+              setDraft({
+                versionId: body.draft.version_id,
+                previewUrl: body.draft.preview_url,
+                expiresAt: body.draft.expires_at ?? "",
+                accessMode: body.draft.access_mode,
+              });
+            }
+          }
+        } catch {
+          // The transcript is already synced; losing the draft lookup only
+          // means the preview panel lags until the next turn or reload.
+        }
+        pushStatus(
+          status === "failed"
+            ? "Reconnected. The turn ended with an error; see the transcript above."
+            : "Reconnected. This turn finished while you were offline.",
+        );
+        return;
+      }
+    },
+    [pushStatus, sessionStatus, syncTranscript],
+  );
+
+  // A page opened while a turn is running (reload mid-build, second tab) joins
+  // the running turn through the same recovery path. The ref guards React
+  // strict-mode double-mount from starting two pollers.
+  const joinedRunningTurn = useRef(false);
+  useEffect(() => {
+    if (initialStatus !== "running" || !initialSessionId) return;
+    if (joinedRunningTurn.current) return;
+    joinedRunningTurn.current = true;
+    setRunning(true);
+    void recoverTurn(initialSessionId).finally(() => setRunning(false));
+  }, [initialStatus, initialSessionId, recoverTurn]);
 
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || running) return;
     setError(null);
     setInput("");
-    setMessages((m) => [...m, { role: "user", text }]);
+    setItems((it) => [...it, { kind: "user", text }]);
     setRunning(true);
 
     try {
@@ -116,19 +272,43 @@ export function BuilderChat({
         const body = (await res.json().catch(() => ({}))) as { message?: string };
         throw new Error(body.message ?? "The AI builder could not start.");
       }
-      await consumeStream(res.body, {
-        onToken: (t) =>
-          setMessages((m) => appendAssistant(m, t)),
-        onStatus: (s) => setMessages((m) => [...m, { role: "status", text: s }]),
-        onDraft: (d) => setDraft(d),
-        onError: (e) => setError(e),
-      });
+      // The turn is now running server-side: from here on, a dropped stream is
+      // recovered from the persisted transcript rather than surfaced as a
+      // failure (the turn itself keeps going without us).
+      let terminal = false;
+      try {
+        terminal = await consumeStream(res.body, {
+          onToken: (t) => setItems((it) => appendAssistant(it, t)),
+          onStatus: pushStatus,
+          onToolStarted: (tool, args) => {
+            liveToolSeq.current += 1;
+            setItems((it) => [
+              ...it,
+              {
+                kind: "tool",
+                callId: `live-${liveToolSeq.current}`,
+                tool,
+                args: parseToolArgs(args),
+                result: null,
+                done: false,
+              },
+            ]);
+          },
+          onToolFinished: (tool, result) =>
+            setItems((it) => finishTool(it, tool, result)),
+          onDraft: (d) => setDraft(d),
+          onError: (e) => setError(e),
+        });
+      } catch {
+        terminal = false;
+      }
+      if (!terminal) await recoverTurn(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setRunning(false);
     }
-  }, [input, running, ensureSession]);
+  }, [input, running, ensureSession, pushStatus, recoverTurn]);
 
   // Switching the model. The builder binds a model to a session for the session's
   // whole life (the message endpoint always runs on the session's model), so once
@@ -144,10 +324,12 @@ export function BuilderChat({
       setSessionId(null);
       setDraft(null);
       setError(null);
+      rawRef.current = [];
+      lastSeqRef.current = 0;
       const label = friendlyModelName(models.find((m) => m.id === next)?.name ?? next);
-      setMessages([
+      setItems([
         {
-          role: "status",
+          kind: "status",
           text: `Started a new conversation with ${label}. The new model applies to your next message.`,
         },
       ]);
@@ -167,11 +349,8 @@ export function BuilderChat({
     }
     // Publishing deletes the preview; clear the draft panel.
     setDraft(null);
-    setMessages((m) => [
-      ...m,
-      { role: "status", text: "Published. This version is now live." },
-    ]);
-  }, [draft, onPublish]);
+    pushStatus("Published. This version is now live.");
+  }, [draft, onPublish, pushStatus]);
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -191,15 +370,15 @@ export function BuilderChat({
         </div>
 
         <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-          {messages.length === 0 && (
+          {items.length === 0 && (
             <p className="text-sm text-muted-foreground">
               Describe the site you want, or the change you want to make. The
               builder will edit your files and give you a preview to review before
               you publish.
             </p>
           )}
-          {messages.map((m, i) => (
-            <MessageBubble key={i} message={m} />
+          {items.map((item, i) => (
+            <ChatEntry key={i} item={item} />
           ))}
           {running && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -439,52 +618,78 @@ function friendlyModelName(name: string): string {
   return colon === -1 ? name : name.slice(colon + 2);
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  if (message.role === "status") {
-    return (
-      <p className="text-xs italic text-muted-foreground">{message.text}</p>
-    );
+function ChatEntry({ item }: { item: ChatItem }) {
+  switch (item.kind) {
+    case "status":
+      return <p className="text-xs italic text-muted-foreground">{item.text}</p>;
+    case "tool":
+      return <ToolCard item={item} />;
+    case "user":
+      return (
+        <div className="flex justify-end">
+          <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">
+            {item.text}
+          </div>
+        </div>
+      );
+    case "assistant":
+      return (
+        <div className="flex justify-start">
+          <div className="max-w-[85%] rounded-lg bg-muted px-3 py-2 text-sm">
+            <ChatMarkdown text={item.text} />
+          </div>
+        </div>
+      );
   }
-  const isUser = message.role === "user";
-  return (
-    <div className={isUser ? "flex justify-end" : "flex justify-start"}>
-      <div
-        className={
-          "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm " +
-          (isUser ? "bg-primary text-primary-foreground" : "bg-muted")
-        }
-      >
-        {message.text}
-      </div>
-    </div>
-  );
 }
 
 // appendAssistant folds a token delta into the trailing assistant bubble,
-// starting a new one when the previous message was not the assistant.
-function appendAssistant(messages: ChatMessage[], token: string): ChatMessage[] {
-  const last = messages[messages.length - 1];
-  if (last && last.role === "assistant") {
-    const copy = messages.slice();
-    copy[copy.length - 1] = { role: "assistant", text: last.text + token };
+// starting a new one when the previous item was not an assistant bubble (so
+// text interleaved with tool cards renders in order, as separate bubbles).
+function appendAssistant(items: ChatItem[], token: string): ChatItem[] {
+  const last = items[items.length - 1];
+  if (last && last.kind === "assistant") {
+    const copy = items.slice();
+    copy[copy.length - 1] = { kind: "assistant", text: last.text + token };
     return copy;
   }
-  return [...messages, { role: "assistant", text: token }];
+  return [...items, { kind: "assistant", text: token }];
+}
+
+// finishTool attaches a result to the oldest still-running tool card for the
+// tool. The loop dispatches a message's tool calls in order (started/finished
+// pairs are emitted sequentially per call), so first-unfinished matches the
+// call that actually finished even when one message carries several calls to
+// the same tool.
+function finishTool(items: ChatItem[], tool: string, result: string): ChatItem[] {
+  const idx = items.findIndex(
+    (it): it is ToolItem => it.kind === "tool" && it.tool === tool && !it.done,
+  );
+  if (idx === -1) return items;
+  const copy = items.slice();
+  copy[idx] = { ...(items[idx] as ToolItem), result: result || null, done: true };
+  return copy;
 }
 
 // consumeStream parses the SSE frames of a builder turn and dispatches events.
+// Returns true when the stream ended with a TERMINAL event (done or error); a
+// false return means the connection dropped mid-turn and the caller should
+// recover from the persisted transcript.
 async function consumeStream(
   body: ReadableStream<Uint8Array>,
   handlers: {
     onToken: (t: string) => void;
     onStatus: (s: string) => void;
+    onToolStarted: (tool: string, args?: string) => void;
+    onToolFinished: (tool: string, result: string) => void;
     onDraft: (d: DraftInfo) => void;
     onError: (e: string) => void;
   },
-): Promise<void> {
+): Promise<boolean> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let terminal = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -502,6 +707,8 @@ async function consumeStream(
         type: string;
         text?: string;
         tool?: string;
+        tool_args?: string;
+        tool_result?: string;
         version_id?: string;
         preview_url?: string;
         expires_at?: string;
@@ -521,7 +728,10 @@ async function consumeStream(
           if (ev.text) handlers.onStatus(ev.text);
           break;
         case "tool_started":
-          handlers.onStatus(`Running ${ev.tool ?? "a tool"}...`);
+          handlers.onToolStarted(ev.tool ?? "tool", ev.tool_args);
+          break;
+        case "tool_finished":
+          handlers.onToolFinished(ev.tool ?? "tool", ev.tool_result ?? "");
           break;
         case "draft_ready":
           if (ev.preview_url && ev.version_id) {
@@ -535,8 +745,13 @@ async function consumeStream(
           break;
         case "error":
           handlers.onError(ev.error ?? "The builder hit an error.");
+          terminal = true;
+          break;
+        case "done":
+          terminal = true;
           break;
       }
     }
   }
+  return terminal;
 }

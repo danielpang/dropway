@@ -104,7 +104,11 @@ type Event struct {
 	// token
 	Text string `json:"text,omitempty"`
 	// tool_started / tool_finished
-	Tool       string `json:"tool,omitempty"`
+	Tool string `json:"tool,omitempty"`
+	// ToolArgs is the call's raw JSON arguments (truncated), sent with
+	// tool_started so the UI can summarize the activity (the command being run,
+	// the path being written) instead of showing only the tool name.
+	ToolArgs   string `json:"tool_args,omitempty"`
 	ToolResult string `json:"tool_result,omitempty"`
 	// draft_ready
 	VersionID  string `json:"version_id,omitempty"`
@@ -242,7 +246,7 @@ func (r *Runner) RunTurn(ctx context.Context, t store.Tenant, sess store.AISessi
 		// Dispatch each tool call against the sandbox, persist + feed back results.
 		for _, call := range result.Message.ToolCalls {
 			emit := emitFromCtx(ctx)
-			emit(Event{Type: "tool_started", Tool: call.Function.Name})
+			emit(Event{Type: "tool_started", Tool: call.Function.Name, ToolArgs: compactToolArgs(call.Function.Arguments)})
 			out := dispatchTool(ctx, sb, call)
 			emit(Event{Type: "tool_finished", Tool: call.Function.Name, ToolResult: truncate(out, 4000)})
 
@@ -516,6 +520,29 @@ func truncate(s string, n int) string {
 		cut--
 	}
 	return s[:cut] + "…"
+}
+
+// compactToolArgs shrinks a tool call's raw JSON arguments for the tool_started
+// event: long string values (write_file content, mostly) are truncated per key
+// so the result STAYS valid JSON the client can parse for its summary (a blind
+// byte-level truncate would cut mid-document and parse as nothing). Unparseable
+// input falls back to a plain truncate.
+func compactToolArgs(raw string) string {
+	const maxValue = 200
+	var args map[string]any
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return truncate(raw, maxValue)
+	}
+	for k, v := range args {
+		if s, ok := v.(string); ok && len(s) > maxValue {
+			args[k] = truncate(s, maxValue)
+		}
+	}
+	out, err := json.Marshal(args)
+	if err != nil {
+		return truncate(raw, maxValue)
+	}
+	return string(out)
 }
 
 // emitCtxKey carries the per-turn Emit sink through ctx so streamOnce and the

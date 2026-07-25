@@ -4,6 +4,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -174,6 +175,34 @@ func TestTruncateRuneSafe(t *testing.T) {
 	}
 	if got := truncate("hi", 100); got != "hi" {
 		t.Errorf("short string changed: %q", got)
+	}
+}
+
+func TestCompactToolArgs(t *testing.T) {
+	// Long string values are truncated per key, so the output stays valid JSON
+	// the client can parse (a write_file's content must not swallow the path).
+	long := strings.Repeat("x", 5000)
+	out := compactToolArgs(`{"path":"index.html","content":"` + long + `"}`)
+	var args map[string]string
+	if err := json.Unmarshal([]byte(out), &args); err != nil {
+		t.Fatalf("compacted args are not valid JSON: %v\n%q", err, out)
+	}
+	if args["path"] != "index.html" {
+		t.Errorf("path = %q, want index.html", args["path"])
+	}
+	if len(args["content"]) > 300 {
+		t.Errorf("content not truncated: %d bytes", len(args["content"]))
+	}
+
+	// Short args pass through unchanged in content.
+	out = compactToolArgs(`{"command":"npm run build"}`)
+	if err := json.Unmarshal([]byte(out), &args); err != nil || args["command"] != "npm run build" {
+		t.Errorf("short args mangled: %q (err %v)", out, err)
+	}
+
+	// Unparseable input degrades to a plain truncate, never a panic.
+	if got := compactToolArgs("not json"); got != "not json" {
+		t.Errorf("unparseable args = %q", got)
 	}
 }
 

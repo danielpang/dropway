@@ -39,18 +39,27 @@ export default async function BuilderPage({
   // Resume the most recent session for this site (newest first) so the user sees
   // their prior conversation instead of a blank chat every visit. A brand-new
   // site has none, and the builder starts fresh (creating one on the first send).
+  // The transcript is passed raw (role + OpenRouter message content): the chat
+  // derives its rendering from it with the same transform it uses for reconnect
+  // replays, so tool activity survives a reload too.
   const sessions = await api.aiSessions(id);
   const latest = sessions[0] ?? null;
   const initial = latest
     ? await api.aiSession(latest.id)
-    : { session: null, messages: [] };
-  const initialMessages = initial.messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      text: typeof m.content?.content === "string" ? m.content.content : "",
-    }))
-    .filter((m) => m.text.length > 0);
+    : { session: null, messages: [], draft: null };
+  const initialTranscript = initial.messages.map((m) => ({
+    seq: m.seq,
+    role: m.role,
+    content: m.content,
+  }));
+  const initialDraft = initial.draft
+    ? {
+        versionId: initial.draft.version_id,
+        previewUrl: initial.draft.preview_url,
+        expiresAt: initial.draft.expires_at ?? "",
+        accessMode: initial.draft.access_mode,
+      }
+    : null;
 
   async function publish(versionId: string) {
     "use server";
@@ -88,7 +97,9 @@ export default async function BuilderPage({
           models={catalog.models}
           onPublish={publish}
           initialSessionId={latest?.id ?? null}
-          initialMessages={initialMessages}
+          initialTranscript={initialTranscript}
+          initialDraft={initialDraft}
+          initialStatus={initial.session?.status ?? latest?.status ?? null}
         />
       )}
     </div>

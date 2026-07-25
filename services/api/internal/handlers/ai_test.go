@@ -174,6 +174,67 @@ func TestPostAIMessage_ConcurrentTurnRejected(t *testing.T) {
 	}
 }
 
+func TestGetAISession_IncludesActiveDraft(t *testing.T) {
+	fs := newFakeStore()
+	a := newAITestAPI(fs)
+	fs.sites["site_x"] = store.Site{ID: "site_x", OrgID: "org_1", Slug: "x", AccessMode: "public"}
+	tn := store.Tenant{OrgID: "org_1", UserID: "user_1"}
+	sess, err := fs.StartAISession(context.Background(), tn, "site_x", "m", nil, 2)
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	// Give the session a draft whose preview is still live.
+	exp := time.Now().Add(time.Hour)
+	fs.versions["ver_draft"] = store.SiteVersion{
+		ID: "ver_draft", OrgID: "org_1", SiteID: "site_x", Status: "ready",
+		CreatedVia: "ai", PreviewExpiresAt: &exp,
+	}
+	vid := "ver_draft"
+	s := fs.ai().sessions[sess.ID]
+	s.LatestVersionID = &vid
+	fs.ai().sessions[sess.ID] = s
+
+	h := authed(a.GetAISession, claims("user_1", "org_1", "member"))
+	req := httptest.NewRequest(http.MethodGet, "/v1/ai/sessions/"+sess.ID, nil)
+	req.Header.Set("Authorization", "Bearer x")
+	req = withURLParam(req, "id", sess.ID)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Draft *aiDraftResponse `json:"draft"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Draft == nil {
+		t.Fatalf("draft missing: %s", rr.Body.String())
+	}
+	if body.Draft.VersionID != "ver_draft" || body.Draft.AccessMode != "public" {
+		t.Errorf("draft = %+v", body.Draft)
+	}
+	if !strings.Contains(body.Draft.PreviewURL, "--org--x.") {
+		t.Errorf("preview URL not the deterministic preview host: %q", body.Draft.PreviewURL)
+	}
+
+	// An EXPIRED preview must not be offered for rehydration.
+	past := time.Now().Add(-time.Hour)
+	v := fs.versions["ver_draft"]
+	v.PreviewExpiresAt = &past
+	fs.versions["ver_draft"] = v
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/ai/sessions/"+sess.ID, nil)
+	req2.Header.Set("Authorization", "Bearer x")
+	req2 = withURLParam(req2, "id", sess.ID)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req2)
+	if strings.Contains(rr.Body.String(), "\"draft\"") {
+		t.Errorf("expired draft still present: %s", rr.Body.String())
+	}
+}
+
 func TestListAIModels(t *testing.T) {
 	fs := newFakeStore()
 	a := newAITestAPI(fs)

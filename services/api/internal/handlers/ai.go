@@ -15,6 +15,7 @@ import (
 	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
 	aipkg "github.com/danielpang/dropway/services/api/internal/ai"
 	"github.com/danielpang/dropway/services/api/internal/store"
@@ -201,7 +202,9 @@ func (a *API) ListAISessions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": out})
 }
 
-// GetAISession returns a session + its transcript.
+// GetAISession returns a session + its transcript, plus the session's still-
+// previewable draft (if any) so the dashboard rehydrates the preview panel on
+// reload/reconnect instead of losing it with the ephemeral draft_ready event.
 func (a *API) GetAISession(w http.ResponseWriter, r *http.Request) {
 	t, ok := tenant(r.Context())
 	if !ok {
@@ -229,9 +232,52 @@ func (a *API) GetAISession(w http.ResponseWriter, r *http.Request) {
 			"created_at": m.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"session": sessionResponse(sess), "messages": out,
-	})
+	resp := map[string]any{"session": sessionResponse(sess), "messages": out}
+	if d := a.aiSessionDraft(r.Context(), t, sess); d != nil {
+		resp["draft"] = d
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// aiDraftResponse mirrors the draft_ready SSE event's fields, so the client can
+// treat a rehydrated draft and a live one identically.
+type aiDraftResponse struct {
+	VersionID  string `json:"version_id"`
+	PreviewURL string `json:"preview_url"`
+	ExpiresAt  string `json:"expires_at"`
+	AccessMode string `json:"access_mode,omitempty"`
+}
+
+// aiSessionDraft resolves the session's newest AI draft to its preview, or nil
+// when there is no draft or the preview has expired. The URL is the
+// deterministic preview host (the same one publishDraft registers), so no
+// host_routes read is needed. Best-effort: any resolution error just omits the
+// draft — the transcript is the response's primary payload.
+func (a *API) aiSessionDraft(ctx context.Context, t store.Tenant, sess store.AISession) *aiDraftResponse {
+	if sess.LatestVersionID == nil {
+		return nil
+	}
+	ver, err := a.Store.GetSiteVersion(ctx, t, *sess.LatestVersionID)
+	if err != nil || ver.SiteID != sess.SiteID {
+		return nil
+	}
+	if ver.PreviewExpiresAt == nil || !ver.PreviewExpiresAt.After(time.Now()) {
+		return nil
+	}
+	orgSlug, err := a.Store.OrgSlug(ctx, t)
+	if err != nil {
+		return nil
+	}
+	site, err := a.Store.GetSite(ctx, t, sess.SiteID)
+	if err != nil {
+		return nil
+	}
+	return &aiDraftResponse{
+		VersionID:  ver.ID,
+		PreviewURL: a.ContentURL(projection.PreviewHostForSite(ver.ID, orgSlug, site.Slug)),
+		ExpiresAt:  ver.PreviewExpiresAt.UTC().Format(time.RFC3339),
+		AccessMode: site.AccessMode,
+	}
 }
 
 // DeleteAISession archives/removes a session.
