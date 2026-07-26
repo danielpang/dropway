@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ExternalLink,
   Info,
-  Loader2,
   Monitor,
   RefreshCw,
   Send,
@@ -12,6 +11,7 @@ import {
   Sparkles,
   Tablet,
 } from "lucide-react";
+import { ThinkingOrb, type OrbState } from "thinking-orbs";
 
 import { ChatMarkdown } from "@/components/ai/chat-markdown";
 import { ModelPicker } from "@/components/ai/model-picker";
@@ -93,6 +93,9 @@ export function BuilderChat({
   const [draft, setDraft] = useState<DraftInfo | null>(initialDraft);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The sandbox tool the builder is running right now (null while it streams
+  // prose). Drives which orb animation the activity line shows.
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // The persisted-transcript mirror recovery rebuilds from: every raw message
@@ -186,6 +189,10 @@ export function BuilderChat({
   // still be down); only the deadline itself surfaces as an error.
   const recoverTurn = useCallback(
     async (id: string): Promise<void> => {
+      // Recovery sees no live tool events, so drop whatever tool was mid-flight
+      // when the stream died. The orb falls back to its generic working state
+      // rather than claiming a command is still running for the whole reconnect.
+      setActiveTool(null);
       pushStatus("Connection lost. Reconnecting...");
       const deadline = Date.now() + RECOVERY_DEADLINE_MS;
       for (;;) {
@@ -260,6 +267,7 @@ export function BuilderChat({
     setInput("");
     setItems((it) => [...it, { kind: "user", text }]);
     setRunning(true);
+    setActiveTool(null);
 
     try {
       const id = await ensureSession();
@@ -281,6 +289,7 @@ export function BuilderChat({
           onToken: (t) => setItems((it) => appendAssistant(it, t)),
           onStatus: pushStatus,
           onToolStarted: (tool, args) => {
+            setActiveTool(tool);
             liveToolSeq.current += 1;
             setItems((it) => [
               ...it,
@@ -294,8 +303,10 @@ export function BuilderChat({
               },
             ]);
           },
-          onToolFinished: (tool, result) =>
-            setItems((it) => finishTool(it, tool, result)),
+          onToolFinished: (tool, result) => {
+            setActiveTool(null);
+            setItems((it) => finishTool(it, tool, result));
+          },
           onDraft: (d) => setDraft(d),
           onError: (e) => setError(e),
         });
@@ -307,6 +318,7 @@ export function BuilderChat({
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setRunning(false);
+      setActiveTool(null);
     }
   }, [input, running, ensureSession, pushStatus, recoverTurn]);
 
@@ -380,11 +392,7 @@ export function BuilderChat({
           {items.map((item, i) => (
             <ChatEntry key={i} item={item} />
           ))}
-          {running && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" /> Working...
-            </div>
-          )}
+          {running && <ActivityIndicator tool={activeTool} />}
         </div>
 
         {error && (
@@ -616,6 +624,34 @@ function previewLifetimeCopy(expiresAt: string): string {
 function friendlyModelName(name: string): string {
   const colon = name.indexOf(": ");
   return colon === -1 ? name : name.slice(colon + 2);
+}
+
+// Each sandbox tool gets its own orb animation and label, so the wait reads as
+// "it is doing a specific thing" rather than one undifferentiated spinner. The
+// null case covers the model streaming prose or thinking between tool calls.
+const TOOL_ACTIVITY: Record<string, { state: OrbState; label: string }> = {
+  read_file: { state: "searching", label: "Reading your files" },
+  list_files: { state: "searching", label: "Looking through your files" },
+  write_file: { state: "composing", label: "Writing your files" },
+  run_command: { state: "solving", label: "Running a command" },
+};
+
+const DEFAULT_ACTIVITY = { state: "working", label: "Thinking" } as const;
+
+/**
+ * The mid-turn activity line: an animated thinking orb (thinking-orbs, a canvas
+ * indicator that follows the dashboard's light/dark theme and respects
+ * prefers-reduced-motion) plus a label describing the current step. The tool
+ * cards below it carry the detail; this line is just "something is happening".
+ */
+function ActivityIndicator({ tool }: { tool: string | null }) {
+  const { state, label } = (tool && TOOL_ACTIVITY[tool]) || DEFAULT_ACTIVITY;
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <ThinkingOrb state={state} size={20} aria-label={label} />
+      {label}
+    </div>
+  );
 }
 
 function ChatEntry({ item }: { item: ChatItem }) {
