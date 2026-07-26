@@ -42,8 +42,10 @@ export function ThemeToggle() {
     ? `Theme: ${currentLabel}. Click to switch (System → Light → Dark)`
     : "Switch theme (System → Light → Dark)";
 
+  // align="end": this lives at the right edge of the app header, where a
+  // centered bubble would hang past the viewport on a phone.
   return (
-    <Tooltip label={label}>
+    <Tooltip label={label} align="end">
       <Button
         type="button"
         variant="ghost"

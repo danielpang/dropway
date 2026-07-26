@@ -138,7 +138,10 @@ export function NewSiteDialog({
     // `disabled` buttons don't emit focus/hover, so the Tooltip wrapper (its
     // own focusable span) carries the hover/focus + aria-describedby.
     return (
-      <Tooltip label="Your organization is over its plan limit. Visit Billing to upgrade before creating new sites.">
+      <Tooltip
+        align="end"
+        label="Your organization is over its plan limit. Visit Billing to upgrade before creating new sites."
+      >
         <Button disabled aria-disabled className="pointer-events-none">
           <Plus aria-hidden />
           New site
