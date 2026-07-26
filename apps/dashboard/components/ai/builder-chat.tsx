@@ -388,8 +388,14 @@ export function BuilderChat({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      {/* Chat column */}
-      <div className="flex h-[70vh] flex-col rounded-lg border bg-card">
+      {/* Chat column. min-w-0 is load-bearing: a grid item's min-width is auto,
+          i.e. its min-content size, so without it the column refuses to shrink
+          below the widest thing in the transcript (a long font-mono command in a
+          tool card). On a phone that pushed the whole card past the viewport,
+          taking the composer and its send button off-screen, and
+          html{overflow-x:clip} made the overflow unreachable at any zoom. The
+          message list scrolls its own overflow instead. */}
+      <div className="flex h-[70vh] min-w-0 flex-col rounded-lg border bg-card">
         <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Sparkles className="h-4 w-4 text-primary" />
@@ -436,7 +442,14 @@ export function BuilderChat({
             placeholder="Make the header dark and add a contact section"
             disabled={running}
           />
-          <Button type="submit" size="icon" disabled={running || !input.trim()}>
+          {/* shrink-0: the input is w-full, so without it the send button gets
+              squeezed narrower than its icon on a phone. */}
+          <Button
+            type="submit"
+            size="icon"
+            className="shrink-0"
+            disabled={running || !input.trim()}
+          >
             <Send className="h-4 w-4" />
           </Button>
         </form>
@@ -500,7 +513,9 @@ function PreviewPanel({
   }, [draft]);
 
   return (
-    <div className="flex h-[70vh] flex-col rounded-lg border bg-card">
+    // min-w-0 for the same reason as the chat column: this is a grid item, and
+    // the toolbar's buttons must not be able to widen it past the viewport.
+    <div className="flex h-[70vh] min-w-0 flex-col rounded-lg border bg-card">
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
         <div className="flex items-center gap-2">
           <span className="pl-1 text-sm font-medium">Preview</span>
