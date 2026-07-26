@@ -103,6 +103,33 @@
 }
 
 /*
+ * Mobile guarantee: tapping a field never zooms the page in.
+ *
+ * iOS Safari magnifies the viewport whenever a focused form control has a font
+ * size below 16px, and it does not zoom back out when the field blurs, so one
+ * tap on a text-sm input leaves the rest of the app oversized and horizontally
+ * panned. Every field in the app is text-sm or smaller, so this hits every page
+ * with a form (the AI builder composer, auth, site settings, dialogs).
+ *
+ * This is DELIBERATELY unlayered: unlayered rules outrank everything in
+ * @layer utilities, so it wins over the text-sm on the controls themselves
+ * without each component having to opt in (and it covers fields we do not
+ * own). Only below md; from md up the controls keep their designed 14px.
+ *
+ * The alternative fix, maximum-scale=1 in the viewport meta, would stop the
+ * zoom by disabling pinch-zoom for everyone. That is an accessibility
+ * regression, so the font size is the lever.
+ */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]) {
+    font-size: 16px;
+  }
+}
+
+/*
  * Subtle, theme-aware background for first-impression surfaces (auth screens):
  * a faint dot grid plus a soft radial wash. Adapts per theme via the tokens.
  */
