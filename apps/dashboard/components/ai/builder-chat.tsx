@@ -183,6 +183,38 @@ export function BuilderChat({
     [siteId],
   );
 
+  // fetchDraft resolves the session's current previewable draft from the session
+  // endpoint (which derives the deterministic preview URL server-side). It is the
+  // backstop for every path that can leave the preview panel empty after a turn
+  // that DID produce a draft: a draft_ready whose preview_url came back blank
+  // (preview-route write + fallback both failed), a dropped frame, or a reconnect
+  // that never saw the live event. Best-effort: a failure just leaves the panel
+  // as it was. Returns true when a draft was found and applied.
+  const fetchDraft = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/ai/sessions/${id}`);
+      if (!res.ok) return false;
+      const body = (await res.json()) as {
+        draft?: {
+          version_id: string;
+          preview_url: string;
+          expires_at?: string;
+          access_mode?: string;
+        };
+      };
+      if (!body.draft?.version_id || !body.draft.preview_url) return false;
+      setDraft({
+        versionId: body.draft.version_id,
+        previewUrl: body.draft.preview_url,
+        expiresAt: body.draft.expires_at ?? "",
+        accessMode: body.draft.access_mode,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   // recoverTurn is the reconnect path: poll status + replay the transcript
   // until the turn ends, then pick the draft off the session response. Network
   // errors while polling are retried until the deadline (the connection may
@@ -213,30 +245,9 @@ export function BuilderChat({
         if (status === "running") continue;
 
         // Turn ended: one full session read for the draft (and final state).
-        try {
-          const res = await fetch(`/api/ai/sessions/${id}`);
-          if (res.ok) {
-            const body = (await res.json()) as {
-              draft?: {
-                version_id: string;
-                preview_url: string;
-                expires_at?: string;
-                access_mode?: string;
-              };
-            };
-            if (body.draft) {
-              setDraft({
-                versionId: body.draft.version_id,
-                previewUrl: body.draft.preview_url,
-                expiresAt: body.draft.expires_at ?? "",
-                accessMode: body.draft.access_mode,
-              });
-            }
-          }
-        } catch {
-          // The transcript is already synced; losing the draft lookup only
-          // means the preview panel lags until the next turn or reload.
-        }
+        // The transcript is already synced; losing the draft lookup only means
+        // the preview panel lags until the next turn or reload.
+        await fetchDraft(id);
         pushStatus(
           status === "failed"
             ? "Reconnected. The turn ended with an error; see the transcript above."
@@ -245,7 +256,7 @@ export function BuilderChat({
         return;
       }
     },
-    [pushStatus, sessionStatus, syncTranscript],
+    [fetchDraft, pushStatus, sessionStatus, syncTranscript],
   );
 
   // A page opened while a turn is running (reload mid-build, second tab) joins
@@ -284,6 +295,7 @@ export function BuilderChat({
       // recovered from the persisted transcript rather than surfaced as a
       // failure (the turn itself keeps going without us).
       let terminal = false;
+      let sawDraft = false;
       try {
         terminal = await consumeStream(res.body, {
           onToken: (t) => setItems((it) => appendAssistant(it, t)),
@@ -307,20 +319,30 @@ export function BuilderChat({
             setActiveTool(null);
             setItems((it) => finishTool(it, tool, result));
           },
-          onDraft: (d) => setDraft(d),
+          onDraft: (d) => {
+            sawDraft = true;
+            setDraft(d);
+          },
           onError: (e) => setError(e),
         });
       } catch {
         terminal = false;
       }
-      if (!terminal) await recoverTurn(id);
+      if (!terminal) {
+        await recoverTurn(id);
+      } else if (!sawDraft) {
+        // The turn ended cleanly but no usable draft_ready reached us. If the
+        // build produced a draft anyway, this recovers its preview URL so the
+        // panel (and its open-in-a-new-tab button) still renders.
+        await fetchDraft(id);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setRunning(false);
       setActiveTool(null);
     }
-  }, [input, running, ensureSession, pushStatus, recoverTurn]);
+  }, [input, running, ensureSession, fetchDraft, pushStatus, recoverTurn]);
 
   // Switching the model. The builder binds a model to a session for the session's
   // whole life (the message endpoint always runs on the session's model), so once
@@ -535,13 +557,14 @@ function PreviewPanel({
               <Button
                 type="button"
                 variant="outline"
-                size="icon"
-                className="size-8"
+                size="sm"
+                className="h-8 gap-1.5"
                 onClick={openInNewTab}
                 aria-label="Open preview in a new tab"
                 title="Open in a new tab"
               >
                 <ExternalLink className="size-4" aria-hidden />
+                <span className="hidden sm:inline">Open</span>
               </Button>
               <Button size="sm" onClick={() => void onPublish()} disabled={publishing}>
                 {publishing ? "Publishing..." : "Publish this version"}
