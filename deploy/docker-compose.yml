@@ -252,7 +252,10 @@ services:
   # Hosted Dropway uses Supabase instead; disable this profile + set DATABASE_URL.
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16
+    # pgvector build of Postgres 16: migration 0017 (org memory) runs
+    # CREATE EXTENSION vector. Same wire protocol/data layout as postgres:16 —
+    # an existing volume upgrades in place.
+    image: pgvector/pgvector:pg16
     profiles: ["local-db"]
     restart: unless-stopped
     environment:

@@ -407,6 +407,53 @@ func rlsTables() []rlsTable {
 					[]any{other, skillFolderID(other), skillID(other), ownerUser(other)}
 			},
 		},
+
+		// --- org memory (migration 0017). Embeddings stay NULL in seeds (the
+		// column is vector(1536); isolation doesn't depend on the vector, and
+		// the CI workflow's psql assertion covers the embedded ANN path). ---
+		{
+			name:   "app.org_memories",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.org_memories (org_id, kind, content, content_hash, embedding_model)
+						VALUES ($1, 'fact', $2, $3, 'rls-test-model')`,
+					[]any{org, "memory for " + org[:4], "memhash-" + org[:4]}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.org_memories (org_id, kind, content, content_hash, embedding_model)
+						VALUES ($1, 'fact', 'sneaky memory', 'memhash-sneak', 'rls-test-model')`,
+					[]any{other}
+			},
+		},
+		{
+			name:   "app.org_memory_ingests",
+			orgCol: "org_id",
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.org_memory_ingests (org_id, source_kind, source_id, through_seq)
+						VALUES ($1, 'ai_session', $2, 1)`,
+					[]any{org, siteID(org)}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.org_memory_ingests (org_id, source_kind, source_id, through_seq)
+						VALUES ($1, 'ai_session', $2, 99)`,
+					[]any{other, verID(other)}
+			},
+		},
+		{
+			name:   "app.org_content_chunks",
+			orgCol: "org_id",
+			// Skill-kind chunks so the FK rides the skills row seeded above.
+			seed: func(org string) (string, []any) {
+				return `INSERT INTO app.org_content_chunks (org_id, source_kind, skill_id, path, chunk_seq, content, embedding_model)
+						VALUES ($1, 'skill', $2, 'SKILL.md', 0, $3, 'rls-test-model')`,
+					[]any{org, skillID(org), "chunk for " + org[:4]}
+			},
+			forgeInsert: func(other string) (string, []any) {
+				return `INSERT INTO app.org_content_chunks (org_id, source_kind, skill_id, path, chunk_seq, content, embedding_model)
+						VALUES ($1, 'skill', $2, 'SKILL.md', 1, 'sneaky chunk', 'rls-test-model')`,
+					[]any{other, skillID(other)}
+			},
+		},
 	}
 }
 

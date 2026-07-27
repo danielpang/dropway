@@ -102,6 +102,22 @@ func (m *AIMeter) AllowAIForOrg(ctx context.Context, orgID string) (bool, string
 	return true, "", nil
 }
 
+// AllowMemoryForOrg reports whether the org may use org memory (retrieval,
+// extraction, content indexing, and the /v1/ai/memories surface). Same
+// paid-plan bar as the AI builder: Pro and above. Kept as its OWN method (not
+// an alias of AllowAIForOrg) so the two features can diverge in tier later
+// without an API change.
+func (m *AIMeter) AllowMemoryForOrg(ctx context.Context, orgID string) (bool, string, error) {
+	tier, err := m.planTier(ctx, orgID)
+	if err != nil {
+		return false, "", err
+	}
+	if tier == TierFree || tier == "" {
+		return false, "plan_required", nil
+	}
+	return true, "", nil
+}
+
 // planTier reads the org's live entitlement tier from billing.subscriptions (the
 // billing module's own mirror, written by the same webhook as app.org_meta.plan_tier
 // in one tx). It reads billing.subscriptions rather than app.org_meta ON PURPOSE:

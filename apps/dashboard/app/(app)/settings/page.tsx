@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   Bot,
+  Brain,
   CreditCard,
   Globe2,
   KeyRound,
@@ -15,6 +16,7 @@ import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
 import { ChatLogsAccess } from "@/components/settings/chat-logs-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { McpAccess } from "@/components/settings/mcp-access";
+import { MemoryAccess } from "@/components/settings/memory-access";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -71,6 +73,12 @@ export default async function OrgSettingsPage() {
     .catch(() => "pro"); // OSS/self-host: unlimited, show the toggle
   const aiSettings = await api.getAIOrgSettings().catch(() => null);
   const showAiBuilder = planTier !== "free" && aiSettings !== null;
+
+  // Company memory: the settings route works even when the org flag is off, so
+  // the card can always render the toggle in its live state. A 503 (no
+  // embeddings configured on this deployment) — or any read error — hides the
+  // card entirely; there is nothing to toggle then.
+  const memorySettings = await api.getMemorySettings().catch(() => null);
 
   // Chat logs default ON (the column default), so a transient read error falls
   // back to enabled; the steady-state value shows on the next load.
@@ -164,6 +172,51 @@ export default async function OrgSettingsPage() {
               initialEnabled={aiSettings.ai_enabled}
               canManage={manage}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Company memory */}
+      {memorySettings && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Brain className="size-4 text-muted-foreground" aria-hidden />
+              Company memory
+            </CardTitle>
+            <CardDescription>
+              Dropway learns durable facts about your organization from AI
+              builds, shared chats, sites and skills, and recalls them in
+              future work.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {memorySettings.plan_allowed === false ? (
+              <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                Company memory requires a Pro plan or above. Upgrade your plan
+                in billing to let Dropway remember your organization.
+              </p>
+            ) : (
+              <>
+                <MemoryAccess
+                  initialEnabled={memorySettings.memory_enabled}
+                  canManage={manage}
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    {memorySettings.count === 1
+                      ? "1 memory stored"
+                      : `${memorySettings.count} memories stored`}
+                    {(memorySettings.max ?? 0) > 0 && (
+                      <> of {memorySettings.max}</>
+                    )}
+                  </p>
+                  <Button asChild variant="outline">
+                    <Link href="/settings/memory">Manage memory</Link>
+                  </Button>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}

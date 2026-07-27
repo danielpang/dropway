@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/danielpang/dropway/internal/embeddings"
 	"github.com/danielpang/dropway/internal/openrouter"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/sandbox"
@@ -27,14 +28,36 @@ import (
 // The plan/card gate is added separately by the cloud build (mountCloud); the
 // OSS default allows any org with a BYO key.
 func wireAIBuilder(api *handlers.API, cfg config.Config, siteStore handlers.SiteStore, obj storage.Store, proj projection.Writer, log *slog.Logger) (*ai.Runner, error) {
+	// The runner (and the memory store) need the concrete store (its own
+	// tx-per-call surface); if the DB isn't wired, neither feature can run.
+	st, _ := siteStore.(*store.Store)
+
+	// Org memory is strictly opt-in twice over: the deployment must configure
+	// an embeddings key AND each org must flip memory_enabled. The memory
+	// ENDPOINTS (list/search/add — the MCP and CLI surface) need only the
+	// embedder + DB, so they are wired before the OpenRouter gate below;
+	// in-loop retrieval/extraction additionally need the AI builder.
+	var embedder *embeddings.Client
+	if cfg.EmbeddingsAPIKey != "" && st != nil {
+		embedder = &embeddings.Client{
+			BaseURL:    cfg.EmbeddingsBaseURL,
+			APIKey:     cfg.EmbeddingsAPIKey,
+			Model:      cfg.EmbeddingsModel,
+			Dimensions: cfg.EmbeddingsDimensions,
+		}
+		api.Memory = st
+		api.MemoryEmbedder = embedder
+		api.MemoryMaxPerOrg = cfg.AIMemoryMaxPerOrg
+		slog.Info("org memory enabled", "embeddings_model", cfg.EmbeddingsModel, "extract_model", cfg.AIMemoryModel)
+	} else {
+		slog.Info("org memory disabled (no EMBEDDINGS_API_KEY or no database)")
+	}
+
 	if cfg.OpenRouterAPIKey == "" {
 		slog.Info("AI builder disabled (no OPENROUTER_API_KEY)")
 		return nil, nil
 	}
-	// The runner needs the concrete store (its own tx-per-call surface); if the
-	// DB isn't wired, the AI feature can't run.
-	st, ok := siteStore.(*store.Store)
-	if !ok || st == nil {
+	if st == nil {
 		slog.Warn("AI builder disabled (no database)")
 		return nil, nil
 	}
@@ -67,6 +90,19 @@ func wireAIBuilder(api *handlers.API, cfg config.Config, siteStore handlers.Site
 		SandboxTTL:    2 * time.Hour,
 		MaxIterations: 50,
 		Logger:        log,
+	}
+
+	// In-loop memory (retrieval + post-turn extraction) rides the embedder
+	// wired above; nil leaves every memory path in the loop a no-op. The
+	// runner also serves as the chat-log extractor and the publish-time
+	// content indexer for the handlers.
+	if embedder != nil {
+		runner.Embedder = embedder
+		runner.MemoryExtractModel = cfg.AIMemoryModel
+		runner.MemoryTopK = cfg.AIMemoryTopK
+		runner.MemoryMaxPerOrg = cfg.AIMemoryMaxPerOrg
+		api.MemoryExtract = runner
+		api.MemoryIndex = runner
 	}
 	if cfg.AIMonthlyCapUSD > 0 {
 		// Self-host cap override: enforce a flat monthly cap via the period-start

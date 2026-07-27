@@ -261,6 +261,9 @@ func (a *API) CreateChatLog(w http.ResponseWriter, r *http.Request) {
 		"title": log.Title, "source_tool": log.SourceTool,
 		"site_id": strPtrOr(log.SiteID, ""), "imported": len(res.Messages),
 	})
+	if len(res.Messages) > 0 {
+		a.extractChatMemoriesAsync(r, t, log.ID)
+	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"chat_log": toChatLogResponse(log),
 		"appended": len(res.Messages),
@@ -403,6 +406,7 @@ func (a *API) appendToLog(w http.ResponseWriter, r *http.Request, t store.Tenant
 	a.recordAudit(r, t, audit.ActionChatLogAppend, "chatlog:"+log.ID, map[string]any{
 		"appended": len(out), "pruned": res.Pruned, "dropped": dropped,
 	})
+	a.extractChatMemoriesAsync(r, t, log.ID)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"messages": out,
 		"pruned":   res.Pruned,

@@ -148,6 +148,21 @@ type fakeAPI struct {
 	siteChatImport                apiclient.ChatImport
 	siteChatResp                  apiclient.ChatAppendResult
 	siteChatErr                   error
+
+	memSearchToken, memSearchQuery string
+	memSearchK                     int
+	memSearchResp                  []apiclient.Memory
+	memSearchErr                   error
+
+	memListToken string
+	memListLimit int
+	memListResp  []apiclient.Memory
+	memListErr   error
+
+	memAddToken, memAddContent, memAddKind, memAddSource string
+	memAddResp                                           apiclient.Memory
+	memAddCreated                                        bool
+	memAddErr                                            error
 }
 
 func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
@@ -208,6 +223,21 @@ func (f *fakeAPI) AppendSiteChat(_ context.Context, token, siteID string, imp ap
 		return apiclient.ChatAppendResult{}, f.siteChatErr
 	}
 	return f.siteChatResp, nil
+}
+func (f *fakeAPI) SearchMemory(_ context.Context, token, query string, k int) ([]apiclient.Memory, error) {
+	f.memSearchToken, f.memSearchQuery, f.memSearchK = token, query, k
+	return f.memSearchResp, f.memSearchErr
+}
+func (f *fakeAPI) ListMemories(_ context.Context, token string, limit int) ([]apiclient.Memory, error) {
+	f.memListToken, f.memListLimit = token, limit
+	return f.memListResp, f.memListErr
+}
+func (f *fakeAPI) AddMemory(_ context.Context, token, content, kind, sourceTool string) (apiclient.Memory, bool, error) {
+	f.memAddToken, f.memAddContent, f.memAddKind, f.memAddSource = token, content, kind, sourceTool
+	if f.memAddErr != nil {
+		return apiclient.Memory{}, false, f.memAddErr
+	}
+	return f.memAddResp, f.memAddCreated, nil
 }
 
 // fakeChats satisfies ChatStore for the get_site_chat read path.

@@ -36,7 +36,10 @@ CREATE TABLE app.org_meta (
     chat_logs_enabled      boolean NOT NULL DEFAULT true,
     -- API-keys kill switch (migration 0016): off → every org key 401s at the
     -- auth boundary; management endpoints still work so admins can revoke.
-    api_keys_enabled       boolean NOT NULL DEFAULT true
+    api_keys_enabled       boolean NOT NULL DEFAULT true,
+    -- Org-memory kill switch (migration 0017). Defaults FALSE: memory rolls
+    -- out opt-in per org, unlike the other feature flags.
+    memory_enabled         boolean NOT NULL DEFAULT false
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -435,4 +438,70 @@ CREATE TABLE app.chat_messages (
     meta        jsonb,
     created_at  timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT chat_messages_log_seq_key UNIQUE (chat_log_id, seq)
+);
+
+-- pgvector (migration 0017): the vector type used by the org-memory tables.
+-- sqlc maps `vector` to a Go string via the sqlc.yaml override; queries pass
+-- embeddings as their text form ('[f1,f2,...]') with explicit ::vector casts
+-- and never scan the column back.
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- org_memories: one durable per-org fact ("your agent knows your company",
+-- migration 0017). Deduped per org on content_hash; pinned rows are always
+-- injected into builder context; disabled rows are never retrieved but are
+-- kept so re-extraction can't resurrect them. content is the source of truth;
+-- embedding is derived data re-embeddable per row via embedding_model.
+CREATE TABLE app.org_memories (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    kind            text NOT NULL DEFAULT 'fact'
+                        CHECK (kind IN ('fact', 'preference', 'style', 'correction', 'manual')),
+    content         text NOT NULL,
+    content_hash    text NOT NULL,
+    embedding       vector(1536),
+    embedding_model text NOT NULL,
+    source_kind     text NOT NULL DEFAULT 'manual'
+                        CHECK (source_kind IN ('ai_session', 'chat_log', 'site_version', 'manual')),
+    source_id       uuid,
+    source_tool     text,
+    pinned          boolean NOT NULL DEFAULT false,
+    disabled        boolean NOT NULL DEFAULT false,
+    created_by      uuid,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    last_used_at    timestamptz,
+    CONSTRAINT org_memories_org_hash_key UNIQUE (org_id, content_hash)
+);
+
+-- org_memory_ingests: extraction watermarks (migration 0017) — one row per
+-- processed source so extraction is idempotent, incremental, and crash-safe.
+CREATE TABLE app.org_memory_ingests (
+    org_id      uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    source_kind text NOT NULL CHECK (source_kind IN ('ai_session', 'chat_log', 'site_version', 'skill')),
+    source_id   uuid NOT NULL,
+    through_seq bigint NOT NULL DEFAULT 0,
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, source_kind, source_id)
+);
+
+-- org_content_chunks: embedded chunks of published site versions and skill
+-- files (migration 0017) for cross-site retrieval. CASCADE ties chunk
+-- lifetime to the source version/skill.
+CREATE TABLE app.org_content_chunks (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    source_kind     text NOT NULL CHECK (source_kind IN ('site_version', 'skill')),
+    version_id      uuid REFERENCES app.site_versions (id) ON DELETE CASCADE,
+    site_id         uuid REFERENCES app.sites (id) ON DELETE CASCADE,
+    skill_id        uuid REFERENCES app.skills (id) ON DELETE CASCADE,
+    path            text NOT NULL,
+    chunk_seq       integer NOT NULL,
+    content         text NOT NULL,
+    embedding       vector(1536),
+    embedding_model text NOT NULL,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT org_content_chunks_source_check CHECK (
+        (source_kind = 'site_version' AND version_id IS NOT NULL AND skill_id IS NULL)
+        OR (source_kind = 'skill' AND skill_id IS NOT NULL AND version_id IS NULL)
+    )
 );

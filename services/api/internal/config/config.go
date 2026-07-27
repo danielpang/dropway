@@ -170,6 +170,27 @@ type Config struct {
 	// cloud build reads the per-org cap from org_meta; this is the OSS fallback.
 	AIMonthlyCapUSD float64 // AI_MONTHLY_CAP_USD
 
+	// --- Org memory ("your agent knows your company") -------------------------
+	// EmbeddingsAPIKey enables the org-memory feature (extraction + retrieval +
+	// the /v1/ai/memories surface). Empty → memory routes 503 and the builder
+	// runs memory-less, mirroring the OpenRouter gate above. EmbeddingsBaseURL
+	// may point at any OpenAI-compatible /v1/embeddings server (self-host:
+	// Ollama or a proxy); the default is the real OpenAI API.
+	EmbeddingsAPIKey  string // EMBEDDINGS_API_KEY
+	EmbeddingsBaseURL string // EMBEDDINGS_BASE_URL (default https://api.openai.com/v1)
+	// EmbeddingsModel must agree with the vector(1536) column width from
+	// migration 0017; changing it follows docs/org-memory-scope.md §3.5.
+	EmbeddingsModel      string // EMBEDDINGS_MODEL (default text-embedding-3-small)
+	EmbeddingsDimensions int    // EMBEDDINGS_DIMENSIONS (default 1536)
+	// AIMemoryModel is the OpenRouter model used for post-turn memory
+	// extraction (a cheap tier; its cost lands in the ai_usage ledger like any
+	// generation).
+	AIMemoryModel string // AI_MEMORY_MODEL (default anthropic/claude-haiku-4-5)
+	// AIMemoryTopK is how many retrieved memories a turn injects (pinned rows
+	// ride on top). AIMemoryMaxPerOrg caps stored rows per org (0 → unlimited).
+	AIMemoryTopK     int // AI_MEMORY_TOPK (default 8)
+	AIMemoryMaxPerOrg int // AI_MEMORY_MAX_PER_ORG (default 2000)
+
 	// PasswordRateLimitPerMin / PasswordRateLimitBurst bound the unauthenticated
 	// POST /v1/authz/password exchange (M3), keyed by client IP + target host. Each
 	// attempt otherwise runs a cost-12 bcrypt, so this is both brute-force and
@@ -245,6 +266,15 @@ func Load() (Config, error) {
 
 		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
 		AIDefaultModel:   envOr("AI_DEFAULT_MODEL", "anthropic/claude-sonnet-4.5"),
+
+		EmbeddingsAPIKey:     os.Getenv("EMBEDDINGS_API_KEY"),
+		EmbeddingsBaseURL:    envOr("EMBEDDINGS_BASE_URL", "https://api.openai.com/v1"),
+		EmbeddingsModel:      envOr("EMBEDDINGS_MODEL", "text-embedding-3-small"),
+		EmbeddingsDimensions: envIntOr("EMBEDDINGS_DIMENSIONS", 1536),
+		AIMemoryModel:        envOr("AI_MEMORY_MODEL", "anthropic/claude-haiku-4-5"),
+		AIMemoryTopK:         envIntOr("AI_MEMORY_TOPK", 8),
+		AIMemoryMaxPerOrg:    envIntOr("AI_MEMORY_MAX_PER_ORG", 2000),
+
 		SandboxProvider:  envOr("SANDBOX_PROVIDER", "docker"),
 		SandboxImage:     os.Getenv("SANDBOX_IMAGE"),
 		FlyAPIToken:      os.Getenv("FLY_API_TOKEN"),
