@@ -2,7 +2,13 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-type Variant = "default" | "secondary" | "outline" | "success" | "muted";
+type Variant =
+  | "default"
+  | "secondary"
+  | "outline"
+  | "success"
+  | "destructive"
+  | "muted";
 
 const variantClasses: Record<Variant, string> = {
   default: "border-transparent bg-primary text-primary-foreground",
@@ -12,6 +18,9 @@ const variantClasses: Record<Variant, string> = {
   // raw colors beyond the green dot the caller supplies).
   success:
     "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  // Dead / failed state (an expired invitation, for one), same token pair the
+  // destructive alerts use so it reads in both themes.
+  destructive: "border-destructive/30 bg-destructive/10 text-destructive",
   muted: "border-transparent bg-muted text-muted-foreground",
 };
 

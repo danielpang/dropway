@@ -34,6 +34,12 @@ export interface OrgInvitation {
   role: Role;
   status: string;
   expiresAt: string | null;
+  /**
+   * True once `expiresAt` has passed. Better Auth leaves the row's `status` at
+   * "pending" after expiry (nothing sweeps it), so expiry is derived here and
+   * stamped server-side to keep the client render deterministic.
+   */
+  expired: boolean;
 }
 
 /** The viewer's own membership in the active org (role gating). */
@@ -110,16 +116,21 @@ export async function loadActiveOrg(): Promise<ActiveOrg | null> {
   const invitations: OrgInvitation[] = (full.invitations ?? [])
     // Only surface still-pending invites; accepted/rejected/cancelled are noise.
     .filter((i) => (i.status ?? "pending") === "pending")
-    .map((i) => ({
-      id: i.id ?? "",
-      email: i.email ?? "",
-      role: asRole(i.role),
-      status: i.status ?? "pending",
-      expiresAt:
+    .map((i) => {
+      const expiresAt =
         i.expiresAt instanceof Date
           ? i.expiresAt.toISOString()
-          : str(i.expiresAt),
-    }));
+          : str(i.expiresAt);
+      const expiresMs = expiresAt ? Date.parse(expiresAt) : NaN;
+      return {
+        id: i.id ?? "",
+        email: i.email ?? "",
+        role: asRole(i.role),
+        status: i.status ?? "pending",
+        expiresAt,
+        expired: Number.isFinite(expiresMs) && expiresMs <= Date.now(),
+      };
+    });
 
   const mine = members.find((m) => m.userId === myUserId);
 

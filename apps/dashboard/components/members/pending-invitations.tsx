@@ -80,14 +80,16 @@ export function PendingInvitations({
                   <p className="text-xs text-muted-foreground">
                     Invited as {invite.role}
                     {invite.expiresAt
-                      ? ` · expires ${new Date(invite.expiresAt).toLocaleDateString()}`
+                      ? ` · ${invite.expired ? "expired" : "expires"} ${new Date(invite.expiresAt).toLocaleDateString()}`
                       : ""}
                   </p>
                 </div>
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
-                <Badge variant="muted">Pending</Badge>
+                <Badge variant={invite.expired ? "destructive" : "muted"}>
+                  {invite.expired ? "Expired" : "Pending"}
+                </Badge>
                 <Button
                   type="button"
                   variant="ghost"
