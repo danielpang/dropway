@@ -39,9 +39,14 @@ type Site struct {
 
 // siteCols is the shared SELECT list: site fields + one representative host.
 // The host subselect pins hr.org_id to the site's org so a (hypothetical)
-// cross-org route row can never surface here.
+// cross-org route row can never surface here. Kinds are ranked so the STABLE
+// canonical <org>--<slug> host wins over a verified custom domain, and both win
+// over a time-limited preview host — previews EXPIRE, and plain `ORDER BY host`
+// used to pick one whenever it sorted first (e.g. `6f5367d7--org--slug` before
+// `org--slug`), handing MCP clients a URL that later dies (a blank/404 embed).
 const siteCols = `s.id, s.slug, s.access_mode, s.current_version_id,
-	(SELECT hr.host FROM app.host_routes hr WHERE hr.site_id = s.id AND hr.org_id = s.org_id ORDER BY hr.host LIMIT 1)`
+	(SELECT hr.host FROM app.host_routes hr WHERE hr.site_id = s.id AND hr.org_id = s.org_id
+	 ORDER BY CASE hr.kind WHEN 'canonical' THEN 0 WHEN 'custom' THEN 1 ELSE 2 END, hr.host LIMIT 1)`
 
 // ErrNotFound is returned when a site slug doesn't resolve under the tenant.
 var ErrNotFound = errors.New("mcp/store: not found")

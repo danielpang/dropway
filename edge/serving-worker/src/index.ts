@@ -330,8 +330,53 @@ function revokedKV(env: Env): RevokedKVLike {
  * Core request handler, exported for tests. Pure with respect to the injected
  * `env` bindings; performs no global side effects beyond an optional best-effort
  * cache write (scheduled via `waitUntil`).
+ *
+ * EMBED post-pass: when the request opted into the embed surface (?embed=1) the
+ * response — WHATEVER it is — must render inside a cross-origin <iframe>. The
+ * success paths (serveEmbed, the gate placeholder) already emit framable headers,
+ * but the failure pages (unknown-host/path 404, 410 link-expired, 429, 503
+ * suspended, 500 projection error) carry `X-Frame-Options: DENY` + CSP
+ * `frame-ancestors 'none'`, and a framing-blocked response renders as a BLANK
+ * iframe in Notion/Linear/Confluence — indistinguishable from a broken embed,
+ * with zero diagnostics for the person pasting the URL. So every embed-mode
+ * response is passed through asFramable(): the error page becomes visible inside
+ * the frame and says what's wrong. This relaxes framing only for pages we (or the
+ * public site) already show to anonymous visitors — gated bytes still never reach
+ * an embed (serveEmbed fails closed to the sign-in placeholder).
  */
 export async function serve(
+  request: Request,
+  env: Env,
+  opts: ServeOptions = {},
+): Promise<Response> {
+  const response = await dispatch(request, env, opts);
+  return isEmbedRequested(new URL(request.url)) ? asFramable(response) : response;
+}
+
+/**
+ * Rewrite a response's framing posture to the embed surface's: X-Frame-Options
+ * dropped (no "allow any origin" value exists; its presence vetoes the CSP), CSP
+ * `frame-ancestors 'none'` widened to `*`, CORP widened to `cross-origin` (a
+ * COEP `require-corp` parent would otherwise refuse the frame). A no-op for
+ * responses that are already framable (the embed success paths). Returns a fresh
+ * Response because upstream ones (e.g. from the Cache API) can be immutable.
+ */
+function asFramable(response: Response): Response {
+  const out = new Response(response.body, response);
+  out.headers.delete("X-Frame-Options");
+  out.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+  const csp = out.headers.get("Content-Security-Policy");
+  if (csp !== null) {
+    out.headers.set(
+      "Content-Security-Policy",
+      csp.replace("frame-ancestors 'none'", "frame-ancestors *"),
+    );
+  }
+  return out;
+}
+
+/** The pre-embed-post-pass request handler (see serve() above). */
+async function dispatch(
   request: Request,
   env: Env,
   opts: ServeOptions = {},
