@@ -231,6 +231,25 @@ func (a *API) RemoveAllowlistEntry(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+
+	// Hard revocation: removing an allowlist grant TIGHTENS access (the de-listed
+	// viewer must lose the site immediately), but the edge holds no allowlist data
+	// and re-checks nothing but the token's aud/site_id/mode/exp — so without a
+	// denylist write the removed viewer's outstanding edge token keeps serving the
+	// site until its short TTL lapses, contradicting the immediate-revocation
+	// guarantee. Write the site denylist key (revoked:site:<id>) so every edge token
+	// for this site issued before now is invalidated at once and re-authorized
+	// against the now-shorter allowlist. Same fail-closed posture as SetSiteAccess:
+	// it only touches gated tokens, and the still-allowed viewers merely re-auth once
+	// (harmless). Idempotent (max min_iat); best-effort — the DB removal already
+	// committed and the short TTL backstops a denylist hiccup.
+	if a.Revoker != nil {
+		minIAT := time.Now().Unix()
+		if err := a.Revoker.Revoke(r.Context(), edgerevoke.KindSite, siteID, minIAT); err != nil {
+			logger(r).Error("denylist write failed after allowlist removal", "site_id", siteID, "err", err)
+		}
+	}
+
 	a.recordAudit(r, t, audit.ActionAllowlistRemove, "site:"+siteID, map[string]any{"email": email})
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"removed": email})
 }
