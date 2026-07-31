@@ -35,7 +35,7 @@ import { api, ApiError, type PlanTier, type Site, type SiteComment } from "@/lib
 import { customDomainsEntitled, embedBadgeRemovable } from "@/lib/billing";
 import { MCP_URL } from "@/lib/env";
 import { canManage, loadActiveOrg } from "@/lib/org";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes, isUuid } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +45,8 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
+  // Skip the API round-trip for non-id path segments (favicon/crawler probes).
+  if (!isUuid(id)) return { title: "Site" };
   const site = await api.getSite(id).catch(() => null);
   return { title: site?.slug ? `${site.slug} · Site` : "Site" };
 }
@@ -66,6 +68,12 @@ export default async function SiteDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+
+  // A site id is always a UUID; anything else is a stray path segment (a browser
+  // or crawler probing for a favicon under this URL, e.g. /sites/favicon.ico).
+  // Answer 404 before any authenticated API read, so an unauthenticated probe
+  // never turns the API's 401 into a rethrown server error (noisy error tracking).
+  if (!isUuid(id)) notFound();
 
   // Fire all three reads concurrently, they don't depend on one another, so
   // awaiting them in series needlessly tripled this page's time-to-render (each
