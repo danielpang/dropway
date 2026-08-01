@@ -7,8 +7,9 @@ import { Card } from "@/components/ui/card";
  * clicked, so the page structure paints immediately while the (force-dynamic)
  * server component fetches the sites list, billing state, and active org over the
  * API. The static heading is real; everything that needs a network round-trip
- * (the "New site" button, which depends on billing + org slug, and each site
- * card) is skeletoned, mirroring page.tsx so the swap-in doesn't shift.
+ * (the "New site" button, which depends on billing + org slug, the All/Mine
+ * filter chips, which carry counts, and each site card) is skeletoned, mirroring
+ * page.tsx so the swap-in doesn't shift.
  */
 export default function DashboardLoading() {
   return (
@@ -17,11 +18,19 @@ export default function DashboardLoading() {
         <div className="min-w-0 flex-1 space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
           <p className="text-muted-foreground">
-            Deploy a folder, get a live, access-controlled URL.
+            Every site in your org. Deploy a folder, get a live,
+            access-controlled URL.
           </p>
         </div>
         {/* "New site" depends on billing/org state; ml-auto mirrors page.tsx wrap alignment. */}
         <Skeleton className="ml-auto h-9 w-28 shrink-0" />
+      </div>
+
+      {/* The All/Mine chips carry counts, so they skeleton rather than render
+          statically; without this band the grid would jump on swap-in. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Skeleton className="h-9 w-20 rounded-md" />
+        <Skeleton className="h-9 w-24 rounded-md" />
       </div>
 
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
