@@ -22,6 +22,11 @@ import { defineConfig } from "vitest/config";
 const root = fileURLToPath(new URL("./", import.meta.url));
 
 export default defineConfig({
+  // tsconfig.json sets `jsx: "preserve"` for Next's compiler, which would make
+  // Vite's oxc transform pass JSX through unparsed. Compile it here (automatic
+  // runtime, so .tsx modules don't need a React import) for the tree-walking
+  // page tests (test/dashboard-page.test.ts).
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     alias: [
       { find: "server-only", replacement: fileURLToPath(new URL("./test/stubs/server-only.ts", import.meta.url)) },
