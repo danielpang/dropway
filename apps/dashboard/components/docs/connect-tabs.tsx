@@ -103,8 +103,7 @@ function Cowork({ url }: { url: string }) {
       </Step>
       <Step>
         Click <Kbd>Connect</Kbd>, then <Authorize />. Dropway now appears as a
-        connector and can list, create, and deploy your sites without
-        reconnecting later.
+        connector and can browse and deploy your sites on request.
       </Step>
     </Steps>
   );

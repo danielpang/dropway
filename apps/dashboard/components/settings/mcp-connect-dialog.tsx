@@ -16,11 +16,9 @@ import { cn } from "@/lib/utils";
  * "Connect" instructions for the Dropway MCP server. An authenticated MCP client
  * (Claude Cowork, Claude Code, Cursor, Codex) adds the MCP URL as a custom
  * connector; on first use the client hits the server, gets a 401 pointing at the
- * dashboard authorization server (RFC 9728/8414), and runs a browser OAuth flow —
- * the user signs in and approves "Authorize MCP access". After that the client can
- * list/create sites, deploy, and read files (scoped to the org by RLS, honoring each
- * site's sharing settings). Authorize once — tokens stay valid until the user
- * disconnects. The only thing to paste is the URL below.
+ * dashboard authorization server (RFC 9728/8414), and runs a browser OAuth flow, * the user signs in and approves "Authorize MCP access". After that the client can
+ * list the org's sites and read their files (scoped to the org by RLS, honoring each
+ * site's sharing settings). The only thing the user needs to paste is the URL below.
  *
  * Order is intentional (most → least guided for a non-technical user): Claude Cowork,
  * Claude Code, Cursor, Codex.
@@ -53,9 +51,9 @@ export function McpConnectDialog({
       <DialogHeader>
         <DialogTitle>Connect an AI tool</DialogTitle>
         <DialogDescription>
-          Add Dropway as an MCP connector so your AI tool can list, create, and
-          deploy this organization&rsquo;s sites. Sign in and approve access
-          once; the connection stays until you disconnect it.
+          Add Dropway as an MCP connector so your AI tool can browse this
+          organization&rsquo;s sites and read their files. You&rsquo;ll sign in
+          and approve access in your browser the first time.
         </DialogDescription>
       </DialogHeader>
       <DialogBody className="space-y-4 pb-6">
@@ -125,8 +123,8 @@ function CoworkSteps({ url }: { url: string }) {
         .
       </li>
       <li>
-        Dropway now appears as a connector. Claude can list and create sites,
-        deploy, and read files on request — no need to reconnect later.
+        Dropway now appears as a connector. Claude can list your sites and read
+        their files on request.
       </li>
     </Steps>
   );
@@ -172,7 +170,7 @@ function CursorSteps({ url }: { url: string }) {
         <span className="font-medium text-foreground">
           &ldquo;Authorize MCP access&rdquo;
         </span>
-        . After that, list/create/deploy work without reconnecting.
+        .
       </li>
     </Steps>
   );

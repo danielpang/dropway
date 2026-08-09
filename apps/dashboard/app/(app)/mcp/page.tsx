@@ -43,7 +43,7 @@ export default function McpReferencePage() {
       <Section
         id="connect"
         title="Connect your tool"
-        lead="Add Dropway as a custom connector. Authorize once in the browser; the connection stays until you disconnect. No API keys to copy."
+        lead="Add Dropway as a custom connector. The first time you use it, a browser tab opens to sign in and approve access. No API keys to copy."
       >
         <ConnectTabs mcpUrl={connectorUrl} />
         <p className="pt-1">All four use the same endpoint:</p>
@@ -154,8 +154,8 @@ export default function McpReferencePage() {
             <span>
               <span className="font-medium text-foreground">OAuth 2.1.</span>{" "}
               Connecting runs a standard browser sign-in and consent against your
-              Dropway account. You authorize once; the connector keeps working
-              for listing and creating sites until you disconnect it.
+              Dropway account; the tool receives a short-lived token, not a
+              password or a long-lived key.
             </span>
           </li>
           <li className="flex items-start gap-2.5">
