@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { api, ApiError, type Site } from "@/lib/api";
 import { loadOrgBillingState } from "@/lib/billing-server";
-import { canManage, loadActiveOrg } from "@/lib/org";
+import { loadActiveOrg } from "@/lib/org";
 import { isSiteVisibleTo, ownerLabel } from "@/lib/sites-visibility";
 
 export const metadata: Metadata = { title: "Sites" };
@@ -19,11 +19,11 @@ export const dynamic = "force-dynamic";
 
 /**
  * The org's sites (server component). Lists every site in the caller's tenant
- * via GET /v1/sites — org-shared sites, plus the viewer's own, plus everything
- * for owners/admins (see lib/sites-visibility.ts; it's a discovery filter, not
- * access control) — with an All/Mine filter driven by `?owner=me` and a "New
- * site" dialog that POSTs to the API. The (app) layout already guarantees an
- * authenticated session + an active organization before this renders.
+ * via GET /v1/sites — org-shared sites, plus the viewer's own (see
+ * lib/sites-visibility.ts; it's a discovery filter, not access control) — with
+ * an All/Mine filter driven by `?owner=me` and a "New site" dialog that POSTs to
+ * the API. The (app) layout already guarantees an authenticated session + an
+ * active organization before this renders.
  */
 export default async function DashboardPage({
   searchParams,
@@ -70,10 +70,7 @@ export default async function DashboardPage({
   // drop the filter row, bylines, and footnote. Safe because the rule is
   // discovery, not access control (the API returns these rows either way).
   const degraded = org === null;
-  const viewer = {
-    userId: org?.myUserId ?? null,
-    canManage: org ? canManage(org.myRole) : false,
-  };
+  const viewer = { userId: org?.myUserId ?? null };
   const members = org?.members ?? [];
 
   const allVisible = degraded
@@ -155,10 +152,8 @@ export default async function DashboardPage({
             ))}
           </ul>
           {degraded ? null : (
-            <p className="text-xs text-muted-foreground">
-              {viewer.canManage
-                ? "You're seeing every site in the org, including ones marked private."
-                : "Sites your teammates marked private are only shown to them and org admins."}
+            <p className="text-center text-xs text-muted-foreground">
+              Sites marked private are only shown to their owner.
             </p>
           )}
         </>
@@ -240,7 +235,7 @@ function SiteRow({ site, owner }: { site: Site; owner: string | null }) {
         {site.feed_visible === false ? (
           <Badge
             variant="outline"
-            title="Hidden from the org feed. Only its owner and org admins see it in this list."
+            title="Hidden from the org feed. Only its owner sees it in this list."
           >
             <EyeOff className="size-3" aria-hidden />
             Hidden
