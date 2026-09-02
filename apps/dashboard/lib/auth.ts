@@ -26,6 +26,7 @@ import {
   passwordResetEmail,
   verifyEmail,
 } from "@/lib/email-templates";
+import { oauthProviderValidAudiences } from "@/lib/mcp-oauth-audiences";
 import {
   MCP_OAUTH_ACCESS_TOKEN_EXPIRES_IN,
   MCP_OAUTH_REFRESH_TOKEN_EXPIRES_IN,
@@ -761,27 +762,21 @@ export const auth = betterAuth({
       // the client sends an RFC 8707 `resource` param AND it's in validAudiences;
       // the token's `aud` then equals that resource (which the MCP Go verifier
       // pins). Compliant MCP clients read the resource from the server's RFC 9728
-      // metadata, which advertises exactly this URL. `iss` is the jwt() plugin's
-      // issuer (jwtIssuer()), the same value the MCP verifier expects. We register
-      // BOTH the bare and trailing-slash forms because some MCP clients (e.g.
-      // mcp-remote) URL-canonicalize the resource and append a "/"
-      // ("http://host" → "http://host/"). The Go API audience (jwtAudience) is also
-      // registered so the CLI's `dropway login` can request a token the API accepts.
-      // Also register the connect-URL forms (MCP_URL = NEXT_PUBLIC_MCP_URL, the
-      // ".../mcp" endpoint shown in the Connect modal). The RFC 9728 metadata
-      // advertises the BARE resource (mcpResourceUrl), so a compliant client sends
-      // that, but some clients (Claude's built-in connector) use the connection URL
-      // itself as the RFC 8707 resource, i.e. ".../mcp". Without these the issued
-      // token's aud wouldn't match and the MCP server 401s. The MCP verifier accepts
-      // the same set (services/mcp WithExtraAudiences).
-      validAudiences: [
-        mcpResourceUrl(),
-        mcpResourceUrl() + "/",
-        MCP_URL,
-        MCP_URL + "/",
-        jwtAudience(),
-        jwtAudience() + "/",
-      ],
+      // metadata (the BARE mcpResourceUrl). Some clients URL-canonicalize and
+      // append a "/" (mcp-remote); Claude's built-in connector uses the connection
+      // URL shown in the Connect modal (`${MCP_URL}/mcp`) as the resource. Those
+      // `/mcp` forms MUST be registered here — listing only the bare MCP_URL
+      // (which is the host, not the connector path) is what produced the
+      // production `oauth token failed: invalid_request` / "requested resource
+      // invalid" spike. The list is built by oauthProviderValidAudiences, the TS
+      // twin of Go `internal/auth.MCPResourceAudiences`, so dashboard minting and
+      // MCP/API verification cannot drift. jwtAudience is included so the CLI's
+      // `dropway login` can request a token the API accepts.
+      validAudiences: oauthProviderValidAudiences({
+        mcpResourceUrl: mcpResourceUrl(),
+        mcpUrl: MCP_URL,
+        jwtAudience: jwtAudience(),
+      }),
       customAccessTokenClaims: async ({ user }) => {
         if (!user) return {};
         const orgId = await firstOrgId(user.id);

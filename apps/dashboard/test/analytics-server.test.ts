@@ -192,4 +192,71 @@ describe("analytics-server captures (serverless-safe)", () => {
     expect((sentError as Error).message).toBe("53300: too many clients already");
     expect(distinctId).toBe("user_9");
   });
+
+  it("captureOAuthError raises Error Tracking for token invalid_request (broken handshake)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { captureOAuthError } = await import("@/lib/analytics-server");
+    await captureOAuthError({
+      endpoint: "token",
+      error: "invalid_request",
+      errorDescription: "requested resource invalid",
+      status: 400,
+      clientId: "client_1",
+      resource: "https://mcp.dropway.dev/mcp",
+    });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    const sent = captureImmediate.mock.calls[0]![0];
+    expect(sent.event).toBe("oauth_error");
+    expect(sent.distinctId).toBe("system");
+    expect(sent.properties).toMatchObject({
+      oauth_endpoint: "token",
+      oauth_error: "invalid_request",
+      oauth_error_description: "requested resource invalid",
+      resource: "https://mcp.dropway.dev/mcp",
+    });
+
+    expect(captureExceptionImmediate).toHaveBeenCalledTimes(1);
+    const [err] = captureExceptionImmediate.mock.calls[0]!;
+    expect((err as Error).message).toBe("oauth token failed: invalid_request");
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[oauth] token failed: invalid_request (requested resource invalid)",
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("captureOAuthError does not raise Error Tracking for token invalid_grant (expected retry)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { captureOAuthError } = await import("@/lib/analytics-server");
+    await captureOAuthError({
+      endpoint: "token",
+      error: "invalid_grant",
+      errorDescription: "invalid code",
+      status: 401,
+    });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    expect(captureImmediate.mock.calls[0]![0].event).toBe("oauth_error");
+    // Still loud in logs so a replayed code is greppable, but not an alertable issue.
+    expect(captureExceptionImmediate).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[oauth] token failed: invalid_grant (invalid code)",
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("captureOAuthError stays quiet in logs for access_denied (user clicked Deny)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { captureOAuthError } = await import("@/lib/analytics-server");
+    await captureOAuthError({
+      endpoint: "authorize",
+      error: "access_denied",
+      status: 302,
+    });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    expect(captureExceptionImmediate).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

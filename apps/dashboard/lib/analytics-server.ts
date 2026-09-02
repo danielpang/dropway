@@ -286,8 +286,16 @@ export async function captureDbCapacityIssue(input: {
 // server/config bug, a scope/redirect mismatch) rather than an ordinary user
 // decision. Only these are raised to Error Tracking as alertable issues; the rest
 // (a user clicking "Deny" → access_denied, a not-yet-authenticated authorize →
-// login_required) are still recorded as `oauth_error` events for funnel analysis
-// but must NOT page anyone — they're expected, not failures.
+// login_required, a replayed/expired authorization code → invalid_grant) are
+// still recorded as `oauth_error` events for funnel analysis but must NOT page
+// anyone — they're expected, not failures.
+//
+// `invalid_grant` is deliberately omitted: MCP/CLI clients retry /oauth2/token
+// with a single-use code (or a rotated refresh token) and the provider correctly
+// returns invalid_grant / "invalid code". Raising each of those as a handled
+// exception grouped the production token-failure issue with expected client
+// retries. The token endpoint still returns 4xx to the client; we just stop
+// minting identical Error Tracking events.
 const ALERTABLE_OAUTH_ERRORS = new Set([
   "invalid_scope",
   "invalid_client",
@@ -295,9 +303,12 @@ const ALERTABLE_OAUTH_ERRORS = new Set([
   "invalid_request",
   "unsupported_response_type",
   "unauthorized_client",
-  "invalid_grant",
   "server_error",
 ]);
+
+// Codes that are a user/client decision, not a broken handshake. Still captured
+// as `oauth_error` events; not written to error logs (would drown Deny clicks).
+const QUIET_OAUTH_ERRORS = new Set(["access_denied", "login_required"]);
 
 /**
  * An OAuth 2.1 / MCP-connect authorization attempt failed at the provider
@@ -350,6 +361,15 @@ export async function captureOAuthError(input: {
     distinctId: input.distinctId || SYSTEM_DISTINCT_ID,
     properties,
   });
+  if (!QUIET_OAUTH_ERRORS.has(input.error)) {
+    // Loud in server logs even when we skip Error Tracking (e.g. invalid_grant
+    // retries): same signal as the oauth_error event, greppable on Vercel.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[oauth] ${input.endpoint} failed: ${input.error}` +
+        (input.errorDescription ? ` (${input.errorDescription})` : ""),
+    );
+  }
   if (ALERTABLE_OAUTH_ERRORS.has(input.error)) {
     // Raise the connection-breaking ones to Error Tracking too, so a broken-connect
     // regression pages instead of merely trending. The message encodes endpoint +
