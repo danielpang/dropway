@@ -37,7 +37,6 @@ type S3Store struct {
 	client  *s3.Client
 	presign *s3.PresignClient
 	bucket  string
-	creds   aws.CredentialsProvider // for VerifyCredentials (fail-fast startup check)
 }
 
 // NewS3Store builds an S3Store from cfg. When both AccessKeyID and
@@ -50,11 +49,9 @@ type S3Store struct {
 // Note the empty-static case is deliberately NOT installed: a static provider
 // built from empty strings constructs fine but fails EVERY object operation at
 // call time with the opaque "static credentials are empty", which is easy to
-// misread as an auth/authorization failure (it stalled a live MCP read incident:
-// list_sites worked from Postgres while every read_file 500'd on the object
-// store). Routing empty creds to the default chain instead means either real
-// credentials are found, or resolution fails with a clear, actionable error —
-// and VerifyCredentials surfaces that at startup rather than per request.
+// misread as an auth/authorization failure. Routing empty creds to the default
+// chain instead means either real credentials are found, or resolution fails
+// with a clear, actionable error naming the missing credential source.
 func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("storage: S3 bucket is required")
@@ -105,26 +102,7 @@ func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 		client:  client,
 		presign: s3.NewPresignClient(presignClient),
 		bucket:  cfg.Bucket,
-		creds:   awsCfg.Credentials,
 	}, nil
-}
-
-// VerifyCredentials resolves the store's credentials once, returning a clear
-// error when none can be found. Construction is deliberately network-free (so a
-// store handle builds even before creds are needed), which means a deploy that
-// ships without object-store credentials otherwise stays silent until the first
-// read fails at runtime with the opaque "static credentials are empty" — the
-// exact failure that was misdiagnosed as an MCP auth problem. Callers run this at
-// startup (fatal on error) so a misconfigured deploy fails loudly, the same way
-// the MCP service already fails its deploy on an unreachable database.
-func (s *S3Store) VerifyCredentials(ctx context.Context) error {
-	if s.creds == nil {
-		return errors.New("storage: no credentials provider configured")
-	}
-	if _, err := s.creds.Retrieve(ctx); err != nil {
-		return fmt.Errorf("storage: no S3/R2 credentials resolved — set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or provide credentials via the AWS default chain (AWS_* env / instance role): %w", err)
-	}
-	return nil
 }
 
 // newS3Client builds an S3 client bound to a specific endpoint host. Used twice:

@@ -31,7 +31,6 @@ import (
 	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/phclient"
-	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	mcpauth "github.com/danielpang/dropway/services/mcp/internal/auth"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
@@ -80,26 +79,16 @@ func main() {
 	}
 	defer pool.Close()
 
-	objStore, err := storage.NewS3Store(ctx, storage.S3Config{
-		Bucket:          os.Getenv("S3_BUCKET"),
-		Region:          os.Getenv("S3_REGION"),
-		Endpoint:        os.Getenv("S3_ENDPOINT"),
-		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
-		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-		UsePathStyle:    os.Getenv("S3_FORCE_PATH_STYLE") == "true",
-	})
-	if err != nil {
-		fatal("object storage", err)
-	}
-	// The read tools (list_files / read_file / download_site) fetch manifests and
-	// blobs from the object store. Resolve credentials NOW so a deploy missing its
-	// R2/S3 keys fails loudly at startup instead of serving list_sites from Postgres
-	// while every file read 500s with "static credentials are empty" — a failure that
-	// looks like (and was reported as) an MCP auth problem. Mirrors the /healthz DB
-	// round-trip that already fails the deploy on a bad DATABASE_URL.
-	if err := objStore.VerifyCredentials(ctx); err != nil {
-		fatal("object storage credentials", err)
-	}
+	// NOTE: this server holds NO object-store credentials. The content-read tools
+	// (list_files / read_file / download_site / download_skill[_folder]) fetch
+	// manifests and blobs THROUGH the Go API (svc.API), which is the single reader
+	// of the blob store. Reads and writes both flow over the forwarded token; the
+	// store-backed tools (list_sites / list_skills / get_site_chat) read Postgres
+	// directly under RLS. An MCP deploy missing R2 credentials used to serve
+	// list_sites from Postgres while every file read 500'd on the object store with
+	// "static credentials are empty" — a failure that looked like (and was reported
+	// as) an MCP auth problem. Routing reads through the API removes that whole class
+	// of misconfiguration from this service.
 
 	// The bearer token is a Better-Auth-issued OAuth access token whose audience is
 	// this MCP resource (publicURL); verify it against the platform JWKS. Accept
@@ -113,7 +102,7 @@ func main() {
 	verifier := coreauth.NewVerifier(jwksURL, issuer, publicURL,
 		coreauth.WithExtraAudiences(coreauth.MCPResourceAudiences(publicURL)...))
 	st := store.New(pool)
-	svc := &tools.Service{Store: st, Skills: st, Chats: st, Blobs: objStore}
+	svc := &tools.Service{Store: st, Skills: st, Chats: st}
 
 	// Product analytics over the same shared posthog client as error tracking.
 	// Nil when PostHog is unconfigured → auth rejections are logged only.

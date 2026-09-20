@@ -573,6 +573,105 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 }
 
 // ---------------------------------------------------------------------------
+// Read tools (site + skill content) — the MCP read tools call these so the API
+// remains the SINGLE reader of the object store; the MCP server holds no S3/R2
+// credentials of its own. All are member-level, RLS-scoped, and forward the
+// caller's token exactly like the write tools.
+// ---------------------------------------------------------------------------
+
+// SiteFileMeta is one entry in a site's file listing.
+type SiteFileMeta struct {
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
+	SHA256      string `json:"sha256"`
+}
+
+// FilePayload is one file's bytes: utf8 text inline or base64 (Encoding says
+// which). ContentType is populated for site files; empty for skill files.
+type FilePayload struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	Encoding    string `json:"encoding"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"` // raw bytes (site files); 0 for skill files
+}
+
+// ListSiteFiles calls GET /v1/sites/{id}/files.
+func (c *Client) ListSiteFiles(ctx context.Context, token, siteID string) ([]SiteFileMeta, error) {
+	var out struct {
+		Files []SiteFileMeta `json:"files"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/sites/"+siteID+"/files", token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Files, nil
+}
+
+// ReadSiteFile calls GET /v1/sites/{id}/files/content?path=…. A 404 (path not in
+// the manifest) surfaces as an *Error{Status:404} the caller maps to not-found.
+func (c *Client) ReadSiteFile(ctx context.Context, token, siteID, path string) (FilePayload, error) {
+	var out FilePayload
+	p := "/v1/sites/" + siteID + "/files/content?path=" + url.QueryEscape(path)
+	if err := c.do(ctx, http.MethodGet, p, token, nil, &out); err != nil {
+		return FilePayload{}, err
+	}
+	return out, nil
+}
+
+// SiteDownload is a whole site's inline files.
+type SiteDownload struct {
+	Slug      string        `json:"slug"`
+	SiteID    string        `json:"site_id"`
+	Files     []FilePayload `json:"files"`
+	Truncated bool          `json:"truncated"`
+}
+
+// DownloadSite calls GET /v1/sites/{id}/download.
+func (c *Client) DownloadSite(ctx context.Context, token, siteID string) (SiteDownload, error) {
+	var out SiteDownload
+	if err := c.do(ctx, http.MethodGet, "/v1/sites/"+siteID+"/download", token, nil, &out); err != nil {
+		return SiteDownload{}, err
+	}
+	return out, nil
+}
+
+// SkillDownload is one skill's inline files (the /skills/{id}/download shape,
+// also the per-skill element of a folder download).
+type SkillDownload struct {
+	Slug      string        `json:"slug"`
+	SkillID   string        `json:"skill_id"`
+	Version   int32         `json:"version"`
+	Files     []FilePayload `json:"files"`
+	Truncated bool          `json:"truncated"`
+}
+
+// DownloadSkill calls GET /v1/skills/{id}/download.
+func (c *Client) DownloadSkill(ctx context.Context, token, skillID string) (SkillDownload, error) {
+	var out SkillDownload
+	if err := c.do(ctx, http.MethodGet, "/v1/skills/"+skillID+"/download", token, nil, &out); err != nil {
+		return SkillDownload{}, err
+	}
+	return out, nil
+}
+
+// SkillFolderDownload is a folder's bulk download: each skill inline (or marked
+// Truncated when the response budget ran out) plus any server warnings.
+type SkillFolderDownload struct {
+	Skills   []SkillDownload `json:"skills"`
+	Warnings []string        `json:"warnings"`
+}
+
+// DownloadSkillFolder calls GET /v1/skill-folders/{id}/download.
+func (c *Client) DownloadSkillFolder(ctx context.Context, token, folderID string) (SkillFolderDownload, error) {
+	var out SkillFolderDownload
+	if err := c.do(ctx, http.MethodGet, "/v1/skill-folders/"+folderID+"/download", token, nil, &out); err != nil {
+		return SkillFolderDownload{}, err
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
 // Org memory ("your agent knows your company") — the memory tools call the
 // API's /v1/ai/memories surface so search embedding, quota, RLS scoping, and
 // audit all stay on the API (the MCP server never touches vectors itself).

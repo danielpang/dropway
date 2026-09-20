@@ -54,9 +54,6 @@ func TestNewS3Store_ExplicitRegion(t *testing.T) {
 	if s.bucket != "b" {
 		t.Errorf("bucket = %q", s.bucket)
 	}
-	if s.creds == nil {
-		t.Error("creds provider not retained (VerifyCredentials would panic/misreport)")
-	}
 }
 
 // TestNewS3Store_HalfConfiguredCredentials asserts that supplying exactly one of
@@ -72,23 +69,6 @@ func TestNewS3Store_HalfConfiguredCredentials(t *testing.T) {
 		if _, err := NewS3Store(context.Background(), cfg); err == nil {
 			t.Errorf("half-configured credentials %+v should error", cfg)
 		}
-	}
-}
-
-// TestVerifyCredentials_Static asserts that with a static key pair (R2/MinIO),
-// credential resolution succeeds without any network call — the fast, common
-// path — so the startup fail-fast check passes on a correctly configured deploy.
-func TestVerifyCredentials_Static(t *testing.T) {
-	s, err := NewS3Store(context.Background(), S3Config{
-		Bucket:          "dropway-blobs",
-		AccessKeyID:     "akid",
-		SecretAccessKey: "secret",
-	})
-	if err != nil {
-		t.Fatalf("NewS3Store: %v", err)
-	}
-	if err := s.VerifyCredentials(context.Background()); err != nil {
-		t.Errorf("VerifyCredentials with static keys: %v", err)
 	}
 }
 

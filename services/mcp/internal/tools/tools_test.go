@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -78,32 +77,6 @@ func (f *fakeSkills) ListFolderSkills(_ context.Context, _ store.Tenant, folderI
 	return f.folderSkills[folderID], nil
 }
 
-type fakeBlobs struct {
-	manifest []byte
-	manErr   error
-	blobs    map[string][]byte // sha256 → content
-
-	skillManifests map[string][]byte // skillID/versionID → manifest JSON
-}
-
-func (f *fakeBlobs) GetManifest(_ context.Context, _, _, _ string) ([]byte, error) {
-	return f.manifest, f.manErr
-}
-func (f *fakeBlobs) GetSkillManifest(_ context.Context, _, skillID, versionID string) ([]byte, error) {
-	b, ok := f.skillManifests[skillID+"/"+versionID]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return b, nil
-}
-func (f *fakeBlobs) GetBlob(_ context.Context, _, sha string) (io.ReadCloser, error) {
-	b, ok := f.blobs[sha]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return io.NopCloser(bytes.NewReader(b)), nil
-}
-
 // fakeAPI records the control-plane calls the write tools make.
 type fakeAPI struct {
 	createToken, createSlug, createMode string
@@ -163,6 +136,42 @@ type fakeAPI struct {
 	memAddResp                                           apiclient.Memory
 	memAddCreated                                        bool
 	memAddErr                                            error
+
+	// content reads (site + skill files) — recorded args + canned responses.
+	readToken                 string
+	lastSiteID, lastReadPath  string
+	lastSkillID, lastFolderID string
+	listSiteFilesResp         []apiclient.SiteFileMeta
+	listSiteFilesErr          error
+	readSiteFileResp          apiclient.FilePayload
+	readSiteFileErr           error
+	downloadSiteResp          apiclient.SiteDownload
+	downloadSiteErr           error
+	downloadSkillResp         apiclient.SkillDownload
+	downloadSkillErr          error
+	downloadFolderResp        apiclient.SkillFolderDownload
+	downloadFolderErr         error
+}
+
+func (f *fakeAPI) ListSiteFiles(_ context.Context, token, siteID string) ([]apiclient.SiteFileMeta, error) {
+	f.readToken, f.lastSiteID = token, siteID
+	return f.listSiteFilesResp, f.listSiteFilesErr
+}
+func (f *fakeAPI) ReadSiteFile(_ context.Context, token, siteID, path string) (apiclient.FilePayload, error) {
+	f.readToken, f.lastSiteID, f.lastReadPath = token, siteID, path
+	return f.readSiteFileResp, f.readSiteFileErr
+}
+func (f *fakeAPI) DownloadSite(_ context.Context, token, siteID string) (apiclient.SiteDownload, error) {
+	f.readToken, f.lastSiteID = token, siteID
+	return f.downloadSiteResp, f.downloadSiteErr
+}
+func (f *fakeAPI) DownloadSkill(_ context.Context, token, skillID string) (apiclient.SkillDownload, error) {
+	f.readToken, f.lastSkillID = token, skillID
+	return f.downloadSkillResp, f.downloadSkillErr
+}
+func (f *fakeAPI) DownloadSkillFolder(_ context.Context, token, folderID string) (apiclient.SkillFolderDownload, error) {
+	f.readToken, f.lastFolderID = token, folderID
+	return f.downloadFolderResp, f.downloadFolderErr
 }
 
 func (f *fakeAPI) CreateSite(_ context.Context, token, slug, accessMode string) (apiclient.Site, error) {
@@ -257,13 +266,9 @@ func (f *fakeChats) ListChatMessages(_ context.Context, _ store.Tenant, chatLogI
 	return f.msgs[chatLogID], nil
 }
 
-const manifestJSON = `{"schema_version":1,"files":{
-	"index.html":{"sha256":"aaa","content_type":"text/html"},
-	"assets/app.js":{"sha256":"bbb","content_type":"application/javascript"},
-	"logo.png":{"sha256":"ccc","content_type":"image/png"}
-}}`
-
 var tnt = store.Tenant{OrgID: "org-1", UserID: "user-1"}
+
+const readTok = "tok-read"
 
 // --- list_sites -------------------------------------------------------------
 
@@ -297,16 +302,23 @@ func TestListSites_StoreError(t *testing.T) {
 
 // --- list_files -------------------------------------------------------------
 
-func TestListFiles_SortedPaths(t *testing.T) {
+func TestListFiles_SortedPathsFromAPI(t *testing.T) {
+	api := &fakeAPI{listSiteFilesResp: []apiclient.SiteFileMeta{
+		{Path: "logo.png"}, {Path: "index.html"}, {Path: "assets/app.js"},
+	}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{
 			"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")},
 		}},
-		Blobs: &fakeBlobs{manifest: []byte(manifestJSON)},
+		API: api,
 	}
-	out, err := svc.ListFiles(context.Background(), tnt, "docs")
+	out, err := svc.ListFiles(context.Background(), tnt, readTok, "docs")
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
+	}
+	// The site is resolved to its id and the API is called with the forwarded token.
+	if api.lastSiteID != "s1" || api.readToken != readTok {
+		t.Errorf("API called with siteID=%q token=%q, want s1/%s", api.lastSiteID, api.readToken, readTok)
 	}
 	want := []string{"assets/app.js", "index.html", "logo.png"}
 	if len(out.Files) != len(want) {
@@ -320,21 +332,26 @@ func TestListFiles_SortedPaths(t *testing.T) {
 }
 
 func TestListFiles_NotLiveIsEmpty(t *testing.T) {
+	api := &fakeAPI{}
 	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{
 		"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil},
-	}}}
-	out, err := svc.ListFiles(context.Background(), tnt, "draft")
+	}}, API: api}
+	out, err := svc.ListFiles(context.Background(), tnt, readTok, "draft")
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
 	if len(out.Files) != 0 {
 		t.Errorf("a non-live site should list no files, got %v", out.Files)
 	}
+	// A non-live site short-circuits in the MCP; the API is never called.
+	if api.lastSiteID != "" {
+		t.Errorf("API should not be called for a non-live site (siteID=%q)", api.lastSiteID)
+	}
 }
 
 func TestListFiles_UnknownSite(t *testing.T) {
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}}
-	if _, err := svc.ListFiles(context.Background(), tnt, "nope"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: &fakeAPI{}}
+	if _, err := svc.ListFiles(context.Background(), tnt, readTok, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
 	}
 }
@@ -342,26 +359,34 @@ func TestListFiles_UnknownSite(t *testing.T) {
 // --- read_file --------------------------------------------------------------
 
 func TestReadFile_Text(t *testing.T) {
+	api := &fakeAPI{readSiteFileResp: apiclient.FilePayload{
+		Path: "index.html", Content: "<h1>hi</h1>", Encoding: "utf8", ContentType: "text/html",
+	}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{"aaa": []byte("<h1>hi</h1>")}},
+		API:   api,
 	}
-	out, err := svc.ReadFile(context.Background(), tnt, "docs", "index.html")
+	out, err := svc.ReadFile(context.Background(), tnt, readTok, "docs", "index.html")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	if out.Text != "<h1>hi</h1>" || out.ContentType != "text/html" || out.Base64 != "" {
 		t.Errorf("text read wrong: %+v", out)
 	}
+	if api.lastSiteID != "s1" || api.lastReadPath != "index.html" {
+		t.Errorf("API called with siteID=%q path=%q", api.lastSiteID, api.lastReadPath)
+	}
 }
 
 func TestReadFile_BinaryIsBase64(t *testing.T) {
-	bin := []byte{0xff, 0xd8, 0xff, 0x00, 0x01} // invalid UTF-8 (e.g. image bytes)
+	api := &fakeAPI{readSiteFileResp: apiclient.FilePayload{
+		Path: "logo.png", Content: "//3/AAE=", Encoding: "base64", ContentType: "image/png",
+	}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{"ccc": bin}},
+		API:   api,
 	}
-	out, err := svc.ReadFile(context.Background(), tnt, "docs", "logo.png")
+	out, err := svc.ReadFile(context.Background(), tnt, readTok, "docs", "logo.png")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -371,18 +396,20 @@ func TestReadFile_BinaryIsBase64(t *testing.T) {
 }
 
 func TestReadFile_PathNotInManifest(t *testing.T) {
+	// The API answers a missing path with 404; the tool maps it to ErrNotFound.
+	api := &fakeAPI{readSiteFileErr: &apiclient.Error{Status: 404, Message: "not found"}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{}},
+		API:   api,
 	}
-	if _, err := svc.ReadFile(context.Background(), tnt, "docs", "secret.txt"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := svc.ReadFile(context.Background(), tnt, readTok, "docs", "secret.txt"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for missing path, got %v", err)
 	}
 }
 
 func TestReadFile_NotLive(t *testing.T) {
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}}
-	if _, err := svc.ReadFile(context.Background(), tnt, "draft", "index.html"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}, API: &fakeAPI{}}
+	if _, err := svc.ReadFile(context.Background(), tnt, readTok, "draft", "index.html"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for non-live site, got %v", err)
 	}
 }
@@ -390,16 +417,18 @@ func TestReadFile_NotLive(t *testing.T) {
 // --- download_site ----------------------------------------------------------
 
 func TestDownloadSite_AllFiles(t *testing.T) {
-	bin := []byte{0xff, 0xd8, 0xff, 0x00}
+	api := &fakeAPI{downloadSiteResp: apiclient.SiteDownload{
+		Slug: "docs", SiteID: "s1", Files: []apiclient.FilePayload{
+			{Path: "assets/app.js", Content: "console.log(1)", Encoding: "utf8", Size: 14},
+			{Path: "index.html", Content: "<h1>hi</h1>", Encoding: "utf8", Size: 11},
+			{Path: "logo.png", Content: "//3/AA==", Encoding: "base64", Size: 4},
+		},
+	}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{
-			"aaa": []byte("<h1>hi</h1>"),
-			"bbb": []byte("console.log(1)"),
-			"ccc": bin,
-		}},
+		API:   api,
 	}
-	out, err := svc.DownloadSite(context.Background(), tnt, "docs")
+	out, err := svc.DownloadSite(context.Background(), tnt, readTok, "docs")
 	if err != nil {
 		t.Fatalf("DownloadSite: %v", err)
 	}
@@ -409,52 +438,46 @@ func TestDownloadSite_AllFiles(t *testing.T) {
 	if len(out.Files) != 3 {
 		t.Fatalf("want 3 files, got %d", len(out.Files))
 	}
-	// Sorted by path: assets/app.js, index.html, logo.png.
+	// Order is whatever the API returned (the API sorts); the MCP preserves it.
 	if out.Files[0].Path != "assets/app.js" || out.Files[1].Path != "index.html" || out.Files[2].Path != "logo.png" {
-		t.Fatalf("files not sorted: %+v", out.Files)
+		t.Fatalf("files order not preserved: %+v", out.Files)
 	}
 	if out.Files[1].Text != "<h1>hi</h1>" || out.Files[1].Size != len("<h1>hi</h1>") {
 		t.Errorf("index.html wrong: %+v", out.Files[1])
 	}
-	if out.Files[2].Base64 == "" || out.Files[2].Text != "" {
-		t.Errorf("binary file should be base64: %+v", out.Files[2])
+	if out.Files[2].Base64 == "" || out.Files[2].Text != "" || out.Files[2].Size != 4 {
+		t.Errorf("binary file should be base64 with raw size: %+v", out.Files[2])
 	}
 }
 
-func TestDownloadSite_Truncated(t *testing.T) {
-	orig := maxDownloadBytes
-	maxDownloadBytes = 12 // tiny cap
-	defer func() { maxDownloadBytes = orig }()
-
+func TestDownloadSite_TruncatedPassthrough(t *testing.T) {
+	// Truncation is decided by the API's byte budget; the MCP just relays the flag.
+	api := &fakeAPI{downloadSiteResp: apiclient.SiteDownload{Slug: "docs", SiteID: "s1", Truncated: true}}
 	svc := &Service{
 		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		Blobs: &fakeBlobs{manifest: []byte(manifestJSON), blobs: map[string][]byte{
-			"aaa": []byte("0123456789"),    // 10 bytes (assets/app.js? no — index.html=aaa)
-			"bbb": []byte("0123456789ABC"), // 13 bytes
-			"ccc": []byte("xx"),
-		}},
+		API:   api,
 	}
-	out, err := svc.DownloadSite(context.Background(), tnt, "docs")
+	out, err := svc.DownloadSite(context.Background(), tnt, readTok, "docs")
 	if err != nil {
 		t.Fatalf("DownloadSite: %v", err)
 	}
-	if !out.Truncated {
-		t.Fatal("expected Truncated=true past the size cap")
-	}
-	// First file (assets/app.js → bbb, 13 bytes) already exceeds the 12-byte cap → nothing fits.
-	if len(out.Files) != 0 {
-		t.Fatalf("expected 0 files under a 12-byte cap, got %d: %+v", len(out.Files), out.Files)
+	if !out.Truncated || len(out.Files) != 0 {
+		t.Fatalf("expected the API's Truncated flag to pass through with no files: %+v", out)
 	}
 }
 
 func TestDownloadSite_NotLive(t *testing.T) {
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}}
-	out, err := svc.DownloadSite(context.Background(), tnt, "draft")
+	api := &fakeAPI{}
+	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}, API: api}
+	out, err := svc.DownloadSite(context.Background(), tnt, readTok, "draft")
 	if err != nil {
 		t.Fatalf("DownloadSite: %v", err)
 	}
 	if len(out.Files) != 0 || out.Truncated {
 		t.Errorf("non-live site should download nothing: %+v", out)
+	}
+	if api.lastSiteID != "" {
+		t.Errorf("API should not be called for a non-live site")
 	}
 }
 
@@ -760,32 +783,25 @@ func TestCheckSkillUpdates(t *testing.T) {
 
 // --- download_skill -----------------------------------------------------------
 
-const skillManifestJSON = `{"schema_version":1,"files":{
-	"SKILL.md":{"sha256":"sm","content_type":"text/markdown","size":11},
-	"assets/logo.png":{"sha256":"sp","content_type":"image/png","size":4}
-}}`
-
-func skillFixture() (*fakeSkills, *fakeBlobs) {
+func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
+	// The skill is resolved to its id under RLS; the bytes come from the API.
+	api := &fakeAPI{downloadSkillResp: apiclient.SkillDownload{
+		Slug: "writing", SkillID: "sk1", Version: 2, Files: []apiclient.FilePayload{
+			{Path: "SKILL.md", Content: "# a skill\n", Encoding: "utf8"},
+			{Path: "assets/logo.png", Content: "//3/AA==", Encoding: "base64"},
+		},
+	}}
 	skills := &fakeSkills{bySlug: map[string]store.Skill{
 		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1"), Version: 2},
 	}}
-	blobs := &fakeBlobs{
-		skillManifests: map[string][]byte{"sk1/v1": []byte(skillManifestJSON)},
-		blobs: map[string][]byte{
-			"sm": []byte("# a skill\n"),    // valid utf8
-			"sp": {0xff, 0xd8, 0xff, 0x00}, // binary
-		},
-	}
-	return skills, blobs
-}
+	svc := &Service{Skills: skills, API: api}
 
-func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
-	skills, blobs := skillFixture()
-	svc := &Service{Skills: skills, Blobs: blobs}
-
-	out, err := svc.DownloadSkill(context.Background(), tnt, "writing")
+	out, err := svc.DownloadSkill(context.Background(), tnt, readTok, "writing")
 	if err != nil {
 		t.Fatalf("DownloadSkill: %v", err)
+	}
+	if api.lastSkillID != "sk1" || api.readToken != readTok {
+		t.Errorf("API called with skillID=%q token=%q", api.lastSkillID, api.readToken)
 	}
 	if out.Name != "writing" || out.Truncated {
 		t.Fatalf("out wrong: %+v", out)
@@ -798,7 +814,6 @@ func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
 	if len(out.Files) != 2 {
 		t.Fatalf("want 2 files, got %d", len(out.Files))
 	}
-	// Sorted by path: SKILL.md, assets/logo.png.
 	if out.Files[0].Path != "SKILL.md" || out.Files[0].Encoding != "utf8" || out.Files[0].Content != "# a skill\n" {
 		t.Errorf("SKILL.md wrong: %+v", out.Files[0])
 	}
@@ -808,73 +823,34 @@ func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
 }
 
 func TestDownloadSkill_UnknownSkill(t *testing.T) {
-	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}}
-	if _, err := svc.DownloadSkill(context.Background(), tnt, "nope"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}, API: &fakeAPI{}}
+	if _, err := svc.DownloadSkill(context.Background(), tnt, readTok, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown skill, got %v", err)
 	}
 }
 
 func TestDownloadSkill_NoContentErrors(t *testing.T) {
+	api := &fakeAPI{}
 	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{
 		"empty": {ID: "sk9", Slug: "empty", CurrentVersionID: nil},
-	}}}
-	if _, err := svc.DownloadSkill(context.Background(), tnt, "empty"); err == nil {
+	}}, API: api}
+	if _, err := svc.DownloadSkill(context.Background(), tnt, readTok, "empty"); err == nil {
 		t.Fatal("expected an error for a skill with no finalized upload")
 	}
-}
-
-func TestDownloadSkill_UnsafeManifestPathRejected(t *testing.T) {
-	skills, blobs := skillFixture()
-	blobs.skillManifests["sk1/v1"] = []byte(`{"schema_version":1,"files":{
-		"SKILL.md":{"sha256":"sm","size":11},
-		"../evil.md":{"sha256":"sm","size":11}
-	}}`)
-	svc := &Service{Skills: skills, Blobs: blobs}
-	if _, err := svc.DownloadSkill(context.Background(), tnt, "writing"); err == nil {
-		t.Fatal("expected an error for a manifest path containing '..'")
+	// The no-content case short-circuits in the MCP; the API is never called.
+	if api.lastSkillID != "" {
+		t.Errorf("API should not be called for a skill with no content")
 	}
 }
 
-// A filename that merely CONTAINS ".." (but has no ".." path SEGMENT), e.g.
-// "changelog..md", is a valid server-side path and must download fine. The old
-// strings.Contains(p, "..") check wrongly rejected these, hard-failing the whole
-// skill; the CleanPath rule (segment-based) accepts them. Regression guard for BUG 1.
-func TestDownloadSkill_DottedFilenameAllowed(t *testing.T) {
+func TestDownloadSkill_TruncatedPassthrough(t *testing.T) {
+	// The API applies the byte budget; the MCP relays its Truncated flag.
+	api := &fakeAPI{downloadSkillResp: apiclient.SkillDownload{Slug: "writing", SkillID: "sk1", Truncated: true}}
 	skills := &fakeSkills{bySlug: map[string]store.Skill{
 		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1")},
 	}}
-	blobs := &fakeBlobs{
-		skillManifests: map[string][]byte{"sk1/v1": []byte(`{"schema_version":1,"files":{
-			"SKILL.md":{"sha256":"sm","content_type":"text/markdown","size":11},
-			"changelog..md":{"sha256":"cl","content_type":"text/markdown","size":3}
-		}}`)},
-		blobs: map[string][]byte{
-			"sm": []byte("# a skill\n"),
-			"cl": []byte("log"),
-		},
-	}
-	svc := &Service{Skills: skills, Blobs: blobs}
-	out, err := svc.DownloadSkill(context.Background(), tnt, "writing")
-	if err != nil {
-		t.Fatalf("DownloadSkill: %v", err)
-	}
-	if len(out.Files) != 2 {
-		t.Fatalf("want 2 files (incl. changelog..md), got %d: %+v", len(out.Files), out.Files)
-	}
-	// Sorted: SKILL.md, changelog..md.
-	if out.Files[1].Path != "changelog..md" || out.Files[1].Content != "log" {
-		t.Errorf("dotted filename not downloaded: %+v", out.Files[1])
-	}
-}
-
-func TestDownloadSkill_OverCapTruncated(t *testing.T) {
-	orig := maxDownloadBytes
-	maxDownloadBytes = 8 // below the manifest's 15 declared bytes
-	defer func() { maxDownloadBytes = orig }()
-
-	skills, blobs := skillFixture()
-	svc := &Service{Skills: skills, Blobs: blobs}
-	out, err := svc.DownloadSkill(context.Background(), tnt, "writing")
+	svc := &Service{Skills: skills, API: api}
+	out, err := svc.DownloadSkill(context.Background(), tnt, readTok, "writing")
 	if err != nil {
 		t.Fatalf("DownloadSkill: %v", err)
 	}
@@ -886,32 +862,29 @@ func TestDownloadSkill_OverCapTruncated(t *testing.T) {
 // --- download_skill_folder ------------------------------------------------------
 
 func TestDownloadSkillFolder_SharedCapTruncation(t *testing.T) {
-	orig := maxDownloadBytes
-	maxDownloadBytes = 20 // fits skill a (15 declared bytes) but not also skill b
-	defer func() { maxDownloadBytes = orig }()
-
+	// The API decides the shared budget and marks each skill; the MCP reshapes the
+	// per-skill entries and synthesizes the note from the truncated set.
+	api := &fakeAPI{downloadFolderResp: apiclient.SkillFolderDownload{
+		Skills: []apiclient.SkillDownload{
+			{Slug: "a", SkillID: "sk1", Files: []apiclient.FilePayload{
+				{Path: "SKILL.md", Content: "# a\n", Encoding: "utf8"},
+				{Path: "assets/logo.png", Content: "//3/AA==", Encoding: "base64"},
+			}},
+			{Slug: "b", SkillID: "sk2", Truncated: true},
+		},
+		Warnings: []string{"some skills were not inlined"},
+	}}
 	skills := &fakeSkills{
 		folders: []store.SkillFolder{{ID: "f1", Slug: "product", Title: "Product", ItemCount: 2}},
-		folderSkills: map[string][]store.Skill{"f1": {
-			{ID: "sk1", Slug: "a", CurrentVersionID: ptr("v1")},
-			{ID: "sk2", Slug: "b", CurrentVersionID: ptr("v2")},
-		}},
 	}
-	blobs := &fakeBlobs{
-		skillManifests: map[string][]byte{
-			"sk1/v1": []byte(skillManifestJSON), // 15 declared bytes
-			"sk2/v2": []byte(skillManifestJSON), // another 15 → over the 20-byte budget
-		},
-		blobs: map[string][]byte{
-			"sm": []byte("# a skill\n"),
-			"sp": {0xff, 0xd8, 0xff, 0x00},
-		},
-	}
-	svc := &Service{Skills: skills, Blobs: blobs}
+	svc := &Service{Skills: skills, API: api}
 
-	out, err := svc.DownloadSkillFolder(context.Background(), tnt, "product")
+	out, err := svc.DownloadSkillFolder(context.Background(), tnt, readTok, "product")
 	if err != nil {
 		t.Fatalf("DownloadSkillFolder: %v", err)
+	}
+	if api.lastFolderID != "f1" || api.readToken != readTok {
+		t.Errorf("API called with folderID=%q token=%q", api.lastFolderID, api.readToken)
 	}
 	if out.Folder != "product" || len(out.Skills) != 2 {
 		t.Fatalf("out wrong: %+v", out)
@@ -928,8 +901,8 @@ func TestDownloadSkillFolder_SharedCapTruncation(t *testing.T) {
 }
 
 func TestDownloadSkillFolder_UnknownFolder(t *testing.T) {
-	svc := &Service{Skills: &fakeSkills{}}
-	if _, err := svc.DownloadSkillFolder(context.Background(), tnt, "ghost"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{Skills: &fakeSkills{}, API: &fakeAPI{}}
+	if _, err := svc.DownloadSkillFolder(context.Background(), tnt, readTok, "ghost"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown folder, got %v", err)
 	}
 }

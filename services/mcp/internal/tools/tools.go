@@ -15,12 +15,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -31,11 +30,6 @@ import (
 	"github.com/danielpang/dropway/services/mcp/internal/auth"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
 )
-
-// maxDownloadBytes caps the total bytes download_site returns inline, so a huge site
-// can't blow up a single tool response. Files beyond the cap are omitted (Truncated).
-// A var (not const) so tests can lower it without staging megabytes of fixtures.
-var maxDownloadBytes = 10 << 20 // 10 MiB
 
 // maxChatBytes caps the total message content get_site_chat returns inline (a
 // long log's trailing messages are omitted, disclosed via Truncated). A var so
@@ -57,25 +51,28 @@ type SkillStore interface {
 	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
 }
 
-// Blobs fetches deploy/skill manifests + content-addressed blobs (satisfied by
-// internal/storage.Store).
-type Blobs interface {
-	GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error)
-	GetSkillManifest(ctx context.Context, orgID, skillID, versionID string) ([]byte, error)
-	GetBlob(ctx context.Context, orgID, sha256 string) (io.ReadCloser, error)
-}
-
 // ChatStore is the shared-chat-log data get_site_chat reads (RLS-scoped).
 type ChatStore interface {
 	ChatLogBySite(ctx context.Context, t store.Tenant, siteID string) (store.ChatLog, error)
 	ListChatMessages(ctx context.Context, t store.Tenant, chatLogID string) ([]store.ChatMessage, error)
 }
 
-// ControlPlane performs WRITES through the Go API (create site / change access /
-// upload skill / share chat logs), forwarding the user's OAuth token. nil when the
-// MCP server has no API_URL configured → the write tools are not registered.
-// Satisfied by *apiclient.Client.
+// ControlPlane is the Go API client the tools call, forwarding the user's OAuth
+// token. It performs control-plane WRITES (create site / change access / upload
+// skill / share chat logs) AND, since the MCP server holds no object-store
+// credentials of its own, every content READ (site files, skill files) — the API
+// is the single reader of the blob store. nil when the MCP server has no API_URL
+// configured → the write tools are not registered and the content-read tools
+// return ErrNoAPI. Satisfied by *apiclient.Client.
 type ControlPlane interface {
+	// Content reads (site + skill files) — the API fetches manifests/blobs so the
+	// MCP never touches the object store.
+	ListSiteFiles(ctx context.Context, token, siteID string) ([]apiclient.SiteFileMeta, error)
+	ReadSiteFile(ctx context.Context, token, siteID, path string) (apiclient.FilePayload, error)
+	DownloadSite(ctx context.Context, token, siteID string) (apiclient.SiteDownload, error)
+	DownloadSkill(ctx context.Context, token, skillID string) (apiclient.SkillDownload, error)
+	DownloadSkillFolder(ctx context.Context, token, folderID string) (apiclient.SkillFolderDownload, error)
+
 	CreateSite(ctx context.Context, token, slug, accessMode string) (apiclient.Site, error)
 	SetAccess(ctx context.Context, token, siteID, mode, password string) error
 	Deploy(ctx context.Context, token, siteID string, files []apiclient.DeployFile, publish bool) (apiclient.DeployResult, error)
@@ -98,10 +95,11 @@ type Service struct {
 	Store  SiteStore
 	Skills SkillStore
 	Chats  ChatStore
-	Blobs  Blobs
-	// API is the control-plane write client. Optional: when nil the read tools still
-	// work but the write tools (create_site, set_site_access, deploy_site,
-	// upload_skill, share_chat, append_chat) are not registered.
+	// API is the Go API client. It backs the write tools AND the content-read
+	// tools (site/skill file bytes), so the MCP server needs no object-store
+	// credentials. When nil (no API_URL) the write tools are not registered and
+	// the content-read tools return ErrNoAPI; the store-backed tools (list_sites,
+	// list_skills, get_site_chat) still work directly from Postgres.
 	API ControlPlane
 }
 
@@ -151,9 +149,22 @@ func writeAuthHint(err error) error {
 	return err
 }
 
+// isAPINotFound reports whether err is the API's 404 (e.g. a file path absent
+// from a site's manifest), so a read tool can render it as store.ErrNotFound
+// instead of a raw "api 404".
+func isAPINotFound(err error) bool {
+	var apiErr *apiclient.Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+}
+
 // ErrNoToken means a write tool ran without the forwardable bearer token (should be
 // impossible behind the auth middleware, which stashes it).
 var ErrNoToken = errors.New("mcp/tools: no bearer token to forward")
+
+// ErrNoAPI means a content-read or write tool ran on an MCP server with no API_URL
+// configured. Content reads (site/skill files) go through the Go API — the MCP
+// holds no object-store credentials — so they need the API just like writes do.
+var ErrNoAPI = errors.New("mcp/tools: this MCP server has no Dropway API configured (set API_URL); file reads and writes are unavailable")
 
 // --- Tool I/O ---------------------------------------------------------------
 
@@ -449,8 +460,10 @@ func (svc *Service) ListSites(ctx context.Context, t store.Tenant) (listSitesOut
 	return out, nil
 }
 
-// ListFiles returns the paths in a site's current published version.
-func (svc *Service) ListFiles(ctx context.Context, t store.Tenant, slug string) (listFilesOut, error) {
+// ListFiles returns the paths in a site's current published version. The site is
+// resolved to its id under RLS (Postgres), then the file listing is fetched from
+// the Go API — the MCP never reads the object store itself.
+func (svc *Service) ListFiles(ctx context.Context, t store.Tenant, token, slug string) (listFilesOut, error) {
 	site, err := svc.Store.SiteBySlug(ctx, t, slug)
 	if err != nil {
 		return listFilesOut{}, err
@@ -458,20 +471,26 @@ func (svc *Service) ListFiles(ctx context.Context, t store.Tenant, slug string) 
 	if site.CurrentVersionID == nil {
 		return listFilesOut{Files: []string{}}, nil // not live → no files
 	}
-	entries, err := svc.manifestEntries(ctx, t.OrgID, site)
+	if svc.API == nil {
+		return listFilesOut{}, ErrNoAPI
+	}
+	files, err := svc.API.ListSiteFiles(ctx, token, site.ID)
 	if err != nil {
 		return listFilesOut{}, err
 	}
-	paths := make([]string, 0, len(entries))
-	for p := range entries {
-		paths = append(paths, p)
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
 	}
 	sort.Strings(paths)
 	return listFilesOut{Files: paths}, nil
 }
 
-// ReadFile returns the contents of one file in a site's current version.
-func (svc *Service) ReadFile(ctx context.Context, t store.Tenant, slug, path string) (readFileOut, error) {
+// ReadFile returns the contents of one file in a site's current version, fetched
+// through the Go API (which reads the manifest + blob). A path absent from the
+// manifest comes back as the API's 404, mapped to store.ErrNotFound so the tool
+// reports "not found" exactly as before.
+func (svc *Service) ReadFile(ctx context.Context, t store.Tenant, token, slug, path string) (readFileOut, error) {
 	site, err := svc.Store.SiteBySlug(ctx, t, slug)
 	if err != nil {
 		return readFileOut{}, err
@@ -479,35 +498,29 @@ func (svc *Service) ReadFile(ctx context.Context, t store.Tenant, slug, path str
 	if site.CurrentVersionID == nil {
 		return readFileOut{}, store.ErrNotFound
 	}
-	entries, err := svc.manifestEntries(ctx, t.OrgID, site)
+	if svc.API == nil {
+		return readFileOut{}, ErrNoAPI
+	}
+	f, err := svc.API.ReadSiteFile(ctx, token, site.ID, path)
 	if err != nil {
+		if isAPINotFound(err) {
+			return readFileOut{}, store.ErrNotFound
+		}
 		return readFileOut{}, err
 	}
-	e, ok := entries[path]
-	if !ok {
-		return readFileOut{}, store.ErrNotFound
-	}
-	rc, err := svc.Blobs.GetBlob(ctx, t.OrgID, e.SHA256)
-	if err != nil {
-		return readFileOut{}, err
-	}
-	defer rc.Close()
-	b, err := io.ReadAll(rc)
-	if err != nil {
-		return readFileOut{}, err
-	}
-	out := readFileOut{Path: path, ContentType: e.ContentType}
-	if utf8.Valid(b) {
-		out.Text = string(b)
+	out := readFileOut{Path: f.Path, ContentType: f.ContentType}
+	if f.Encoding == "base64" {
+		out.Base64 = f.Content
 	} else {
-		out.Base64 = base64.StdEncoding.EncodeToString(b)
+		out.Text = f.Content
 	}
 	return out, nil
 }
 
-// DownloadSite reads EVERY file of a site's current version, returning each path's
-// bytes inline (text or base64), up to maxDownloadBytes total (Truncated past that).
-func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, slug string) (downloadSiteOut, error) {
+// DownloadSite reads EVERY file of a site's current version through the Go API,
+// returning each path's bytes inline (text or base64), up to the API's inline cap
+// (Truncated past that).
+func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, token, slug string) (downloadSiteOut, error) {
 	site, err := svc.Store.SiteBySlug(ctx, t, slug)
 	if err != nil {
 		return downloadSiteOut{}, err
@@ -516,40 +529,22 @@ func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, slug strin
 	if site.CurrentVersionID == nil {
 		return out, nil // not live → nothing to download
 	}
-	entries, err := svc.manifestEntries(ctx, t.OrgID, site)
+	if svc.API == nil {
+		return downloadSiteOut{}, ErrNoAPI
+	}
+	dl, err := svc.API.DownloadSite(ctx, token, site.ID)
 	if err != nil {
 		return downloadSiteOut{}, err
 	}
-	paths := make([]string, 0, len(entries))
-	for p := range entries {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-
-	total := 0
-	for _, p := range paths {
-		e := entries[p]
-		rc, err := svc.Blobs.GetBlob(ctx, t.OrgID, e.SHA256)
-		if err != nil {
-			return downloadSiteOut{}, err
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return downloadSiteOut{}, err
-		}
-		if total+len(b) > maxDownloadBytes {
-			out.Truncated = true
-			break
-		}
-		total += len(b)
-		f := downloadedFile{Path: p, ContentType: e.ContentType, Size: len(b)}
-		if utf8.Valid(b) {
-			f.Text = string(b)
+	out.Truncated = dl.Truncated
+	for _, f := range dl.Files {
+		df := downloadedFile{Path: f.Path, ContentType: f.ContentType, Size: int(f.Size)}
+		if f.Encoding == "base64" {
+			df.Base64 = f.Content
 		} else {
-			f.Base64 = base64.StdEncoding.EncodeToString(b)
+			df.Text = f.Content
 		}
-		out.Files = append(out.Files, f)
+		out.Files = append(out.Files, df)
 	}
 	return out, nil
 }
@@ -683,9 +678,11 @@ func (svc *Service) CheckSkillUpdates(ctx context.Context, t store.Tenant, in ch
 	return out, nil
 }
 
-// DownloadSkill reads EVERY file of a skill's current version, returning each
-// path's bytes inline (utf8 or base64), up to maxDownloadBytes total.
-func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, name string) (downloadSkillOut, error) {
+// DownloadSkill reads EVERY file of a skill's current version through the Go API,
+// returning each path's bytes inline (utf8 or base64). The skill is resolved to
+// its id under RLS first (preserving the "no content yet" and unknown-slug
+// errors) and the bytes are fetched by the API — the MCP holds no storage creds.
+func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, token, name string) (downloadSkillOut, error) {
 	sk, err := svc.Skills.SkillBySlug(ctx, t, name)
 	if err != nil {
 		return downloadSkillOut{}, err
@@ -693,54 +690,60 @@ func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, name stri
 	if sk.CurrentVersionID == nil {
 		return downloadSkillOut{}, fmt.Errorf("mcp/tools: skill %q has no uploaded content yet", name)
 	}
-	out := downloadSkillOut{Name: sk.Slug, Version: sk.Version, Files: []skillFilePayload{}}
-	files, _, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, maxDownloadBytes)
+	if svc.API == nil {
+		return downloadSkillOut{}, ErrNoAPI
+	}
+	dl, err := svc.API.DownloadSkill(ctx, token, sk.ID)
 	if err != nil {
 		return downloadSkillOut{}, err
 	}
-	if files == nil {
-		out.Truncated = true // whole skill over the cap (can't happen at the API's 5 MiB skill cap)
-		return out, nil
-	}
-	out.Files = files
-	return out, nil
+	return downloadSkillOut{
+		Name:      sk.Slug,
+		Version:   dl.Version,
+		Files:     toSkillFilePayloads(dl.Files),
+		Truncated: dl.Truncated,
+	}, nil
 }
 
-// DownloadSkillFolder downloads every finalized skill in a folder under ONE
-// shared maxDownloadBytes budget. Skills that would blow the budget come back as
-// truncated entries (no files) with a note to fetch them via download_skill.
-func (svc *Service) DownloadSkillFolder(ctx context.Context, t store.Tenant, folderSlug string) (downloadSkillFolderOut, error) {
+// DownloadSkillFolder downloads every finalized skill in a folder through the Go
+// API (which applies the shared response budget); skills the budget omits come
+// back as truncated entries with a note to fetch them via download_skill.
+func (svc *Service) DownloadSkillFolder(ctx context.Context, t store.Tenant, token, folderSlug string) (downloadSkillFolderOut, error) {
 	folder, err := svc.Skills.SkillFolderBySlug(ctx, t, folderSlug)
 	if err != nil {
 		return downloadSkillFolderOut{}, err
 	}
-	skills, err := svc.Skills.ListFolderSkills(ctx, t, folder.ID)
+	if svc.API == nil {
+		return downloadSkillFolderOut{}, ErrNoAPI
+	}
+	dl, err := svc.API.DownloadSkillFolder(ctx, token, folder.ID)
 	if err != nil {
 		return downloadSkillFolderOut{}, err
 	}
 	out := downloadSkillFolderOut{Folder: folder.Slug, Skills: []folderSkillDownload{}}
-	budget := maxDownloadBytes
 	var truncated []string
-	for _, sk := range skills {
-		if sk.CurrentVersionID == nil {
-			continue // finalized-only listing, but stay defensive
-		}
-		files, used, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, budget)
-		if err != nil {
-			return downloadSkillFolderOut{}, err
-		}
-		if files == nil { // wouldn't fit in the remaining budget
-			out.Skills = append(out.Skills, folderSkillDownload{Name: sk.Slug, Truncated: true})
+	for _, sk := range dl.Skills {
+		entry := folderSkillDownload{Name: sk.Slug, Truncated: sk.Truncated}
+		if sk.Truncated {
 			truncated = append(truncated, sk.Slug)
-			continue
+		} else {
+			entry.Files = toSkillFilePayloads(sk.Files)
 		}
-		budget -= used
-		out.Skills = append(out.Skills, folderSkillDownload{Name: sk.Slug, Files: files})
+		out.Skills = append(out.Skills, entry)
 	}
 	if len(truncated) > 0 {
 		out.Note = "response size cap reached — call download_skill individually for: " + strings.Join(truncated, ", ")
 	}
 	return out, nil
+}
+
+// toSkillFilePayloads maps API file payloads to the skill tool's inline shape.
+func toSkillFilePayloads(files []apiclient.FilePayload) []skillFilePayload {
+	out := make([]skillFilePayload, 0, len(files))
+	for _, f := range files {
+		out = append(out, skillFilePayload{Path: f.Path, Content: f.Content, Encoding: f.Encoding})
+	}
+	return out
 }
 
 // UploadSkill decodes the input files, enforces the cheap client-side rules
@@ -993,92 +996,6 @@ func (svc *Service) GetSiteChat(ctx context.Context, t store.Tenant, slug string
 		out.Messages = append(out.Messages, sm)
 	}
 	return out, nil
-}
-
-// downloadSkillFiles reads a skill's files under a byte budget. Returns
-// (nil, 0, nil) when the skill's manifest-declared total wouldn't fit — the
-// caller renders that as a truncated entry instead of a partial skill (half a
-// skill is worse than none: the agent would install it missing files).
-func (svc *Service) downloadSkillFiles(ctx context.Context, orgID string, sk store.Skill, budget int) ([]skillFilePayload, int, error) {
-	entries, err := svc.skillManifestEntries(ctx, orgID, sk)
-	if err != nil {
-		return nil, 0, err
-	}
-	paths := make([]string, 0, len(entries))
-	var declared int64
-	for p, e := range entries {
-		if !skillspec.CleanPath(p) {
-			return nil, 0, fmt.Errorf("mcp/tools: skill %q manifest has unsafe path %q", sk.Slug, p)
-		}
-		paths = append(paths, p)
-		declared += e.Size
-	}
-	if declared > int64(budget) {
-		return nil, 0, nil
-	}
-	sort.Strings(paths)
-
-	files := make([]skillFilePayload, 0, len(paths))
-	total := 0
-	for _, p := range paths {
-		rc, err := svc.Blobs.GetBlob(ctx, orgID, entries[p].SHA256)
-		if err != nil {
-			return nil, 0, err
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return nil, 0, err
-		}
-		if total+len(b) > budget {
-			return nil, 0, nil // stored bytes exceeded the declared sizes — treat as over-budget
-		}
-		total += len(b)
-		f := skillFilePayload{Path: p}
-		if utf8.Valid(b) {
-			f.Content, f.Encoding = string(b), "utf8"
-		} else {
-			f.Content, f.Encoding = base64.StdEncoding.EncodeToString(b), "base64"
-		}
-		files = append(files, f)
-	}
-	return files, total, nil
-}
-
-type manifestEntry struct {
-	SHA256      string `json:"sha256"`
-	ContentType string `json:"content_type"`
-	Size        int64  `json:"size"` // used by the skill download budget; 0 when absent
-}
-
-// manifestEntries loads + parses a site's current-version manifest into a
-// path→entry map.
-func (svc *Service) manifestEntries(ctx context.Context, orgID string, site store.Site) (map[string]manifestEntry, error) {
-	raw, err := svc.Blobs.GetManifest(ctx, orgID, site.ID, *site.CurrentVersionID)
-	if err != nil {
-		return nil, err
-	}
-	return parseManifest(raw)
-}
-
-// skillManifestEntries loads + parses a skill's current-version manifest into a
-// path→entry map.
-func (svc *Service) skillManifestEntries(ctx context.Context, orgID string, sk store.Skill) (map[string]manifestEntry, error) {
-	raw, err := svc.Blobs.GetSkillManifest(ctx, orgID, sk.ID, *sk.CurrentVersionID)
-	if err != nil {
-		return nil, err
-	}
-	return parseManifest(raw)
-}
-
-func parseManifest(raw []byte) (map[string]manifestEntry, error) {
-	var parsed struct {
-		Files map[string]manifestEntry `json:"files"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, err
-	}
-	return parsed.Files, nil
 }
 
 // --- Org memory tools --------------------------------------------------------
@@ -1373,7 +1290,11 @@ func (svc *Service) listFilesHandler(ctx context.Context, _ *mcpsdk.CallToolRequ
 	if !ok {
 		return nil, listFilesOut{}, ErrNoTenant
 	}
-	out, err := svc.ListFiles(ctx, t, in.Site)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, listFilesOut{}, ErrNoToken
+	}
+	out, err := svc.ListFiles(ctx, t, token, in.Site)
 	return nil, out, err
 }
 
@@ -1383,7 +1304,11 @@ func (svc *Service) readFileHandler(ctx context.Context, _ *mcpsdk.CallToolReque
 	if !ok {
 		return nil, readFileOut{}, ErrNoTenant
 	}
-	out, err := svc.ReadFile(ctx, t, in.Site, in.Path)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, readFileOut{}, ErrNoToken
+	}
+	out, err := svc.ReadFile(ctx, t, token, in.Site, in.Path)
 	return nil, out, err
 }
 
@@ -1393,7 +1318,11 @@ func (svc *Service) downloadSiteHandler(ctx context.Context, _ *mcpsdk.CallToolR
 	if !ok {
 		return nil, downloadSiteOut{}, ErrNoTenant
 	}
-	out, err := svc.DownloadSite(ctx, t, in.Site)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, downloadSiteOut{}, ErrNoToken
+	}
+	out, err := svc.DownloadSite(ctx, t, token, in.Site)
 	return nil, out, err
 }
 
@@ -1437,7 +1366,11 @@ func (svc *Service) downloadSkillHandler(ctx context.Context, _ *mcpsdk.CallTool
 	if !ok {
 		return nil, downloadSkillOut{}, ErrNoTenant
 	}
-	out, err := svc.DownloadSkill(ctx, t, in.Name)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, downloadSkillOut{}, ErrNoToken
+	}
+	out, err := svc.DownloadSkill(ctx, t, token, in.Name)
 	return nil, out, err
 }
 
@@ -1447,7 +1380,11 @@ func (svc *Service) downloadSkillFolderHandler(ctx context.Context, _ *mcpsdk.Ca
 	if !ok {
 		return nil, downloadSkillFolderOut{}, ErrNoTenant
 	}
-	out, err := svc.DownloadSkillFolder(ctx, t, in.Folder)
+	token, ok := auth.TokenFromContext(ctx)
+	if !ok || token == "" {
+		return nil, downloadSkillFolderOut{}, ErrNoToken
+	}
+	out, err := svc.DownloadSkillFolder(ctx, t, token, in.Folder)
 	return nil, out, err
 }
 
