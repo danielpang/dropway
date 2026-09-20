@@ -109,6 +109,14 @@ func (a *API) ReadSiteFile(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, store.ErrNotFound)
 		return
 	}
+	// Refuse an oversized file rather than silently truncating it: readBlobBounded
+	// caps the read at siteContentMaxBytes, so serving it would return the first
+	// 10 MiB as if complete (with Size reported as 10 MiB). The manifest carries
+	// the true size, so reject before reading.
+	if tgt.Size > siteContentMaxBytes {
+		httpx.WriteError(w, fmt.Errorf("%w: file %q is %d bytes, over the %d-byte read limit", httpx.ErrBadRequest, path, tgt.Size, int64(siteContentMaxBytes)))
+		return
+	}
 	body, err := a.readBlobBounded(r, t.OrgID, tgt.SHA256, siteContentMaxBytes)
 	if err != nil {
 		httpx.WriteError(w, err)
@@ -151,14 +159,18 @@ func (a *API) DownloadSite(w http.ResponseWriter, r *http.Request) {
 	var total int64
 	for _, p := range paths {
 		tgt := files[p]
+		// Budget on the manifest's true size BEFORE reading: readBlobBounded caps
+		// each read at siteContentMaxBytes, so budgeting on the returned bytes would
+		// let an over-cap file through truncated-but-marked-complete. Omit any file
+		// that won't fit whole (Truncated), never serve a partial one.
+		if total+tgt.Size > siteContentMaxBytes {
+			resp.Truncated = true
+			break
+		}
 		body, err := a.readBlobBounded(r, t.OrgID, tgt.SHA256, siteContentMaxBytes)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
-		}
-		if total+int64(len(body)) > siteContentMaxBytes {
-			resp.Truncated = true
-			break
 		}
 		size := int64(len(body))
 		total += size

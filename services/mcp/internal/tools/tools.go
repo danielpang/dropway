@@ -994,6 +994,12 @@ func (svc *Service) GetSiteChat(ctx context.Context, token, slug string) (getSit
 	}
 	chat, err := svc.API.GetSiteChat(ctx, token, site.ID)
 	if err != nil {
+		// A site with no attached chat log comes back as the API's 404 — render it
+		// as the graceful store.ErrNotFound the tool returned before, not a raw
+		// "api 404" (same mapping ReadFile applies for a missing file path).
+		if isAPINotFound(err) {
+			return getSiteChatOut{}, store.ErrNotFound
+		}
 		return getSiteChatOut{}, err
 	}
 	log := chat.ChatLog
