@@ -23,7 +23,6 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,19 +54,6 @@ func env(key, def string) string {
 	return def
 }
 
-// stubBlobs satisfies tools.Blobs; initialize never reads blobs, so the methods
-// just error if something unexpectedly calls them.
-type stubBlobs struct{}
-
-func (stubBlobs) GetManifest(context.Context, string, string, string) ([]byte, error) {
-	return nil, errors.New("stub: GetManifest not implemented")
-}
-func (stubBlobs) GetSkillManifest(context.Context, string, string, string) ([]byte, error) {
-	return nil, errors.New("stub: GetSkillManifest not implemented")
-}
-func (stubBlobs) GetBlob(context.Context, string, string) (io.ReadCloser, error) {
-	return nil, errors.New("stub: GetBlob not implemented")
-}
 
 // jwks serves an Ed25519 public key as an OKP JWK so the real coreauth.Verifier
 // can validate tokens we mint with the matching private key.
@@ -208,7 +194,7 @@ func TestMCPServer_Endpoints(t *testing.T) {
 	verifier := coreauth.NewVerifier(jwks.URL, itIssuer, itResource,
 		coreauth.WithExtraAudiences(itResource+"/"))
 	st := store.New(appPool)
-	svc := &tools.Service{Store: st, Skills: st, Chats: st, Blobs: stubBlobs{}}
+	svc := &tools.Service{Store: st, Skills: st, Chats: st}
 
 	ts := httptest.NewServer(newMux(verifier, st, svc, itResource, itIssuer, nil, nil))
 	defer ts.Close()
