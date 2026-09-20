@@ -145,7 +145,8 @@ func startServeITMinio(t *testing.T, ctx context.Context) *storage.S3Store {
 	_ = exec.Command("docker", "rm", "-f", serveITMinioName).Run()
 	out, err := exec.Command("docker", "run", "-d", "--name", serveITMinioName,
 		"-e", "MINIO_ROOT_USER="+serveITMinioUser, "-e", "MINIO_ROOT_PASSWORD="+serveITMinioPass,
-		"-p", serveITMinioPort+":9000", "minio/minio:latest", "server", "/data").CombinedOutput()
+		// quay.io mirror: Docker Hub denies anonymous minio/minio pulls on CI runners.
+		"-p", serveITMinioPort+":9000", "quay.io/minio/minio:latest", "server", "/data").CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker run minio: %v\n%s", err, out)
 	}

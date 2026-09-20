@@ -15,16 +15,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/skillspec"
 	slugpkg "github.com/danielpang/dropway/internal/slug"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
@@ -32,50 +32,34 @@ import (
 	"github.com/danielpang/dropway/services/mcp/internal/store"
 )
 
-// maxDownloadBytes caps the total bytes download_site returns inline, so a huge site
-// can't blow up a single tool response. Files beyond the cap are omitted (Truncated).
-// A var (not const) so tests can lower it without staging megabytes of fixtures.
-var maxDownloadBytes = 10 << 20 // 10 MiB
-
 // maxChatBytes caps the total message content get_site_chat returns inline (a
 // long log's trailing messages are omitted, disclosed via Truncated). A var so
 // tests can lower it.
 var maxChatBytes = 1 << 20 // 1 MiB
 
-// SiteStore is the site data the tools read (RLS-scoped).
-type SiteStore interface {
-	ListSites(ctx context.Context, t store.Tenant) ([]store.Site, error)
-	SiteBySlug(ctx context.Context, t store.Tenant, slug string) (store.Site, error)
-}
-
-// SkillStore is the skill data the skill tools read (RLS-scoped).
-type SkillStore interface {
-	ListSkills(ctx context.Context, t store.Tenant, query, folderSlug string, presetsOnly bool) ([]store.Skill, error)
-	SkillBySlug(ctx context.Context, t store.Tenant, slug string) (store.Skill, error)
-	ListSkillFolders(ctx context.Context, t store.Tenant) ([]store.SkillFolder, error)
-	SkillFolderBySlug(ctx context.Context, t store.Tenant, slug string) (store.SkillFolder, error)
-	ListFolderSkills(ctx context.Context, t store.Tenant, folderID string) ([]store.Skill, error)
-}
-
-// Blobs fetches deploy/skill manifests + content-addressed blobs (satisfied by
-// internal/storage.Store).
-type Blobs interface {
-	GetManifest(ctx context.Context, orgID, siteID, versionID string) ([]byte, error)
-	GetSkillManifest(ctx context.Context, orgID, skillID, versionID string) ([]byte, error)
-	GetBlob(ctx context.Context, orgID, sha256 string) (io.ReadCloser, error)
-}
-
-// ChatStore is the shared-chat-log data get_site_chat reads (RLS-scoped).
-type ChatStore interface {
-	ChatLogBySite(ctx context.Context, t store.Tenant, siteID string) (store.ChatLog, error)
-	ListChatMessages(ctx context.Context, t store.Tenant, chatLogID string) ([]store.ChatMessage, error)
-}
-
-// ControlPlane performs WRITES through the Go API (create site / change access /
-// upload skill / share chat logs), forwarding the user's OAuth token. nil when the
-// MCP server has no API_URL configured → the write tools are not registered.
-// Satisfied by *apiclient.Client.
+// ControlPlane is the Go API client the tools call, forwarding the user's OAuth
+// token. It performs control-plane WRITES (create site / change access / upload
+// skill / share chat logs) AND, since the MCP server holds no object-store
+// credentials of its own, every content READ (site files, skill files) — the API
+// is the single reader of the blob store. nil when the MCP server has no API_URL
+// configured → the write tools are not registered and the content-read tools
+// return ErrNoAPI. Satisfied by *apiclient.Client.
 type ControlPlane interface {
+	// Listing + resolution + chat reads — the MCP holds no DB, so it lists through
+	// the API and resolves a slug to an id locally.
+	ListSites(ctx context.Context, token string) ([]apiclient.SiteSummary, error)
+	ListSkills(ctx context.Context, token, query, folder string, presetsOnly bool) ([]apiclient.SkillSummary, error)
+	ListSkillFolders(ctx context.Context, token string) ([]apiclient.SkillFolderSummary, error)
+	GetSiteChat(ctx context.Context, token, siteID string) (apiclient.SiteChat, error)
+
+	// Content reads (site + skill files) — the API fetches manifests/blobs so the
+	// MCP never touches the object store.
+	ListSiteFiles(ctx context.Context, token, siteID string) ([]apiclient.SiteFileMeta, error)
+	ReadSiteFile(ctx context.Context, token, siteID, path string) (apiclient.FilePayload, error)
+	DownloadSite(ctx context.Context, token, siteID string) (apiclient.SiteDownload, error)
+	DownloadSkill(ctx context.Context, token, skillID string) (apiclient.SkillDownload, error)
+	DownloadSkillFolder(ctx context.Context, token, folderID string) (apiclient.SkillFolderDownload, error)
+
 	CreateSite(ctx context.Context, token, slug, accessMode string) (apiclient.Site, error)
 	SetAccess(ctx context.Context, token, siteID, mode, password string) error
 	Deploy(ctx context.Context, token, siteID string, files []apiclient.DeployFile, publish bool) (apiclient.DeployResult, error)
@@ -95,14 +79,112 @@ type ControlPlane interface {
 
 // Service holds the tool dependencies.
 type Service struct {
-	Store  SiteStore
-	Skills SkillStore
-	Chats  ChatStore
-	Blobs  Blobs
-	// API is the control-plane write client. Optional: when nil the read tools still
-	// work but the write tools (create_site, set_site_access, deploy_site,
-	// upload_skill, share_chat, append_chat) are not registered.
+	// API is the Go API client and the tools' ONLY backing dependency: the MCP
+	// server touches no database and no object store of its own. Every tool —
+	// listing, slug→id resolution, file/chat reads, and writes — goes through the
+	// API over the caller's forwarded token. When nil (no API_URL) the write tools
+	// are not registered and the read tools return ErrNoAPI. (The org mcp_enabled
+	// kill-switch is still checked against Postgres in the request gate, main.go —
+	// the one place the MCP process reads the DB.)
 	API ControlPlane
+
+	// Reporter captures a tool handler's failure to the error sink (PostHog). Every
+	// registered tool is wrapped (see addTool) so any non-nil error it returns is
+	// emitted as an exception tagged with the tool name + tenant. nil ⇒ no capture
+	// (tests, or a build without error tracking); errtrack.FromEnv returns a Noop,
+	// never nil, so production always has one.
+	Reporter errtrack.Reporter
+}
+
+// reportToolError emits a failed tool call to the error sink (PostHog), attributed
+// to the acting user and tagged with the tool name + org. A nil Reporter or nil
+// err is a no-op. Called by addTool for every registered tool, so a failure at any
+// tool endpoint is observable without each handler opting in.
+func (svc *Service) reportToolError(ctx context.Context, tool string, err error) {
+	if svc.Reporter == nil || err == nil {
+		return
+	}
+	t, _ := auth.TenantFromContext(ctx)
+	svc.Reporter.CaptureException(errtrack.WithDistinctID(ctx, t.UserID), err, map[string]any{
+		"surface": "mcp",
+		"tool":    tool,
+		"org_id":  t.OrgID,
+		"user_id": t.UserID,
+	})
+}
+
+// capturingHandler wraps h so any non-nil error it returns is captured to the
+// error sink (reportToolError), then returned to the client unchanged. Split out
+// from addTool so the capture behavior is unit-testable without standing up a
+// server.
+func capturingHandler[In, Out any](svc *Service, name string, h mcpsdk.ToolHandlerFor[In, Out]) mcpsdk.ToolHandlerFor[In, Out] {
+	return func(ctx context.Context, req *mcpsdk.CallToolRequest, in In) (*mcpsdk.CallToolResult, Out, error) {
+		res, out, err := h(ctx, req, in)
+		if err != nil {
+			svc.reportToolError(ctx, name, err)
+		}
+		return res, out, err
+	}
+}
+
+// addTool registers one tool with its handler wrapped by capturingHandler, so any
+// error at any tool endpoint is emitted to PostHog without per-handler
+// boilerplate — every current and future tool is covered.
+func addTool[In, Out any](server *mcpsdk.Server, svc *Service, tool *mcpsdk.Tool, h mcpsdk.ToolHandlerFor[In, Out]) {
+	mcpsdk.AddTool(server, tool, capturingHandler(svc, tool.Name, h))
+}
+
+// resolveSite finds a site by slug via the API listing (the MCP holds no DB, so
+// it can't look the id up directly). Returns store.ErrNotFound when no site in
+// the caller's org has that slug.
+func (svc *Service) resolveSite(ctx context.Context, token, slug string) (apiclient.SiteSummary, error) {
+	if svc.API == nil {
+		return apiclient.SiteSummary{}, ErrNoAPI
+	}
+	sites, err := svc.API.ListSites(ctx, token)
+	if err != nil {
+		return apiclient.SiteSummary{}, err
+	}
+	for _, s := range sites {
+		if s.Slug == slug {
+			return s, nil
+		}
+	}
+	return apiclient.SiteSummary{}, store.ErrNotFound
+}
+
+// resolveSkill finds a skill by slug via the API listing.
+func (svc *Service) resolveSkill(ctx context.Context, token, slug string) (apiclient.SkillSummary, error) {
+	if svc.API == nil {
+		return apiclient.SkillSummary{}, ErrNoAPI
+	}
+	skills, err := svc.API.ListSkills(ctx, token, "", "", false)
+	if err != nil {
+		return apiclient.SkillSummary{}, err
+	}
+	for _, sk := range skills {
+		if sk.Slug == slug {
+			return sk, nil
+		}
+	}
+	return apiclient.SkillSummary{}, store.ErrNotFound
+}
+
+// resolveFolder finds a skill folder by slug via the API listing.
+func (svc *Service) resolveFolder(ctx context.Context, token, slug string) (apiclient.SkillFolderSummary, error) {
+	if svc.API == nil {
+		return apiclient.SkillFolderSummary{}, ErrNoAPI
+	}
+	folders, err := svc.API.ListSkillFolders(ctx, token)
+	if err != nil {
+		return apiclient.SkillFolderSummary{}, err
+	}
+	for _, f := range folders {
+		if f.Slug == slug {
+			return f, nil
+		}
+	}
+	return apiclient.SkillFolderSummary{}, store.ErrNotFound
 }
 
 // ErrNoTenant means the request reached a tool without an authenticated tenant
@@ -151,9 +233,22 @@ func writeAuthHint(err error) error {
 	return err
 }
 
+// isAPINotFound reports whether err is the API's 404 (e.g. a file path absent
+// from a site's manifest), so a read tool can render it as store.ErrNotFound
+// instead of a raw "api 404".
+func isAPINotFound(err error) bool {
+	var apiErr *apiclient.Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+}
+
 // ErrNoToken means a write tool ran without the forwardable bearer token (should be
 // impossible behind the auth middleware, which stashes it).
 var ErrNoToken = errors.New("mcp/tools: no bearer token to forward")
+
+// ErrNoAPI means a content-read or write tool ran on an MCP server with no API_URL
+// configured. Content reads (site/skill files) go through the Go API — the MCP
+// holds no object-store credentials — so they need the API just like writes do.
+var ErrNoAPI = errors.New("mcp/tools: this MCP server has no Dropway API configured (set API_URL); file reads and writes are unavailable")
 
 // --- Tool I/O ---------------------------------------------------------------
 
@@ -242,10 +337,6 @@ type deploySiteOut struct {
 	Published     bool   `json:"published"`
 	LiveURL       string `json:"live_url,omitempty"`
 }
-
-// seedOwnerUserID is the sentinel owner_user_id marking a Dropway-seeded preset
-// skill (mirrors the API store's SeedOwnerUserID; rendered as owner "Dropway").
-const seedOwnerUserID = "00000000-0000-0000-0000-000000000000"
 
 type listSkillsIn struct {
 	Query       string `json:"query,omitempty" jsonschema:"optional text filter matched against slug, title, and description"`
@@ -432,83 +523,82 @@ type getSiteChatOut struct {
 
 // --- Exported (testable) logic ----------------------------------------------
 
-// ListSites returns the tenant's sites.
-func (svc *Service) ListSites(ctx context.Context, t store.Tenant) (listSitesOut, error) {
-	sites, err := svc.Store.ListSites(ctx, t)
+// ListSites returns the tenant's sites, fetched from the Go API.
+func (svc *Service) ListSites(ctx context.Context, token string) (listSitesOut, error) {
+	if svc.API == nil {
+		return listSitesOut{}, ErrNoAPI
+	}
+	sites, err := svc.API.ListSites(ctx, token)
 	if err != nil {
 		return listSitesOut{}, err
 	}
 	out := listSitesOut{Sites: []SiteInfo{}}
 	for _, s := range sites {
 		info := SiteInfo{Slug: s.Slug, AccessMode: s.AccessMode, Live: s.CurrentVersionID != nil}
-		if s.Host != nil {
-			info.URL = "https://" + *s.Host
+		if info.Live {
+			info.URL = s.LiveURL // a published site has a reachable host
 		}
 		out.Sites = append(out.Sites, info)
 	}
 	return out, nil
 }
 
-// ListFiles returns the paths in a site's current published version.
-func (svc *Service) ListFiles(ctx context.Context, t store.Tenant, slug string) (listFilesOut, error) {
-	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+// ListFiles returns the paths in a site's current published version. The slug is
+// resolved to its id via the API listing, then the file listing is fetched from
+// the Go API — the MCP never reads the database or object store itself.
+func (svc *Service) ListFiles(ctx context.Context, token, slug string) (listFilesOut, error) {
+	site, err := svc.resolveSite(ctx, token, slug)
 	if err != nil {
 		return listFilesOut{}, err
 	}
 	if site.CurrentVersionID == nil {
 		return listFilesOut{Files: []string{}}, nil // not live → no files
 	}
-	entries, err := svc.manifestEntries(ctx, t.OrgID, site)
+	files, err := svc.API.ListSiteFiles(ctx, token, site.ID)
 	if err != nil {
 		return listFilesOut{}, err
 	}
-	paths := make([]string, 0, len(entries))
-	for p := range entries {
-		paths = append(paths, p)
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
 	}
 	sort.Strings(paths)
 	return listFilesOut{Files: paths}, nil
 }
 
-// ReadFile returns the contents of one file in a site's current version.
-func (svc *Service) ReadFile(ctx context.Context, t store.Tenant, slug, path string) (readFileOut, error) {
-	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+// ReadFile returns the contents of one file in a site's current version, fetched
+// through the Go API (which reads the manifest + blob). A path absent from the
+// manifest comes back as the API's 404, mapped to store.ErrNotFound so the tool
+// reports "not found" exactly as before.
+func (svc *Service) ReadFile(ctx context.Context, token, slug, path string) (readFileOut, error) {
+	site, err := svc.resolveSite(ctx, token, slug)
 	if err != nil {
 		return readFileOut{}, err
 	}
 	if site.CurrentVersionID == nil {
 		return readFileOut{}, store.ErrNotFound
 	}
-	entries, err := svc.manifestEntries(ctx, t.OrgID, site)
+	f, err := svc.API.ReadSiteFile(ctx, token, site.ID, path)
 	if err != nil {
+		if isAPINotFound(err) {
+			return readFileOut{}, store.ErrNotFound
+		}
 		return readFileOut{}, err
 	}
-	e, ok := entries[path]
-	if !ok {
-		return readFileOut{}, store.ErrNotFound
-	}
-	rc, err := svc.Blobs.GetBlob(ctx, t.OrgID, e.SHA256)
-	if err != nil {
-		return readFileOut{}, err
-	}
-	defer rc.Close()
-	b, err := io.ReadAll(rc)
-	if err != nil {
-		return readFileOut{}, err
-	}
-	out := readFileOut{Path: path, ContentType: e.ContentType}
-	if utf8.Valid(b) {
-		out.Text = string(b)
+	out := readFileOut{Path: f.Path, ContentType: f.ContentType}
+	if f.Encoding == "base64" {
+		out.Base64 = f.Content
 	} else {
-		out.Base64 = base64.StdEncoding.EncodeToString(b)
+		out.Text = f.Content
 	}
 	return out, nil
 }
 
-// DownloadSite reads EVERY file of a site's current version, returning each path's
-// bytes inline (text or base64), up to maxDownloadBytes total (Truncated past that).
-func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, slug string) (downloadSiteOut, error) {
-	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+// DownloadSite reads EVERY file of a site's current version through the Go API,
+// returning each path's bytes inline (text or base64), up to the API's inline cap
+// (Truncated past that).
+func (svc *Service) DownloadSite(ctx context.Context, token, slug string) (downloadSiteOut, error) {
+	site, err := svc.resolveSite(ctx, token, slug)
 	if err != nil {
 		return downloadSiteOut{}, err
 	}
@@ -516,40 +606,19 @@ func (svc *Service) DownloadSite(ctx context.Context, t store.Tenant, slug strin
 	if site.CurrentVersionID == nil {
 		return out, nil // not live → nothing to download
 	}
-	entries, err := svc.manifestEntries(ctx, t.OrgID, site)
+	dl, err := svc.API.DownloadSite(ctx, token, site.ID)
 	if err != nil {
 		return downloadSiteOut{}, err
 	}
-	paths := make([]string, 0, len(entries))
-	for p := range entries {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-
-	total := 0
-	for _, p := range paths {
-		e := entries[p]
-		rc, err := svc.Blobs.GetBlob(ctx, t.OrgID, e.SHA256)
-		if err != nil {
-			return downloadSiteOut{}, err
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return downloadSiteOut{}, err
-		}
-		if total+len(b) > maxDownloadBytes {
-			out.Truncated = true
-			break
-		}
-		total += len(b)
-		f := downloadedFile{Path: p, ContentType: e.ContentType, Size: len(b)}
-		if utf8.Valid(b) {
-			f.Text = string(b)
+	out.Truncated = dl.Truncated
+	for _, f := range dl.Files {
+		df := downloadedFile{Path: f.Path, ContentType: f.ContentType, Size: int(f.Size)}
+		if f.Encoding == "base64" {
+			df.Base64 = f.Content
 		} else {
-			f.Base64 = base64.StdEncoding.EncodeToString(b)
+			df.Text = f.Content
 		}
-		out.Files = append(out.Files, f)
+		out.Files = append(out.Files, df)
 	}
 	return out, nil
 }
@@ -575,8 +644,8 @@ func (svc *Service) CreateSite(ctx context.Context, token, rawSlug, accessMode s
 // re-checks the live role, rewrites the edge routes, and writes the revocation
 // denylist). The slug is resolved to its id under RLS first (confirming the site is
 // in the caller's org) so the agent can't target an arbitrary site id.
-func (svc *Service) SetAccess(ctx context.Context, t store.Tenant, token, slug, mode, password string) (setAccessOut, error) {
-	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+func (svc *Service) SetAccess(ctx context.Context, token, slug, mode, password string) (setAccessOut, error) {
+	site, err := svc.resolveSite(ctx, token, slug)
 	if err != nil {
 		return setAccessOut{}, err
 	}
@@ -590,8 +659,8 @@ func (svc *Service) SetAccess(ctx context.Context, t store.Tenant, token, slug, 
 // API's deploy loop. The slug is resolved to its id under RLS first (confirming the
 // site is in the caller's org); the rest runs in the API (blob verification, version
 // record, edge projection on publish).
-func (svc *Service) DeploySite(ctx context.Context, t store.Tenant, token, slug string, files []deployFileIn, publish bool) (deploySiteOut, error) {
-	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+func (svc *Service) DeploySite(ctx context.Context, token, slug string, files []deployFileIn, publish bool) (deploySiteOut, error) {
+	site, err := svc.resolveSite(ctx, token, slug)
 	if err != nil {
 		return deploySiteOut{}, err
 	}
@@ -627,9 +696,13 @@ func (svc *Service) DeploySite(ctx context.Context, t store.Tenant, token, slug 
 	}, nil
 }
 
-// ListSkills returns the org's finalized shared skills matching the filters.
-func (svc *Service) ListSkills(ctx context.Context, t store.Tenant, query, folder string, presetsOnly bool) (listSkillsOut, error) {
-	skills, err := svc.Skills.ListSkills(ctx, t, query, folder, presetsOnly)
+// ListSkills returns the org's finalized shared skills matching the filters,
+// fetched from the Go API.
+func (svc *Service) ListSkills(ctx context.Context, token, query, folder string, presetsOnly bool) (listSkillsOut, error) {
+	if svc.API == nil {
+		return listSkillsOut{}, ErrNoAPI
+	}
+	skills, err := svc.API.ListSkills(ctx, token, query, folder, presetsOnly)
 	if err != nil {
 		return listSkillsOut{}, err
 	}
@@ -642,10 +715,10 @@ func (svc *Service) ListSkills(ctx context.Context, t store.Tenant, query, folde
 			Folders:     []skillFolderInfo{},
 			SizeBytes:   sk.SizeBytes,
 			Version:     sk.Version,
-			Owner:       sk.OwnerUserID,
+			Owner:       sk.OwnerID,
 			CreatedAt:   sk.CreatedAt.UTC().Format(time.RFC3339),
 		}
-		if sk.OwnerUserID == seedOwnerUserID {
+		if sk.IsSeeded {
 			info.Owner = "Dropway"
 		}
 		for _, f := range sk.Folders {
@@ -661,8 +734,11 @@ func (svc *Service) ListSkills(ctx context.Context, t store.Tenant, query, folde
 // updates an outdated skill by calling download_skill. A skill that no longer
 // exists in the org (or has no current version) is reported with latest_version
 // 0 and outdated=false (nothing to update to).
-func (svc *Service) CheckSkillUpdates(ctx context.Context, t store.Tenant, in checkSkillUpdatesIn) (checkSkillUpdatesOut, error) {
-	skills, err := svc.Skills.ListSkills(ctx, t, "", "", false)
+func (svc *Service) CheckSkillUpdates(ctx context.Context, token string, in checkSkillUpdatesIn) (checkSkillUpdatesOut, error) {
+	if svc.API == nil {
+		return checkSkillUpdatesOut{}, ErrNoAPI
+	}
+	skills, err := svc.API.ListSkills(ctx, token, "", "", false)
 	if err != nil {
 		return checkSkillUpdatesOut{}, err
 	}
@@ -683,64 +759,66 @@ func (svc *Service) CheckSkillUpdates(ctx context.Context, t store.Tenant, in ch
 	return out, nil
 }
 
-// DownloadSkill reads EVERY file of a skill's current version, returning each
-// path's bytes inline (utf8 or base64), up to maxDownloadBytes total.
-func (svc *Service) DownloadSkill(ctx context.Context, t store.Tenant, name string) (downloadSkillOut, error) {
-	sk, err := svc.Skills.SkillBySlug(ctx, t, name)
+// DownloadSkill reads EVERY file of a skill's current version through the Go API,
+// returning each path's bytes inline (utf8 or base64). The skill is resolved to
+// its id under RLS first (preserving the "no content yet" and unknown-slug
+// errors) and the bytes are fetched by the API — the MCP holds no storage creds.
+func (svc *Service) DownloadSkill(ctx context.Context, token, name string) (downloadSkillOut, error) {
+	sk, err := svc.resolveSkill(ctx, token, name)
 	if err != nil {
 		return downloadSkillOut{}, err
 	}
 	if sk.CurrentVersionID == nil {
 		return downloadSkillOut{}, fmt.Errorf("mcp/tools: skill %q has no uploaded content yet", name)
 	}
-	out := downloadSkillOut{Name: sk.Slug, Version: sk.Version, Files: []skillFilePayload{}}
-	files, _, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, maxDownloadBytes)
+	dl, err := svc.API.DownloadSkill(ctx, token, sk.ID)
 	if err != nil {
 		return downloadSkillOut{}, err
 	}
-	if files == nil {
-		out.Truncated = true // whole skill over the cap (can't happen at the API's 5 MiB skill cap)
-		return out, nil
-	}
-	out.Files = files
-	return out, nil
+	return downloadSkillOut{
+		Name:      sk.Slug,
+		Version:   dl.Version,
+		Files:     toSkillFilePayloads(dl.Files),
+		Truncated: dl.Truncated,
+	}, nil
 }
 
-// DownloadSkillFolder downloads every finalized skill in a folder under ONE
-// shared maxDownloadBytes budget. Skills that would blow the budget come back as
-// truncated entries (no files) with a note to fetch them via download_skill.
-func (svc *Service) DownloadSkillFolder(ctx context.Context, t store.Tenant, folderSlug string) (downloadSkillFolderOut, error) {
-	folder, err := svc.Skills.SkillFolderBySlug(ctx, t, folderSlug)
+// DownloadSkillFolder downloads every finalized skill in a folder through the Go
+// API (which applies the shared response budget); skills the budget omits come
+// back as truncated entries with a note to fetch them via download_skill.
+func (svc *Service) DownloadSkillFolder(ctx context.Context, token, folderSlug string) (downloadSkillFolderOut, error) {
+	folder, err := svc.resolveFolder(ctx, token, folderSlug)
 	if err != nil {
 		return downloadSkillFolderOut{}, err
 	}
-	skills, err := svc.Skills.ListFolderSkills(ctx, t, folder.ID)
+	dl, err := svc.API.DownloadSkillFolder(ctx, token, folder.ID)
 	if err != nil {
 		return downloadSkillFolderOut{}, err
 	}
 	out := downloadSkillFolderOut{Folder: folder.Slug, Skills: []folderSkillDownload{}}
-	budget := maxDownloadBytes
 	var truncated []string
-	for _, sk := range skills {
-		if sk.CurrentVersionID == nil {
-			continue // finalized-only listing, but stay defensive
-		}
-		files, used, err := svc.downloadSkillFiles(ctx, t.OrgID, sk, budget)
-		if err != nil {
-			return downloadSkillFolderOut{}, err
-		}
-		if files == nil { // wouldn't fit in the remaining budget
-			out.Skills = append(out.Skills, folderSkillDownload{Name: sk.Slug, Truncated: true})
+	for _, sk := range dl.Skills {
+		entry := folderSkillDownload{Name: sk.Slug, Truncated: sk.Truncated}
+		if sk.Truncated {
 			truncated = append(truncated, sk.Slug)
-			continue
+		} else {
+			entry.Files = toSkillFilePayloads(sk.Files)
 		}
-		budget -= used
-		out.Skills = append(out.Skills, folderSkillDownload{Name: sk.Slug, Files: files})
+		out.Skills = append(out.Skills, entry)
 	}
 	if len(truncated) > 0 {
 		out.Note = "response size cap reached — call download_skill individually for: " + strings.Join(truncated, ", ")
 	}
 	return out, nil
+}
+
+// toSkillFilePayloads maps API file payloads to the skill tool's inline shape.
+func toSkillFilePayloads(files []apiclient.FilePayload) []skillFilePayload {
+	out := make([]skillFilePayload, 0, len(files))
+	for _, f := range files {
+		out = append(out, skillFilePayload{Path: f.Path, Content: f.Content, Encoding: f.Encoding})
+	}
+	return out
 }
 
 // UploadSkill decodes the input files, enforces the cheap client-side rules
@@ -755,7 +833,10 @@ func (svc *Service) DownloadSkillFolder(ctx context.Context, t store.Tenant, fol
 // an org whose first-ever skills activity is an MCP upload can still target a
 // default folder (resolving before the create would dead-end against an
 // empty folder set).
-func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token string, in uploadSkillIn) (uploadSkillOut, error) {
+func (svc *Service) UploadSkill(ctx context.Context, token string, in uploadSkillIn) (uploadSkillOut, error) {
+	if svc.API == nil {
+		return uploadSkillOut{}, ErrNoAPI
+	}
 	name := slugpkg.Slugify(in.Name)
 	if name == "" {
 		return uploadSkillOut{}, fmt.Errorf("name %q has no usable characters (use lowercase letters, digits, and hyphens)", in.Name)
@@ -799,7 +880,7 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 	// the latest-only model).
 	skillID := ""
 	created := false
-	switch existing, err := svc.Skills.SkillBySlug(ctx, t, name); {
+	switch existing, err := svc.resolveSkill(ctx, token, name); {
 	case err == nil:
 		skillID = existing.ID
 	case errors.Is(err, store.ErrNotFound):
@@ -825,7 +906,7 @@ func (svc *Service) UploadSkill(ctx context.Context, t store.Tenant, token strin
 	// so the agent can self-correct. Folders are applied only on first create,
 	// matching CreateSkill's old folders argument — a re-upload never re-files.
 	if created && len(in.Folders) > 0 {
-		all, lerr := svc.Skills.ListSkillFolders(ctx, t)
+		all, lerr := svc.API.ListSkillFolders(ctx, token)
 		if lerr != nil {
 			return uploadSkillOut{}, lerr
 		}
@@ -869,11 +950,14 @@ func toChatImport(transcript, format string, deriveActions bool, msgs []chatMess
 // explicit messages, and optionally attached to a site. The site SLUG is
 // resolved to its id under RLS first (confirming the site is in the caller's
 // org — the API takes a site_id).
-func (svc *Service) ShareChat(ctx context.Context, t store.Tenant, token string, in shareChatIn) (shareChatOut, error) {
+func (svc *Service) ShareChat(ctx context.Context, token string, in shareChatIn) (shareChatOut, error) {
+	if svc.API == nil {
+		return shareChatOut{}, ErrNoAPI
+	}
 	siteID := ""
-	var site store.Site
+	var site apiclient.SiteSummary
 	if in.Site != "" {
-		s, err := svc.Store.SiteBySlug(ctx, t, in.Site)
+		s, err := svc.resolveSite(ctx, token, in.Site)
 		if err != nil {
 			return shareChatOut{}, err
 		}
@@ -894,8 +978,8 @@ func (svc *Service) ShareChat(ctx context.Context, t store.Tenant, token string,
 	}
 	if in.Site != "" {
 		hint := "Once the site is published, viewers can open this chat under \"How this was made\" on the site"
-		if site.Host != nil {
-			hint += " at https://" + *site.Host
+		if site.CurrentVersionID != nil && site.LiveURL != "" {
+			hint += " at " + site.LiveURL
 		}
 		out.ViewerHint = hint + "."
 	} else {
@@ -909,7 +993,10 @@ func (svc *Service) ShareChat(ctx context.Context, t store.Tenant, token string,
 // chat_id or by a site slug, whose attached log the API creates when absent.
 // Exactly one addressing mode must be set; the slug is resolved to its id
 // under RLS first.
-func (svc *Service) AppendChat(ctx context.Context, t store.Tenant, token string, in appendChatIn) (appendChatOut, error) {
+func (svc *Service) AppendChat(ctx context.Context, token string, in appendChatIn) (appendChatOut, error) {
+	if svc.API == nil {
+		return appendChatOut{}, ErrNoAPI
+	}
 	if (in.Site == "") == (in.ChatID == "") {
 		return appendChatOut{}, errors.New("mcp/tools: append_chat takes exactly one of 'site' or 'chat_id'")
 	}
@@ -921,7 +1008,7 @@ func (svc *Service) AppendChat(ctx context.Context, t store.Tenant, token string
 	var res apiclient.ChatAppendResult
 	var err error
 	if in.Site != "" {
-		site, serr := svc.Store.SiteBySlug(ctx, t, in.Site)
+		site, serr := svc.resolveSite(ctx, token, in.Site)
 		if serr != nil {
 			return appendChatOut{}, serr
 		}
@@ -942,22 +1029,26 @@ func (svc *Service) AppendChat(ctx context.Context, t store.Tenant, token string
 	}, nil
 }
 
-// GetSiteChat reads a site's attached chat log + messages under RLS. Total
-// inline content is capped at maxChatBytes: trailing messages past the cap are
-// omitted and disclosed via Truncated.
-func (svc *Service) GetSiteChat(ctx context.Context, t store.Tenant, slug string) (getSiteChatOut, error) {
-	site, err := svc.Store.SiteBySlug(ctx, t, slug)
+// GetSiteChat reads a site's attached chat log + messages through the Go API
+// (which enforces the org chat kill-switch). The slug is resolved to its id via
+// the API listing first. Total inline content is capped at maxChatBytes: trailing
+// messages past the cap are omitted and disclosed via Truncated.
+func (svc *Service) GetSiteChat(ctx context.Context, token, slug string) (getSiteChatOut, error) {
+	site, err := svc.resolveSite(ctx, token, slug)
 	if err != nil {
 		return getSiteChatOut{}, err
 	}
-	log, err := svc.Chats.ChatLogBySite(ctx, t, site.ID)
+	chat, err := svc.API.GetSiteChat(ctx, token, site.ID)
 	if err != nil {
+		// A site with no attached chat log comes back as the API's 404 — render it
+		// as the graceful store.ErrNotFound the tool returned before, not a raw
+		// "api 404" (same mapping ReadFile applies for a missing file path).
+		if isAPINotFound(err) {
+			return getSiteChatOut{}, store.ErrNotFound
+		}
 		return getSiteChatOut{}, err
 	}
-	msgs, err := svc.Chats.ListChatMessages(ctx, t, log.ID)
-	if err != nil {
-		return getSiteChatOut{}, err
-	}
+	log := chat.ChatLog
 	out := getSiteChatOut{
 		Site: slug,
 		ChatLog: siteChatLogInfo{
@@ -971,7 +1062,7 @@ func (svc *Service) GetSiteChat(ctx context.Context, t store.Tenant, slug string
 		Messages: []siteChatMessage{},
 	}
 	total := 0
-	for _, m := range msgs {
+	for _, m := range chat.Messages {
 		if total+len(m.Content) > maxChatBytes {
 			out.Truncated = true
 			break
@@ -993,92 +1084,6 @@ func (svc *Service) GetSiteChat(ctx context.Context, t store.Tenant, slug string
 		out.Messages = append(out.Messages, sm)
 	}
 	return out, nil
-}
-
-// downloadSkillFiles reads a skill's files under a byte budget. Returns
-// (nil, 0, nil) when the skill's manifest-declared total wouldn't fit — the
-// caller renders that as a truncated entry instead of a partial skill (half a
-// skill is worse than none: the agent would install it missing files).
-func (svc *Service) downloadSkillFiles(ctx context.Context, orgID string, sk store.Skill, budget int) ([]skillFilePayload, int, error) {
-	entries, err := svc.skillManifestEntries(ctx, orgID, sk)
-	if err != nil {
-		return nil, 0, err
-	}
-	paths := make([]string, 0, len(entries))
-	var declared int64
-	for p, e := range entries {
-		if !skillspec.CleanPath(p) {
-			return nil, 0, fmt.Errorf("mcp/tools: skill %q manifest has unsafe path %q", sk.Slug, p)
-		}
-		paths = append(paths, p)
-		declared += e.Size
-	}
-	if declared > int64(budget) {
-		return nil, 0, nil
-	}
-	sort.Strings(paths)
-
-	files := make([]skillFilePayload, 0, len(paths))
-	total := 0
-	for _, p := range paths {
-		rc, err := svc.Blobs.GetBlob(ctx, orgID, entries[p].SHA256)
-		if err != nil {
-			return nil, 0, err
-		}
-		b, err := io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return nil, 0, err
-		}
-		if total+len(b) > budget {
-			return nil, 0, nil // stored bytes exceeded the declared sizes — treat as over-budget
-		}
-		total += len(b)
-		f := skillFilePayload{Path: p}
-		if utf8.Valid(b) {
-			f.Content, f.Encoding = string(b), "utf8"
-		} else {
-			f.Content, f.Encoding = base64.StdEncoding.EncodeToString(b), "base64"
-		}
-		files = append(files, f)
-	}
-	return files, total, nil
-}
-
-type manifestEntry struct {
-	SHA256      string `json:"sha256"`
-	ContentType string `json:"content_type"`
-	Size        int64  `json:"size"` // used by the skill download budget; 0 when absent
-}
-
-// manifestEntries loads + parses a site's current-version manifest into a
-// path→entry map.
-func (svc *Service) manifestEntries(ctx context.Context, orgID string, site store.Site) (map[string]manifestEntry, error) {
-	raw, err := svc.Blobs.GetManifest(ctx, orgID, site.ID, *site.CurrentVersionID)
-	if err != nil {
-		return nil, err
-	}
-	return parseManifest(raw)
-}
-
-// skillManifestEntries loads + parses a skill's current-version manifest into a
-// path→entry map.
-func (svc *Service) skillManifestEntries(ctx context.Context, orgID string, sk store.Skill) (map[string]manifestEntry, error) {
-	raw, err := svc.Blobs.GetSkillManifest(ctx, orgID, sk.ID, *sk.CurrentVersionID)
-	if err != nil {
-		return nil, err
-	}
-	return parseManifest(raw)
-}
-
-func parseManifest(raw []byte) (map[string]manifestEntry, error) {
-	var parsed struct {
-		Files map[string]manifestEntry `json:"files"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, err
-	}
-	return parsed.Files, nil
 }
 
 // --- Org memory tools --------------------------------------------------------
@@ -1255,40 +1260,40 @@ func dropNullUnions(s *jsonschema.Schema) {
 // share_chat, append_chat) are registered only when a control-plane client is
 // configured (the MCP server has an API_URL).
 func Register(server *mcpsdk.Server, svc *Service) {
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_sites",
 		Description: "List the deployed sites in your Dropway organization (slug, access mode, whether live, URL).",
 	}, svc.listSitesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_files",
 		Description: "List the files of a site's currently published version. Args: site (slug).",
 	}, svc.listFilesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "read_file",
 		Description: "Read the contents of one file in a site's current version. Args: site (slug), path (from list_files).",
 	}, svc.readFileHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "download_site",
 		Description: "Download every file of a site's current version at once (path + contents). Args: site (slug). Large sites are truncated to a size cap.",
 	}, svc.downloadSiteHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_skills",
 		Description: "List the shared Claude skills in your Dropway organization. Args (all optional): query (text filter), folder (folder slug), presets_only. Note: Dropway's preset skills appear only after the org's first skills use through the API, dashboard, or CLI — MCP reads cannot trigger that seeding, but upload_skill (a write) does.",
 	}, svc.listSkillsHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "download_skill",
 		Description: "Download every file of a shared skill (path + contents, utf8 or base64). Args: name (slug from list_skills). Write the files into .claude/skills/<name>/ preserving each file's relative path; refuse any path containing '..'.",
 	}, svc.downloadSkillHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "download_skill_folder",
 		Description: "Download every skill in a skill folder at once. Args: folder (folder slug). Write each skill's files into .claude/skills/<name>/; refuse any path containing '..'. The response is capped in size — skills marked truncated carry no files, fetch each of those with download_skill.",
 	}, svc.downloadSkillFolderHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "check_skill_updates",
 		Description: "Check whether locally-held skills are out of date. Args: installed ([{name, version}] — the skills you have and the version each was downloaded at, e.g. from each .claude/skills/<name>/.dropway.json). Returns, per skill, installed_version, latest_version, and outdated. Update an outdated skill by calling download_skill for it.",
 		InputSchema: inputSchema[checkSkillUpdatesIn](),
 	}, svc.checkSkillUpdatesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "get_site_chat",
 		Description: "Read the shared chat log attached to a site (the transcript behind its \"How this was made\" panel): log metadata plus every message in order. Args: site (slug). Errors if the site has no attached log — start one with share_chat or append_chat.",
 	}, svc.getSiteChatHandler)
@@ -1296,35 +1301,35 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	if svc.API == nil {
 		return // no control-plane client → read-only deployment, no write tools
 	}
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "create_site",
 		Description: "Create a new site in your Dropway organization. Args: slug, access_mode (optional: 'public' or 'org_only'). Subject to your plan's site limit.",
 	}, svc.createSiteHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "set_site_access",
 		Description: "Change a site's sharing/permissions. Args: site (slug), mode ('public'|'org_only'|'password'|'allowlist'), password (only for mode=password). Owner/admin only.",
 	}, svc.setAccessHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "deploy_site",
 		Description: "Upload files to a site and publish them (go live). Args: site (slug), files ([{path, text or base64, content_type?}]), publish (default true). Include an index.html for the site root. Returns the live URL.",
 		// Explicit schema so `files` is a plain array and `publish` a plain boolean
 		// (not "[null, …]" unions that some clients coerce to strings).
 		InputSchema: inputSchema[deploySiteIn](),
 	}, svc.deploySiteHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "upload_skill",
 		Description: "Share a Claude skill with your Dropway organization (create or replace — uploads are latest-only). Args: name (slug), files ([{path, content, encoding? 'utf8'|'base64'}], must include a root SKILL.md), title (optional), folders (optional folder slugs, applied on first create). Max 200 files / 5 MiB total.",
 		// Explicit schema so `files`/`folders` are plain arrays (see deploy_site).
 		InputSchema: inputSchema[uploadSkillIn](),
 	}, svc.uploadSkillHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "share_chat",
 		Description: "Share this session's conversation as a Dropway chat log. Attached to a site (site slug), it renders as the published site's \"How this was made\" panel — the story behind the artifact, under the site's own access control; unattached, it goes to the org's chat library. Args (all optional): site (slug — one attached log per site), title, source_tool ('claude_code'|'chatgpt'|'cursor'|'other'), transcript (a raw export: Claude Code JSONL, ChatGPT JSON, or plain text — normalized server-side), format ('auto' default), derive_actions (condense the transcript's tool activity into action rows), messages ([{kind, role, content, meta}] explicit turns/annotations). Returns chat_id — use append_chat to add to the log as work continues.",
 		// Explicit schema so `messages` (and nested `paths`) are plain arrays
 		// (see deploy_site).
 		InputSchema: inputSchema[shareChatIn](),
 	}, svc.shareChatHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "append_chat",
 		Description: "Append to a shared chat log. Args: exactly ONE of site (slug — appends to the site's attached log, creating it if absent) or chat_id (from share_chat), plus messages and/or transcript. Use this to narrate your work as you go: after a meaningful step, append a kind='action' message whose meta is {action:'file_edit', paths:[…]} or {action:'tool_use', tool:'…'} and whose content is a one-line comment on WHY you did it (not a restatement of the diff), alongside kind='chat' rows for the actual conversation turns.",
 		// Explicit schema so `messages` (and nested `paths`) are plain arrays.
@@ -1334,15 +1339,15 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	// writes stay on the API's quota/audit path), so all three register behind
 	// the same control-plane gate as the write tools. Orgs that haven't enabled
 	// memory get a clear 403 from the API.
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "search_memory",
 		Description: "Fetch this Dropway organization's remembered brand, style, and preference context BEFORE building or editing anything for it. Returns pinned company facts plus the memories most relevant to your query (e.g. 'brand colors and tone for a pricing page'). Args: query, k (optional).",
 	}, svc.searchMemoryHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_memories",
 		Description: "Browse everything Dropway remembers about this organization (pinned first, then most recently updated). Args: limit (optional, default 50).",
 	}, svc.listMemoriesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "add_memory",
 		Description: "Record a durable fact about this organization that future builds should know (brand voice, color palette, product names, structural preferences, standing corrections). One self-contained sentence per call; duplicates dedupe server-side. Args: content, kind (optional: fact|preference|style|correction), source_tool (optional: your agent name, e.g. 'claude-code').",
 	}, svc.addMemoryHandler)
@@ -1357,50 +1362,58 @@ func logTool(ctx context.Context, tool string, attrs ...any) {
 	slog.Info("mcp tool call", append(base, attrs...)...)
 }
 
+// mcpToken pulls the forwarded bearer credential the tools hand to the API. The
+// gate guarantees it (and the tenant) are present on every /mcp request; a missing
+// token here means the request bypassed the gate, so every tool guards on it.
+func mcpToken(ctx context.Context) (string, bool) {
+	tok, ok := auth.TokenFromContext(ctx)
+	return tok, ok && tok != ""
+}
+
 func (svc *Service) listSitesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, _ listSitesIn) (*mcpsdk.CallToolResult, listSitesOut, error) {
 	logTool(ctx, "list_sites")
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, listSitesOut{}, ErrNoTenant
+		return nil, listSitesOut{}, ErrNoToken
 	}
-	out, err := svc.ListSites(ctx, t)
+	out, err := svc.ListSites(ctx, token)
 	return nil, out, err
 }
 
 func (svc *Service) listFilesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in listFilesIn) (*mcpsdk.CallToolResult, listFilesOut, error) {
 	logTool(ctx, "list_files", "site", in.Site)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, listFilesOut{}, ErrNoTenant
+		return nil, listFilesOut{}, ErrNoToken
 	}
-	out, err := svc.ListFiles(ctx, t, in.Site)
+	out, err := svc.ListFiles(ctx, token, in.Site)
 	return nil, out, err
 }
 
 func (svc *Service) readFileHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in readFileIn) (*mcpsdk.CallToolResult, readFileOut, error) {
 	logTool(ctx, "read_file", "site", in.Site, "path", in.Path)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, readFileOut{}, ErrNoTenant
+		return nil, readFileOut{}, ErrNoToken
 	}
-	out, err := svc.ReadFile(ctx, t, in.Site, in.Path)
+	out, err := svc.ReadFile(ctx, token, in.Site, in.Path)
 	return nil, out, err
 }
 
 func (svc *Service) downloadSiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in downloadSiteIn) (*mcpsdk.CallToolResult, downloadSiteOut, error) {
 	logTool(ctx, "download_site", "site", in.Site)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, downloadSiteOut{}, ErrNoTenant
+		return nil, downloadSiteOut{}, ErrNoToken
 	}
-	out, err := svc.DownloadSite(ctx, t, in.Site)
+	out, err := svc.DownloadSite(ctx, token, in.Site)
 	return nil, out, err
 }
 
 func (svc *Service) createSiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in createSiteIn) (*mcpsdk.CallToolResult, createSiteOut, error) {
 	logTool(ctx, "create_site", "slug", in.Slug, "access_mode", in.AccessMode)
-	token, ok := auth.TokenFromContext(ctx)
-	if !ok || token == "" {
+	token, ok := mcpToken(ctx)
+	if !ok {
 		return nil, createSiteOut{}, ErrNoToken
 	}
 	out, err := svc.CreateSite(ctx, token, in.Slug, in.AccessMode)
@@ -1409,126 +1422,106 @@ func (svc *Service) createSiteHandler(ctx context.Context, _ *mcpsdk.CallToolReq
 
 func (svc *Service) setAccessHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in setAccessIn) (*mcpsdk.CallToolResult, setAccessOut, error) {
 	logTool(ctx, "set_site_access", "site", in.Site, "mode", in.Mode)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, setAccessOut{}, ErrNoTenant
-	}
-	token, ok := auth.TokenFromContext(ctx)
-	if !ok || token == "" {
 		return nil, setAccessOut{}, ErrNoToken
 	}
-	out, err := svc.SetAccess(ctx, t, token, in.Site, in.Mode, in.Password)
+	out, err := svc.SetAccess(ctx, token, in.Site, in.Mode, in.Password)
 	return nil, out, err
 }
 
 func (svc *Service) listSkillsHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in listSkillsIn) (*mcpsdk.CallToolResult, listSkillsOut, error) {
 	logTool(ctx, "list_skills", "query", in.Query, "folder", in.Folder, "presets_only", in.PresetsOnly)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, listSkillsOut{}, ErrNoTenant
+		return nil, listSkillsOut{}, ErrNoToken
 	}
-	out, err := svc.ListSkills(ctx, t, in.Query, in.Folder, in.PresetsOnly)
+	out, err := svc.ListSkills(ctx, token, in.Query, in.Folder, in.PresetsOnly)
 	return nil, out, err
 }
 
 func (svc *Service) downloadSkillHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in downloadSkillIn) (*mcpsdk.CallToolResult, downloadSkillOut, error) {
 	logTool(ctx, "download_skill", "name", in.Name)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, downloadSkillOut{}, ErrNoTenant
+		return nil, downloadSkillOut{}, ErrNoToken
 	}
-	out, err := svc.DownloadSkill(ctx, t, in.Name)
+	out, err := svc.DownloadSkill(ctx, token, in.Name)
 	return nil, out, err
 }
 
 func (svc *Service) downloadSkillFolderHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in downloadSkillFolderIn) (*mcpsdk.CallToolResult, downloadSkillFolderOut, error) {
 	logTool(ctx, "download_skill_folder", "folder", in.Folder)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, downloadSkillFolderOut{}, ErrNoTenant
+		return nil, downloadSkillFolderOut{}, ErrNoToken
 	}
-	out, err := svc.DownloadSkillFolder(ctx, t, in.Folder)
+	out, err := svc.DownloadSkillFolder(ctx, token, in.Folder)
 	return nil, out, err
 }
 
 func (svc *Service) checkSkillUpdatesHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in checkSkillUpdatesIn) (*mcpsdk.CallToolResult, checkSkillUpdatesOut, error) {
 	logTool(ctx, "check_skill_updates", "installed", len(in.Installed))
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, checkSkillUpdatesOut{}, ErrNoTenant
+		return nil, checkSkillUpdatesOut{}, ErrNoToken
 	}
-	out, err := svc.CheckSkillUpdates(ctx, t, in)
+	out, err := svc.CheckSkillUpdates(ctx, token, in)
 	return nil, out, err
 }
 
 func (svc *Service) uploadSkillHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in uploadSkillIn) (*mcpsdk.CallToolResult, uploadSkillOut, error) {
 	logTool(ctx, "upload_skill", "name", in.Name, "files", len(in.Files))
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, uploadSkillOut{}, ErrNoTenant
-	}
-	token, ok := auth.TokenFromContext(ctx)
-	if !ok || token == "" {
 		return nil, uploadSkillOut{}, ErrNoToken
 	}
-	out, err := svc.UploadSkill(ctx, t, token, in)
+	out, err := svc.UploadSkill(ctx, token, in)
 	return nil, out, err
 }
 
 func (svc *Service) deploySiteHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in deploySiteIn) (*mcpsdk.CallToolResult, deploySiteOut, error) {
 	logTool(ctx, "deploy_site", "site", in.Site, "files", len(in.Files))
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, deploySiteOut{}, ErrNoTenant
-	}
-	token, ok := auth.TokenFromContext(ctx)
-	if !ok || token == "" {
 		return nil, deploySiteOut{}, ErrNoToken
 	}
 	publish := true
 	if in.Publish != nil {
 		publish = *in.Publish
 	}
-	out, err := svc.DeploySite(ctx, t, token, in.Site, in.Files, publish)
+	out, err := svc.DeploySite(ctx, token, in.Site, in.Files, publish)
 	return nil, out, err
 }
 
 func (svc *Service) getSiteChatHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in getSiteChatIn) (*mcpsdk.CallToolResult, getSiteChatOut, error) {
 	logTool(ctx, "get_site_chat", "site", in.Site)
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, getSiteChatOut{}, ErrNoTenant
+		return nil, getSiteChatOut{}, ErrNoToken
 	}
-	out, err := svc.GetSiteChat(ctx, t, in.Site)
+	out, err := svc.GetSiteChat(ctx, token, in.Site)
 	return nil, out, err
 }
 
 func (svc *Service) shareChatHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in shareChatIn) (*mcpsdk.CallToolResult, shareChatOut, error) {
 	logTool(ctx, "share_chat", "site", in.Site, "source_tool", in.SourceTool,
 		"messages", len(in.Messages), "transcript_bytes", len(in.Transcript))
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, shareChatOut{}, ErrNoTenant
-	}
-	token, ok := auth.TokenFromContext(ctx)
-	if !ok || token == "" {
 		return nil, shareChatOut{}, ErrNoToken
 	}
-	out, err := svc.ShareChat(ctx, t, token, in)
+	out, err := svc.ShareChat(ctx, token, in)
 	return nil, out, err
 }
 
 func (svc *Service) appendChatHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in appendChatIn) (*mcpsdk.CallToolResult, appendChatOut, error) {
 	logTool(ctx, "append_chat", "site", in.Site, "chat_id", in.ChatID,
 		"messages", len(in.Messages), "transcript_bytes", len(in.Transcript))
-	t, ok := auth.TenantFromContext(ctx)
+	token, ok := mcpToken(ctx)
 	if !ok {
-		return nil, appendChatOut{}, ErrNoTenant
-	}
-	token, ok := auth.TokenFromContext(ctx)
-	if !ok || token == "" {
 		return nil, appendChatOut{}, ErrNoToken
 	}
-	out, err := svc.AppendChat(ctx, t, token, in)
+	out, err := svc.AppendChat(ctx, token, in)
 	return nil, out, err
 }

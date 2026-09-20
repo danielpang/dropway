@@ -392,12 +392,13 @@ type ChatImport struct {
 
 // ChatLogInfo is the subset of the API's chat_log response the MCP tools surface.
 type ChatLogInfo struct {
-	ID           string  `json:"id"`
-	SiteID       *string `json:"site_id,omitempty"`
-	Title        string  `json:"title"`
-	SourceTool   string  `json:"source_tool"`
-	PanelEnabled bool    `json:"panel_enabled"`
-	MessageCount int64   `json:"message_count"`
+	ID           string    `json:"id"`
+	SiteID       *string   `json:"site_id,omitempty"`
+	Title        string    `json:"title"`
+	SourceTool   string    `json:"source_tool"`
+	PanelEnabled bool      `json:"panel_enabled"`
+	MessageCount int64     `json:"message_count"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // ChatCreateResult summarizes a created chat log (+ its inline import, if any).
@@ -570,6 +571,224 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Read tools (site + skill content) — the MCP read tools call these so the API
+// remains the SINGLE reader of the object store; the MCP server holds no S3/R2
+// credentials of its own. All are member-level, RLS-scoped, and forward the
+// caller's token exactly like the write tools.
+// ---------------------------------------------------------------------------
+
+// SiteFileMeta is one entry in a site's file listing.
+type SiteFileMeta struct {
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type,omitempty"`
+	SHA256      string `json:"sha256"`
+}
+
+// FilePayload is one file's bytes: utf8 text inline or base64 (Encoding says
+// which). ContentType is populated for site files; empty for skill files.
+type FilePayload struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	Encoding    string `json:"encoding"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"` // raw bytes (site files); 0 for skill files
+}
+
+// ListSiteFiles calls GET /v1/sites/{id}/files.
+func (c *Client) ListSiteFiles(ctx context.Context, token, siteID string) ([]SiteFileMeta, error) {
+	var out struct {
+		Files []SiteFileMeta `json:"files"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/sites/"+siteID+"/files", token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Files, nil
+}
+
+// ReadSiteFile calls GET /v1/sites/{id}/files/content?path=…. A 404 (path not in
+// the manifest) surfaces as an *Error{Status:404} the caller maps to not-found.
+func (c *Client) ReadSiteFile(ctx context.Context, token, siteID, path string) (FilePayload, error) {
+	var out FilePayload
+	p := "/v1/sites/" + siteID + "/files/content?path=" + url.QueryEscape(path)
+	if err := c.do(ctx, http.MethodGet, p, token, nil, &out); err != nil {
+		return FilePayload{}, err
+	}
+	return out, nil
+}
+
+// SiteDownload is a whole site's inline files.
+type SiteDownload struct {
+	Slug      string        `json:"slug"`
+	SiteID    string        `json:"site_id"`
+	Files     []FilePayload `json:"files"`
+	Truncated bool          `json:"truncated"`
+}
+
+// DownloadSite calls GET /v1/sites/{id}/download.
+func (c *Client) DownloadSite(ctx context.Context, token, siteID string) (SiteDownload, error) {
+	var out SiteDownload
+	if err := c.do(ctx, http.MethodGet, "/v1/sites/"+siteID+"/download", token, nil, &out); err != nil {
+		return SiteDownload{}, err
+	}
+	return out, nil
+}
+
+// SkillDownload is one skill's inline files (the /skills/{id}/download shape,
+// also the per-skill element of a folder download).
+type SkillDownload struct {
+	Slug      string        `json:"slug"`
+	SkillID   string        `json:"skill_id"`
+	Version   int32         `json:"version"`
+	Files     []FilePayload `json:"files"`
+	Truncated bool          `json:"truncated"`
+}
+
+// DownloadSkill calls GET /v1/skills/{id}/download.
+func (c *Client) DownloadSkill(ctx context.Context, token, skillID string) (SkillDownload, error) {
+	var out SkillDownload
+	if err := c.do(ctx, http.MethodGet, "/v1/skills/"+skillID+"/download", token, nil, &out); err != nil {
+		return SkillDownload{}, err
+	}
+	return out, nil
+}
+
+// SkillFolderDownload is a folder's bulk download: each skill inline (or marked
+// Truncated when the response budget ran out) plus any server warnings.
+type SkillFolderDownload struct {
+	Skills   []SkillDownload `json:"skills"`
+	Warnings []string        `json:"warnings"`
+}
+
+// DownloadSkillFolder calls GET /v1/skill-folders/{id}/download.
+func (c *Client) DownloadSkillFolder(ctx context.Context, token, folderID string) (SkillFolderDownload, error) {
+	var out SkillFolderDownload
+	if err := c.do(ctx, http.MethodGet, "/v1/skill-folders/"+folderID+"/download", token, nil, &out); err != nil {
+		return SkillFolderDownload{}, err
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Listing + chat reads — the MCP resolves a slug to an id by listing (it holds
+// no DB of its own), and reads a site's attached chat through the API. All are
+// member-level, RLS-scoped, and forward the caller's token.
+// ---------------------------------------------------------------------------
+
+// SiteSummary is one site in the org listing (GET /v1/sites).
+type SiteSummary struct {
+	ID               string  `json:"id"`
+	Slug             string  `json:"slug"`
+	AccessMode       string  `json:"access_mode"`
+	CurrentVersionID *string `json:"current_version_id,omitempty"`
+	LiveURL          string  `json:"live_url"`
+}
+
+// ListSites calls GET /v1/sites.
+func (c *Client) ListSites(ctx context.Context, token string) ([]SiteSummary, error) {
+	var out struct {
+		Sites []SiteSummary `json:"sites"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/sites", token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Sites, nil
+}
+
+// SkillFolderRef is a folder a skill belongs to (embedded in SkillSummary).
+type SkillFolderRef struct {
+	Slug     string `json:"slug"`
+	Title    string `json:"title"`
+	IsPreset bool   `json:"is_preset"`
+}
+
+// SkillSummary is one skill in the org listing (GET /v1/skills).
+type SkillSummary struct {
+	ID               string           `json:"id"`
+	Slug             string           `json:"slug"`
+	Title            string           `json:"title"`
+	Description      string           `json:"description"`
+	OwnerID          string           `json:"owner_id"`
+	IsSeeded         bool             `json:"is_seeded"`
+	CurrentVersionID *string          `json:"current_version_id,omitempty"`
+	SizeBytes        int64            `json:"size_bytes"`
+	Version          int32            `json:"version"`
+	Folders          []SkillFolderRef `json:"folders"`
+	CreatedAt        time.Time        `json:"created_at"`
+}
+
+// ListSkills calls GET /v1/skills with the same filters the list_skills tool
+// takes (query, folder slug, presets-only).
+func (c *Client) ListSkills(ctx context.Context, token, query, folder string, presetsOnly bool) ([]SkillSummary, error) {
+	q := url.Values{}
+	if query != "" {
+		q.Set("q", query)
+	}
+	if folder != "" {
+		q.Set("folder", folder)
+	}
+	if presetsOnly {
+		q.Set("presets", "true")
+	}
+	path := "/v1/skills"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var out struct {
+		Skills []SkillSummary `json:"skills"`
+	}
+	if err := c.do(ctx, http.MethodGet, path, token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Skills, nil
+}
+
+// SkillFolderSummary is one folder in the org listing (GET /v1/skill-folders).
+type SkillFolderSummary struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	ItemCount int64     `json:"item_count"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListSkillFolders calls GET /v1/skill-folders.
+func (c *Client) ListSkillFolders(ctx context.Context, token string) ([]SkillFolderSummary, error) {
+	var out struct {
+		Folders []SkillFolderSummary `json:"folders"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/skill-folders", token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Folders, nil
+}
+
+// ChatMessageDTO is one message in a site's chat log.
+type ChatMessageDTO struct {
+	Seq       int32           `json:"seq"`
+	Role      string          `json:"role"`
+	Kind      string          `json:"kind"`
+	Content   string          `json:"content"`
+	Meta      json.RawMessage `json:"meta,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// SiteChat is a site's attached chat log plus its messages.
+type SiteChat struct {
+	ChatLog  ChatLogInfo      `json:"chat_log"`
+	Messages []ChatMessageDTO `json:"messages"`
+}
+
+// GetSiteChat calls GET /v1/sites/{id}/chat.
+func (c *Client) GetSiteChat(ctx context.Context, token, siteID string) (SiteChat, error) {
+	var out SiteChat
+	if err := c.do(ctx, http.MethodGet, "/v1/sites/"+siteID+"/chat", token, nil, &out); err != nil {
+		return SiteChat{}, err
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

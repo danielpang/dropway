@@ -43,7 +43,9 @@ func TestNewS3Store_DefaultsRegionAndBuilds(t *testing.T) {
 	}
 }
 
-// TestNewS3Store_ExplicitRegion asserts a supplied region is honored.
+// TestNewS3Store_ExplicitRegion asserts a supplied region is honored. With no
+// credentials it also exercises the default-credential-chain path: construction
+// stays network-free (no eager credential resolution), so the handle still builds.
 func TestNewS3Store_ExplicitRegion(t *testing.T) {
 	s, err := NewS3Store(context.Background(), S3Config{Bucket: "b", Region: "us-east-1"})
 	if err != nil {
@@ -51,6 +53,22 @@ func TestNewS3Store_ExplicitRegion(t *testing.T) {
 	}
 	if s.bucket != "b" {
 		t.Errorf("bucket = %q", s.bucket)
+	}
+}
+
+// TestNewS3Store_HalfConfiguredCredentials asserts that supplying exactly one of
+// the access-key pair is rejected as a configuration error, rather than silently
+// building a broken static provider (or masking a typo by falling through to the
+// default chain). Both half-configured shapes must fail.
+func TestNewS3Store_HalfConfiguredCredentials(t *testing.T) {
+	cases := []S3Config{
+		{Bucket: "b", AccessKeyID: "akid"},       // secret missing
+		{Bucket: "b", SecretAccessKey: "secret"}, // key id missing
+	}
+	for _, cfg := range cases {
+		if _, err := NewS3Store(context.Background(), cfg); err == nil {
+			t.Errorf("half-configured credentials %+v should error", cfg)
+		}
 	}
 }
 

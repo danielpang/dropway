@@ -129,6 +129,14 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			// Deploy history (newest first) for the rollback picker.
 			r.Get("/{id}/versions", api.ListVersions)
 
+			// Read a published site's files (any member; RLS-scoped). These back the
+			// MCP read tools (list_files / read_file / download_site) so the MCP
+			// server never needs object-store credentials of its own — the API is
+			// the single reader of the blob store, mirroring the skill endpoints.
+			r.Get("/{id}/files", api.ListSiteFiles)
+			r.Get("/{id}/files/content", api.ReadSiteFile)
+			r.Get("/{id}/download", api.DownloadSite)
+
 			r.Post("/{id}/deployments/prepare", api.PrepareDeployment)
 			r.Post("/{id}/deployments", api.FinalizeDeployment)
 			r.Post("/{id}/publish", api.Publish)

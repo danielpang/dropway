@@ -39,9 +39,19 @@ type S3Store struct {
 	bucket  string
 }
 
-// NewS3Store builds an S3Store from cfg. Static credentials are used (the deploy
-// box / container supplies scoped keys via env); a real AWS deployment could swap
-// in the default credential chain, but R2/MinIO use access-key pairs.
+// NewS3Store builds an S3Store from cfg. When both AccessKeyID and
+// SecretAccessKey are supplied, a static credentials provider is used (R2/MinIO
+// and any deploy that hands the container a scoped key pair via env). When BOTH
+// are empty, we fall back to the AWS default credential chain (env AWS_*, an
+// attached IAM/instance role, shared config) — the correct path for a real AWS
+// deployment. Supplying exactly one of the pair is a configuration error.
+//
+// Note the empty-static case is deliberately NOT installed: a static provider
+// built from empty strings constructs fine but fails EVERY object operation at
+// call time with the opaque "static credentials are empty", which is easy to
+// misread as an auth/authorization failure. Routing empty creds to the default
+// chain instead means either real credentials are found, or resolution fails
+// with a clear, actionable error naming the missing credential source.
 func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("storage: S3 bucket is required")
@@ -51,12 +61,19 @@ func NewS3Store(ctx context.Context, cfg S3Config) (*S3Store, error) {
 		region = "auto" // R2's conventional region token
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.AccessKeyID, cfg.SecretAccessKey, "",
-		)),
-	)
+	hasKey, hasSecret := cfg.AccessKeyID != "", cfg.SecretAccessKey != ""
+	if hasKey != hasSecret {
+		return nil, errors.New("storage: S3 credentials half-configured — set BOTH S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY (or NEITHER, to use the AWS default credential chain)")
+	}
+
+	loadOpts := []func(*config.LoadOptions) error{config.WithRegion(region)}
+	if hasKey { // both present: static keys (R2/MinIO). Empty pair → default chain.
+		loadOpts = append(loadOpts, config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		))
+	}
+
+	awsCfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: load aws config: %w", err)
 	}
