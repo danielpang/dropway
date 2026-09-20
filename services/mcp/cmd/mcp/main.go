@@ -91,6 +91,15 @@ func main() {
 	if err != nil {
 		fatal("object storage", err)
 	}
+	// The read tools (list_files / read_file / download_site) fetch manifests and
+	// blobs from the object store. Resolve credentials NOW so a deploy missing its
+	// R2/S3 keys fails loudly at startup instead of serving list_sites from Postgres
+	// while every file read 500s with "static credentials are empty" — a failure that
+	// looks like (and was reported as) an MCP auth problem. Mirrors the /healthz DB
+	// round-trip that already fails the deploy on a bad DATABASE_URL.
+	if err := objStore.VerifyCredentials(ctx); err != nil {
+		fatal("object storage credentials", err)
+	}
 
 	// The bearer token is a Better-Auth-issued OAuth access token whose audience is
 	// this MCP resource (publicURL); verify it against the platform JWKS. Accept
