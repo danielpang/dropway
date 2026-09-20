@@ -278,7 +278,12 @@ services:
   # Hosted Dropway uses Cloudflare R2 instead; disable + set the S3_* vars.
   # ---------------------------------------------------------------------------
   minio:
-    image: minio/minio:latest
+    # Pulled from quay.io (MinIO's canonical registry) rather than Docker Hub:
+    # anonymous `docker pull minio/minio` from shared CI runners is rate-limited /
+    # denied ("pull access denied … repository does not exist or may require
+    # 'docker login'"), which broke the E2E + serve integration jobs. quay.io has
+    # no such anonymous-pull limit. Keep minio + mc on the same registry.
+    image: quay.io/minio/minio:latest
     profiles: ["local-storage"]
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -306,7 +311,7 @@ services:
   # createbucket — one-shot: ensure the blob bucket exists in MinIO.
   # ---------------------------------------------------------------------------
   createbucket:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest # quay.io mirror — see the minio service note above
     profiles: ["local-storage"]
     depends_on:
       minio:

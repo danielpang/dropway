@@ -44,7 +44,7 @@ const (
 	pgPort      = "55432"
 	minioPort   = "59000"
 	pgImage     = "postgres:16"
-	minioImage  = "minio/minio:latest"
+	minioImage  = "quay.io/minio/minio:latest" // quay.io mirror: Docker Hub denies anonymous minio/minio pulls on CI runners
 	ownerDSN    = "postgres://postgres:postgres@127.0.0.1:" + pgPort + "/dropway?sslmode=disable"
 	appPassword = "dropway_app_it_pw"
 	appDSN      = "postgres://dropway_app:" + appPassword + "@127.0.0.1:" + pgPort + "/dropway?sslmode=disable"
