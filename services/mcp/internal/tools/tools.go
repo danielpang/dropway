@@ -24,6 +24,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/danielpang/dropway/internal/errtrack"
 	"github.com/danielpang/dropway/internal/skillspec"
 	slugpkg "github.com/danielpang/dropway/internal/slug"
 	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
@@ -86,6 +87,51 @@ type Service struct {
 	// kill-switch is still checked against Postgres in the request gate, main.go —
 	// the one place the MCP process reads the DB.)
 	API ControlPlane
+
+	// Reporter captures a tool handler's failure to the error sink (PostHog). Every
+	// registered tool is wrapped (see addTool) so any non-nil error it returns is
+	// emitted as an exception tagged with the tool name + tenant. nil ⇒ no capture
+	// (tests, or a build without error tracking); errtrack.FromEnv returns a Noop,
+	// never nil, so production always has one.
+	Reporter errtrack.Reporter
+}
+
+// reportToolError emits a failed tool call to the error sink (PostHog), attributed
+// to the acting user and tagged with the tool name + org. A nil Reporter or nil
+// err is a no-op. Called by addTool for every registered tool, so a failure at any
+// tool endpoint is observable without each handler opting in.
+func (svc *Service) reportToolError(ctx context.Context, tool string, err error) {
+	if svc.Reporter == nil || err == nil {
+		return
+	}
+	t, _ := auth.TenantFromContext(ctx)
+	svc.Reporter.CaptureException(errtrack.WithDistinctID(ctx, t.UserID), err, map[string]any{
+		"surface": "mcp",
+		"tool":    tool,
+		"org_id":  t.OrgID,
+		"user_id": t.UserID,
+	})
+}
+
+// capturingHandler wraps h so any non-nil error it returns is captured to the
+// error sink (reportToolError), then returned to the client unchanged. Split out
+// from addTool so the capture behavior is unit-testable without standing up a
+// server.
+func capturingHandler[In, Out any](svc *Service, name string, h mcpsdk.ToolHandlerFor[In, Out]) mcpsdk.ToolHandlerFor[In, Out] {
+	return func(ctx context.Context, req *mcpsdk.CallToolRequest, in In) (*mcpsdk.CallToolResult, Out, error) {
+		res, out, err := h(ctx, req, in)
+		if err != nil {
+			svc.reportToolError(ctx, name, err)
+		}
+		return res, out, err
+	}
+}
+
+// addTool registers one tool with its handler wrapped by capturingHandler, so any
+// error at any tool endpoint is emitted to PostHog without per-handler
+// boilerplate — every current and future tool is covered.
+func addTool[In, Out any](server *mcpsdk.Server, svc *Service, tool *mcpsdk.Tool, h mcpsdk.ToolHandlerFor[In, Out]) {
+	mcpsdk.AddTool(server, tool, capturingHandler(svc, tool.Name, h))
 }
 
 // resolveSite finds a site by slug via the API listing (the MCP holds no DB, so
@@ -1214,40 +1260,40 @@ func dropNullUnions(s *jsonschema.Schema) {
 // share_chat, append_chat) are registered only when a control-plane client is
 // configured (the MCP server has an API_URL).
 func Register(server *mcpsdk.Server, svc *Service) {
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_sites",
 		Description: "List the deployed sites in your Dropway organization (slug, access mode, whether live, URL).",
 	}, svc.listSitesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_files",
 		Description: "List the files of a site's currently published version. Args: site (slug).",
 	}, svc.listFilesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "read_file",
 		Description: "Read the contents of one file in a site's current version. Args: site (slug), path (from list_files).",
 	}, svc.readFileHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "download_site",
 		Description: "Download every file of a site's current version at once (path + contents). Args: site (slug). Large sites are truncated to a size cap.",
 	}, svc.downloadSiteHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_skills",
 		Description: "List the shared Claude skills in your Dropway organization. Args (all optional): query (text filter), folder (folder slug), presets_only. Note: Dropway's preset skills appear only after the org's first skills use through the API, dashboard, or CLI — MCP reads cannot trigger that seeding, but upload_skill (a write) does.",
 	}, svc.listSkillsHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "download_skill",
 		Description: "Download every file of a shared skill (path + contents, utf8 or base64). Args: name (slug from list_skills). Write the files into .claude/skills/<name>/ preserving each file's relative path; refuse any path containing '..'.",
 	}, svc.downloadSkillHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "download_skill_folder",
 		Description: "Download every skill in a skill folder at once. Args: folder (folder slug). Write each skill's files into .claude/skills/<name>/; refuse any path containing '..'. The response is capped in size — skills marked truncated carry no files, fetch each of those with download_skill.",
 	}, svc.downloadSkillFolderHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "check_skill_updates",
 		Description: "Check whether locally-held skills are out of date. Args: installed ([{name, version}] — the skills you have and the version each was downloaded at, e.g. from each .claude/skills/<name>/.dropway.json). Returns, per skill, installed_version, latest_version, and outdated. Update an outdated skill by calling download_skill for it.",
 		InputSchema: inputSchema[checkSkillUpdatesIn](),
 	}, svc.checkSkillUpdatesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "get_site_chat",
 		Description: "Read the shared chat log attached to a site (the transcript behind its \"How this was made\" panel): log metadata plus every message in order. Args: site (slug). Errors if the site has no attached log — start one with share_chat or append_chat.",
 	}, svc.getSiteChatHandler)
@@ -1255,35 +1301,35 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	if svc.API == nil {
 		return // no control-plane client → read-only deployment, no write tools
 	}
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "create_site",
 		Description: "Create a new site in your Dropway organization. Args: slug, access_mode (optional: 'public' or 'org_only'). Subject to your plan's site limit.",
 	}, svc.createSiteHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "set_site_access",
 		Description: "Change a site's sharing/permissions. Args: site (slug), mode ('public'|'org_only'|'password'|'allowlist'), password (only for mode=password). Owner/admin only.",
 	}, svc.setAccessHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "deploy_site",
 		Description: "Upload files to a site and publish them (go live). Args: site (slug), files ([{path, text or base64, content_type?}]), publish (default true). Include an index.html for the site root. Returns the live URL.",
 		// Explicit schema so `files` is a plain array and `publish` a plain boolean
 		// (not "[null, …]" unions that some clients coerce to strings).
 		InputSchema: inputSchema[deploySiteIn](),
 	}, svc.deploySiteHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "upload_skill",
 		Description: "Share a Claude skill with your Dropway organization (create or replace — uploads are latest-only). Args: name (slug), files ([{path, content, encoding? 'utf8'|'base64'}], must include a root SKILL.md), title (optional), folders (optional folder slugs, applied on first create). Max 200 files / 5 MiB total.",
 		// Explicit schema so `files`/`folders` are plain arrays (see deploy_site).
 		InputSchema: inputSchema[uploadSkillIn](),
 	}, svc.uploadSkillHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "share_chat",
 		Description: "Share this session's conversation as a Dropway chat log. Attached to a site (site slug), it renders as the published site's \"How this was made\" panel — the story behind the artifact, under the site's own access control; unattached, it goes to the org's chat library. Args (all optional): site (slug — one attached log per site), title, source_tool ('claude_code'|'chatgpt'|'cursor'|'other'), transcript (a raw export: Claude Code JSONL, ChatGPT JSON, or plain text — normalized server-side), format ('auto' default), derive_actions (condense the transcript's tool activity into action rows), messages ([{kind, role, content, meta}] explicit turns/annotations). Returns chat_id — use append_chat to add to the log as work continues.",
 		// Explicit schema so `messages` (and nested `paths`) are plain arrays
 		// (see deploy_site).
 		InputSchema: inputSchema[shareChatIn](),
 	}, svc.shareChatHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "append_chat",
 		Description: "Append to a shared chat log. Args: exactly ONE of site (slug — appends to the site's attached log, creating it if absent) or chat_id (from share_chat), plus messages and/or transcript. Use this to narrate your work as you go: after a meaningful step, append a kind='action' message whose meta is {action:'file_edit', paths:[…]} or {action:'tool_use', tool:'…'} and whose content is a one-line comment on WHY you did it (not a restatement of the diff), alongside kind='chat' rows for the actual conversation turns.",
 		// Explicit schema so `messages` (and nested `paths`) are plain arrays.
@@ -1293,15 +1339,15 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	// writes stay on the API's quota/audit path), so all three register behind
 	// the same control-plane gate as the write tools. Orgs that haven't enabled
 	// memory get a clear 403 from the API.
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "search_memory",
 		Description: "Fetch this Dropway organization's remembered brand, style, and preference context BEFORE building or editing anything for it. Returns pinned company facts plus the memories most relevant to your query (e.g. 'brand colors and tone for a pricing page'). Args: query, k (optional).",
 	}, svc.searchMemoryHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_memories",
 		Description: "Browse everything Dropway remembers about this organization (pinned first, then most recently updated). Args: limit (optional, default 50).",
 	}, svc.listMemoriesHandler)
-	mcpsdk.AddTool(server, &mcpsdk.Tool{
+	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "add_memory",
 		Description: "Record a durable fact about this organization that future builds should know (brand voice, color palette, product names, structural preferences, standing corrections). One self-contained sentence per call; duplicates dedupe server-side. Args: content, kind (optional: fact|preference|style|correction), source_tool (optional: your agent name, e.g. 'claude-code').",
 	}, svc.addMemoryHandler)

@@ -105,7 +105,9 @@ func main() {
 	// and the /healthz DB round-trip — the one place this process reads Postgres.
 	// The tools themselves hold no store: every tool call goes through the Go API.
 	st := store.New(pool)
-	svc := &tools.Service{}
+	// Reporter (PostHog error tracking, or Noop when unconfigured) so any tool
+	// endpoint failure is captured as an exception, tagged with the tool + tenant.
+	svc := &tools.Service{Reporter: rep}
 
 	// Product analytics over the same shared posthog client as error tracking.
 	// Nil when PostHog is unconfigured → auth rejections are logged only.
