@@ -16,68 +16,13 @@ import (
 
 func ptr(s string) *string { return &s }
 
+const readTok = "tok-read"
+
 // --- fakes ------------------------------------------------------------------
 
-type fakeStore struct {
-	sites  []store.Site
-	bySlug map[string]store.Site
-	err    error
-}
-
-func (f *fakeStore) ListSites(_ context.Context, _ store.Tenant) ([]store.Site, error) {
-	return f.sites, f.err
-}
-func (f *fakeStore) SiteBySlug(_ context.Context, _ store.Tenant, slug string) (store.Site, error) {
-	s, ok := f.bySlug[slug]
-	if !ok {
-		return store.Site{}, store.ErrNotFound
-	}
-	return s, nil
-}
-
-// fakeSkills satisfies SkillStore, recording the filter args list_skills passes.
-type fakeSkills struct {
-	skills  []store.Skill
-	listErr error
-
-	listQuery, listFolder string
-	listPresetsOnly       bool
-
-	bySlug map[string]store.Skill
-
-	folders    []store.SkillFolder
-	foldersErr error
-
-	folderSkills map[string][]store.Skill // folder id → skills
-}
-
-func (f *fakeSkills) ListSkills(_ context.Context, _ store.Tenant, query, folderSlug string, presetsOnly bool) ([]store.Skill, error) {
-	f.listQuery, f.listFolder, f.listPresetsOnly = query, folderSlug, presetsOnly
-	return f.skills, f.listErr
-}
-func (f *fakeSkills) SkillBySlug(_ context.Context, _ store.Tenant, slug string) (store.Skill, error) {
-	s, ok := f.bySlug[slug]
-	if !ok {
-		return store.Skill{}, store.ErrNotFound
-	}
-	return s, nil
-}
-func (f *fakeSkills) ListSkillFolders(_ context.Context, _ store.Tenant) ([]store.SkillFolder, error) {
-	return f.folders, f.foldersErr
-}
-func (f *fakeSkills) SkillFolderBySlug(_ context.Context, _ store.Tenant, slug string) (store.SkillFolder, error) {
-	for _, fo := range f.folders {
-		if fo.Slug == slug {
-			return fo, nil
-		}
-	}
-	return store.SkillFolder{}, store.ErrNotFound
-}
-func (f *fakeSkills) ListFolderSkills(_ context.Context, _ store.Tenant, folderID string) ([]store.Skill, error) {
-	return f.folderSkills[folderID], nil
-}
-
-// fakeAPI records the control-plane calls the write tools make.
+// fakeAPI records the control-plane calls the tools make and serves canned
+// responses. It is the tools' ONLY backing dependency: listing + slug→id
+// resolution, content reads, and writes all go through it.
 type fakeAPI struct {
 	createToken, createSlug, createMode string
 	createResp                          apiclient.Site
@@ -151,6 +96,37 @@ type fakeAPI struct {
 	downloadSkillErr          error
 	downloadFolderResp        apiclient.SkillFolderDownload
 	downloadFolderErr         error
+
+	// listing + chat reads (slug→id resolution goes through these).
+	listSitesResp        []apiclient.SiteSummary
+	listSitesErr         error
+	listSkillsResp       []apiclient.SkillSummary
+	listSkillsErr        error
+	listSkillsQuery      string
+	listSkillsFolder     string
+	listSkillsPresets    bool
+	listSkillFoldersResp []apiclient.SkillFolderSummary
+	listSkillFoldersErr  error
+	getSiteChatResp      apiclient.SiteChat
+	getSiteChatErr       error
+	getSiteChatSiteID    string
+}
+
+func (f *fakeAPI) ListSites(_ context.Context, token string) ([]apiclient.SiteSummary, error) {
+	f.readToken = token
+	return f.listSitesResp, f.listSitesErr
+}
+func (f *fakeAPI) ListSkills(_ context.Context, token, query, folder string, presetsOnly bool) ([]apiclient.SkillSummary, error) {
+	f.readToken, f.listSkillsQuery, f.listSkillsFolder, f.listSkillsPresets = token, query, folder, presetsOnly
+	return f.listSkillsResp, f.listSkillsErr
+}
+func (f *fakeAPI) ListSkillFolders(_ context.Context, token string) ([]apiclient.SkillFolderSummary, error) {
+	f.readToken = token
+	return f.listSkillFoldersResp, f.listSkillFoldersErr
+}
+func (f *fakeAPI) GetSiteChat(_ context.Context, token, siteID string) (apiclient.SiteChat, error) {
+	f.readToken, f.getSiteChatSiteID = token, siteID
+	return f.getSiteChatResp, f.getSiteChatErr
 }
 
 func (f *fakeAPI) ListSiteFiles(_ context.Context, token, siteID string) ([]apiclient.SiteFileMeta, error) {
@@ -249,36 +225,15 @@ func (f *fakeAPI) AddMemory(_ context.Context, token, content, kind, sourceTool 
 	return f.memAddResp, f.memAddCreated, nil
 }
 
-// fakeChats satisfies ChatStore for the get_site_chat read path.
-type fakeChats struct {
-	bySite map[string]store.ChatLog       // site id → attached log
-	msgs   map[string][]store.ChatMessage // chat log id → messages
-}
-
-func (f *fakeChats) ChatLogBySite(_ context.Context, _ store.Tenant, siteID string) (store.ChatLog, error) {
-	l, ok := f.bySite[siteID]
-	if !ok {
-		return store.ChatLog{}, store.ErrNotFound
-	}
-	return l, nil
-}
-func (f *fakeChats) ListChatMessages(_ context.Context, _ store.Tenant, chatLogID string) ([]store.ChatMessage, error) {
-	return f.msgs[chatLogID], nil
-}
-
-var tnt = store.Tenant{OrgID: "org-1", UserID: "user-1"}
-
-const readTok = "tok-read"
-
 // --- list_sites -------------------------------------------------------------
 
 func TestListSites(t *testing.T) {
-	svc := &Service{Store: &fakeStore{sites: []store.Site{
-		{Slug: "docs", AccessMode: "public", CurrentVersionID: ptr("v1"), Host: ptr("acme--docs.dropwaycontent.com")},
-		{Slug: "draft", AccessMode: "org_only", CurrentVersionID: nil, Host: nil},
+	svc := &Service{API: &fakeAPI{listSitesResp: []apiclient.SiteSummary{
+		{Slug: "docs", AccessMode: "public", CurrentVersionID: ptr("v1"), LiveURL: "https://acme--docs.dropwaycontent.com"},
+		{Slug: "draft", AccessMode: "org_only"},
 	}}}
 
-	out, err := svc.ListSites(context.Background(), tnt)
+	out, err := svc.ListSites(context.Background(), readTok)
 	if err != nil {
 		t.Fatalf("ListSites: %v", err)
 	}
@@ -294,8 +249,8 @@ func TestListSites(t *testing.T) {
 }
 
 func TestListSites_StoreError(t *testing.T) {
-	svc := &Service{Store: &fakeStore{err: errors.New("boom")}}
-	if _, err := svc.ListSites(context.Background(), tnt); err == nil {
+	svc := &Service{API: &fakeAPI{listSitesErr: errors.New("boom")}}
+	if _, err := svc.ListSites(context.Background(), readTok); err == nil {
 		t.Fatal("expected store error to propagate")
 	}
 }
@@ -303,16 +258,14 @@ func TestListSites_StoreError(t *testing.T) {
 // --- list_files -------------------------------------------------------------
 
 func TestListFiles_SortedPathsFromAPI(t *testing.T) {
-	api := &fakeAPI{listSiteFilesResp: []apiclient.SiteFileMeta{
-		{Path: "logo.png"}, {Path: "index.html"}, {Path: "assets/app.js"},
-	}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{
-			"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")},
-		}},
-		API: api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}},
+		listSiteFilesResp: []apiclient.SiteFileMeta{
+			{Path: "logo.png"}, {Path: "index.html"}, {Path: "assets/app.js"},
+		},
 	}
-	out, err := svc.ListFiles(context.Background(), tnt, readTok, "docs")
+	svc := &Service{API: api}
+	out, err := svc.ListFiles(context.Background(), readTok, "docs")
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
@@ -332,26 +285,24 @@ func TestListFiles_SortedPathsFromAPI(t *testing.T) {
 }
 
 func TestListFiles_NotLiveIsEmpty(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{
-		"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil},
-	}}, API: api}
-	out, err := svc.ListFiles(context.Background(), tnt, readTok, "draft")
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s2", Slug: "draft", CurrentVersionID: nil}}}
+	svc := &Service{API: api}
+	out, err := svc.ListFiles(context.Background(), readTok, "draft")
 	if err != nil {
 		t.Fatalf("ListFiles: %v", err)
 	}
 	if len(out.Files) != 0 {
 		t.Errorf("a non-live site should list no files, got %v", out.Files)
 	}
-	// A non-live site short-circuits in the MCP; the API is never called.
+	// A non-live site short-circuits in the MCP; the file listing is never fetched.
 	if api.lastSiteID != "" {
 		t.Errorf("API should not be called for a non-live site (siteID=%q)", api.lastSiteID)
 	}
 }
 
 func TestListFiles_UnknownSite(t *testing.T) {
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: &fakeAPI{}}
-	if _, err := svc.ListFiles(context.Background(), tnt, readTok, "nope"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: &fakeAPI{}}
+	if _, err := svc.ListFiles(context.Background(), readTok, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
 	}
 }
@@ -359,14 +310,14 @@ func TestListFiles_UnknownSite(t *testing.T) {
 // --- read_file --------------------------------------------------------------
 
 func TestReadFile_Text(t *testing.T) {
-	api := &fakeAPI{readSiteFileResp: apiclient.FilePayload{
-		Path: "index.html", Content: "<h1>hi</h1>", Encoding: "utf8", ContentType: "text/html",
-	}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}},
+		readSiteFileResp: apiclient.FilePayload{
+			Path: "index.html", Content: "<h1>hi</h1>", Encoding: "utf8", ContentType: "text/html",
+		},
 	}
-	out, err := svc.ReadFile(context.Background(), tnt, readTok, "docs", "index.html")
+	svc := &Service{API: api}
+	out, err := svc.ReadFile(context.Background(), readTok, "docs", "index.html")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -379,14 +330,14 @@ func TestReadFile_Text(t *testing.T) {
 }
 
 func TestReadFile_BinaryIsBase64(t *testing.T) {
-	api := &fakeAPI{readSiteFileResp: apiclient.FilePayload{
-		Path: "logo.png", Content: "//3/AAE=", Encoding: "base64", ContentType: "image/png",
-	}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}},
+		readSiteFileResp: apiclient.FilePayload{
+			Path: "logo.png", Content: "//3/AAE=", Encoding: "base64", ContentType: "image/png",
+		},
 	}
-	out, err := svc.ReadFile(context.Background(), tnt, readTok, "docs", "logo.png")
+	svc := &Service{API: api}
+	out, err := svc.ReadFile(context.Background(), readTok, "docs", "logo.png")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -397,19 +348,20 @@ func TestReadFile_BinaryIsBase64(t *testing.T) {
 
 func TestReadFile_PathNotInManifest(t *testing.T) {
 	// The API answers a missing path with 404; the tool maps it to ErrNotFound.
-	api := &fakeAPI{readSiteFileErr: &apiclient.Error{Status: 404, Message: "not found"}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp:   []apiclient.SiteSummary{{ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}},
+		readSiteFileErr: &apiclient.Error{Status: 404, Message: "not found"},
 	}
-	if _, err := svc.ReadFile(context.Background(), tnt, readTok, "docs", "secret.txt"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: api}
+	if _, err := svc.ReadFile(context.Background(), readTok, "docs", "secret.txt"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for missing path, got %v", err)
 	}
 }
 
 func TestReadFile_NotLive(t *testing.T) {
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}, API: &fakeAPI{}}
-	if _, err := svc.ReadFile(context.Background(), tnt, readTok, "draft", "index.html"); !errors.Is(err, store.ErrNotFound) {
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s2", Slug: "draft", CurrentVersionID: nil}}}
+	svc := &Service{API: api}
+	if _, err := svc.ReadFile(context.Background(), readTok, "draft", "index.html"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for non-live site, got %v", err)
 	}
 }
@@ -417,18 +369,18 @@ func TestReadFile_NotLive(t *testing.T) {
 // --- download_site ----------------------------------------------------------
 
 func TestDownloadSite_AllFiles(t *testing.T) {
-	api := &fakeAPI{downloadSiteResp: apiclient.SiteDownload{
-		Slug: "docs", SiteID: "s1", Files: []apiclient.FilePayload{
-			{Path: "assets/app.js", Content: "console.log(1)", Encoding: "utf8", Size: 14},
-			{Path: "index.html", Content: "<h1>hi</h1>", Encoding: "utf8", Size: 11},
-			{Path: "logo.png", Content: "//3/AA==", Encoding: "base64", Size: 4},
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}},
+		downloadSiteResp: apiclient.SiteDownload{
+			Slug: "docs", SiteID: "s1", Files: []apiclient.FilePayload{
+				{Path: "assets/app.js", Content: "console.log(1)", Encoding: "utf8", Size: 14},
+				{Path: "index.html", Content: "<h1>hi</h1>", Encoding: "utf8", Size: 11},
+				{Path: "logo.png", Content: "//3/AA==", Encoding: "base64", Size: 4},
+			},
 		},
-	}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		API:   api,
 	}
-	out, err := svc.DownloadSite(context.Background(), tnt, readTok, "docs")
+	svc := &Service{API: api}
+	out, err := svc.DownloadSite(context.Background(), readTok, "docs")
 	if err != nil {
 		t.Fatalf("DownloadSite: %v", err)
 	}
@@ -452,12 +404,12 @@ func TestDownloadSite_AllFiles(t *testing.T) {
 
 func TestDownloadSite_TruncatedPassthrough(t *testing.T) {
 	// Truncation is decided by the API's byte budget; the MCP just relays the flag.
-	api := &fakeAPI{downloadSiteResp: apiclient.SiteDownload{Slug: "docs", SiteID: "s1", Truncated: true}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp:    []apiclient.SiteSummary{{ID: "s1", Slug: "docs", CurrentVersionID: ptr("v1")}},
+		downloadSiteResp: apiclient.SiteDownload{Slug: "docs", SiteID: "s1", Truncated: true},
 	}
-	out, err := svc.DownloadSite(context.Background(), tnt, readTok, "docs")
+	svc := &Service{API: api}
+	out, err := svc.DownloadSite(context.Background(), readTok, "docs")
 	if err != nil {
 		t.Fatalf("DownloadSite: %v", err)
 	}
@@ -467,9 +419,9 @@ func TestDownloadSite_TruncatedPassthrough(t *testing.T) {
 }
 
 func TestDownloadSite_NotLive(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"draft": {ID: "s2", Slug: "draft", CurrentVersionID: nil}}}, API: api}
-	out, err := svc.DownloadSite(context.Background(), tnt, readTok, "draft")
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s2", Slug: "draft", CurrentVersionID: nil}}}
+	svc := &Service{API: api}
+	out, err := svc.DownloadSite(context.Background(), readTok, "draft")
 	if err != nil {
 		t.Fatalf("DownloadSite: %v", err)
 	}
@@ -535,12 +487,9 @@ func TestCreateSite_RejectsUnusableSlug(t *testing.T) {
 // --- set_site_access --------------------------------------------------------
 
 func TestSetAccess_ResolvesSlugToID(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-xyz", Slug: "docs"}}},
-		API:   api,
-	}
-	out, err := svc.SetAccess(context.Background(), tnt, "tok-7", "docs", "public", "")
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "site-xyz", Slug: "docs"}}}
+	svc := &Service{API: api}
+	out, err := svc.SetAccess(context.Background(), "tok-7", "docs", "public", "")
 	if err != nil {
 		t.Fatalf("SetAccess: %v", err)
 	}
@@ -557,8 +506,8 @@ func TestSetAccess_ResolvesSlugToID(t *testing.T) {
 
 func TestSetAccess_UnknownSiteDoesNotCallAPI(t *testing.T) {
 	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	if _, err := svc.SetAccess(context.Background(), tnt, "tok", "ghost", "public", ""); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: api}
+	if _, err := svc.SetAccess(context.Background(), "tok", "ghost", "public", ""); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
 	}
 	if api.setSiteID != "" {
@@ -567,12 +516,9 @@ func TestSetAccess_UnknownSiteDoesNotCallAPI(t *testing.T) {
 }
 
 func TestSetAccess_PasswordForwarded(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
-		API:   api,
-	}
-	if _, err := svc.SetAccess(context.Background(), tnt, "tok", "docs", "password", "hunter2"); err != nil {
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs"}}}
+	svc := &Service{API: api}
+	if _, err := svc.SetAccess(context.Background(), "tok", "docs", "password", "hunter2"); err != nil {
 		t.Fatalf("SetAccess: %v", err)
 	}
 	if api.setMode != "password" || api.setPassword != "hunter2" {
@@ -583,18 +529,18 @@ func TestSetAccess_PasswordForwarded(t *testing.T) {
 // --- deploy_site ------------------------------------------------------------
 
 func TestDeploySite_DecodesAndForwards(t *testing.T) {
-	api := &fakeAPI{deployResp: apiclient.DeployResult{
-		VersionID: "v1", LiveURL: "https://acme--docs.dropwaycontent.com", FilesUploaded: 2, Published: true,
-	}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "site-1", Slug: "docs"}},
+		deployResp: apiclient.DeployResult{
+			VersionID: "v1", LiveURL: "https://acme--docs.dropwaycontent.com", FilesUploaded: 2, Published: true,
+		},
 	}
+	svc := &Service{API: api}
 	files := []deployFileIn{
 		{Path: "index.html", Text: "<h1>hi</h1>"},
 		{Path: "logo.png", Base64: "AAEC"}, // 3 bytes: 0x00 0x01 0x02
 	}
-	out, err := svc.DeploySite(context.Background(), tnt, "tok-9", "docs", files, true)
+	out, err := svc.DeploySite(context.Background(), "tok-9", "docs", files, true)
 	if err != nil {
 		t.Fatalf("DeploySite: %v", err)
 	}
@@ -619,12 +565,12 @@ func TestDeploySite_DecodesAndForwards(t *testing.T) {
 }
 
 func TestDeploySite_StageWithoutPublish(t *testing.T) {
-	api := &fakeAPI{deployResp: apiclient.DeployResult{VersionID: "v2", Published: false}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs"}},
+		deployResp:    apiclient.DeployResult{VersionID: "v2", Published: false},
 	}
-	out, err := svc.DeploySite(context.Background(), tnt, "tok", "docs", []deployFileIn{{Path: "index.html", Text: "x"}}, false)
+	svc := &Service{API: api}
+	out, err := svc.DeploySite(context.Background(), "tok", "docs", []deployFileIn{{Path: "index.html", Text: "x"}}, false)
 	if err != nil {
 		t.Fatalf("DeploySite: %v", err)
 	}
@@ -637,12 +583,9 @@ func TestDeploySite_StageWithoutPublish(t *testing.T) {
 }
 
 func TestDeploySite_InvalidBase64(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
-		API:   api,
-	}
-	_, err := svc.DeploySite(context.Background(), tnt, "tok", "docs", []deployFileIn{{Path: "x", Base64: "!!!notb64"}}, true)
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs"}}}
+	svc := &Service{API: api}
+	_, err := svc.DeploySite(context.Background(), "tok", "docs", []deployFileIn{{Path: "x", Base64: "!!!notb64"}}, true)
 	if err == nil {
 		t.Fatal("expected an invalid-base64 error")
 	}
@@ -652,12 +595,9 @@ func TestDeploySite_InvalidBase64(t *testing.T) {
 }
 
 func TestDeploySite_NoFiles(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}},
-		API:   api,
-	}
-	if _, err := svc.DeploySite(context.Background(), tnt, "tok", "docs", nil, true); err == nil {
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs"}}}
+	svc := &Service{API: api}
+	if _, err := svc.DeploySite(context.Background(), "tok", "docs", nil, true); err == nil {
 		t.Fatal("expected an error for an empty file set")
 	}
 }
@@ -685,8 +625,8 @@ func TestDeploySite_SchemaHasPlainTypes(t *testing.T) {
 
 func TestDeploySite_UnknownSite(t *testing.T) {
 	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	if _, err := svc.DeploySite(context.Background(), tnt, "tok", "ghost", []deployFileIn{{Path: "i", Text: "x"}}, true); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: api}
+	if _, err := svc.DeploySite(context.Background(), "tok", "ghost", []deployFileIn{{Path: "i", Text: "x"}}, true); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 	if api.deploySiteID != "" {
@@ -697,17 +637,17 @@ func TestDeploySite_UnknownSite(t *testing.T) {
 // --- list_skills --------------------------------------------------------------
 
 func TestListSkills_MapsFieldsAndOwner(t *testing.T) {
-	skills := &fakeSkills{skills: []store.Skill{
+	api := &fakeAPI{listSkillsResp: []apiclient.SkillSummary{
 		{
 			ID: "sk1", Slug: "writing", Title: "Writing", Description: "House style",
-			OwnerUserID: "user-9", CurrentVersionID: ptr("v1"), SizeBytes: 1234,
-			Folders: []store.SkillFolderRef{{FolderID: "f1", Slug: "product", Title: "Product", IsPreset: true}},
+			OwnerID: "user-9", CurrentVersionID: ptr("v1"), SizeBytes: 1234,
+			Folders: []apiclient.SkillFolderRef{{Slug: "product", Title: "Product", IsPreset: true}},
 		},
-		{ID: "sk2", Slug: "seeded", OwnerUserID: "00000000-0000-0000-0000-000000000000", CurrentVersionID: ptr("v2")},
+		{ID: "sk2", Slug: "seeded", IsSeeded: true, CurrentVersionID: ptr("v2")},
 	}}
-	svc := &Service{Skills: skills}
+	svc := &Service{API: api}
 
-	out, err := svc.ListSkills(context.Background(), tnt, "", "", false)
+	out, err := svc.ListSkills(context.Background(), readTok, "", "", false)
 	if err != nil {
 		t.Fatalf("ListSkills: %v", err)
 	}
@@ -727,23 +667,23 @@ func TestListSkills_MapsFieldsAndOwner(t *testing.T) {
 }
 
 func TestListSkills_ForwardsFilters(t *testing.T) {
-	skills := &fakeSkills{}
-	svc := &Service{Skills: skills}
-	if _, err := svc.ListSkills(context.Background(), tnt, "style", "product", true); err != nil {
+	api := &fakeAPI{}
+	svc := &Service{API: api}
+	if _, err := svc.ListSkills(context.Background(), readTok, "style", "product", true); err != nil {
 		t.Fatalf("ListSkills: %v", err)
 	}
-	if skills.listQuery != "style" || skills.listFolder != "product" || !skills.listPresetsOnly {
-		t.Errorf("filters not forwarded to the store: query=%q folder=%q presets=%v",
-			skills.listQuery, skills.listFolder, skills.listPresetsOnly)
+	if api.listSkillsQuery != "style" || api.listSkillsFolder != "product" || !api.listSkillsPresets {
+		t.Errorf("filters not forwarded to the API: query=%q folder=%q presets=%v",
+			api.listSkillsQuery, api.listSkillsFolder, api.listSkillsPresets)
 	}
 }
 
 func TestListSkills_ExposesVersion(t *testing.T) {
-	skills := &fakeSkills{skills: []store.Skill{
+	api := &fakeAPI{listSkillsResp: []apiclient.SkillSummary{
 		{ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v3"), Version: 3},
 	}}
-	svc := &Service{Skills: skills}
-	out, err := svc.ListSkills(context.Background(), tnt, "", "", false)
+	svc := &Service{API: api}
+	out, err := svc.ListSkills(context.Background(), readTok, "", "", false)
 	if err != nil {
 		t.Fatalf("ListSkills: %v", err)
 	}
@@ -753,12 +693,12 @@ func TestListSkills_ExposesVersion(t *testing.T) {
 }
 
 func TestCheckSkillUpdates(t *testing.T) {
-	skills := &fakeSkills{skills: []store.Skill{
+	api := &fakeAPI{listSkillsResp: []apiclient.SkillSummary{
 		{Slug: "writing", Version: 3},
 		{Slug: "review", Version: 1},
 	}}
-	svc := &Service{Skills: skills}
-	out, err := svc.CheckSkillUpdates(context.Background(), tnt, checkSkillUpdatesIn{Installed: []installedSkill{
+	svc := &Service{API: api}
+	out, err := svc.CheckSkillUpdates(context.Background(), readTok, checkSkillUpdatesIn{Installed: []installedSkill{
 		{Name: "writing", Version: 1}, // behind (3 > 1) → outdated
 		{Name: "review", Version: 1},  // up to date
 		{Name: "gone", Version: 2},    // no longer in the org → latest 0, not outdated
@@ -784,19 +724,19 @@ func TestCheckSkillUpdates(t *testing.T) {
 // --- download_skill -----------------------------------------------------------
 
 func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
-	// The skill is resolved to its id under RLS; the bytes come from the API.
-	api := &fakeAPI{downloadSkillResp: apiclient.SkillDownload{
-		Slug: "writing", SkillID: "sk1", Version: 2, Files: []apiclient.FilePayload{
-			{Path: "SKILL.md", Content: "# a skill\n", Encoding: "utf8"},
-			{Path: "assets/logo.png", Content: "//3/AA==", Encoding: "base64"},
+	// The skill is resolved to its id via the API listing; the bytes come from the API.
+	api := &fakeAPI{
+		listSkillsResp: []apiclient.SkillSummary{{ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1"), Version: 2}},
+		downloadSkillResp: apiclient.SkillDownload{
+			Slug: "writing", SkillID: "sk1", Version: 2, Files: []apiclient.FilePayload{
+				{Path: "SKILL.md", Content: "# a skill\n", Encoding: "utf8"},
+				{Path: "assets/logo.png", Content: "//3/AA==", Encoding: "base64"},
+			},
 		},
-	}}
-	skills := &fakeSkills{bySlug: map[string]store.Skill{
-		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1"), Version: 2},
-	}}
-	svc := &Service{Skills: skills, API: api}
+	}
+	svc := &Service{API: api}
 
-	out, err := svc.DownloadSkill(context.Background(), tnt, readTok, "writing")
+	out, err := svc.DownloadSkill(context.Background(), readTok, "writing")
 	if err != nil {
 		t.Fatalf("DownloadSkill: %v", err)
 	}
@@ -823,21 +763,19 @@ func TestDownloadSkill_TextAndBinaryEncoding(t *testing.T) {
 }
 
 func TestDownloadSkill_UnknownSkill(t *testing.T) {
-	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}, API: &fakeAPI{}}
-	if _, err := svc.DownloadSkill(context.Background(), tnt, readTok, "nope"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: &fakeAPI{}}
+	if _, err := svc.DownloadSkill(context.Background(), readTok, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown skill, got %v", err)
 	}
 }
 
 func TestDownloadSkill_NoContentErrors(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{
-		"empty": {ID: "sk9", Slug: "empty", CurrentVersionID: nil},
-	}}, API: api}
-	if _, err := svc.DownloadSkill(context.Background(), tnt, readTok, "empty"); err == nil {
+	api := &fakeAPI{listSkillsResp: []apiclient.SkillSummary{{ID: "sk9", Slug: "empty", CurrentVersionID: nil}}}
+	svc := &Service{API: api}
+	if _, err := svc.DownloadSkill(context.Background(), readTok, "empty"); err == nil {
 		t.Fatal("expected an error for a skill with no finalized upload")
 	}
-	// The no-content case short-circuits in the MCP; the API is never called.
+	// The no-content case short-circuits in the MCP; the download is never fetched.
 	if api.lastSkillID != "" {
 		t.Errorf("API should not be called for a skill with no content")
 	}
@@ -845,12 +783,12 @@ func TestDownloadSkill_NoContentErrors(t *testing.T) {
 
 func TestDownloadSkill_TruncatedPassthrough(t *testing.T) {
 	// The API applies the byte budget; the MCP relays its Truncated flag.
-	api := &fakeAPI{downloadSkillResp: apiclient.SkillDownload{Slug: "writing", SkillID: "sk1", Truncated: true}}
-	skills := &fakeSkills{bySlug: map[string]store.Skill{
-		"writing": {ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1")},
-	}}
-	svc := &Service{Skills: skills, API: api}
-	out, err := svc.DownloadSkill(context.Background(), tnt, readTok, "writing")
+	api := &fakeAPI{
+		listSkillsResp:    []apiclient.SkillSummary{{ID: "sk1", Slug: "writing", CurrentVersionID: ptr("v1")}},
+		downloadSkillResp: apiclient.SkillDownload{Slug: "writing", SkillID: "sk1", Truncated: true},
+	}
+	svc := &Service{API: api}
+	out, err := svc.DownloadSkill(context.Background(), readTok, "writing")
 	if err != nil {
 		t.Fatalf("DownloadSkill: %v", err)
 	}
@@ -864,22 +802,22 @@ func TestDownloadSkill_TruncatedPassthrough(t *testing.T) {
 func TestDownloadSkillFolder_SharedCapTruncation(t *testing.T) {
 	// The API decides the shared budget and marks each skill; the MCP reshapes the
 	// per-skill entries and synthesizes the note from the truncated set.
-	api := &fakeAPI{downloadFolderResp: apiclient.SkillFolderDownload{
-		Skills: []apiclient.SkillDownload{
-			{Slug: "a", SkillID: "sk1", Files: []apiclient.FilePayload{
-				{Path: "SKILL.md", Content: "# a\n", Encoding: "utf8"},
-				{Path: "assets/logo.png", Content: "//3/AA==", Encoding: "base64"},
-			}},
-			{Slug: "b", SkillID: "sk2", Truncated: true},
+	api := &fakeAPI{
+		listSkillFoldersResp: []apiclient.SkillFolderSummary{{ID: "f1", Slug: "product", Title: "Product", ItemCount: 2}},
+		downloadFolderResp: apiclient.SkillFolderDownload{
+			Skills: []apiclient.SkillDownload{
+				{Slug: "a", SkillID: "sk1", Files: []apiclient.FilePayload{
+					{Path: "SKILL.md", Content: "# a\n", Encoding: "utf8"},
+					{Path: "assets/logo.png", Content: "//3/AA==", Encoding: "base64"},
+				}},
+				{Slug: "b", SkillID: "sk2", Truncated: true},
+			},
+			Warnings: []string{"some skills were not inlined"},
 		},
-		Warnings: []string{"some skills were not inlined"},
-	}}
-	skills := &fakeSkills{
-		folders: []store.SkillFolder{{ID: "f1", Slug: "product", Title: "Product", ItemCount: 2}},
 	}
-	svc := &Service{Skills: skills, API: api}
+	svc := &Service{API: api}
 
-	out, err := svc.DownloadSkillFolder(context.Background(), tnt, readTok, "product")
+	out, err := svc.DownloadSkillFolder(context.Background(), readTok, "product")
 	if err != nil {
 		t.Fatalf("DownloadSkillFolder: %v", err)
 	}
@@ -901,8 +839,8 @@ func TestDownloadSkillFolder_SharedCapTruncation(t *testing.T) {
 }
 
 func TestDownloadSkillFolder_UnknownFolder(t *testing.T) {
-	svc := &Service{Skills: &fakeSkills{}, API: &fakeAPI{}}
-	if _, err := svc.DownloadSkillFolder(context.Background(), tnt, readTok, "ghost"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: &fakeAPI{}}
+	if _, err := svc.DownloadSkillFolder(context.Background(), readTok, "ghost"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown folder, got %v", err)
 	}
 }
@@ -911,14 +849,12 @@ func TestDownloadSkillFolder_UnknownFolder(t *testing.T) {
 
 func TestUploadSkill_CreatesWhenAbsent(t *testing.T) {
 	api := &fakeAPI{
-		createSkillResp: apiclient.SkillInfo{ID: "sk-new", Slug: "writing"},
-		uploadResp:      apiclient.UploadResult{VersionID: "v1", VersionNo: 1, Warnings: []string{"w"}},
+		// absent from listSkillsResp → create; folders resolved post-create.
+		createSkillResp:      apiclient.SkillInfo{ID: "sk-new", Slug: "writing"},
+		uploadResp:           apiclient.UploadResult{VersionID: "v1", VersionNo: 1, Warnings: []string{"w"}},
+		listSkillFoldersResp: []apiclient.SkillFolderSummary{{ID: "f1", Slug: "product", Title: "Product"}},
 	}
-	skills := &fakeSkills{
-		bySlug:  map[string]store.Skill{}, // absent → create
-		folders: []store.SkillFolder{{ID: "f1", Slug: "product", Title: "Product"}},
-	}
-	svc := &Service{Skills: skills, API: api}
+	svc := &Service{API: api}
 
 	in := uploadSkillIn{
 		Name:    "writing",
@@ -929,7 +865,7 @@ func TestUploadSkill_CreatesWhenAbsent(t *testing.T) {
 			{Path: "assets/logo.png", Content: "AAEC", Encoding: "base64"}, // 0x00 0x01 0x02
 		},
 	}
-	out, err := svc.UploadSkill(context.Background(), tnt, "tok-5", in)
+	out, err := svc.UploadSkill(context.Background(), "tok-5", in)
 	if err != nil {
 		t.Fatalf("UploadSkill: %v", err)
 	}
@@ -965,13 +901,13 @@ func TestUploadSkill_CreatesWhenAbsent(t *testing.T) {
 }
 
 func TestUploadSkill_ReusesExistingSkill(t *testing.T) {
-	api := &fakeAPI{uploadResp: apiclient.UploadResult{VersionID: "v2", VersionNo: 2}}
-	skills := &fakeSkills{bySlug: map[string]store.Skill{
-		"writing": {ID: "sk-old", Slug: "writing", CurrentVersionID: ptr("v1")},
-	}}
-	svc := &Service{Skills: skills, API: api}
+	api := &fakeAPI{
+		uploadResp:     apiclient.UploadResult{VersionID: "v2", VersionNo: 2},
+		listSkillsResp: []apiclient.SkillSummary{{ID: "sk-old", Slug: "writing", CurrentVersionID: ptr("v1")}},
+	}
+	svc := &Service{API: api}
 
-	out, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+	out, err := svc.UploadSkill(context.Background(), "tok", uploadSkillIn{
 		Name:  "writing",
 		Files: []uploadSkillFileIn{{Path: "SKILL.md", Content: "# v2"}},
 	})
@@ -994,8 +930,8 @@ func TestUploadSkill_ReusesExistingSkill(t *testing.T) {
 
 func TestUploadSkill_RequiresRootSkillMD(t *testing.T) {
 	api := &fakeAPI{}
-	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}, API: api}
-	_, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+	svc := &Service{API: api}
+	_, err := svc.UploadSkill(context.Background(), "tok", uploadSkillIn{
 		Name:  "writing",
 		Files: []uploadSkillFileIn{{Path: "notes.md", Content: "x"}},
 	})
@@ -1012,15 +948,12 @@ func TestUploadSkill_RequiresRootSkillMD(t *testing.T) {
 // the available slugs — which are non-empty precisely because seeding has run — and
 // SetSkillFolders is never called for the bad slug.
 func TestUploadSkill_UnknownFolderListsAvailable(t *testing.T) {
-	api := &fakeAPI{createSkillResp: apiclient.SkillInfo{ID: "sk-new", Slug: "writing"}}
-	svc := &Service{
-		Skills: &fakeSkills{
-			bySlug:  map[string]store.Skill{},
-			folders: []store.SkillFolder{{ID: "f1", Slug: "product"}},
-		},
-		API: api,
+	api := &fakeAPI{
+		createSkillResp:      apiclient.SkillInfo{ID: "sk-new", Slug: "writing"},
+		listSkillFoldersResp: []apiclient.SkillFolderSummary{{ID: "f1", Slug: "product"}},
 	}
-	_, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+	svc := &Service{API: api}
+	_, err := svc.UploadSkill(context.Background(), "tok", uploadSkillIn{
 		Name:    "writing",
 		Folders: []string{"ghost"},
 		Files:   []uploadSkillFileIn{{Path: "SKILL.md", Content: "x"}},
@@ -1035,8 +968,8 @@ func TestUploadSkill_UnknownFolderListsAvailable(t *testing.T) {
 
 func TestUploadSkill_UnsafePathRejected(t *testing.T) {
 	api := &fakeAPI{}
-	svc := &Service{Skills: &fakeSkills{bySlug: map[string]store.Skill{}}, API: api}
-	_, err := svc.UploadSkill(context.Background(), tnt, "tok", uploadSkillIn{
+	svc := &Service{API: api}
+	_, err := svc.UploadSkill(context.Background(), "tok", uploadSkillIn{
 		Name:  "writing",
 		Files: []uploadSkillFileIn{{Path: "SKILL.md", Content: "x"}, {Path: "../escape.md", Content: "x"}},
 	})
@@ -1051,16 +984,16 @@ func TestUploadSkill_UnsafePathRejected(t *testing.T) {
 // --- share_chat -----------------------------------------------------------------
 
 func TestShareChat_ResolvesSiteAndMaps(t *testing.T) {
-	api := &fakeAPI{chatCreateResp: apiclient.ChatCreateResult{
-		ChatLog:  apiclient.ChatLogInfo{ID: "chat-1", Title: "Build log"},
-		Appended: 3, Pruned: 1, Window: 50, Dropped: 2,
-	}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{
-			"docs": {ID: "site-1", Slug: "docs", Host: ptr("acme--docs.dropwaycontent.com")},
-		}},
-		API: api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{
+			{ID: "site-1", Slug: "docs", CurrentVersionID: ptr("v1"), LiveURL: "https://acme--docs.dropwaycontent.com"},
+		},
+		chatCreateResp: apiclient.ChatCreateResult{
+			ChatLog:  apiclient.ChatLogInfo{ID: "chat-1", Title: "Build log"},
+			Appended: 3, Pruned: 1, Window: 50, Dropped: 2,
+		},
 	}
+	svc := &Service{API: api}
 	in := shareChatIn{
 		Site:       "docs",
 		Title:      "Build log",
@@ -1072,7 +1005,7 @@ func TestShareChat_ResolvesSiteAndMaps(t *testing.T) {
 			{Kind: "action", Content: "wired the nav", Meta: &chatActionMeta{Action: "file_edit", Paths: []string{"index.html"}}},
 		},
 	}
-	out, err := svc.ShareChat(context.Background(), tnt, "tok-3", in)
+	out, err := svc.ShareChat(context.Background(), "tok-3", in)
 	if err != nil {
 		t.Fatalf("ShareChat: %v", err)
 	}
@@ -1103,8 +1036,8 @@ func TestShareChat_ResolvesSiteAndMaps(t *testing.T) {
 
 func TestShareChat_UnattachedSkipsSiteLookup(t *testing.T) {
 	api := &fakeAPI{chatCreateResp: apiclient.ChatCreateResult{ChatLog: apiclient.ChatLogInfo{ID: "chat-2"}}}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	out, err := svc.ShareChat(context.Background(), tnt, "tok", shareChatIn{Transcript: "hi"})
+	svc := &Service{API: api}
+	out, err := svc.ShareChat(context.Background(), "tok", shareChatIn{Transcript: "hi"})
 	if err != nil {
 		t.Fatalf("ShareChat: %v", err)
 	}
@@ -1121,8 +1054,8 @@ func TestShareChat_UnattachedSkipsSiteLookup(t *testing.T) {
 
 func TestShareChat_UnknownSiteDoesNotCallAPI(t *testing.T) {
 	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	if _, err := svc.ShareChat(context.Background(), tnt, "tok", shareChatIn{Site: "ghost"}); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: api}
+	if _, err := svc.ShareChat(context.Background(), "tok", shareChatIn{Site: "ghost"}); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
 	}
 	if api.chatCreateToken != "" {
@@ -1132,8 +1065,8 @@ func TestShareChat_UnknownSiteDoesNotCallAPI(t *testing.T) {
 
 func TestShareChat_APIErrorPropagates(t *testing.T) {
 	api := &fakeAPI{chatCreateErr: &apiclient.Error{Status: 402, Message: "chat log limit reached"}}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	if _, err := svc.ShareChat(context.Background(), tnt, "tok", shareChatIn{Transcript: "hi"}); err == nil {
+	svc := &Service{API: api}
+	if _, err := svc.ShareChat(context.Background(), "tok", shareChatIn{Transcript: "hi"}); err == nil {
 		t.Fatal("expected the API error to propagate")
 	}
 }
@@ -1154,11 +1087,11 @@ func TestShareChat_SchemaHasPlainTypes(t *testing.T) {
 // --- append_chat ------------------------------------------------------------------
 
 func TestAppendChat_BySiteResolvesSlug(t *testing.T) {
-	api := &fakeAPI{siteChatResp: apiclient.ChatAppendResult{Appended: 2, Pruned: 1, Window: 50}}
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
-		API:   api,
+	api := &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "site-1", Slug: "docs"}},
+		siteChatResp:  apiclient.ChatAppendResult{Appended: 2, Pruned: 1, Window: 50},
 	}
+	svc := &Service{API: api}
 	in := appendChatIn{
 		Site: "docs",
 		Messages: []chatMessageIn{
@@ -1166,7 +1099,7 @@ func TestAppendChat_BySiteResolvesSlug(t *testing.T) {
 			{Kind: "action", Content: "kept the hero copy short on purpose", Meta: &chatActionMeta{Action: "tool_use", Tool: "deploy_site"}},
 		},
 	}
-	out, err := svc.AppendChat(context.Background(), tnt, "tok-4", in)
+	out, err := svc.AppendChat(context.Background(), "tok-4", in)
 	if err != nil {
 		t.Fatalf("AppendChat: %v", err)
 	}
@@ -1186,8 +1119,8 @@ func TestAppendChat_BySiteResolvesSlug(t *testing.T) {
 
 func TestAppendChat_ByChatID(t *testing.T) {
 	api := &fakeAPI{chatAppendResp: apiclient.ChatAppendResult{Appended: 1}}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	out, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{
+	svc := &Service{API: api}
+	out, err := svc.AppendChat(context.Background(), "tok", appendChatIn{
 		ChatID:   "chat-7",
 		Messages: []chatMessageIn{{Content: "hi", Role: "user"}},
 	})
@@ -1206,13 +1139,13 @@ func TestAppendChat_ByChatID(t *testing.T) {
 }
 
 func TestAppendChat_ExactlyOneTarget(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}}, API: api}
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs"}}}
+	svc := &Service{API: api}
 	msgs := []chatMessageIn{{Content: "x", Role: "user"}}
-	if _, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{Messages: msgs}); err == nil {
+	if _, err := svc.AppendChat(context.Background(), "tok", appendChatIn{Messages: msgs}); err == nil {
 		t.Fatal("expected an error when neither site nor chat_id is set")
 	}
-	if _, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{Site: "docs", ChatID: "c1", Messages: msgs}); err == nil {
+	if _, err := svc.AppendChat(context.Background(), "tok", appendChatIn{Site: "docs", ChatID: "c1", Messages: msgs}); err == nil {
 		t.Fatal("expected an error when both site and chat_id are set")
 	}
 	if api.chatAppendID != "" || api.siteChatSiteID != "" {
@@ -1221,9 +1154,9 @@ func TestAppendChat_ExactlyOneTarget(t *testing.T) {
 }
 
 func TestAppendChat_RequiresPayload(t *testing.T) {
-	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "s1", Slug: "docs"}}}, API: api}
-	if _, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{Site: "docs"}); err == nil {
+	api := &fakeAPI{listSitesResp: []apiclient.SiteSummary{{ID: "s1", Slug: "docs"}}}
+	svc := &Service{API: api}
+	if _, err := svc.AppendChat(context.Background(), "tok", appendChatIn{Site: "docs"}); err == nil {
 		t.Fatal("expected an error for an append with no messages and no transcript")
 	}
 	if api.siteChatSiteID != "" {
@@ -1233,8 +1166,8 @@ func TestAppendChat_RequiresPayload(t *testing.T) {
 
 func TestAppendChat_UnknownSiteDoesNotCallAPI(t *testing.T) {
 	api := &fakeAPI{}
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, API: api}
-	_, err := svc.AppendChat(context.Background(), tnt, "tok", appendChatIn{
+	svc := &Service{API: api}
+	_, err := svc.AppendChat(context.Background(), "tok", appendChatIn{
 		Site: "ghost", Messages: []chatMessageIn{{Content: "x", Role: "user"}},
 	})
 	if !errors.Is(err, store.ErrNotFound) {
@@ -1247,37 +1180,43 @@ func TestAppendChat_UnknownSiteDoesNotCallAPI(t *testing.T) {
 
 // --- get_site_chat ----------------------------------------------------------------
 
-func siteChatFixture() (*fakeStore, *fakeChats) {
-	st := &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}}
-	chats := &fakeChats{
-		bySite: map[string]store.ChatLog{"site-1": {
-			ID: "chat-1", SiteID: ptr("site-1"), Title: "Build log", SourceTool: "claude_code",
-			PanelEnabled: true, MessageCount: 3, CreatedBy: "user-1",
-			CreatedAt: time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC),
-		}},
-		msgs: map[string][]store.ChatMessage{"chat-1": {
-			{Seq: 1, Role: "user", Kind: "chat", Content: "build me a docs site",
-				CreatedAt: time.Date(2026, 7, 14, 10, 1, 0, 0, time.UTC)},
-			{Seq: 2, Role: "assistant", Kind: "action", Content: "scaffolded the layout",
-				Meta:      []byte(`{"action":"file_edit","paths":["index.html","style.css"]}`),
-				CreatedAt: time.Date(2026, 7, 14, 10, 2, 0, 0, time.UTC)},
-			{Seq: 3, Role: "assistant", Kind: "chat", Content: "done!",
-				CreatedAt: time.Date(2026, 7, 14, 10, 3, 0, 0, time.UTC)},
-		}},
+// siteChatFixture returns a fakeAPI wired so "docs" resolves to site-1 and the
+// API serves that site's attached chat log + messages.
+func siteChatFixture() *fakeAPI {
+	return &fakeAPI{
+		listSitesResp: []apiclient.SiteSummary{{ID: "site-1", Slug: "docs"}},
+		getSiteChatResp: apiclient.SiteChat{
+			ChatLog: apiclient.ChatLogInfo{
+				ID: "chat-1", SiteID: ptr("site-1"), Title: "Build log", SourceTool: "claude_code",
+				PanelEnabled: true, MessageCount: 3,
+				CreatedAt: time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC),
+			},
+			Messages: []apiclient.ChatMessageDTO{
+				{Seq: 1, Role: "user", Kind: "chat", Content: "build me a docs site",
+					CreatedAt: time.Date(2026, 7, 14, 10, 1, 0, 0, time.UTC)},
+				{Seq: 2, Role: "assistant", Kind: "action", Content: "scaffolded the layout",
+					Meta:      []byte(`{"action":"file_edit","paths":["index.html","style.css"]}`),
+					CreatedAt: time.Date(2026, 7, 14, 10, 2, 0, 0, time.UTC)},
+				{Seq: 3, Role: "assistant", Kind: "chat", Content: "done!",
+					CreatedAt: time.Date(2026, 7, 14, 10, 3, 0, 0, time.UTC)},
+			},
+		},
 	}
-	return st, chats
 }
 
 func TestGetSiteChat_MapsLogAndMessages(t *testing.T) {
-	st, chats := siteChatFixture()
-	svc := &Service{Store: st, Chats: chats}
+	api := siteChatFixture()
+	svc := &Service{API: api}
 
-	out, err := svc.GetSiteChat(context.Background(), tnt, "docs")
+	out, err := svc.GetSiteChat(context.Background(), readTok, "docs")
 	if err != nil {
 		t.Fatalf("GetSiteChat: %v", err)
 	}
 	if out.Site != "docs" || out.Truncated {
 		t.Fatalf("out wrong: %+v", out)
+	}
+	if api.getSiteChatSiteID != "site-1" {
+		t.Errorf("slug not resolved to id: getSiteChatSiteID=%q, want site-1", api.getSiteChatSiteID)
 	}
 	l := out.ChatLog
 	if l.ChatID != "chat-1" || l.Title != "Build log" || l.SourceTool != "claude_code" ||
@@ -1298,19 +1237,23 @@ func TestGetSiteChat_MapsLogAndMessages(t *testing.T) {
 }
 
 func TestGetSiteChat_UnknownSite(t *testing.T) {
-	svc := &Service{Store: &fakeStore{bySlug: map[string]store.Site{}}, Chats: &fakeChats{}}
-	if _, err := svc.GetSiteChat(context.Background(), tnt, "ghost"); !errors.Is(err, store.ErrNotFound) {
+	svc := &Service{API: &fakeAPI{}}
+	if _, err := svc.GetSiteChat(context.Background(), readTok, "ghost"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("want ErrNotFound for unknown site, got %v", err)
 	}
 }
 
 func TestGetSiteChat_NoAttachedLog(t *testing.T) {
-	svc := &Service{
-		Store: &fakeStore{bySlug: map[string]store.Site{"docs": {ID: "site-1", Slug: "docs"}}},
-		Chats: &fakeChats{bySite: map[string]store.ChatLog{}},
+	// The site resolves, but it has no attached log: the API answers 404. Unlike the
+	// slug-resolution path, GetSiteChat relays the raw API error rather than mapping
+	// it to store.ErrNotFound, so the assertion is simply that it errors.
+	api := &fakeAPI{
+		listSitesResp:  []apiclient.SiteSummary{{ID: "site-1", Slug: "docs"}},
+		getSiteChatErr: &apiclient.Error{Status: 404, Message: "no chat log attached"},
 	}
-	if _, err := svc.GetSiteChat(context.Background(), tnt, "docs"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("want ErrNotFound for a site with no attached log, got %v", err)
+	svc := &Service{API: api}
+	if _, err := svc.GetSiteChat(context.Background(), readTok, "docs"); err == nil {
+		t.Fatal("want an error for a site with no attached log")
 	}
 }
 
@@ -1319,9 +1262,9 @@ func TestGetSiteChat_TruncatedPastCap(t *testing.T) {
 	maxChatBytes = 25 // fits the first message (20 bytes) but not also the second
 	defer func() { maxChatBytes = orig }()
 
-	st, chats := siteChatFixture()
-	svc := &Service{Store: st, Chats: chats}
-	out, err := svc.GetSiteChat(context.Background(), tnt, "docs")
+	api := siteChatFixture()
+	svc := &Service{API: api}
+	out, err := svc.GetSiteChat(context.Background(), readTok, "docs")
 	if err != nil {
 		t.Fatalf("GetSiteChat: %v", err)
 	}

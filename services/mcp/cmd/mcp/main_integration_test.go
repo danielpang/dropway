@@ -54,7 +54,6 @@ func env(key, def string) string {
 	return def
 }
 
-
 // jwks serves an Ed25519 public key as an OKP JWK so the real coreauth.Verifier
 // can validate tokens we mint with the matching private key.
 func newJWKS(t *testing.T, pub ed25519.PublicKey) *httptest.Server {
@@ -194,7 +193,9 @@ func TestMCPServer_Endpoints(t *testing.T) {
 	verifier := coreauth.NewVerifier(jwks.URL, itIssuer, itResource,
 		coreauth.WithExtraAudiences(itResource+"/"))
 	st := store.New(appPool)
-	svc := &tools.Service{Store: st, Skills: st, Chats: st}
+	// The tools hold no store; this suite only exercises auth + the mcp_enabled
+	// kill-switch (which the gate checks against st, passed to newMux below).
+	svc := &tools.Service{}
 
 	ts := httptest.NewServer(newMux(verifier, st, svc, itResource, itIssuer, nil, nil))
 	defer ts.Close()

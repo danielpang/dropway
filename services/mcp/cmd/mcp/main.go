@@ -101,8 +101,11 @@ func main() {
 	// matches whatever form the client sent.
 	verifier := coreauth.NewVerifier(jwksURL, issuer, publicURL,
 		coreauth.WithExtraAudiences(coreauth.MCPResourceAudiences(publicURL)...))
+	// st is used ONLY for the org mcp_enabled kill-switch gate (requireMCPEnabled)
+	// and the /healthz DB round-trip — the one place this process reads Postgres.
+	// The tools themselves hold no store: every tool call goes through the Go API.
 	st := store.New(pool)
-	svc := &tools.Service{Store: st, Skills: st, Chats: st}
+	svc := &tools.Service{}
 
 	// Product analytics over the same shared posthog client as error tracking.
 	// Nil when PostHog is unconfigured → auth rejections are logged only.
