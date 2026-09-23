@@ -80,6 +80,25 @@ describe("redirectToRegister", () => {
     expect(redirectToRegister(OTHER, [STABLE, CALLBACK])).toBeNull();
   });
 
+  it("refuses non-canonical strings that parse as a ChatGPT callback", () => {
+    expect(
+      redirectToRegister(
+        "https://chatgpt.com/./connector_platform_oauth_redirect",
+        [CALLBACK],
+      ),
+    ).toBeNull();
+    expect(
+      redirectToRegister(` ${STABLE}`, [CALLBACK]),
+    ).toBeNull();
+    expect(
+      redirectToRegister("https://ChatGPT.com/connector_platform_oauth_redirect", [CALLBACK]),
+    ).toBeNull();
+    expect(redirectToRegister(`${CALLBACK}/`, [STABLE])).toBeNull();
+    expect(
+      redirectToRegister("https://chatgpt.com/connector/oauth/foo/../cb_123", [STABLE]),
+    ).toBeNull();
+  });
+
   it("refuses a ChatGPT callback when the client never registered one on that host", () => {
     expect(redirectToRegister(STABLE, ["http://127.0.0.1:9999/callback"])).toBeNull();
     expect(
@@ -118,6 +137,7 @@ describe("registerChatgptAuthorizeRedirect", () => {
       redirectUri: CALLBACK,
       findClient,
       updateRedirects,
+      clientHasConsent: async () => false,
     });
     expect(result).toBe("updated");
     expect(updateRedirects).toHaveBeenCalledWith("client", [STABLE, CALLBACK]);
@@ -156,6 +176,50 @@ describe("registerChatgptAuthorizeRedirect", () => {
       }),
     ).toBe("unchanged");
     expect(updateRedirects).not.toHaveBeenCalled();
+  });
+
+  it("does not attach a new callback id when consent already exists or is skipped", async () => {
+    const updateRedirects = vi.fn();
+    expect(
+      await registerChatgptAuthorizeRedirect({
+        clientId: "client",
+        redirectUri: CALLBACK,
+        findClient: async () => ({ redirectUris: [STABLE] }),
+        updateRedirects,
+        clientHasConsent: async () => true,
+      }),
+    ).toBe("unchanged");
+    expect(
+      await registerChatgptAuthorizeRedirect({
+        clientId: "client",
+        redirectUri: CALLBACK,
+        findClient: async () => ({ redirectUris: [STABLE], skipConsent: true }),
+        updateRedirects,
+        clientHasConsent: async () => false,
+      }),
+    ).toBe("unchanged");
+    expect(
+      await registerChatgptAuthorizeRedirect({
+        clientId: "client",
+        redirectUri: CALLBACK,
+        findClient: async () => ({ redirectUris: [STABLE] }),
+        updateRedirects,
+      }),
+    ).toBe("unchanged");
+    expect(updateRedirects).not.toHaveBeenCalled();
+  });
+
+  it("still adds the stable callback after consent exists", async () => {
+    const updateRedirects = vi.fn(async () => undefined);
+    const result = await registerChatgptAuthorizeRedirect({
+      clientId: "client",
+      redirectUri: STABLE,
+      findClient: async () => ({ redirectUris: [CALLBACK] }),
+      updateRedirects,
+      clientHasConsent: async () => true,
+    });
+    expect(result).toBe("updated");
+    expect(updateRedirects).toHaveBeenCalledWith("client", [CALLBACK, STABLE]);
   });
 
   it("skips a missing client without writing", async () => {

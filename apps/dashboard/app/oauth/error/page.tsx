@@ -4,8 +4,9 @@ import { ShieldAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
-  firstQueryValue,
   oauthErrorPresentation,
+  safeOAuthErrorCode,
+  safeOAuthErrorDescription,
 } from "@/lib/oauth-error-page";
 
 export const metadata: Metadata = { title: "Authorization failed" };
@@ -24,8 +25,8 @@ export default async function OAuthErrorPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const error = firstQueryValue(sp.error);
-  const description = firstQueryValue(sp.error_description);
+  const error = safeOAuthErrorCode(sp.error);
+  const description = safeOAuthErrorDescription(sp.error_description);
   const copy = oauthErrorPresentation(error);
 
   return (

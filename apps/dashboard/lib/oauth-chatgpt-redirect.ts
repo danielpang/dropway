@@ -27,9 +27,32 @@ export type ChatgptRedirect =
   | { kind: "stable"; host: string }
   | { kind: "callback"; host: string; id: string };
 
+function canonicalForm(parsed: ChatgptRedirect): string {
+  return parsed.kind === "stable"
+    ? `https://${parsed.host}${STABLE_PATH}`
+    : `https://${parsed.host}${CALLBACK_PREFIX}${parsed.id}`;
+}
+
+/**
+ * The requested redirect we are willing to store. The URL parser folds dot
+ * segments, backslashes, and surrounding whitespace into a chatgpt.com path,
+ * so classification alone is not enough: the raw string must be the canonical
+ * callback, or the stable callback with one trailing slash.
+ */
+export function acceptableRequestedRedirect(raw: string): string | null {
+  const parsed = parseChatgptRedirect(raw);
+  if (!parsed) return null;
+  const canonical = canonicalForm(parsed);
+  if (raw === canonical) return raw;
+  if (parsed.kind === "stable" && raw === `${canonical}/`) return raw;
+  return null;
+}
+
 /**
  * Classify a redirect_uri as one of ChatGPT's documented connector callbacks.
  * Returns null for every other URL, including other paths on chatgpt.com.
+ * Registered values may be slightly non-canonical; use
+ * `acceptableRequestedRedirect` before storing a new one.
  */
 export function parseChatgptRedirect(raw: string): ChatgptRedirect | null {
   let url: URL;
@@ -46,7 +69,9 @@ export function parseChatgptRedirect(raw: string): ChatgptRedirect | null {
   if (!CHATGPT_HOSTS.has(host)) return null;
 
   let path = url.pathname;
-  if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+  // One trailing slash is part of the stable callback only. A trailing slash
+  // on /connector/oauth/{id} is a different path and is not accepted.
+  if (path === `${STABLE_PATH}/`) path = STABLE_PATH;
   if (path.includes("\\") || path.split("/").includes("..")) return null;
 
   if (path === STABLE_PATH) return { kind: "stable", host };
@@ -69,16 +94,18 @@ export function redirectToRegister(
   requestedRaw: string,
   registered: readonly string[],
 ): string | null {
-  const requested = parseChatgptRedirect(requestedRaw);
+  const requestedRawOk = acceptableRequestedRedirect(requestedRaw);
+  if (!requestedRawOk) return null;
+  const requested = parseChatgptRedirect(requestedRawOk);
   if (!requested) return null;
-  if (registered.includes(requestedRaw)) return null;
+  if (registered.includes(requestedRawOk)) return null;
 
   const sameHost = registered
     .map((raw) => parseChatgptRedirect(raw))
     .filter((parsed): parsed is ChatgptRedirect => parsed !== null && parsed.host === requested.host);
   if (sameHost.length === 0) return null;
 
-  if (requested.kind === "stable") return requestedRaw;
+  if (requested.kind === "stable") return requestedRawOk;
 
   const ids = sameHost.filter((parsed) => parsed.kind === "callback");
   const hasThisId = ids.some((parsed) => parsed.kind === "callback" && parsed.id === requested.id);
@@ -87,8 +114,25 @@ export function redirectToRegister(
   // A different callback id is already on the client. Refuse another one so a
   // known client_id cannot be pointed at someone else's ChatGPT callback.
   if (hasOtherId) return null;
-  if (hasThisId || hasStable) return requestedRaw;
+  if (hasThisId || hasStable) return requestedRawOk;
   return null;
+}
+
+/** A callback id that is not already on this client's allowlist. */
+export function isNewCallbackId(
+  requestedRaw: string,
+  registered: readonly string[],
+): boolean {
+  const requested = parseChatgptRedirect(requestedRaw);
+  if (!requested || requested.kind !== "callback") return false;
+  return !registered.some((raw) => {
+    const existing = parseChatgptRedirect(raw);
+    return (
+      existing?.kind === "callback" &&
+      existing.host === requested.host &&
+      existing.id === requested.id
+    );
+  });
 }
 
 /** Allowlist to persist when an alias should be added; null when no write is needed. */
@@ -123,6 +167,8 @@ export function coerceRedirectUris(value: unknown): string[] | null {
 
 export type OAuthClientRedirectRecord = {
   redirectUris?: unknown;
+  /** When true, authorize issues a code without a consent screen. */
+  skipConsent?: boolean | null;
 };
 
 /**
@@ -137,19 +183,68 @@ export async function registerChatgptAuthorizeRedirect(input: {
     clientId: string,
   ) => Promise<OAuthClientRedirectRecord | null | undefined>;
   updateRedirects: (clientId: string, redirectUris: string[]) => Promise<void>;
+  /**
+   * Whether any user has already consented to this client. Required before a
+   * brand-new callback id is stored: that id is chosen by the authorize
+   * request, and an existing consent would send the code there with no new
+   * approval screen. Missing or failing lookup fails closed for that case.
+   * Adding the fixed stable URL does not consult this.
+   */
+  clientHasConsent?: (clientId: string) => Promise<boolean>;
 }): Promise<"updated" | "unchanged" | "skipped"> {
   const { clientId, redirectUri } = input;
   if (!clientId || !redirectUri) return "skipped";
   // Parse before any database read so ordinary (non-ChatGPT) clients, including
   // the localhost clients used by the CLI and e2e, never touch oauthClient.
-  if (!parseChatgptRedirect(redirectUri)) return "skipped";
+  if (!acceptableRequestedRedirect(redirectUri)) return "skipped";
 
   const client = await input.findClient(clientId);
   if (!client) return "skipped";
   const current = coerceRedirectUris(client.redirectUris);
   if (!current) return "skipped";
-  const next = nextRedirectUris(redirectUri, current);
+  if (!(await mayStoreRedirect(input, clientId, redirectUri, current, client.skipConsent))) {
+    return "unchanged";
+  }
+
+  // Re-read so a callback id committed by a concurrent authorize is not
+  // overwritten with a stale copy of the allowlist.
+  const latestClient = await input.findClient(clientId);
+  if (!latestClient) return "skipped";
+  const latest = coerceRedirectUris(latestClient.redirectUris);
+  if (!latest) return "skipped";
+  if (
+    !(await mayStoreRedirect(
+      input,
+      clientId,
+      redirectUri,
+      latest,
+      latestClient.skipConsent,
+    ))
+  ) {
+    return "unchanged";
+  }
+  const next = nextRedirectUris(redirectUri, latest);
   if (!next) return "unchanged";
   await input.updateRedirects(clientId, next);
   return "updated";
+}
+
+async function mayStoreRedirect(
+  input: {
+    clientHasConsent?: (clientId: string) => Promise<boolean>;
+  },
+  clientId: string,
+  redirectUri: string,
+  registered: readonly string[],
+  skipConsent: boolean | null | undefined,
+): Promise<boolean> {
+  if (!nextRedirectUris(redirectUri, registered)) return false;
+  if (!isNewCallbackId(redirectUri, registered)) return true;
+  if (skipConsent) return false;
+  try {
+    if (!input.clientHasConsent) return false;
+    return !(await input.clientHasConsent(clientId));
+  } catch {
+    return false;
+  }
 }

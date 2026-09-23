@@ -306,7 +306,11 @@ export const auth = betterAuth({
     //      with the other. The alias is written onto that client's redirectUris
     //      before the endpoint reads it. The requested URI is stored as sent so
     //      the authorization code stays bound to the URI ChatGPT will repeat at
-    //      the token endpoint. Non-ChatGPT clients are not read or updated.
+    //      the token endpoint. A brand-new callback id is stored only when this
+    //      client has no consent yet and does not skip consent — an existing
+    //      grant would otherwise send the code to that id with no new approval.
+    //      The fixed stable callback can still be added after consent. Non-ChatGPT
+    //      clients are not read or updated.
     //   2. Gracefully narrow a client's requested `scope` to the scopes we
     //      support, dropping unsupported ones instead of hard-failing the whole
     //      handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
@@ -344,11 +348,22 @@ export const auth = betterAuth({
               clientId: typeof clientId === "string" ? clientId : undefined,
               redirectUri: typeof redirectUri === "string" ? redirectUri : undefined,
               findClient: (id) =>
-                ctx.context.adapter.findOne<{ redirectUris?: unknown }>({
+                ctx.context.adapter.findOne<{
+                  redirectUris?: unknown;
+                  skipConsent?: boolean | null;
+                }>({
                   model: "oauthClient",
                   where: [{ field: "clientId", value: id }],
-                  select: ["redirectUris"],
+                  select: ["redirectUris", "skipConsent"],
                 }),
+              clientHasConsent: async (id) => {
+                const rows = await ctx.context.adapter.findMany<{ clientId?: string }>({
+                  model: "oauthConsent",
+                  where: [{ field: "clientId", value: id }],
+                  limit: 1,
+                });
+                return Array.isArray(rows) && rows.length > 0;
+              },
               updateRedirects: async (id, redirectUris) => {
                 await ctx.context.adapter.update({
                   model: "oauthClient",
