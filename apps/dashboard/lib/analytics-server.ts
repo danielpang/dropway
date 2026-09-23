@@ -314,7 +314,9 @@ const ALERTABLE_OAUTH_ERRORS = new Set([
  * endpoint / client) AND, for a connection-breaking code (ALERTABLE_OAUTH_ERRORS),
  * raise it to Error Tracking so a spike is alertable, not just a chart. No user is
  * authenticated at this point, so it's attributed to the system distinct_id unless
- * a session is known; client_id / scope / resource ride along as properties.
+ * a session is known; client_id / scope / resource / redirect_uri ride along as
+ * properties. redirect_uri is the client's callback (not a secret); it is what
+ * makes an invalid_redirect diagnosable.
  *
  * Best-effort and self-swallowing: telemetry must never affect the auth response.
  */
@@ -333,9 +335,14 @@ export async function captureOAuthError(input: {
   scope?: string | null;
   /** The RFC 8707 resource the token was for (which server), when known. */
   resource?: string | null;
+  /** The client's redirect_uri, when the request carried one. */
+  redirectUri?: string | null;
   /** Acting user, when a session exists; defaults to the system distinct_id. */
   distinctId?: string | null;
 }): Promise<void> {
+  const redirectUri = input.redirectUri
+    ? input.redirectUri.slice(0, 512)
+    : undefined;
   const properties = {
     oauth_endpoint: input.endpoint,
     oauth_error: input.error,
@@ -344,6 +351,7 @@ export async function captureOAuthError(input: {
     client_id: input.clientId ?? undefined,
     scope: input.scope ?? undefined,
     resource: input.resource ?? undefined,
+    redirect_uri: redirectUri,
   };
   await captureServerEvent({
     event: "oauth_error",
