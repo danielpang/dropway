@@ -30,6 +30,7 @@ import {
   MCP_OAUTH_ACCESS_TOKEN_EXPIRES_IN,
   MCP_OAUTH_REFRESH_TOKEN_EXPIRES_IN,
 } from "@/lib/mcp-oauth-ttl";
+import { registerChatgptAuthorizeRedirect } from "@/lib/oauth-chatgpt-redirect";
 
 // NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
 // module top level. The `@better-auth/cli migrate` step loads THIS config under a
@@ -180,6 +181,15 @@ export const auth = betterAuth({
   appName: "Dropway",
   baseURL: betterAuthUrl(),
   secret: betterAuthSecret(),
+  // OAuth errors that cannot be returned to the client (invalid_redirect,
+  // missing client_id, …) redirect the browser here. The provider default is
+  // `${baseURL}/error`, which is not a route: it 404s, and that 404's only
+  // action is "Back to dashboard" — the sites list. A relative URL resolves
+  // against the dashboard origin. Social sign-in failures use this page too,
+  // so the copy stays generic when the code is not an OAuth redirect error.
+  onAPIError: {
+    errorURL: "/oauth/error",
+  },
 
   // Intercept Better Auth's own logs so a connection-capacity failure inside ITS
   // queries (e.g. findSession hitting the pooler cap, the original EMAXCONNSESSION
@@ -288,15 +298,25 @@ export const auth = betterAuth({
   //                     Emits ONLY on an APIError, so it never double-counts the
   //                     successes already captured at session/user creation.
   hooks: {
-    // BEFORE: gracefully narrow a client's requested `scope` to the scopes we
-    // support, dropping unsupported ones instead of hard-failing the whole
-    // handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
-    // partially ignore requested scope and grant a subset, and narrowing only ever
-    // REDUCES privilege, so it's the safe direction: a client that tacks on a scope
-    // we don't offer still connects (with less), rather than dead-ending. Runs
-    // before the provider's own scope validation so the request it sees is already
-    // clean. Scoped to the scope-bearing OAuth endpoints; scope lives in the query
-    // for GET /authorize and in the body for POST /register + /token.
+    // BEFORE:
+    //   1. On /oauth2/authorize, accept ChatGPT's documented connector callback
+    //      when this client already registered one on the same host. Better Auth
+    //      matches redirect_uri by exact string; ChatGPT registers one of
+    //      connector_platform_oauth_redirect / connector/oauth/{id} and authorizes
+    //      with the other. The alias is written onto that client's redirectUris
+    //      before the endpoint reads it. The requested URI is stored as sent so
+    //      the authorization code stays bound to the URI ChatGPT will repeat at
+    //      the token endpoint. Non-ChatGPT clients are not read or updated.
+    //   2. Gracefully narrow a client's requested `scope` to the scopes we
+    //      support, dropping unsupported ones instead of hard-failing the whole
+    //      handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
+    //      partially ignore requested scope and grant a subset, and narrowing only
+    //      ever REDUCES privilege, so it's the safe direction: a client that tacks
+    //      on a scope we don't offer still connects (with less), rather than
+    //      dead-ending. Runs before the provider's own scope validation so the
+    //      request it sees is already clean. Scoped to the scope-bearing OAuth
+    //      endpoints; scope lives in the query for GET /authorize and in the body
+    //      for POST /register + /token.
     //
     // Guardrails: we narrow ONLY when at least one supported scope remains. If EVERY
     // requested scope is unsupported we leave the request untouched so the provider
@@ -314,6 +334,33 @@ export const auth = betterAuth({
         const source = (inQuery ? ctx.query : ctx.body) as
           | Record<string, unknown>
           | undefined;
+        if (path === "/oauth2/authorize") {
+          // Own try/catch: an alias bug must not skip scope narrowing or throw
+          // into the auth path. A no-op leaves the provider's exact match in place.
+          try {
+            const clientId = source?.client_id;
+            const redirectUri = source?.redirect_uri;
+            await registerChatgptAuthorizeRedirect({
+              clientId: typeof clientId === "string" ? clientId : undefined,
+              redirectUri: typeof redirectUri === "string" ? redirectUri : undefined,
+              findClient: (id) =>
+                ctx.context.adapter.findOne<{ redirectUris?: unknown }>({
+                  model: "oauthClient",
+                  where: [{ field: "clientId", value: id }],
+                  select: ["redirectUris"],
+                }),
+              updateRedirects: async (id, redirectUris) => {
+                await ctx.context.adapter.update({
+                  model: "oauthClient",
+                  where: [{ field: "clientId", value: id }],
+                  update: { redirectUris },
+                });
+              },
+            });
+          } catch {
+            // proceed; authorize will apply its own redirect check
+          }
+        }
         const rawScope = source?.scope;
         if (typeof rawScope !== "string" || rawScope.trim() === "") return;
         const requested = rawScope.split(" ").filter(Boolean);
@@ -410,6 +457,9 @@ export const auth = betterAuth({
             clientId: str(query?.client_id) ?? str(body?.client_id) ?? null,
             scope: str(query?.scope) ?? str(body?.scope) ?? null,
             resource: str(query?.resource) ?? str(body?.resource) ?? null,
+            // The callback the client sent. Not a secret; without it an
+            // invalid_redirect issue cannot show WHICH uri was rejected.
+            redirectUri: str(query?.redirect_uri) ?? str(body?.redirect_uri) ?? null,
           });
         } catch {
           // Telemetry must never break the auth path.
