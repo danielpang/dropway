@@ -30,7 +30,11 @@ import {
   MCP_OAUTH_ACCESS_TOKEN_EXPIRES_IN,
   MCP_OAUTH_REFRESH_TOKEN_EXPIRES_IN,
 } from "@/lib/mcp-oauth-ttl";
-import { registerChatgptAuthorizeRedirect } from "@/lib/oauth-chatgpt-redirect";
+import {
+  expandChatgptRegistrationRedirects,
+  registerChatgptAuthorizeRedirect,
+} from "@/lib/oauth-chatgpt-redirect";
+import { registerLoopbackAuthorizeRedirect } from "@/lib/oauth-loopback-redirect";
 
 // NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
 // module top level. The `@better-auth/cli migrate` step loads THIS config under a
@@ -299,7 +303,11 @@ export const auth = betterAuth({
   //                     successes already captured at session/user creation.
   hooks: {
     // BEFORE:
-    //   1. On /oauth2/authorize, accept ChatGPT's documented connector callback
+    //   1. On /oauth2/register, when ChatGPT registers a per-connection callback,
+    //      also store the fixed stable callback. This server advertises RFC 9207
+    //      issuer identification, and ChatGPT then authorizes with
+    //      connector_platform_oauth_redirect.
+    //   2. On /oauth2/authorize, accept ChatGPT's documented connector callback
     //      when this client already registered one on the same host. Better Auth
     //      matches redirect_uri by exact string; ChatGPT registers one of
     //      connector_platform_oauth_redirect / connector/oauth/{id} and authorizes
@@ -309,9 +317,14 @@ export const auth = betterAuth({
     //      the token endpoint. A brand-new callback id is stored only when this
     //      client has no consent yet and does not skip consent — an existing
     //      grant would otherwise send the code to that id with no new approval.
-    //      The fixed stable callback can still be added after consent. Non-ChatGPT
-    //      clients are not read or updated.
-    //   2. Gracefully narrow a client's requested `scope` to the scopes we
+    //      The fixed stable callback can still be added after consent.
+    //      Also accept a loopback sibling (localhost / 127.0.0.1 / ::1, any port,
+    //      same path) when the client already registered one. Manual MCP connect
+    //      registers one of those and authorizes with the other; Better Auth
+    //      port-flexes only IP literals, so localhost is rejected as
+    //      invalid_redirect. A client that never registered a loopback callback
+    //      is not given one.
+    //   3. Gracefully narrow a client's requested `scope` to the scopes we
     //      support, dropping unsupported ones instead of hard-failing the whole
     //      handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
     //      partially ignore requested scope and grant a subset, and narrowing only
@@ -344,10 +357,10 @@ export const auth = betterAuth({
           try {
             const clientId = source?.client_id;
             const redirectUri = source?.redirect_uri;
-            await registerChatgptAuthorizeRedirect({
+            const alias = {
               clientId: typeof clientId === "string" ? clientId : undefined,
               redirectUri: typeof redirectUri === "string" ? redirectUri : undefined,
-              findClient: (id) =>
+              findClient: (id: string) =>
                 ctx.context.adapter.findOne<{
                   redirectUris?: unknown;
                   skipConsent?: boolean | null;
@@ -356,6 +369,16 @@ export const auth = betterAuth({
                   where: [{ field: "clientId", value: id }],
                   select: ["redirectUris", "skipConsent"],
                 }),
+              updateRedirects: async (id: string, redirectUris: string[]) => {
+                await ctx.context.adapter.update({
+                  model: "oauthClient",
+                  where: [{ field: "clientId", value: id }],
+                  update: { redirectUris },
+                });
+              },
+            };
+            await registerChatgptAuthorizeRedirect({
+              ...alias,
               clientHasConsent: async (id) => {
                 const rows = await ctx.context.adapter.findMany<{ clientId?: string }>({
                   model: "oauthConsent",
@@ -364,50 +387,58 @@ export const auth = betterAuth({
                 });
                 return Array.isArray(rows) && rows.length > 0;
               },
-              updateRedirects: async (id, redirectUris) => {
-                await ctx.context.adapter.update({
-                  model: "oauthClient",
-                  where: [{ field: "clientId", value: id }],
-                  update: { redirectUris },
-                });
-              },
             });
+            await registerLoopbackAuthorizeRedirect(alias);
           } catch {
             // proceed; authorize will apply its own redirect check
           }
         }
+        const registeredRedirects =
+          path === "/oauth2/register"
+            ? expandChatgptRegistrationRedirects(source?.redirect_uris)
+            : null;
         const rawScope = source?.scope;
-        if (typeof rawScope !== "string" || rawScope.trim() === "") return;
-        const requested = rawScope.split(" ").filter(Boolean);
-        const supported = new Set<string>(SUPPORTED_SCOPES);
-        const kept = requested.filter((s) => supported.has(s));
-        const dropped = requested.filter((s) => !supported.has(s));
+        const hasScope = typeof rawScope === "string" && rawScope.trim() !== "";
         // Nothing unsupported (common case), or NOTHING supported (leave the normal
-        // invalid_scope to stand) → don't touch the request.
-        if (dropped.length === 0 || kept.length === 0) return;
-        const filtered = kept.join(" ");
-        // Fire-and-forget: record that we narrowed, so a client repeatedly asking
-        // for a scope we drop is visible. Never blocks or breaks the auth path.
-        void (async () => {
-          try {
-            const clientId = source?.client_id;
-            const analytics = await import("@/lib/analytics-server");
-            await analytics.captureOAuthScopeDropped({
-              endpoint: path.slice("/oauth2/".length),
-              dropped,
-              kept,
-              clientId: typeof clientId === "string" ? clientId : null,
-            });
-          } catch {
-            // telemetry is best-effort
+        // invalid_scope to stand) → don't rewrite scope. An empty scope is left
+        // alone too: the provider fills its own default.
+        let narrowedScope: string | undefined;
+        if (hasScope) {
+          const requested = rawScope.split(" ").filter(Boolean);
+          const supported = new Set<string>(SUPPORTED_SCOPES);
+          const kept = requested.filter((s) => supported.has(s));
+          const dropped = requested.filter((s) => !supported.has(s));
+          if (dropped.length > 0 && kept.length > 0) {
+            narrowedScope = kept.join(" ");
+            // Fire-and-forget: record that we narrowed, so a client repeatedly asking
+            // for a scope we drop is visible. Never blocks or breaks the auth path.
+            void (async () => {
+              try {
+                const clientId = source?.client_id;
+                const analytics = await import("@/lib/analytics-server");
+                await analytics.captureOAuthScopeDropped({
+                  endpoint: path.slice("/oauth2/".length),
+                  dropped,
+                  kept,
+                  clientId: typeof clientId === "string" ? clientId : null,
+                });
+              } catch {
+                // telemetry is best-effort
+              }
+            })();
           }
-        })();
-        // Rewrite only `scope`; the merge (defuReplaceArrays) keeps every other
-        // query/body field. Returning a `context` patch is how a before-hook edits
-        // the request the endpoint then handles.
+        }
+        if (!narrowedScope && !registeredRedirects) return;
+        // Returning a `context` patch is how a before-hook edits the request the
+        // endpoint then handles. The merge keeps every field we do not set.
+        const patched = {
+          ...source,
+          ...(registeredRedirects ? { redirect_uris: registeredRedirects } : {}),
+          ...(narrowedScope ? { scope: narrowedScope } : {}),
+        };
         return inQuery
-          ? { context: { query: { ...source, scope: filtered } } }
-          : { context: { body: { ...source, scope: filtered } } };
+          ? { context: { query: patched } }
+          : { context: { body: patched } };
       } catch {
         // A narrowing bug must never break auth: proceed with the request unmodified.
         return;

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   coerceRedirectUris,
+  expandChatgptRegistrationRedirects,
   nextRedirectUris,
   parseChatgptRedirect,
   redirectToRegister,
@@ -112,6 +113,22 @@ describe("redirectToRegister", () => {
     const legacyStable = "https://chat.openai.com/connector_platform_oauth_redirect";
     expect(redirectToRegister(legacy, [legacyStable])).toBe(legacy);
     expect(redirectToRegister(legacy, [STABLE])).toBeNull();
+  });
+});
+
+describe("expandChatgptRegistrationRedirects", () => {
+  it("adds the stable callback when registration only listed a callback id", () => {
+    expect(expandChatgptRegistrationRedirects([CALLBACK])).toEqual([CALLBACK, STABLE]);
+  });
+
+  it("leaves a registration that already has the stable callback unchanged", () => {
+    expect(expandChatgptRegistrationRedirects([STABLE])).toBeNull();
+    expect(expandChatgptRegistrationRedirects([CALLBACK, STABLE])).toBeNull();
+  });
+
+  it("does not invent a ChatGPT callback for any other client", () => {
+    expect(expandChatgptRegistrationRedirects(["http://127.0.0.1:9999/callback"])).toBeNull();
+    expect(expandChatgptRegistrationRedirects("not json")).toBeNull();
   });
 });
 
