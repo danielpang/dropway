@@ -31,6 +31,7 @@ import {
   MCP_OAUTH_REFRESH_TOKEN_EXPIRES_IN,
 } from "@/lib/mcp-oauth-ttl";
 import { registerChatgptAuthorizeRedirect } from "@/lib/oauth-chatgpt-redirect";
+import { registerLoopbackAuthorizeRedirect } from "@/lib/oauth-loopback-redirect";
 
 // NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
 // module top level. The `@better-auth/cli migrate` step loads THIS config under a
@@ -299,18 +300,16 @@ export const auth = betterAuth({
   //                     successes already captured at session/user creation.
   hooks: {
     // BEFORE:
-    //   1. On /oauth2/authorize, accept ChatGPT's documented connector callback
-    //      when this client already registered one on the same host. Better Auth
-    //      matches redirect_uri by exact string; ChatGPT registers one of
-    //      connector_platform_oauth_redirect / connector/oauth/{id} and authorizes
-    //      with the other. The alias is written onto that client's redirectUris
-    //      before the endpoint reads it. The requested URI is stored as sent so
-    //      the authorization code stays bound to the URI ChatGPT will repeat at
-    //      the token endpoint. A brand-new callback id is stored only when this
-    //      client has no consent yet and does not skip consent — an existing
-    //      grant would otherwise send the code to that id with no new approval.
-    //      The fixed stable callback can still be added after consent. Non-ChatGPT
-    //      clients are not read or updated.
+    //   1. On /oauth2/authorize, patch redirectUris before Better Auth's exact match:
+    //      (a) ChatGPT connector callbacks — registers one of
+    //          connector_platform_oauth_redirect / connector/oauth/{id} and may
+    //          authorize with the other; alias rules in oauth-chatgpt-redirect.ts.
+    //      (b) Native loopback MCP/CLI clients — Better Auth allows port variance
+    //          only for 127.0.0.0/8 IP literals, not the hostname `localhost`, and
+    //          many clients cache client_id across sessions while binding a new port.
+    //          When the client already has a loopback /callback registered, accept
+    //          the requested localhost/127.0.0.1 URI (see oauth-loopback-redirect.ts).
+    //      Non-matching clients are not read or updated.
     //   2. Gracefully narrow a client's requested `scope` to the scopes we
     //      support, dropping unsupported ones instead of hard-failing the whole
     //      handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
@@ -344,10 +343,10 @@ export const auth = betterAuth({
           try {
             const clientId = source?.client_id;
             const redirectUri = source?.redirect_uri;
-            await registerChatgptAuthorizeRedirect({
+            const oauthRedirectPatch = {
               clientId: typeof clientId === "string" ? clientId : undefined,
               redirectUri: typeof redirectUri === "string" ? redirectUri : undefined,
-              findClient: (id) =>
+              findClient: (id: string) =>
                 ctx.context.adapter.findOne<{
                   redirectUris?: unknown;
                   skipConsent?: boolean | null;
@@ -356,6 +355,17 @@ export const auth = betterAuth({
                   where: [{ field: "clientId", value: id }],
                   select: ["redirectUris", "skipConsent"],
                 }),
+              updateRedirects: async (id: string, redirectUris: string[]) => {
+                await ctx.context.adapter.update({
+                  model: "oauthClient",
+                  where: [{ field: "clientId", value: id }],
+                  update: { redirectUris },
+                });
+              },
+            };
+            await registerLoopbackAuthorizeRedirect(oauthRedirectPatch);
+            await registerChatgptAuthorizeRedirect({
+              ...oauthRedirectPatch,
               clientHasConsent: async (id) => {
                 const rows = await ctx.context.adapter.findMany<{ clientId?: string }>({
                   model: "oauthConsent",
@@ -363,13 +373,6 @@ export const auth = betterAuth({
                   limit: 1,
                 });
                 return Array.isArray(rows) && rows.length > 0;
-              },
-              updateRedirects: async (id, redirectUris) => {
-                await ctx.context.adapter.update({
-                  model: "oauthClient",
-                  where: [{ field: "clientId", value: id }],
-                  update: { redirectUris },
-                });
               },
             });
           } catch {
