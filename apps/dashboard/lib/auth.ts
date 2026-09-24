@@ -35,6 +35,7 @@ import {
   registerChatgptAuthorizeRedirect,
 } from "@/lib/oauth-chatgpt-redirect";
 import { registerLoopbackAuthorizeRedirect } from "@/lib/oauth-loopback-redirect";
+import { authorizedCodexLoopbackRedirect } from "@/lib/oauth-token-loopback-redirect";
 
 // NOTE: `@/lib/email` is imported LAZILY inside the send callbacks below, never at
 // module top level. The `@better-auth/cli migrate` step loads THIS config under a
@@ -324,7 +325,11 @@ export const auth = betterAuth({
     //      port-flexes only IP literals, so localhost is rejected as
     //      invalid_redirect. A client that never registered a loopback callback
     //      is not given one.
-    //   3. Gracefully narrow a client's requested `scope` to the scopes we
+    //   3. On /oauth2/token, repair only a localhost/127.0.0.1 spelling
+    //      difference for the same callback port and path, after confirming
+    //      the code belongs to this client. Better Auth still performs its
+    //      ordinary one-time code, PKCE, and exact redirect checks.
+    //   4. Gracefully narrow a client's requested `scope` to the scopes we
     //      support, dropping unsupported ones instead of hard-failing the whole
     //      handshake with `invalid_scope`. OAuth 2.0 §3.3 explicitly lets the AS
     //      partially ignore requested scope and grant a subset, and narrowing only
@@ -397,6 +402,20 @@ export const auth = betterAuth({
           path === "/oauth2/register"
             ? expandChatgptRegistrationRedirects(source?.redirect_uris)
             : null;
+        let tokenRedirectUri: string | null = null;
+        if (path === "/oauth2/token" && source?.grant_type === "authorization_code") {
+          try {
+            tokenRedirectUri = await authorizedCodexLoopbackRedirect({
+              clientId: source.client_id,
+              code: source.code,
+              redirectUri: source.redirect_uri,
+              findVerification: (identifier) =>
+                ctx.context.internalAdapter.findVerificationValue(identifier),
+            });
+          } catch {
+            // A failed compatibility lookup leaves the provider's strict check.
+          }
+        }
         const rawScope = source?.scope;
         const hasScope = typeof rawScope === "string" && rawScope.trim() !== "";
         // Nothing unsupported (common case), or NOTHING supported (leave the normal
@@ -428,13 +447,14 @@ export const auth = betterAuth({
             })();
           }
         }
-        if (!narrowedScope && !registeredRedirects) return;
+        if (!narrowedScope && !registeredRedirects && !tokenRedirectUri) return;
         // Returning a `context` patch is how a before-hook edits the request the
         // endpoint then handles. The merge keeps every field we do not set.
         const patched = {
           ...source,
           ...(registeredRedirects ? { redirect_uris: registeredRedirects } : {}),
           ...(narrowedScope ? { scope: narrowedScope } : {}),
+          ...(tokenRedirectUri ? { redirect_uri: tokenRedirectUri } : {}),
         };
         return inQuery
           ? { context: { query: patched } }
