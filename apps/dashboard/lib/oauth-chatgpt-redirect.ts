@@ -135,6 +135,29 @@ export function isNewCallbackId(
   });
 }
 
+/**
+ * Redirects to store at dynamic registration when the client already sent a
+ * documented ChatGPT callback. Dropway advertises RFC 9207 issuer
+ * identification, and ChatGPT then authorizes with the fixed stable callback
+ * even if registration only listed the per-connection id. Adding that stable
+ * URL here means the authorize request matches before any consent exists.
+ * Returns null when nothing needs to be added.
+ */
+export function expandChatgptRegistrationRedirects(value: unknown): string[] | null {
+  const uris = coerceRedirectUris(value);
+  if (!uris || uris.length === 0) return null;
+  const additions: string[] = [];
+  for (const raw of uris) {
+    const parsed = parseChatgptRedirect(raw);
+    if (!parsed) continue;
+    const stable = `https://${parsed.host}${STABLE_PATH}`;
+    if (uris.includes(stable) || additions.includes(stable)) continue;
+    additions.push(stable);
+  }
+  if (additions.length === 0) return null;
+  return [...uris, ...additions];
+}
+
 /** Allowlist to persist when an alias should be added; null when no write is needed. */
 export function nextRedirectUris(
   requested: string,

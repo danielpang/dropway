@@ -59,7 +59,7 @@ export function oauthErrorPresentation(
       return {
         title: "Callback URL not accepted",
         body: "The callback URL from this connection is not one Dropway has registered for this app.",
-        hint: "Start the connection again from the app that sent you here. For ChatGPT, remove the Dropway connector and add it again if it was added before this was fixed.",
+        hint: "Go back to the app that sent you here and start the connection again. For ChatGPT, start authentication once more from the connector.",
       };
     case "invalid_client":
       return {
