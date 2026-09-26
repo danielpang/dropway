@@ -8,7 +8,7 @@
 //
 //   - no edge cookie                 → 302 to the dashboard /authz exchange;
 //   - a valid org_only edge token    → 200 + the published bytes streamed from
-//                                       MinIO, with private/no-store (never cached);
+//     MinIO, with private/no-store (never cached);
 //   - an EXPIRED token               → fail closed → 302;
 //   - a token minted for ANOTHER host → fail closed → 302 (aud binding).
 //
@@ -47,6 +47,9 @@ const (
 	serveITMinioUser = "dropway"
 	serveITMinioPass = "dropway-dev-secret"
 	serveITBucket    = "dropway-blobs"
+	// MinIO's Docker Hub and Quay community images no longer allow anonymous
+	// pulls. Same public build the self-host compose file pins.
+	serveITMinioImage = "ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9"
 )
 
 func TestIntegration_OrgOnly_ServeFromObjectStore(t *testing.T) {
@@ -145,8 +148,7 @@ func startServeITMinio(t *testing.T, ctx context.Context) *storage.S3Store {
 	_ = exec.Command("docker", "rm", "-f", serveITMinioName).Run()
 	out, err := exec.Command("docker", "run", "-d", "--name", serveITMinioName,
 		"-e", "MINIO_ROOT_USER="+serveITMinioUser, "-e", "MINIO_ROOT_PASSWORD="+serveITMinioPass,
-		// quay.io mirror: Docker Hub denies anonymous minio/minio pulls on CI runners.
-		"-p", serveITMinioPort+":9000", "quay.io/minio/minio:latest", "server", "/data").CombinedOutput()
+		"-p", serveITMinioPort+":9000", serveITMinioImage, "server", "/data").CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker run minio: %v\n%s", err, out)
 	}

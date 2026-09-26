@@ -41,10 +41,12 @@ import (
 )
 
 const (
-	pgPort      = "55432"
-	minioPort   = "59000"
-	pgImage     = "postgres:16"
-	minioImage  = "quay.io/minio/minio:latest" // quay.io mirror: Docker Hub denies anonymous minio/minio pulls on CI runners
+	pgPort    = "55432"
+	minioPort = "59000"
+	pgImage   = "postgres:16"
+	// MinIO's Docker Hub and Quay community images no longer allow anonymous
+	// pulls. Same public build the self-host compose file pins.
+	minioImage  = "ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9"
 	ownerDSN    = "postgres://postgres:postgres@127.0.0.1:" + pgPort + "/dropway?sslmode=disable"
 	appPassword = "dropway_app_it_pw"
 	appDSN      = "postgres://dropway_app:" + appPassword + "@127.0.0.1:" + pgPort + "/dropway?sslmode=disable"
