@@ -118,8 +118,8 @@ func (p chatImportPayload) parse() (msgs []chatspec.Message, dropped int, err er
 	return msgs, dropped, nil
 }
 
-// requireChatLogs gates every chat endpoint on the org kill switch (mirrors
-// the AI builder's requireAI). Fail-soft true when the row is missing.
+// requireChatLogs gates every chat endpoint on the org kill switch.
+// Fail-soft true when the row is missing.
 func (a *API) requireChatLogs(w http.ResponseWriter, r *http.Request, t store.Tenant) bool {
 	enabled, err := a.Store.ChatLogsEnabled(r.Context(), t)
 	if err != nil {

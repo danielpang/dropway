@@ -118,36 +118,6 @@ export const CHANGELOG: ChangelogEntry[] = [
     ],
   },
   {
-    id: "ai-website-builder",
-    date: "2026-07-09",
-    label: "New",
-    title: "AI website builder",
-    summary:
-      "Describe the page you want and watch it come together. The builder generates a site from a prompt, streams its work live, and hands you a real, access-controlled URL the moment you publish.",
-    changes: [
-      {
-        id: "ai-builder-chat",
-        title: "Build from a prompt",
-        body: "Open any site and chat with the builder to create or change a page. It writes the HTML, CSS, and JS for you, running in a sandbox, and shows its progress as it goes.",
-      },
-      {
-        id: "ai-builder-preview",
-        title: "Live preview and publish",
-        body: "Every turn refreshes a live preview of the draft. When it looks right, publish it as a new immutable version, with the same instant rollback as any other deploy.",
-      },
-      {
-        id: "ai-builder-models",
-        title: "Pick your model",
-        body: "Choose the model that drives a build from the model picker. Requests are proxied through the dashboard so your session, not an API key, authorizes the work.",
-      },
-      {
-        id: "ai-builder-metered-usage",
-        title: "Usage-based pricing",
-        body: "The builder is charged per usage, at cost with no markup, on paid plans. Your builds are metered as you go and settled with the rest of your bill at the end of your billing cycle, so there is nothing to pay up front, and a note in the builder reminds you that usage is metered while you work.",
-      },
-    ],
-  },
-  {
     id: "skills",
     date: "2026-06-24",
     label: "New",

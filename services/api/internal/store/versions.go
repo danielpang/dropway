@@ -28,8 +28,8 @@ type CreateSiteVersionParams struct {
 	ContentHash string // sha256 of the deploy manifest (the whole-deploy digest)
 	SizeBytes   int64
 	Status      string // typically "ready" once blobs are verified + manifest written
-	// CreatedVia marks how the version was produced: "deploy" (default) or "ai"
-	// (an AI-builder draft the GC pins for the draft-retention window).
+	// CreatedVia marks how the version was produced. New versions use "deploy".
+	// Historical rows may still be "ai" from the removed website builder.
 	CreatedVia string
 	// Blobs are the deploy's DISTINCT content-addressed blobs (+ sizes). On a
 	// genuinely-new version they feed the dedup-aware storage meter + cap; on an

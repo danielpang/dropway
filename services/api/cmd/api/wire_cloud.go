@@ -11,72 +11,18 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"os"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	cloudbilling "github.com/danielpang/dropway/cloud/billing"
 	cloudquota "github.com/danielpang/dropway/cloud/quota"
 	"github.com/danielpang/dropway/internal/middleware"
-	"github.com/danielpang/dropway/internal/pgpool"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/services/api/internal/config"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
-
-// runCloudBillingTask runs a one-off operator task selected by BILLING_TASK and
-// exits, instead of starting the server. It lands AI pass-through billing in a
-// Stripe account:
-//
-//	BILLING_TASK=bootstrap-ai  create the ai_cost_cents meter + $0.01 metered
-//	                           price; prints the price id for STRIPE_AI_METER_PRICE.
-//	BILLING_TASK=backfill-ai   attach STRIPE_AI_METER_PRICE to existing
-//	                           subscriptions (idempotent; safe to re-run).
-//
-// Returns handled=false (server starts normally) when BILLING_TASK is unset.
-func runCloudBillingTask(ctx context.Context, cfg config.Config) (bool, error) {
-	task := os.Getenv("BILLING_TASK")
-	if task == "" {
-		return false, nil
-	}
-	if cfg.StripeSecretKey == "" {
-		return true, errors.New("BILLING_TASK requires STRIPE_SECRET_KEY")
-	}
-	switch task {
-	case "bootstrap-ai":
-		res, err := cloudbilling.BootstrapAIMeter(cfg.StripeSecretKey)
-		if err != nil {
-			return true, err
-		}
-		slog.Info("AI meter bootstrap complete",
-			"meter_id", res.MeterID, "meter_existed", res.MeterExisted,
-			"price_id", res.PriceID)
-		slog.Info("set STRIPE_AI_METER_PRICE to the price id above, then run BILLING_TASK=backfill-ai for existing subscribers")
-		return true, nil
-	case "backfill-ai":
-		if cfg.DatabaseURL == "" {
-			return true, errors.New("backfill-ai requires DATABASE_URL")
-		}
-		pool, err := pgpool.New(ctx, cfg.DatabaseURL, 4)
-		if err != nil {
-			return true, err
-		}
-		defer pool.Close()
-		res, err := cloudbilling.BackfillAIMeteredItem(ctx, pool, cfg.StripeSecretKey, cfg.StripeAIMeterPrice)
-		if err != nil {
-			return true, err
-		}
-		slog.Info("AI metered-price backfill complete",
-			"scanned", res.Scanned, "attached", res.Attached, "skipped", res.Skipped)
-		return true, nil
-	default:
-		return true, fmt.Errorf("unknown BILLING_TASK %q (want bootstrap-ai or backfill-ai)", task)
-	}
-}
 
 // storeRoleChecker adapts the core *store.Store to cloud/billing's store-free
 // RoleChecker (Go's internal-package rule forbids cloud/ from importing the
@@ -155,20 +101,14 @@ func quotaProviderName() string { return "cloud hard-cap (free/pro/business/ente
 // Without a DB pool or the Stripe secrets, billing can't run; we log and skip so
 // the rest of the API still serves (the webhook would 500 with no store; better to
 // not register it).
-// cloudAIGate adapts cloud/billing's AIMeter (which answers AllowAIForOrg by
-// org id) to the handlers.AIGate interface (which takes a store.Tenant). Go's
-// internal-package rule forbids cloud/ from naming store.Tenant, so this
-// adapter lives here (inside services/api) exactly like storeRoleChecker.
-type cloudAIGate struct{ meter *cloudbilling.AIMeter }
+// cloudMemoryGate adapts cloud/billing's PlanGate (which answers
+// AllowMemoryForOrg by org id) to handlers.MemoryGate and ai.MemoryGate
+// (which take a store.Tenant). Go's internal-package rule forbids cloud/
+// from naming store.Tenant, so this adapter lives here.
+type cloudMemoryGate struct{ gate *cloudbilling.PlanGate }
 
-func (g cloudAIGate) AllowAI(ctx context.Context, t store.Tenant) (bool, string, error) {
-	return g.meter.AllowAIForOrg(ctx, t.OrgID)
-}
-
-// AllowMemory makes the same adapter satisfy handlers.MemoryGate and
-// ai.MemoryGate (org memory is Pro+ on the hosted build).
-func (g cloudAIGate) AllowMemory(ctx context.Context, t store.Tenant) (bool, string, error) {
-	return g.meter.AllowMemoryForOrg(ctx, t.OrgID)
+func (g cloudMemoryGate) AllowMemory(ctx context.Context, t store.Tenant) (bool, string, error) {
+	return g.gate.AllowMemoryForOrg(ctx, t.OrgID)
 }
 
 func mountCloud(mux *chi.Mux, deps cloudDeps) {
@@ -181,36 +121,16 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 		return
 	}
 
-	// AI pass-through billing: attach the Stripe meter to the AI runner (each
-	// generation's cost + 3% fee is metered) and the paid-plan gate to the API
-	// (the hosted build requires a paid plan with a card on file). Wired here,
-	// BEFORE the local `store` var shadows the store package, so the PeriodStart
-	// closure can name store.Tenant. No-op when the AI builder is disabled.
+	// Org memory is Pro+ on the hosted build: gate the /v1/ai/memories +
+	// /v1/orgs/memory surface AND the runner's async paths (extraction,
+	// content indexing). Wired before the local `store` var shadows the
+	// store package.
 	if deps.API != nil {
-		meter := cloudbilling.NewAIMeter(deps.Pool, deps.Cfg.StripeSecretKey)
-		deps.API.AIGate = cloudAIGate{meter: meter}
-		// Org memory is Pro+ on the hosted build: gate the /v1/ai/memories +
-		// /v1/orgs/memory surface AND the runner's in-loop/async paths
-		// (extraction, content indexing) with the same tier check.
-		deps.API.MemoryGate = cloudAIGate{meter: meter}
-		// Align the AI spend window (cap enforcement AND the dashboard usage
-		// display) to the org's exact Stripe billing period, so the number the user
-		// sees reconciles with the invoice period and can't disagree with a 402.
-		// Falls back to the calendar month when the org has no subscription/period
-		// yet. The SAME closure feeds the runner (cap) and the API (display).
-		billingPeriodStart := func(ctx context.Context, t store.Tenant) time.Time {
-			if start, ok, err := meter.BillingPeriodStart(ctx, t.OrgID); err == nil && ok {
-				return start
-			}
-			now := time.Now().UTC()
-			return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		}
-		deps.API.AISpendPeriodStart = billingPeriodStart
-		if deps.AIRunner != nil {
-			deps.AIRunner.UsageReporter = meter
-			deps.AIRunner.PeriodStart = billingPeriodStart
-			deps.AIRunner.MemoryGate = cloudAIGate{meter: meter}
-			slog.Info("cloud AI metering wired (pass-through OpenRouter cost + 3% fee, billing-period-aligned)")
+		gate := cloudMemoryGate{gate: cloudbilling.NewPlanGate(deps.Pool)}
+		deps.API.MemoryGate = gate
+		if deps.Memory != nil {
+			deps.Memory.MemoryGate = gate
+			slog.Info("org memory plan gate wired (Pro and above)")
 		}
 	}
 
@@ -263,11 +183,7 @@ func mountCloud(mux *chi.Mux, deps cloudDeps) {
 	// claim) via the core Store, strict-by-default with ALLOW_JWT_ROLE_FALLBACK —
 	// the same confused-deputy guard the rest of the API uses (FIX 2).
 	bh := cloudbilling.NewHandlers(store, stripeClient, prices, deps.Cfg.DashboardURL,
-		storeRoleChecker{deps.Store}, deps.Cfg.AllowJWTRoleFallback, slog.Default()).
-		WithAIMeteredPrice(deps.Cfg.StripeAIMeterPrice)
-	if deps.Cfg.StripeAIMeterPrice != "" {
-		slog.Info("cloud billing: AI metered price attached to new checkouts", "price", deps.Cfg.StripeAIMeterPrice)
-	}
+		storeRoleChecker{deps.Store}, deps.Cfg.AllowJWTRoleFallback, slog.Default())
 
 	// JWT-FREE, signature-verified webhook. Mounted at the top level (NOT under
 	// /v1) so no Auth middleware runs — Stripe carries no Better Auth JWT.

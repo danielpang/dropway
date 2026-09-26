@@ -11,44 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AppAiMessage struct {
-	ID        string
-	OrgID     string
-	SessionID string
-	Seq       int32
-	Role      string
-	Content   []byte
-	CreatedAt time.Time
-}
-
-type AppAiSession struct {
-	ID               string
-	OrgID            string
-	SiteID           string
-	CreatedBy        string
-	Status           string
-	Model            string
-	SandboxID        pgtype.Text
-	SandboxExpiresAt pgtype.Timestamptz
-	BaseVersionID    *string
-	LatestVersionID  *string
-	CreatedAt        time.Time
-	LastActivityAt   time.Time
-}
-
-type AppAiUsage struct {
-	ID                     string
-	OrgID                  string
-	SessionID              *string
-	Model                  string
-	OpenrouterGenerationID string
-	PromptTokens           int64
-	CompletionTokens       int64
-	CostUsd                float64
-	ReportedToBillingAt    pgtype.Timestamptz
-	CreatedAt              time.Time
-}
-
 type AppAllowlistEntry struct {
 	ID              string
 	OrgID           string
@@ -197,8 +159,6 @@ type AppOrgMetum struct {
 	OrgStatus            string
 	McpEnabled           bool
 	SkillsSeeded         bool
-	AiEnabled            bool
-	AiMonthlyCapUsd      float64
 	ChatLogsEnabled      bool
 	ApiKeysEnabled       bool
 	MemoryEnabled        bool

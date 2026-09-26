@@ -28,10 +28,6 @@ CREATE TABLE app.org_meta (
     -- Guards the lazy per-org seeding of default skill folders + preset skills
     -- (migration 0008): set true in the same tx that seeds.
     skills_seeded          boolean NOT NULL DEFAULT false,
-    -- AI builder kill switch (mirrors mcp_enabled) + owner-adjustable monthly
-    -- AI spend cap in USD (migration 0010).
-    ai_enabled             boolean NOT NULL DEFAULT true,
-    ai_monthly_cap_usd     numeric(10,2) NOT NULL DEFAULT 20.00,
     -- Chat-log (Share This Session) kill switch (migration 0013).
     chat_logs_enabled      boolean NOT NULL DEFAULT true,
     -- API-keys kill switch (migration 0016): off → every org key 401s at the
@@ -96,9 +92,10 @@ CREATE TABLE app.site_versions (
     size_bytes   bigint NOT NULL DEFAULT 0,
     created_by   uuid NOT NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
-    -- created_via: 'ai' marks drafts produced by the AI builder (migration 0010);
-    -- draft GC pins them for a retention window. preview_expires_at is the active
-    -- preview-host deadline (NULL = no active preview).
+    -- created_via records how the version was produced. New rows are 'deploy';
+    -- historical rows may still be 'ai' from the removed website builder.
+    -- preview_expires_at is the active preview-host deadline (NULL = no
+    -- active preview).
     created_via  text NOT NULL DEFAULT 'deploy'
                      CHECK (created_via IN ('deploy', 'ai')),
     preview_expires_at timestamptz,
@@ -303,57 +300,6 @@ CREATE TABLE app.host_routes (
     version_id uuid REFERENCES app.site_versions (id) ON DELETE CASCADE,
     expires_at timestamptz
 );
-
--- ai_sessions: one AI-builder chat per site edit stream (migration 0010). The
--- sandbox id/expiry are cached so a dead machine is lazily recreated on the
--- next message; base/latest version ids tie the chat to the drafts it produced.
-CREATE TABLE app.ai_sessions (
-    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id             uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    site_id            uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
-    created_by         uuid NOT NULL,
-    status             text NOT NULL DEFAULT 'active'
-                           CHECK (status IN ('active', 'running', 'idle', 'archived', 'failed')),
-    model              text NOT NULL,
-    sandbox_id         text,
-    sandbox_expires_at timestamptz,
-    base_version_id    uuid REFERENCES app.site_versions (id) ON DELETE SET NULL,
-    latest_version_id  uuid REFERENCES app.site_versions (id) ON DELETE SET NULL,
-    created_at         timestamptz NOT NULL DEFAULT now(),
-    last_activity_at   timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ai_sessions_org_site_idx ON app.ai_sessions (org_id, site_id, created_at DESC);
-
--- ai_messages: the conversation transcript. content is the OpenAI message
--- shape (incl. tool calls / truncated tool results); seq is per-session
--- monotonic and doubles as the SSE Last-Event-ID for resume.
-CREATE TABLE app.ai_messages (
-    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    session_id uuid NOT NULL REFERENCES app.ai_sessions (id) ON DELETE CASCADE,
-    seq        integer NOT NULL,
-    role       text NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
-    content    jsonb NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ai_messages_session_seq_key UNIQUE (session_id, seq)
-);
-
--- ai_usage: append-only AI cost ledger, one row per OpenRouter generation.
--- session_id is SET NULL on session deletion (billing rows outlive chats);
--- reported_to_billing_at is NULL until the cloud Stripe meter event is acked.
-CREATE TABLE app.ai_usage (
-    id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id                   uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
-    session_id               uuid REFERENCES app.ai_sessions (id) ON DELETE SET NULL,
-    model                    text NOT NULL,
-    openrouter_generation_id text NOT NULL UNIQUE,
-    prompt_tokens            bigint NOT NULL DEFAULT 0,
-    completion_tokens        bigint NOT NULL DEFAULT 0,
-    cost_usd                 numeric(12,6) NOT NULL CHECK (cost_usd >= 0),
-    reported_to_billing_at   timestamptz,
-    created_at               timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ai_usage_org_created_idx ON app.ai_usage (org_id, created_at);
 
 -- resolve_host: RLS-bypassing host → site resolver for the /authz exchange
 -- (migration 0006). SECURITY DEFINER so a content host shared cross-org still

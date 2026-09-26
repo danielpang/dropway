@@ -256,36 +256,3 @@ func TestChatStreamContextCancel(t *testing.T) {
 		}
 	}
 }
-
-func TestModels(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" {
-			t.Errorf("path = %q, want /models", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[
-			{"id":"a/one","name":"A One","description":"first","context_length":128000,"pricing":{"prompt":"0.000003","completion":"0.000015"}},
-			{"id":"b/two","name":"B Two","pricing":{"prompt":"0","completion":"0"}}
-		]}`))
-	}))
-	defer srv.Close()
-
-	c := &Client{BaseURL: srv.URL}
-	models, err := c.Models(context.Background())
-	if err != nil {
-		t.Fatalf("Models: %v", err)
-	}
-	if len(models) != 2 {
-		t.Fatalf("got %d models, want 2", len(models))
-	}
-	m := models[0]
-	if m.ID != "a/one" || m.Name != "A One" || m.Description != "first" || m.ContextLength != 128000 {
-		t.Errorf("model 0 = %+v", m)
-	}
-	if m.Pricing.Prompt != "0.000003" || m.Pricing.Completion != "0.000015" {
-		t.Errorf("model 0 pricing = %+v", m.Pricing)
-	}
-	if models[1].ID != "b/two" || models[1].ContextLength != 0 {
-		t.Errorf("model 1 = %+v", models[1])
-	}
-}

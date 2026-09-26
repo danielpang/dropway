@@ -37,21 +37,20 @@ type MemoryStore interface {
 }
 
 // MemoryEmbedder turns text into vectors for the search/create endpoints (the
-// same seam the AI runner uses; wired to *embeddings.Client in main).
+// same seam content indexing uses; wired to *embeddings.Client in main).
 type MemoryEmbedder interface {
 	Embed(ctx context.Context, inputs []string) ([][]float32, error)
 	ModelID() string
 }
 
-// MemoryExtractor runs the async memory-extraction pass over a chat log
-// (satisfied by *ai.Runner). Optional: nil → chat writes never feed memory.
+// MemoryExtractor runs the async memory-extraction pass over a chat log.
+// Optional: nil → chat writes never feed memory.
 type MemoryExtractor interface {
 	ExtractChatLogMemories(ctx context.Context, t store.Tenant, chatLogID string)
 }
 
-// MemoryIndexer chunks + embeds published content into org_content_chunks
-// (satisfied by *ai.Runner). Optional: nil → publishes/skill uploads are not
-// indexed for retrieval.
+// MemoryIndexer chunks + embeds published content into org_content_chunks.
+// Optional: nil → publishes/skill uploads are not indexed for retrieval.
 type MemoryIndexer interface {
 	IndexSiteVersion(ctx context.Context, t store.Tenant, siteID, versionID string)
 	IndexSkill(ctx context.Context, t store.Tenant, skillID, versionID string)
@@ -90,8 +89,7 @@ const maxMemoryContentBytes = 2048
 
 // MemoryGate decides whether an org may use org memory beyond the org-level
 // memory_enabled switch. The cloud build gates it to Pro and above; OSS
-// leaves it nil (allow all — self-host is BYO embeddings key). Same shape as
-// AIGate; the cloud adapter satisfies both.
+// leaves it nil (allow all — self-host is BYO embeddings key).
 type MemoryGate interface {
 	AllowMemory(ctx context.Context, t store.Tenant) (allowed bool, reason string, err error)
 }
@@ -123,7 +121,6 @@ func (a *API) requireMemoryPlan(w http.ResponseWriter, r *http.Request, t store.
 // requireMemory guards the memory routes: the feature must be wired
 // (Memory + MemoryEmbedder set), the org's plan must allow it (Pro+ on the
 // hosted build), and, unless settingsOnly, the org's memory_enabled flag on.
-// Mirrors requireAI's shape.
 func (a *API) requireMemory(w http.ResponseWriter, r *http.Request, t store.Tenant, settingsOnly bool) bool {
 	if a.Memory == nil || a.MemoryEmbedder == nil {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable,

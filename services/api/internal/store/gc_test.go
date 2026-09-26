@@ -298,6 +298,32 @@ func TestSelectRetained_KeepsCurrentEvenIfOld(t *testing.T) {
 	}
 }
 
+// TestSelectRetained_PinsPreviewWithinRecreateWindow keeps a non-current
+// version outside keep-last-N while its preview deadline is still inside
+// PreviewBlobRetention, and drops it once that window has passed.
+func TestSelectRetained_PinsPreviewWithinRecreateWindow(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	live := ver("draft", "s", 1, false)
+	live.PreviewExpiresAt = pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true}
+	recent := ver("recent", "s", 2, false)
+	recent.PreviewExpiresAt = pgtype.Timestamptz{Time: now.Add(-24 * time.Hour), Valid: true}
+	stale := ver("stale", "s", 3, false)
+	stale.PreviewExpiresAt = pgtype.Timestamptz{Time: now.Add(-PreviewBlobRetention - time.Hour), Valid: true}
+	current := ver("live", "s", 4, true)
+
+	got := selectRetained([]db.ListVersionsForGCRow{current, stale, recent, live}, 0, now)
+	keep := map[string]bool{}
+	for _, v := range got {
+		keep[v.VersionID] = true
+	}
+	if !keep["live"] || !keep["draft"] || !keep["recent"] {
+		t.Fatalf("current, live preview, and recently expired preview must be retained, got %v", keep)
+	}
+	if keep["stale"] {
+		t.Fatal("a preview past the recreate window must not be pinned")
+	}
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

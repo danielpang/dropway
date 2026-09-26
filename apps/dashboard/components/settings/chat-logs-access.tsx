@@ -9,8 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 
 /**
- * The org "Shared chat logs" kill switch (owner/admin only; mirrors the AI
- * builder toggle). Flips PATCH /v1/orgs/chat-logs. Every chat route re-checks
+ * The org "Shared chat logs" kill switch (owner/admin only). Flips
+ * PATCH /v1/orgs/chat-logs. Every chat route re-checks
  * the flag, so turning it off blocks imports, appends, and the served "How
  * this was made" panels for the whole org immediately — existing logs are
  * kept, not deleted.

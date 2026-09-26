@@ -39,16 +39,6 @@ func (a *API) previewTTL() time.Duration {
 	return defaultPreviewTTL
 }
 
-// aiSpendPeriodStart returns the start of the AI spend window (cap + usage
-// display), using the injected resolver when present, else the calendar month.
-func (a *API) aiSpendPeriodStart(ctx context.Context, t store.Tenant) time.Time {
-	if a.AISpendPeriodStart != nil {
-		return a.AISpendPeriodStart(ctx, t)
-	}
-	now := time.Now().UTC()
-	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-}
-
 // API holds the handler dependencies wired in main.go. Quota is the open-core
 // seam (Unlimited in OSS, the cloud hard-cap provider under -tags cloud). Store,
 // Objects, and Projection are the Phase-1 publish/serve loop; they may be nil in
@@ -132,22 +122,6 @@ type API struct {
 	// (PREVIEW_TTL_HOURS; default 7 days). The zero value falls back to
 	// defaultPreviewTTL so a bare unit-test API still gets a sane deadline.
 	PreviewTTL time.Duration
-
-	// AI builder wiring. All optional: when AI or AIModels is nil the AI routes
-	// return 503 (self-host without an OPENROUTER_API_KEY, or a DB-less API).
-	AI       AITurnRunner   // runs one builder turn (streamed); *ai.Runner
-	AIModels AIModelCatalog // OpenRouter model catalog for the picker
-	AIGate   AIGate         // plan/card gate (cloud); nil → allow all
-	// AIDefaultModel is the model used when a session omits one.
-	AIDefaultModel string
-	// AIMaxConcurrent bounds active AI sessions per site (0 → default 2).
-	AIMaxConcurrent int
-	// AISpendPeriodStart returns the start of the window the AI spend cap + the
-	// "usage this month" display are computed over. Nil → the calendar month; the
-	// cloud build injects the Stripe billing-period resolver so the number the
-	// user sees matches what the cap enforces (the SAME resolver the AI runner's
-	// PeriodStart uses).
-	AISpendPeriodStart func(ctx context.Context, t store.Tenant) time.Time
 
 	// Org memory wiring (docs/org-memory-scope.md). Both optional: when either
 	// is nil the /v1/ai/memories + /v1/orgs/memory routes return 503 (self-host

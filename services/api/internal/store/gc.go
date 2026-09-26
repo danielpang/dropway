@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
@@ -21,6 +23,11 @@ import (
 // orphan to be older than the presign TTL PLUS a 1h safety margin (covers clock
 // skew + a slow upload/commit) before it is eligible for deletion.
 const DefaultGCMinAge = 15*time.Minute + time.Hour
+
+// PreviewBlobRetention is how long a version's blobs stay after its preview
+// deadline so an expired preview can be re-created without re-uploading.
+// A live preview (deadline still in the future) is always inside this window.
+const PreviewBlobRetention = 30 * 24 * time.Hour
 
 // GCPolicy configures the R2 version GC retention.
 type GCPolicy struct {
@@ -37,25 +44,8 @@ type GCPolicy struct {
 	// DefaultGCMinAge (presign TTL + 1h); set it explicitly (e.g. for a test) to
 	// override. The age guard is enforced even on a non-DryRun run.
 	MinAge time.Duration
-	// DraftRetention pins AI-builder draft versions (created_via='ai') younger
-	// than this even when they fall outside KeepLastN, so an expired preview can
-	// be re-created without re-uploading content. Zero/negative uses
-	// DefaultDraftRetention (30 days).
-	DraftRetention time.Duration
 	// DryRun, when true, reports what WOULD be deleted without deleting anything.
 	DryRun bool
-}
-
-// DefaultDraftRetention is how long AI draft versions' blobs are pinned by the
-// GC beyond the keep-last-N policy (preview re-creation window).
-const DefaultDraftRetention = 30 * 24 * time.Hour
-
-// draftRetention returns the effective draft-pinning window (default 30 days).
-func (p GCPolicy) draftRetention() time.Duration {
-	if p.DraftRetention <= 0 {
-		return DefaultDraftRetention
-	}
-	return p.DraftRetention
 }
 
 // minAge returns the effective age guard: the configured MinAge, or
@@ -118,7 +108,7 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 		if err != nil {
 			return err
 		}
-		retained = selectRetained(rows, pol.KeepLastN, time.Now().Add(-pol.draftRetention()))
+		retained = selectRetained(rows, pol.KeepLastN, time.Now())
 		skillRetained, err = q.ListCurrentSkillVersionsForGC(ctx, orgID)
 		if isUndefinedTable(err) {
 			// The skills tables (migration 0008) aren't applied yet — deploy ran
@@ -293,13 +283,12 @@ func (s *Store) GCAllOrgs(ctx context.Context, obj storage.Store, pol GCPolicy) 
 }
 
 // selectRetained picks, per site, the set of versions whose blobs must be kept: the
-// CURRENT (live) version plus the most-recent keepLastN by version_no, plus every
-// AI draft (created_via='ai') created at/after draftCutoff — the preview
-// re-creation window. The input rows are ordered (site_id, version_no DESC) by the
-// query, so the first keepLastN rows of each site are the newest. The current
-// version is always included (it may be older than the newest N — e.g. after a
-// rollback — and must never be GC'd).
-func selectRetained(rows []db.ListVersionsForGCRow, keepLastN int, draftCutoff time.Time) []db.ListVersionsForGCRow {
+// CURRENT (live) version plus the most-recent keepLastN by version_no, plus any
+// version whose preview deadline is still inside PreviewBlobRetention. The input
+// rows are ordered (site_id, version_no DESC) by the query, so the first keepLastN
+// rows of each site are the newest. The current version is always included (it
+// may be older than the newest N — e.g. after a rollback — and must never be GC'd).
+func selectRetained(rows []db.ListVersionsForGCRow, keepLastN int, now time.Time) []db.ListVersionsForGCRow {
 	if keepLastN < 0 {
 		keepLastN = 0
 	}
@@ -330,13 +319,24 @@ func selectRetained(rows []db.ListVersionsForGCRow, keepLastN int, draftCutoff t
 		perSiteKept[v.SiteID]++
 		add(v)
 	}
-	// Third pass: pin young AI drafts (the preview re-creation window). Without
-	// this, a burst of drafts pushes older-but-still-previewable drafts out of
-	// keep-last-N and their expired previews could never be re-created.
+	// Third pass: pin versions that still have a preview, including a recreate
+	// window after the deadline. Without this, keep-last-N drops the draft a
+	// live preview URL is serving.
 	for _, v := range rows {
-		if v.CreatedVia == "ai" && !v.CreatedAt.Before(draftCutoff) {
+		if previewBlobsRetained(v.PreviewExpiresAt, now) {
 			add(v)
 		}
 	}
 	return out
+}
+
+// previewBlobsRetained reports whether a version's preview deadline still
+// protects its blobs. NULL means no preview. A deadline in the future is a
+// live preview; one in the past stays protected until PreviewBlobRetention
+// after that deadline.
+func previewBlobsRetained(exp pgtype.Timestamptz, now time.Time) bool {
+	if !exp.Valid {
+		return false
+	}
+	return now.Before(exp.Time.Add(PreviewBlobRetention))
 }

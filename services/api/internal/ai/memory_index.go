@@ -17,9 +17,8 @@ import (
 )
 
 // Content indexing: after a site version or skill is published, its text
-// content is chunked, embedded, and stored in org_content_chunks so retrieval
-// can quote the org's existing sites and skills ("make the pricing section
-// like our launch site"). Chunks ride their source's lifecycle (FK CASCADE);
+// content is chunked, embedded, and stored in org_content_chunks so search
+// can quote the org's existing sites and skills. Chunks ride their source's lifecycle (FK CASCADE);
 // search only ever surfaces chunks of each site's CURRENT version.
 
 const (

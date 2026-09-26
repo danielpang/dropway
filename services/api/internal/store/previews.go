@@ -33,9 +33,10 @@ type PreviewResult struct {
 // CreatePreviewRoute registers (or renews) the time-limited preview host for
 // one site version: `<shortVersionID>--<org>--<slug>.<ContentDomain>` pinned to
 // exactly that version, expiring ttl from now. Calling it again extends the
-// deadline and re-registers an expired/deleted preview (the draft's blobs +
-// manifest stay in R2 under the draft-retention GC policy, so re-creation is
-// one row + one KV write).
+// deadline and re-registers an expired/deleted preview. Blobs stay in R2 while
+// the version's preview deadline is inside the GC recreate window
+// (PreviewBlobRetention after preview_expires_at), so re-creation is one row
+// + one KV write.
 //
 // The route write to KV is the CALLER's job (post-commit, like Publish); this
 // only makes Postgres authoritative. Confused-deputy guards mirror Publish:
@@ -173,7 +174,7 @@ func (s *Store) DeletePreviewRoutes(ctx context.Context, t Tenant, siteID, versi
 
 // DeleteOtherSitePreviewRoutes drops every preview route of the site EXCEPT the
 // one pinning keepVersionID, so a site has at most one live preview at a time (a
-// new AI draft supersedes the earlier drafts' previews). Returns the removed
+// newer preview supersedes the earlier one). Returns the removed
 // hosts so the caller deletes their KV keys. RLS scopes the delete to the tenant.
 func (s *Store) DeleteOtherSitePreviewRoutes(ctx context.Context, t Tenant, siteID, keepVersionID string) ([]string, error) {
 	var hosts []string
@@ -203,41 +204,6 @@ func (s *Store) SweepExpiredPreviews(ctx context.Context, t Tenant, olderThan ti
 		return err
 	})
 	return hosts, err
-}
-
-// UnreportedUsage is one AI ledger row the cloud meter has not acked (for the
-// meter retry sweep). Kept vendor-neutral in core; the cloud meter consumes it.
-type UnreportedUsage struct {
-	RowID        string
-	OrgID        string
-	GenerationID string
-	CostUSD      float64
-}
-
-// ListUnreportedAIUsage returns up to limit of this org's ledger rows the meter
-// has not acked (reported_to_billing_at IS NULL), oldest first.
-func (s *Store) ListUnreportedAIUsage(ctx context.Context, t Tenant, limit int32) ([]UnreportedUsage, error) {
-	var out []UnreportedUsage
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListUnreportedAIUsage(ctx, db.ListUnreportedAIUsageParams{OrgID: t.OrgID, Limit: limit})
-		if err != nil {
-			return err
-		}
-		out = make([]UnreportedUsage, len(rows))
-		for i, r := range rows {
-			out[i] = UnreportedUsage{RowID: r.ID, OrgID: r.OrgID, GenerationID: r.OpenrouterGenerationID, CostUSD: r.CostUsd}
-		}
-		return nil
-	})
-	return out, err
-}
-
-// MarkAIUsageReported marks one ledger row as metered (the retry sweep calls it
-// after a successful meter send).
-func (s *Store) MarkAIUsageReported(ctx context.Context, t Tenant, rowID string) error {
-	return s.withTx(ctx, t, func(q *db.Queries) error {
-		return q.MarkAIUsageReported(ctx, db.MarkAIUsageReportedParams{ID: rowID, OrgID: t.OrgID})
-	})
 }
 
 // earliestExpiry combines a policy link-expiry (RFC3339 or "") with the preview

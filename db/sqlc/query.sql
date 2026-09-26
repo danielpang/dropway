@@ -33,7 +33,7 @@ VALUES ($1)
 ON CONFLICT (org_id) DO NOTHING;
 
 -- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd, api_keys_enabled
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, api_keys_enabled
 FROM app.org_meta
 WHERE id = $1;
 
@@ -643,17 +643,21 @@ RETURNING id, org_id, actor_user, actor_token, action, target, metadata, ip, req
 -- name: ListVersionsForGC :many
 -- Every version of every site in the active org, newest first within each site,
 -- flagged with whether it is the site's CURRENT (live) version. Drives the R2
--- version GC retention policy (keep current + last N): the GC groups by site, keeps
--- the current version + the top-N by version_no, reads those versions' manifests to
--- collect referenced blob shas, and deletes every org blob not in that set. RLS
--- scopes the rows to the active org. r2_prefix + id locate the manifest object.
+-- version GC retention policy (keep current + last N, plus versions whose
+-- preview deadline is still inside the recreate window): the GC groups by site,
+-- keeps those versions, reads their manifests to collect referenced blob shas,
+-- and deletes every org blob not in that set. RLS scopes the rows to the active
+-- org. r2_prefix + id locate the manifest object. preview_expires_at is the
+-- version's preview deadline (NULL = no preview); the GC pins it so a live or
+-- recently expired preview can still be served and re-created.
 SELECT
-    v.id            AS version_id,
-    v.site_id       AS site_id,
-    v.version_no    AS version_no,
-    v.r2_prefix     AS r2_prefix,
-    v.created_via   AS created_via,
-    v.created_at    AS created_at,
+    v.id                  AS version_id,
+    v.site_id             AS site_id,
+    v.version_no          AS version_no,
+    v.r2_prefix           AS r2_prefix,
+    v.created_via         AS created_via,
+    v.created_at          AS created_at,
+    v.preview_expires_at  AS preview_expires_at,
     (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
 FROM app.site_versions v
 JOIN app.sites s ON s.id = v.site_id
@@ -963,7 +967,7 @@ SET skills_seeded = $2
 WHERE id = $1;
 
 -- ===========================================================================
--- preview routes (AI builder / version previews) — time-limited draft hosts
+-- preview routes — time-limited draft hosts pinned to one version
 -- ===========================================================================
 
 -- name: UpsertPreviewRoute :exec
@@ -1003,8 +1007,7 @@ RETURNING host;
 
 -- name: DeleteSitePreviewRoutesExcept :many
 -- Drop a site's preview routes except the one pinning keep_version_id, returning
--- the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
--- AI draft removes the earlier drafts' previews (pass the new version to keep).
+-- the removed hosts for KV cleanup. Keeps at most one live preview per site.
 -- Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
 DELETE FROM app.host_routes
 WHERE site_id = sqlc.arg('site_id')
@@ -1040,153 +1043,6 @@ ORDER BY hr.host;
 DELETE FROM app.host_routes
 WHERE kind = 'preview' AND expires_at < $1 AND org_id = $2
 RETURNING host;
-
--- ===========================================================================
--- AI builder — sessions, transcript, cost ledger
--- ===========================================================================
-
--- name: CreateAISession :one
-INSERT INTO app.ai_sessions (org_id, site_id, created_by, model, base_version_id)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-          base_version_id, latest_version_id, created_at, last_activity_at;
-
--- name: GetAISession :one
-SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-       base_version_id, latest_version_id, created_at, last_activity_at
-FROM app.ai_sessions
-WHERE id = $1 AND org_id = $2;
-
--- name: ListAISessionsForOrg :many
-SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-       base_version_id, latest_version_id, created_at, last_activity_at
-FROM app.ai_sessions
-WHERE org_id = $1 AND status <> 'archived'
-ORDER BY last_activity_at DESC;
-
--- name: ListAISessionsForSite :many
-SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-       base_version_id, latest_version_id, created_at, last_activity_at
-FROM app.ai_sessions
-WHERE site_id = $1 AND org_id = $2 AND status <> 'archived'
-ORDER BY last_activity_at DESC;
-
--- name: LockOrgAISessionQuota :exec
--- Serialize concurrent session creates for the SAME org (TOCTOU guard for the
--- active-session concurrency cap, same pattern as LockOrgSiteQuota). The cap
--- itself is counted per-site; this org-wide lock is a coarser-but-correct guard.
-SELECT pg_advisory_xact_lock(hashtext($1::text || ':ai_sessions'));
-
--- name: CountActiveAISessions :one
--- Active = a session a user could still be driving (not archived/failed). Scoped
--- to the SITE: the concurrency cap is per-site, not per-org, so building on one
--- site never blocks building on another (a site normally has a single resumable
--- session, so the natural limit is the number of sites). Uses ai_sessions_org_site_idx.
-SELECT count(*)::bigint AS n
-FROM app.ai_sessions
-WHERE org_id = $1 AND site_id = $2 AND status IN ('active', 'running', 'idle');
-
--- name: SetAISessionStatus :exec
-UPDATE app.ai_sessions
-SET status = $2, last_activity_at = now()
-WHERE id = $1 AND org_id = $3;
-
--- name: TryBeginAITurn :one
--- Atomically claim a session for a turn: flip active/idle -> running and RETURN
--- the id ONLY if the claim won. A session already 'running' matches no row
--- (no-rows), so a concurrent second turn is rejected instead of racing on the
--- ai_messages (session_id, seq) unique key. The single-writer guarantee this
--- gives is what AppendAIMessage relies on.
-UPDATE app.ai_sessions
-SET status = 'running', last_activity_at = now()
-WHERE id = $1 AND org_id = $2 AND status IN ('active', 'idle')
-RETURNING id;
-
--- name: SetAISessionSandbox :exec
--- Cache the live sandbox handle (NULLs clear it after a reap/destroy).
-UPDATE app.ai_sessions
-SET sandbox_id = $2, sandbox_expires_at = $3, last_activity_at = now()
-WHERE id = $1 AND org_id = $4;
-
--- name: SetAISessionLatestVersion :exec
-UPDATE app.ai_sessions
-SET latest_version_id = $2, last_activity_at = now()
-WHERE id = $1 AND org_id = $3;
-
--- name: DeleteAISession :exec
-DELETE FROM app.ai_sessions
-WHERE id = $1 AND org_id = $2;
-
--- name: AppendAIMessage :one
--- Transcript append with a per-session monotonic seq (MAX+1 over an empty set
--- yields 1). Two racing appends can collide on the (session_id, seq) unique
--- key; the store retries — in practice a session has a single writer (the turn
--- loop holds the session lock).
-INSERT INTO app.ai_messages (org_id, session_id, seq, role, content)
-SELECT $1, $2, COALESCE(MAX(m.seq), 0) + 1, $3, $4
-FROM app.ai_messages m
-WHERE m.session_id = $2 AND m.org_id = $1
-RETURNING id, org_id, session_id, seq, role, content, created_at;
-
--- name: ListAIMessages :many
--- The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
--- pass 0 for the full history).
-SELECT id, org_id, session_id, seq, role, content, created_at
-FROM app.ai_messages
-WHERE session_id = $1 AND seq > $2 AND org_id = $3
-ORDER BY seq;
-
--- name: InsertAIUsage :one
--- Append one OpenRouter generation to the cost ledger. Idempotent on the
--- generation id (a retried turn never double-counts); RETURNING yields a row
--- only when the generation is genuinely new (pgx.ErrNoRows = already recorded),
--- mirroring InsertOrgBlob's dedup contract.
-INSERT INTO app.ai_usage (org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd)
-VALUES ($1, $2, $3, $4, $5, $6, $7::float8)
-ON CONFLICT (openrouter_generation_id) DO NOTHING
-RETURNING id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at;
-
--- name: SumAIUsageSince :one
--- The org's AI spend since a period start (the spend-cap check input and the
--- dashboard usage figure).
-SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total_cost_usd
-FROM app.ai_usage
-WHERE org_id = $1 AND created_at >= $2;
-
--- name: ListAIUsageForOrg :many
--- Recent ledger rows for the billing page's usage detail.
-SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
-FROM app.ai_usage
-WHERE org_id = $1 AND created_at >= $2
-ORDER BY created_at DESC
-LIMIT $3;
-
--- name: ListUnreportedAIUsage :many
--- Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
--- NULL), oldest first, for the per-row meter send + the ops retry sweep.
-SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
-FROM app.ai_usage
-WHERE org_id = $1 AND reported_to_billing_at IS NULL
-ORDER BY created_at
-LIMIT $2;
-
--- name: MarkAIUsageReported :exec
-UPDATE app.ai_usage
-SET reported_to_billing_at = now()
-WHERE id = $1 AND org_id = $2;
-
--- name: SetAIEnabled :exec
--- Org-level AI builder kill switch (owner/admin only, enforced in Go), the
--- exact analog of SetMcpEnabled.
-UPDATE app.org_meta
-SET ai_enabled = $2
-WHERE id = $1;
-
--- name: SetAIMonthlyCap :exec
-UPDATE app.org_meta
-SET ai_monthly_cap_usd = $2::float8
-WHERE id = $1;
-
 
 -- ===========================================================================
 -- chat logs (Share This Session) — append-only conversation histories with
@@ -1479,8 +1335,7 @@ WHERE org_id = $1 AND id = ANY($2::uuid[]);
 SELECT memory_enabled FROM app.org_meta WHERE id = $1;
 
 -- name: SetMemoryEnabled :exec
--- Org-level memory kill switch (owner/admin only, enforced in Go), the exact
--- analog of SetAIEnabled.
+-- Org-level memory kill switch (owner/admin only, enforced in Go).
 UPDATE app.org_meta
 SET memory_enabled = $2
 WHERE id = $1;
