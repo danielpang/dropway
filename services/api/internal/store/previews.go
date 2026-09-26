@@ -205,41 +205,6 @@ func (s *Store) SweepExpiredPreviews(ctx context.Context, t Tenant, olderThan ti
 	return hosts, err
 }
 
-// UnreportedUsage is one AI ledger row the cloud meter has not acked (for the
-// meter retry sweep). Kept vendor-neutral in core; the cloud meter consumes it.
-type UnreportedUsage struct {
-	RowID        string
-	OrgID        string
-	GenerationID string
-	CostUSD      float64
-}
-
-// ListUnreportedAIUsage returns up to limit of this org's ledger rows the meter
-// has not acked (reported_to_billing_at IS NULL), oldest first.
-func (s *Store) ListUnreportedAIUsage(ctx context.Context, t Tenant, limit int32) ([]UnreportedUsage, error) {
-	var out []UnreportedUsage
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		rows, err := q.ListUnreportedAIUsage(ctx, db.ListUnreportedAIUsageParams{OrgID: t.OrgID, Limit: limit})
-		if err != nil {
-			return err
-		}
-		out = make([]UnreportedUsage, len(rows))
-		for i, r := range rows {
-			out[i] = UnreportedUsage{RowID: r.ID, OrgID: r.OrgID, GenerationID: r.OpenrouterGenerationID, CostUSD: r.CostUsd}
-		}
-		return nil
-	})
-	return out, err
-}
-
-// MarkAIUsageReported marks one ledger row as metered (the retry sweep calls it
-// after a successful meter send).
-func (s *Store) MarkAIUsageReported(ctx context.Context, t Tenant, rowID string) error {
-	return s.withTx(ctx, t, func(q *db.Queries) error {
-		return q.MarkAIUsageReported(ctx, db.MarkAIUsageReportedParams{ID: rowID, OrgID: t.OrgID})
-	})
-}
-
 // earliestExpiry combines a policy link-expiry (RFC3339 or "") with the preview
 // deadline, returning the RFC3339 instant the edge should enforce — the earlier
 // of the two. A preview host always has a deadline.

@@ -74,8 +74,7 @@ func orgParamStructs(t *testing.T) map[string]bool {
 
 // TestOrgScopedParamsCallSitesSetOrgID asserts every db.<Name>Params{...} literal
 // constructed in the store package sets OrgID when the struct has that field. This
-// is the exact class of the audit-log (ListAuditLog) and AI-transcript
-// (ListAIMessages) bugs from the PR #100 review.
+// is the exact class of the audit-log (ListAuditLog) bug from the PR #100 review.
 func TestOrgScopedParamsCallSitesSetOrgID(t *testing.T) {
 	orgStructs := orgParamStructs(t)
 	if len(orgStructs) == 0 {

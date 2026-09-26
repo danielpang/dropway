@@ -16,8 +16,7 @@ import (
 
 // newMemoryCmd builds the `dropway memory` group: the CLI surface of org
 // memory ("your agent knows your company"), so coding agents that shell out —
-// or users curating from the terminal — reach the same memory the AI builder
-// and MCP tools use.
+// or users curating from the terminal — reach the same memory the MCP tools use.
 func newMemoryCmd(memoryFactory func(baseURL, token string) api.MemoryClient) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "memory",
@@ -240,7 +239,7 @@ func newMemoryRmCmd(factory func(baseURL, token string) api.MemoryClient) *cobra
 // printMemories renders the aligned table every list-ish subcommand shares.
 func printMemories(out io.Writer, rows []api.Memory, withDistance bool) {
 	if len(rows) == 0 {
-		fmt.Fprintln(out, "No memories yet. The AI builder learns as your org uses it, or add one with `dropway memory add`.")
+		fmt.Fprintln(out, "No memories yet. Add one with `dropway memory add`.")
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 3, ' ', 0)

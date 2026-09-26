@@ -274,3 +274,68 @@ func TestStubVerifier_ErrorBranches(t *testing.T) {
 		t.Errorf("valid signed event: ev=%+v err=%v", ev, err)
 	}
 }
+
+// An extra subscription item whose price is not a known plan tier must not
+// steal the tier or the seat count from the plan item, regardless of order.
+func TestFromSubscription_UnknownItemIgnoredForTier(t *testing.T) {
+	d, err := newVerifier().fromSubscription([]byte(`{
+		"id":"sub_two","customer":"cus_x","status":"active",
+		"current_period_start":1000,"current_period_end":2000,
+		"metadata":{"org_id":"org_two"},
+		"items":{"data":[
+			{"quantity":0,"price":{"id":"price_unknown"}},
+			{"quantity":5,"price":{"id":"price_biz"}}
+		]}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if d.PlanTier != TierBusiness {
+		t.Errorf("tier = %q, want business (the plan item)", d.PlanTier)
+	}
+	if d.Seats != 5 {
+		t.Errorf("seats = %d, want 5 (from the plan item)", d.Seats)
+	}
+	if d.UnknownPrice {
+		t.Error("UnknownPrice must be false: the plan item's price is recognized")
+	}
+}
+
+// current_period_start is parsed from the top level, and falls back to the item.
+func TestFromSubscription_PeriodStart(t *testing.T) {
+	top, err := newVerifier().fromSubscription([]byte(`{
+		"id":"s1","customer":"c1","status":"active",
+		"current_period_start":1700000000,"current_period_end":1702600000,
+		"metadata":{"org_id":"o1"},
+		"items":{"data":[{"quantity":1,"price":{"id":"price_pro"}}]}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if top.CurrentPeriodStart != 1700000000 {
+		t.Errorf("current_period_start = %d, want 1700000000", top.CurrentPeriodStart)
+	}
+
+	// Top level absent → back-filled from the item.
+	fromItem, err := newVerifier().fromSubscription([]byte(`{
+		"id":"s2","customer":"c2","status":"active",
+		"metadata":{"org_id":"o2"},
+		"items":{"data":[{"quantity":1,"price":{"id":"price_pro"},"current_period_start":1699999999}]}
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if fromItem.CurrentPeriodStart != 1699999999 {
+		t.Errorf("current_period_start = %d, want 1699999999 (from item)", fromItem.CurrentPeriodStart)
+	}
+}
+
+func TestCheckoutLineItems(t *testing.T) {
+	plan := checkoutLineItems(CheckoutParams{PriceID: "price_pro"}, 2)
+	if len(plan) != 1 {
+		t.Fatalf("line items = %d, want 1", len(plan))
+	}
+	if plan[0].Price == nil || *plan[0].Price != "price_pro" || plan[0].Quantity == nil || *plan[0].Quantity != 2 {
+		t.Errorf("plan item = %+v", plan[0])
+	}
+}

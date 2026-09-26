@@ -8,11 +8,9 @@ import {
   KeyRound,
   MessageSquareText,
   ShieldAlert,
-  Sparkles,
   Users,
 } from "lucide-react";
 
-import { AiBuilderAccess } from "@/components/settings/ai-builder-access";
 import { ChatLogsAccess } from "@/components/settings/chat-logs-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
 import { McpAccess } from "@/components/settings/mcp-access";
@@ -62,17 +60,6 @@ export default async function OrgSettingsPage() {
     .catch(() => ({ allow_external_sharing: false, mcp_enabled: true }));
   const allowExternalSharing = policy.allow_external_sharing;
   const mcpEnabled = policy.mcp_enabled;
-
-  // The AI builder card is shown ONLY on a paid plan (the builder requires one,
-  // so a free org has nothing to toggle). getBilling 404s on OSS/self-host, which
-  // is unlimited → treat as paid so a self-hoster still sees the toggle. We read
-  // the live ai_enabled state; a 503 (builder not configured) hides the card.
-  const planTier = await api
-    .getBilling()
-    .then((b) => b.plan_tier ?? "free")
-    .catch(() => "pro"); // OSS/self-host: unlimited, show the toggle
-  const aiSettings = await api.getAIOrgSettings().catch(() => null);
-  const showAiBuilder = planTier !== "free" && aiSettings !== null;
 
   // Company memory: the settings route works even when the org flag is off, so
   // the card can always render the toggle in its live state. A 503 (no
@@ -154,28 +141,6 @@ export default async function OrgSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* AI website builder (paid plans only) */}
-      {showAiBuilder && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="size-4 text-muted-foreground" aria-hidden />
-              AI website builder
-            </CardTitle>
-            <CardDescription>
-              Let members create and edit sites by chatting with AI. Usage is
-              billed at the provider&rsquo;s cost.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <AiBuilderAccess
-              initialEnabled={aiSettings.ai_enabled}
-              canManage={manage}
-            />
-          </CardContent>
-        </Card>
-      )}
-
       {/* Company memory */}
       {memorySettings && (
         <Card>
@@ -185,9 +150,9 @@ export default async function OrgSettingsPage() {
               Company memory
             </CardTitle>
             <CardDescription>
-              Dropway learns durable facts about your organization from AI
-              builds, shared chats, sites and skills, and recalls them in
-              future work.
+              Dropway learns durable facts about your organization from
+              shared chats, sites, and skills, and recalls them in future
+              work.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

@@ -62,11 +62,11 @@ type cloudDeps struct {
 	// cloud build hands it to the BillingStore for plan upgrade/downgrade events; the
 	// OSS build ignores it. Its lifecycle (flush on shutdown) is owned by run().
 	Analytics analytics.Emitter
-	// API + AIRunner let the cloud build attach the AI pass-through meter (Stripe)
-	// and the paid-plan gate. Both nil when the AI builder is disabled; the OSS
-	// mountCloud ignores them.
-	API      *handlers.API
-	AIRunner *ai.Runner
+	// API + Memory let the cloud build attach the paid-plan gate for org memory.
+	// Memory is nil when embeddings are not configured; the OSS mountCloud
+	// ignores both.
+	API    *handlers.API
+	Memory *ai.Runner
 }
 
 // newPostHogClient is the seam wireTelemetry builds the shared client through.
@@ -132,13 +132,6 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	}
 
 	ctx := context.Background()
-
-	// One-off cloud billing operator tasks (BILLING_TASK): AI meter bootstrap /
-	// metered-price backfill. In the OSS build this is a no-op that returns false.
-	// When handled, we ran the task instead of starting the server.
-	if handled, err := runCloudBillingTask(ctx, cfg); handled || err != nil {
-		return err
-	}
 
 	if cfg.JWKSURL == "" {
 		// The authenticated routes can't verify without a JWKS; surface it loudly.
@@ -264,14 +257,10 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	// Version-preview lifetime (PREVIEW_TTL_HOURS, default 7 days).
 	api.PreviewTTL = time.Duration(cfg.PreviewTTLHours) * time.Hour
 
-	// AI website builder. Wired only when an OpenRouter key is configured (self-
-	// host brings its own); otherwise the /v1/ai routes 503. The sandbox provider
-	// is selected by SANDBOX_PROVIDER. The plan/card gate is added by the cloud
-	// build via mountCloud; the OSS default allows all (BYO key).
-	aiRunner, err := wireAIBuilder(api, cfg, siteStore, obj, proj, baseLogger)
-	if err != nil {
-		return fmt.Errorf("wire AI builder: %w", err)
-	}
+	// Org memory. Endpoints need an embeddings key; chat-log extraction also
+	// needs an OpenRouter key. The plan gate is added by the cloud build via
+	// mountCloud; the OSS default allows all (BYO keys).
+	memoryRunner := wireOrgMemory(api, cfg, siteStore, obj, baseLogger)
 
 	// Embedded default preset skills, materialized lazily per org on its first
 	// skills touch. A bad embedded seed is a build artifact problem — fail
@@ -344,7 +333,7 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		Projection:           proj,
 		Analytics:            analyticsEmitter,
 		API:                  api,
-		AIRunner:             aiRunner,
+		Memory:               memoryRunner,
 	})
 
 	srv := &http.Server{

@@ -15,21 +15,11 @@ type Querier interface {
 	// Reserve $2 consecutive seq numbers; returns the FIRST reserved number. seq
 	// stays monotonic across pruning because the allocator never rewinds.
 	AllocateChatSeq(ctx context.Context, arg AllocateChatSeqParams) (int32, error)
-	// Transcript append with a per-session monotonic seq (MAX+1 over an empty set
-	// yields 1). Two racing appends can collide on the (session_id, seq) unique
-	// key; the store retries — in practice a session has a single writer (the turn
-	// loop holds the session lock).
-	AppendAIMessage(ctx context.Context, arg AppendAIMessageParams) (AppAiMessage, error)
 	// Claim a pending grant for the first verified account that matches it: set
 	// claimed_at + claimed_by_user_id. Idempotent — re-claiming by the same user is a
 	// no-op; we only set claim fields when still unclaimed so the original claimant
 	// and timestamp are preserved.
 	ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error
-	// Active = a session a user could still be driving (not archived/failed). Scoped
-	// to the SITE: the concurrency cap is per-site, not per-org, so building on one
-	// site never blocks building on another (a site normally has a single resumable
-	// session, so the natural limit is the number of sites). Uses ai_sessions_org_site_idx.
-	CountActiveAISessions(ctx context.Context, arg CountActiveAISessionsParams) (int64, error)
 	CountChatLogsForOrg(ctx context.Context, orgID string) (int64, error)
 	CountChatMessages(ctx context.Context, arg CountChatMessagesParams) (int64, error)
 	CountFolderItems(ctx context.Context, arg CountFolderItemsParams) (int64, error)
@@ -40,10 +30,6 @@ type Querier interface {
 	// org_id to be explicit.
 	CountSitesForOrg(ctx context.Context, orgID string) (int64, error)
 	CountSkillsForOrg(ctx context.Context, orgID string) (int64, error)
-	// ===========================================================================
-	// AI builder — sessions, transcript, cost ledger
-	// ===========================================================================
-	CreateAISession(ctx context.Context, arg CreateAISessionParams) (AppAiSession, error)
 	// ===========================================================================
 	// API keys (migration 0016): org-scoped credentials for the SDK / CLI / CI.
 	// The auth-boundary lookup is app.resolve_api_key() (SECURITY DEFINER, called via
@@ -80,7 +66,6 @@ type Querier interface {
 	// ===========================================================================
 	CreateSkillFolder(ctx context.Context, arg CreateSkillFolderParams) (AppSkillFolder, error)
 	CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (AppSkillVersion, error)
-	DeleteAISession(ctx context.Context, arg DeleteAISessionParams) error
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
 	DeleteChatLog(ctx context.Context, arg DeleteChatLogParams) (int64, error)
 	DeleteChatMessage(ctx context.Context, arg DeleteChatMessageParams) (int64, error)
@@ -121,8 +106,7 @@ type Querier interface {
 	// retained set), the same path that prunes old versions.
 	DeleteSite(ctx context.Context, arg DeleteSiteParams) (string, error)
 	// Drop a site's preview routes except the one pinning keep_version_id, returning
-	// the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
-	// AI draft removes the earlier drafts' previews (pass the new version to keep).
+	// the removed hosts for KV cleanup. Keeps at most one live preview per site.
 	// Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
 	DeleteSitePreviewRoutesExcept(ctx context.Context, arg DeleteSitePreviewRoutesExceptParams) ([]string, error)
 	// Remove a skill (versions + folder memberships cascade). RETURNING detects an
@@ -157,7 +141,6 @@ type Querier interface {
 	EnsureOrgMeta(ctx context.Context, id string) error
 	// Idempotent upsert of the per-org counter row backing the quota gate.
 	EnsureOrgUsage(ctx context.Context, orgID string) error
-	GetAISession(ctx context.Context, arg GetAISessionParams) (AppAiSession, error)
 	// One key by id in the active org (RLS-scoped).
 	GetAPIKey(ctx context.Context, arg GetAPIKeyParams) (GetAPIKeyRow, error)
 	// Look up a grant by (site, email) for the authz claim path.
@@ -223,11 +206,6 @@ type Querier interface {
 	// Bump the org's sites_count counter, returning the new value. Run inside the
 	// create-site tx after the row is inserted.
 	IncSiteCount(ctx context.Context, orgID string) (int32, error)
-	// Append one OpenRouter generation to the cost ledger. Idempotent on the
-	// generation id (a retried turn never double-counts); RETURNING yields a row
-	// only when the generation is genuinely new (pgx.ErrNoRows = already recorded),
-	// mirroring InsertOrgBlob's dedup contract.
-	InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) (AppAiUsage, error)
 	InsertChatMessage(ctx context.Context, arg InsertChatMessageParams) (AppChatMessage, error)
 	InsertContentChunk(ctx context.Context, arg InsertContentChunkParams) error
 	// ===========================================================================
@@ -251,13 +229,6 @@ type Querier interface {
 	// yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
 	// the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
 	InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (int64, error)
-	// The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
-	// pass 0 for the full history).
-	ListAIMessages(ctx context.Context, arg ListAIMessagesParams) ([]AppAiMessage, error)
-	ListAISessionsForOrg(ctx context.Context, orgID string) ([]AppAiSession, error)
-	ListAISessionsForSite(ctx context.Context, arg ListAISessionsForSiteParams) ([]AppAiSession, error)
-	// Recent ledger rows for the billing page's usage detail.
-	ListAIUsageForOrg(ctx context.Context, arg ListAIUsageForOrgParams) ([]AppAiUsage, error)
 	// The active org's keys, newest first (RLS-scoped; backed by api_keys_org_idx).
 	// Metadata + prefix only — never the hash, never the secret.
 	ListAPIKeys(ctx context.Context, orgID string) ([]ListAPIKeysRow, error)
@@ -347,9 +318,6 @@ type Querier interface {
 	// only to their owner (caller_id), so half-finished uploads don't clutter the
 	// org listing. RLS scopes every read to the active org.
 	ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListSkillsRow, error)
-	// Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
-	// NULL), oldest first, for the per-row meter send + the ops retry sweep.
-	ListUnreportedAIUsage(ctx context.Context, arg ListUnreportedAIUsageParams) ([]AppAiUsage, error)
 	// ===========================================================================
 	// R2 version GC (Phase 4) — versions to retain per org
 	// ===========================================================================
@@ -364,10 +332,6 @@ type Querier interface {
 	// COUNT → policy (hard cap) or INSERT → prune (window), so two concurrent
 	// appends can't both slip past the cap or over-prune.
 	LockChatLogAppend(ctx context.Context, dollar_1 string) error
-	// Serialize concurrent session creates for the SAME org (TOCTOU guard for the
-	// active-session concurrency cap, same pattern as LockOrgSiteQuota). The cap
-	// itself is counted per-site; this org-wide lock is a coarser-but-correct guard.
-	LockOrgAISessionQuota(ctx context.Context, dollar_1 string) error
 	// ===========================================================================
 	// chat logs (Share This Session) — append-only conversation histories with
 	// optional site attachment (migration 0013)
@@ -416,7 +380,6 @@ type Querier interface {
 	// per-folder cap check → INSERT is a critical section (free tier caps skills per
 	// folder; see quota.ResourceSkillPerFolder).
 	LockSkillFolderQuota(ctx context.Context, dollar_1 string) error
-	MarkAIUsageReported(ctx context.Context, arg MarkAIUsageReportedParams) error
 	// The extraction dedupe probe: nearest neighbor over ALL rows — pinned and
 	// disabled INCLUDED (unlike SearchOrgMemories) — so a reworded restatement of
 	// a pinned fact can't duplicate it and a disabled fact can't sneak back in
@@ -459,14 +422,6 @@ type Querier interface {
 	// embedding model. Pinned rows are excluded here (fetched separately, always
 	// included) so the k budget goes to genuinely retrieved memories.
 	SearchOrgMemories(ctx context.Context, arg SearchOrgMemoriesParams) ([]SearchOrgMemoriesRow, error)
-	// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
-	// exact analog of SetMcpEnabled.
-	SetAIEnabled(ctx context.Context, arg SetAIEnabledParams) error
-	SetAIMonthlyCap(ctx context.Context, arg SetAIMonthlyCapParams) error
-	SetAISessionLatestVersion(ctx context.Context, arg SetAISessionLatestVersionParams) error
-	// Cache the live sandbox handle (NULLs clear it after a reap/destroy).
-	SetAISessionSandbox(ctx context.Context, arg SetAISessionSandboxParams) error
-	SetAISessionStatus(ctx context.Context, arg SetAISessionStatusParams) error
 	// ===========================================================================
 	// org policy (Phase 2) — allow_external_sharing toggle + reconcile
 	// ===========================================================================
@@ -490,8 +445,7 @@ type Querier interface {
 	// enforced in Go). The MCP resource server ALSO re-checks org_meta.mcp_enabled per
 	// request, so disabling takes effect immediately even for already-issued tokens.
 	SetMcpEnabled(ctx context.Context, arg SetMcpEnabledParams) error
-	// Org-level memory kill switch (owner/admin only, enforced in Go), the exact
-	// analog of SetAIEnabled.
+	// Org-level memory kill switch (owner/admin only, enforced in Go).
 	SetMemoryEnabled(ctx context.Context, arg SetMemoryEnabledParams) error
 	SetOrgMemoryDisabled(ctx context.Context, arg SetOrgMemoryDisabledParams) (SetOrgMemoryDisabledRow, error)
 	SetOrgMemoryPinned(ctx context.Context, arg SetOrgMemoryPinnedParams) (SetOrgMemoryPinnedRow, error)
@@ -534,21 +488,12 @@ type Querier interface {
 	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
 	// floors at zero so a reconciliation skew can never make the counter negative.
 	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error
-	// The org's AI spend since a period start (the spend-cap check input and the
-	// dashboard usage figure).
-	SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams) (float64, error)
 	// Best-effort, throttled last-used stamp: update at most once per 5 minutes per key
 	// so a keyed GET doesn't become a write on every request. Runs under the resolved
 	// org's tenant context (RLS-scoped by org_id).
 	TouchAPIKeyLastUsed(ctx context.Context, arg TouchAPIKeyLastUsedParams) error
 	// Best-effort retrieval stamp for the dashboard's "last used" column.
 	TouchOrgMemoriesUsed(ctx context.Context, arg TouchOrgMemoriesUsedParams) error
-	// Atomically claim a session for a turn: flip active/idle -> running and RETURN
-	// the id ONLY if the claim won. A session already 'running' matches no row
-	// (no-rows), so a concurrent second turn is rejected instead of racing on the
-	// ai_messages (session_id, seq) unique key. The single-writer guarantee this
-	// gives is what AppendAIMessage relies on.
-	TryBeginAITurn(ctx context.Context, arg TryBeginAITurnParams) (string, error)
 	// Advance the custom-domain state machine (pending → verifying → verified/failed)
 	// and the TLS status from a Cloudflare Status() poll.
 	UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error)
@@ -585,7 +530,7 @@ type Querier interface {
 	// scopes the write to the active org.
 	UpsertPostVote(ctx context.Context, arg UpsertPostVoteParams) error
 	// ===========================================================================
-	// preview routes (AI builder / version previews) — time-limited draft hosts
+	// preview routes — time-limited draft hosts pinned to one version
 	// ===========================================================================
 	// Register (or renew) a preview host pinned to a specific draft version. PK on
 	// host enforces global uniqueness like every other route; ON CONFLICT updates

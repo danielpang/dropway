@@ -259,10 +259,9 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 		CurrentPeriodEnd:     sub.CurrentPeriodEnd,
 		PlanTier:             TierFree,
 	}
-	// Derive seats + tier from the PLAN line item's price. With the metered AI
-	// price now riding on the same subscription as a second item, pick the item
-	// whose price maps to a known plan tier (the metered price maps to none), so a
-	// two-item subscription still resolves the right tier + seats.
+	// Derive seats + tier from the plan line item. If a subscription carries an
+	// extra item whose price is not a known plan tier, skip it so seats and
+	// tier still come from the plan price.
 	if len(sub.Items.Data) > 0 {
 		item := sub.Items.Data[0]
 		for _, it := range sub.Items.Data {
@@ -322,11 +321,6 @@ type CheckoutParams struct {
 	Metadata          map[string]string
 	SuccessURL        string
 	CancelURL         string
-	// MeteredPriceID, when set, is the usage-based AI price ($0.01 per
-	// ai_cost_cents unit) added as a SECOND subscription item so AI usage bills
-	// onto the SAME subscription (one invoice per cycle). Metered items carry no
-	// quantity. Empty → the subscription is plan-only (AI metering off).
-	MeteredPriceID string
 	// LocalCurrency turns on Stripe Adaptive Pricing for the session: the customer
 	// is presented and charged in their local currency (Stripe converts from the
 	// USD price). When false the session stays USD and the customer's bank does the
@@ -384,20 +378,13 @@ func (c *realStripeClient) EnsureCustomer(existingID, orgID, email string) (stri
 	return cust.ID, nil
 }
 
-// checkoutLineItems builds the subscription line items: the plan price (with the
-// seat quantity) plus, when configured, the metered AI price (no quantity, as
-// metered prices reject it) so AI usage accrues on the same subscription.
+// checkoutLineItems builds the subscription line items: the plan price with the
+// seat quantity.
 func checkoutLineItems(p CheckoutParams, qty int64) []*stripe.CheckoutSessionLineItemParams {
-	items := []*stripe.CheckoutSessionLineItemParams{{
+	return []*stripe.CheckoutSessionLineItemParams{{
 		Price:    stripe.String(p.PriceID),
 		Quantity: stripe.Int64(qty),
 	}}
-	if p.MeteredPriceID != "" {
-		items = append(items, &stripe.CheckoutSessionLineItemParams{
-			Price: stripe.String(p.MeteredPriceID),
-		})
-	}
-	return items
 }
 
 func (c *realStripeClient) CreateCheckoutSession(p CheckoutParams) (string, error) {

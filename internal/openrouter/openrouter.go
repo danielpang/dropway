@@ -1,17 +1,15 @@
-// Package openrouter is the LLM vendor seam for the AI website builder: a
-// minimal client for the OpenRouter chat-completions API (an OpenAI-compatible
-// gateway over many model providers). The builder's agent loop depends only on
-// this package's Client/Event surface, so a different gateway can be dropped in
-// behind the same shape without touching the loop.
+// Package openrouter is a minimal client for the OpenRouter chat-completions
+// API (an OpenAI-compatible gateway over many model providers). Org-memory
+// extraction uses Client and Event; a different gateway can be dropped in
+// behind the same shape.
 //
 // The API key is configuration, not code: the composition root (the API
 // service's main) reads OPENROUTER_API_KEY from the environment and injects it
 // here. Self-host deployments bring their own key.
 //
-// Cost semantics: this client always requests usage accounting
-// (usage.include), so OpenRouter's final stream chunk reports usage.cost in
-// OpenRouter credits, which are 1:1 with USD. Usage is surfaced on the "done"
-// Event so the caller can meter per-generation spend.
+// This client always requests usage accounting (usage.include), so OpenRouter's
+// final stream chunk reports token counts and usage.cost (OpenRouter credits,
+// 1:1 with USD) on the "done" Event.
 package openrouter
 
 import (
@@ -146,43 +144,6 @@ type Event struct {
 	Usage   *Usage
 	// Type=="error": Err carries the terminal error.
 	Err error
-}
-
-// Model is one catalog entry from GET /models.
-type Model struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description,omitempty"`
-	ContextLength int64  `json:"context_length,omitempty"`
-	Pricing       struct {
-		Prompt     string `json:"prompt"` // per-token USD as string
-		Completion string `json:"completion"`
-	} `json:"pricing"`
-}
-
-// Models fetches the OpenRouter model catalog. No auth is required, but the
-// API key (when set) is sent anyway so account-scoped catalog views work.
-func (c *Client) Models(ctx context.Context) ([]Model, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("openrouter: models request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-		return nil, apiError(resp.StatusCode, body)
-	}
-	var out struct {
-		Data []Model `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("openrouter: decode models response: %w", err)
-	}
-	return out.Data, nil
 }
 
 // maxErrorBody caps how much of an error response body is read into memory.

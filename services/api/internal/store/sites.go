@@ -178,8 +178,8 @@ type SiteVersion struct {
 	SizeBytes   int64
 	CreatedBy   string
 	CreatedAt   time.Time
-	// CreatedVia distinguishes AI-builder drafts ('ai') from regular deploys
-	// ('deploy'); the draft-aware GC pins young 'ai' versions.
+	// CreatedVia records how the version was produced ("deploy", or the
+	// historical "ai" value).
 	CreatedVia string
 	// PreviewExpiresAt mirrors the version's active preview-route deadline
 	// (nil = no active preview).

@@ -373,32 +373,6 @@ services:
     depends_on:
       - serve
 
-  # ---------------------------------------------------------------------------
-  # sandbox-image — build-only helper (profile: ai). The AI website builder runs
-  # untrusted, LLM-generated build commands inside THIS image via sandboxd (the
-  # in-container agent). Build + push it to your Fly sandbox app:
-  #   docker build -f services/sandboxd/Dockerfile -t registry.fly.io/<app>:latest .
-  #   flyctl auth docker && docker push registry.fly.io/<app>:latest
-  #
-  # SELF-HOST: the AI builder is supported ONLY with SANDBOX_PROVIDER=fly. The
-  # local `docker` provider is NOT wired into this compose stack (and is dev-only
-  # at best): it needs the `docker` CLI + /var/run/docker.sock in the `api`
-  # process, which the distroless api image does not ship, and mounting the socket
-  # would grant the api root-equivalent host access. See deploy/README.md
-  # ("AI website builder"). This build-only service just produces the image; it is
-  # never `up`'d (sandboxd runs per session inside a fresh machine Fly creates).
-  # ---------------------------------------------------------------------------
-  sandbox-image:
-    build:
-      context: ..
-      dockerfile: services/sandboxd/Dockerfile
-    image: dropway-sandbox
-    profiles: ["ai"]
-    # Build-only: it is never `up`'d as a long-running service (sandboxd runs
-    # per session inside a fresh container the provider creates).
-    command: ["--help"]
-    restart: "no"
-
 volumes:
   pgdata:
   miniodata:

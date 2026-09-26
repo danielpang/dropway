@@ -8,7 +8,6 @@ import {
   Link2,
   MessageSquareText,
   Settings,
-  Sparkles,
 } from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
@@ -189,18 +188,9 @@ export default async function SiteDetailPage({
         </div>
       </div>
 
-      {/* Actions. On mobile the buttons are laid out on a tidy grid (primary full
-          width, secondary actions two-up) instead of wrapping left-aligned; from
-          sm+ they collapse back to a single row with the primary on the left and
-          the secondary actions pushed right. */}
-      <div className="flex flex-col gap-2 border-y border-border py-3 sm:flex-row sm:flex-wrap sm:items-center">
-        <Button asChild size="sm" className="w-full sm:w-auto">
-          <Link href={`/sites/${id}/builder`}>
-            <Sparkles aria-hidden />
-            Build with AI
-          </Link>
-        </Button>
-        <div className="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:flex-wrap sm:items-center">
+      {/* Actions. On mobile the buttons sit two-up; from sm+ they form one row. */}
+      <div className="border-y border-border py-3">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
             <Link href={`/sites/${id}/settings`}>
               <Settings aria-hidden />

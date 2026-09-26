@@ -111,12 +111,6 @@ type Config struct {
 	StripePriceBusiness   string
 	StripePriceEnterprise string
 
-	// StripeAIMeterPrice is the usage-based Stripe Price id for AI builder usage
-	// (the metered price attached to the ai_cost_cents Billing Meter, $0.01/unit).
-	// Set STRIPE_AI_METER_PRICE to bill pass-through AI cost on the org's
-	// subscription. Empty → AI usage is metered to the ledger but not to Stripe.
-	StripeAIMeterPrice string
-
 	// DashboardURL is the dashboard origin (DASHBOARD_URL) used for Checkout
 	// success/cancel + Billing-Portal return URLs. Defaults to https://app.dropway.dev.
 	DashboardURL string
@@ -153,27 +147,13 @@ type Config struct {
 	// expired preview restarts the clock.
 	PreviewTTLHours int
 
-	// --- AI website builder ---------------------------------------------------
-	// OpenRouterAPIKey enables the AI builder (self-host: bring your own key).
-	// Empty → the AI routes 503.
+	// OpenRouterAPIKey enables chat-log memory extraction. Empty → extraction
+	// is off; content indexing still runs when embeddings are configured.
 	OpenRouterAPIKey string // OPENROUTER_API_KEY
-	// AIDefaultModel is the OpenRouter model a session uses when none is picked.
-	AIDefaultModel string // AI_DEFAULT_MODEL
-	// SandboxProvider selects the sandbox backend: "fly" or "docker".
-	SandboxProvider string // SANDBOX_PROVIDER (default "docker")
-	// SandboxImage is the builder image the sandbox boots.
-	SandboxImage string // SANDBOX_IMAGE
-	// FlyAPIToken / FlySandboxApp configure the Fly Machines sandbox provider.
-	FlyAPIToken   string // FLY_API_TOKEN
-	FlySandboxApp string // FLY_SANDBOX_APP
-	// AIMonthlyCapUSD is the self-host default AI spend cap (0 → unlimited). The
-	// cloud build reads the per-org cap from org_meta; this is the OSS fallback.
-	AIMonthlyCapUSD float64 // AI_MONTHLY_CAP_USD
 
 	// --- Org memory ("your agent knows your company") -------------------------
-	// EmbeddingsAPIKey enables the org-memory feature (extraction + retrieval +
-	// the /v1/ai/memories surface). Empty → memory routes 503 and the builder
-	// runs memory-less, mirroring the OpenRouter gate above. EmbeddingsBaseURL
+	// EmbeddingsAPIKey enables the org-memory feature (extraction + search +
+	// the /v1/ai/memories surface). Empty → memory routes 503. EmbeddingsBaseURL
 	// may point at any OpenAI-compatible /v1/embeddings server (self-host:
 	// Ollama or a proxy); the default is the real OpenAI API.
 	EmbeddingsAPIKey  string // EMBEDDINGS_API_KEY
@@ -182,13 +162,9 @@ type Config struct {
 	// migration 0017; changing it follows docs/org-memory-scope.md §3.5.
 	EmbeddingsModel      string // EMBEDDINGS_MODEL (default text-embedding-3-small)
 	EmbeddingsDimensions int    // EMBEDDINGS_DIMENSIONS (default 1536)
-	// AIMemoryModel is the OpenRouter model used for post-turn memory
-	// extraction (a cheap tier; its cost lands in the ai_usage ledger like any
-	// generation).
+	// AIMemoryModel is the OpenRouter model used for chat-log memory extraction.
 	AIMemoryModel string // AI_MEMORY_MODEL (default anthropic/claude-haiku-4-5)
-	// AIMemoryTopK is how many retrieved memories a turn injects (pinned rows
-	// ride on top). AIMemoryMaxPerOrg caps stored rows per org (0 → unlimited).
-	AIMemoryTopK     int // AI_MEMORY_TOPK (default 8)
+	// AIMemoryMaxPerOrg caps stored memory rows per org (0 → unlimited).
 	AIMemoryMaxPerOrg int // AI_MEMORY_MAX_PER_ORG (default 2000)
 
 	// PasswordRateLimitPerMin / PasswordRateLimitBurst bound the unauthenticated
@@ -254,7 +230,6 @@ func Load() (Config, error) {
 		StripePricePro:        os.Getenv("STRIPE_PRICE_PRO"),
 		StripePriceBusiness:   os.Getenv("STRIPE_PRICE_BUSINESS"),
 		StripePriceEnterprise: os.Getenv("STRIPE_PRICE_ENTERPRISE"),
-		StripeAIMeterPrice:    os.Getenv("STRIPE_AI_METER_PRICE"),
 		DashboardURL:          envOr("DASHBOARD_URL", "https://app.dropway.dev"),
 		Environment:           envOr("ENVIRONMENT", "development"),
 		EnforceStorageQuota:   parseBool(os.Getenv("ENFORCE_STORAGE_QUOTA")),
@@ -265,21 +240,13 @@ func Load() (Config, error) {
 		PreviewTTLHours: envIntOr("PREVIEW_TTL_HOURS", 168),
 
 		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
-		AIDefaultModel:   envOr("AI_DEFAULT_MODEL", "anthropic/claude-sonnet-4.5"),
 
 		EmbeddingsAPIKey:     os.Getenv("EMBEDDINGS_API_KEY"),
 		EmbeddingsBaseURL:    envOr("EMBEDDINGS_BASE_URL", "https://api.openai.com/v1"),
 		EmbeddingsModel:      envOr("EMBEDDINGS_MODEL", "text-embedding-3-small"),
 		EmbeddingsDimensions: envIntOr("EMBEDDINGS_DIMENSIONS", 1536),
 		AIMemoryModel:        envOr("AI_MEMORY_MODEL", "anthropic/claude-haiku-4-5"),
-		AIMemoryTopK:         envIntOr("AI_MEMORY_TOPK", 8),
 		AIMemoryMaxPerOrg:    envIntOr("AI_MEMORY_MAX_PER_ORG", 2000),
-
-		SandboxProvider:  envOr("SANDBOX_PROVIDER", "docker"),
-		SandboxImage:     os.Getenv("SANDBOX_IMAGE"),
-		FlyAPIToken:      os.Getenv("FLY_API_TOKEN"),
-		FlySandboxApp:    os.Getenv("FLY_SANDBOX_APP"),
-		AIMonthlyCapUSD:  envFloatOr("AI_MONTHLY_CAP_USD", 0),
 
 		PasswordRateLimitPerMin: envIntOr("PASSWORD_RATELIMIT_PER_MIN", 10),
 		PasswordRateLimitBurst:  envIntOr("PASSWORD_RATELIMIT_BURST", 5),
@@ -337,17 +304,6 @@ func envIntOr(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
 			return n
-		}
-	}
-	return def
-}
-
-// envFloatOr parses the environment value for key as a float, falling back to
-// def when unset/empty or unparseable / negative.
-func envFloatOr(key string, def float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && f >= 0 {
-			return f
 		}
 	}
 	return def

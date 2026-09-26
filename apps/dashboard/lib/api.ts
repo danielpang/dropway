@@ -45,43 +45,6 @@ export type SiteComment = components["schemas"]["SiteComment"];
 export type Domain = components["schemas"]["Domain"];
 export type EdgeToken = components["schemas"]["EdgeToken"];
 
-/** One entry in the OpenRouter model catalog the AI builder's picker renders. */
-export type AiModel = {
-  id: string;
-  name?: string;
-  description?: string;
-  context_length?: number;
-  pricing?: { prompt?: string; completion?: string };
-};
-
-/** An AI builder chat session for a site. */
-export type AiSession = {
-  id: string;
-  site_id: string;
-  status: string;
-  model: string;
-  created_at: string;
-};
-
-/** One persisted transcript message (OpenAI message shape in `content`). */
-export type AiMessage = {
-  seq: number;
-  role: "system" | "user" | "assistant" | "tool";
-  content: { role?: string; content?: string; [k: string]: unknown };
-  created_at: string;
-};
-
-/**
- * A session's newest AI draft while its preview is still live (mirrors the
- * draft_ready SSE event), so the builder can rehydrate the preview panel.
- */
-export type AiDraft = {
-  version_id: string;
-  preview_url: string;
-  expires_at?: string;
-  access_mode?: string;
-};
-
 // ---- Org-wide skill sharing shapes -----------------------------------------
 
 /** An org-shared Claude skill (SKILL.md + supporting files, latest-only versions). */
@@ -391,16 +354,6 @@ const bearerToken = cache(async (): Promise<string | null> => {
   return minted;
 });
 
-/**
- * The current session's bearer token, for callers that talk to the Go API
- * OUTSIDE this typed client — notably the AI builder SSE proxy route handler,
- * which streams `text/event-stream` and so can't use apiFetch's JSON path. It
- * reuses the same mint + cache, so no extra signing cost.
- */
-export async function mintApiToken(): Promise<string | null> {
-  return bearerToken();
-}
-
 // ---- Core fetch wrapper ---------------------------------------------------
 
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -521,68 +474,6 @@ export const api = {
   /** Get one site by id (404 → ApiError with status 404). */
   getSite(id: string): Promise<Site> {
     return apiGet(`/v1/sites/${id}`) as Promise<Site>;
-  },
-
-  /**
-   * The OpenRouter model catalog for the AI builder's model picker, plus the
-   * server's default model id. Includes context window + per-token pricing so the
-   * picker can show a context badge and a cost tier. Returns an empty catalog
-   * when the builder is not configured (503), so callers degrade gracefully.
-   */
-  async aiModels(): Promise<{ models: AiModel[]; default: string }> {
-    try {
-      const body = (await apiGet("/v1/ai/models")) as {
-        models?: AiModel[];
-        default?: string;
-      };
-      return { models: body.models ?? [], default: body.default ?? "" };
-    } catch {
-      return { models: [], default: "" };
-    }
-  },
-
-  /**
-   * The AI builder sessions for a site (newest activity first). Best-effort:
-   * returns an empty list when the builder is not configured or on any error, so
-   * the builder page still renders (starting a fresh session).
-   */
-  async aiSessions(siteId: string): Promise<AiSession[]> {
-    try {
-      const body = (await apiGet(
-        `/v1/ai/sessions?site_id=${encodeURIComponent(siteId)}`,
-      )) as { sessions?: AiSession[] };
-      return body.sessions ?? [];
-    } catch {
-      return [];
-    }
-  },
-
-  /**
-   * One AI session plus its persisted transcript and (when its preview is still
-   * live) the newest draft, so the builder can rehydrate a conversation AND the
-   * preview panel the user returns to. Best-effort (empty transcript on error).
-   */
-  async aiSession(
-    id: string,
-  ): Promise<{
-    session: AiSession | null;
-    messages: AiMessage[];
-    draft: AiDraft | null;
-  }> {
-    try {
-      const body = (await apiGet(`/v1/ai/sessions/${id}`)) as {
-        session?: AiSession;
-        messages?: AiMessage[];
-        draft?: AiDraft;
-      };
-      return {
-        session: body.session ?? null,
-        messages: body.messages ?? [],
-        draft: body.draft ?? null,
-      };
-    } catch {
-      return { session: null, messages: [], draft: null };
-    }
   },
 
   /**
@@ -966,34 +857,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
     });
-  },
-
-  /**
-   * Toggle whether the AI website builder is available to this org (owner/admin
-   * only → 403). Enforced on every /v1/ai/* call, so a disable takes effect
-   * immediately. Returns the org's AI settings (enabled + cap + current spend).
-   */
-  setAIEnabled(enabled: boolean): Promise<{
-    ai_enabled: boolean;
-    ai_monthly_cap_usd: number;
-    spent_usd: number;
-  }> {
-    return apiFetch("/v1/orgs/ai", {
-      method: "PATCH",
-      body: JSON.stringify({ ai_enabled: enabled }),
-    });
-  },
-
-  /**
-   * The org's AI builder settings: the enabled toggle, the monthly spend cap, and
-   * the current-period spend. 503 when the builder isn't configured on the server.
-   */
-  getAIOrgSettings(): Promise<{
-    ai_enabled: boolean;
-    ai_monthly_cap_usd: number;
-    spent_usd: number;
-  }> {
-    return apiFetch("/v1/orgs/ai", { method: "GET" });
   },
 
   /**

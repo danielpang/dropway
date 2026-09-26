@@ -8,6 +8,12 @@ and edit.
 Status: proposed · Owner: TBD · Related: agent-database evaluation (Mem0 / Letta
 / Qdrant, July 2026)
 
+The built-in AI website builder, its agent loop, and AI-metered billing have
+been removed. Org memory remains as extraction from shared chat logs, content
+indexing, and access through the API, MCP, and CLI. Sections below that
+describe injecting memory into builder turns (`RunTurn`, `app.ai_messages`,
+`components/ai`) are the original proposal, not the current implementation.
+
 ---
 
 ## 1. Summary

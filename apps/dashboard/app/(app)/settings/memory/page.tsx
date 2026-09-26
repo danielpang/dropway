@@ -121,7 +121,7 @@ export default async function MemoryPage(props: {
             <p className="text-sm text-muted-foreground">
               Upgrade to Pro or above to let Dropway remember your
               organization&rsquo;s brand, preferences, and past work — and
-              recall them in the AI builder, MCP tools, and CLI.
+              recall them from MCP tools and the CLI.
             </p>
           </CardContent>
         </Card>

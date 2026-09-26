@@ -54,45 +54,6 @@ func (q *Queries) AllocateChatSeq(ctx context.Context, arg AllocateChatSeqParams
 	return base_seq, err
 }
 
-const appendAIMessage = `-- name: AppendAIMessage :one
-INSERT INTO app.ai_messages (org_id, session_id, seq, role, content)
-SELECT $1, $2, COALESCE(MAX(m.seq), 0) + 1, $3, $4
-FROM app.ai_messages m
-WHERE m.session_id = $2 AND m.org_id = $1
-RETURNING id, org_id, session_id, seq, role, content, created_at
-`
-
-type AppendAIMessageParams struct {
-	OrgID     string
-	SessionID string
-	Role      string
-	Content   []byte
-}
-
-// Transcript append with a per-session monotonic seq (MAX+1 over an empty set
-// yields 1). Two racing appends can collide on the (session_id, seq) unique
-// key; the store retries — in practice a session has a single writer (the turn
-// loop holds the session lock).
-func (q *Queries) AppendAIMessage(ctx context.Context, arg AppendAIMessageParams) (AppAiMessage, error) {
-	row := q.db.QueryRow(ctx, appendAIMessage,
-		arg.OrgID,
-		arg.SessionID,
-		arg.Role,
-		arg.Content,
-	)
-	var i AppAiMessage
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.SessionID,
-		&i.Seq,
-		&i.Role,
-		&i.Content,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const claimAllowlistEntry = `-- name: ClaimAllowlistEntry :exec
 UPDATE app.allowlist_entries
 SET claimed_at         = COALESCE(claimed_at, now()),
@@ -113,28 +74,6 @@ type ClaimAllowlistEntryParams struct {
 func (q *Queries) ClaimAllowlistEntry(ctx context.Context, arg ClaimAllowlistEntryParams) error {
 	_, err := q.db.Exec(ctx, claimAllowlistEntry, arg.ID, arg.ClaimedByUserID, arg.OrgID)
 	return err
-}
-
-const countActiveAISessions = `-- name: CountActiveAISessions :one
-SELECT count(*)::bigint AS n
-FROM app.ai_sessions
-WHERE org_id = $1 AND site_id = $2 AND status IN ('active', 'running', 'idle')
-`
-
-type CountActiveAISessionsParams struct {
-	OrgID  string
-	SiteID string
-}
-
-// Active = a session a user could still be driving (not archived/failed). Scoped
-// to the SITE: the concurrency cap is per-site, not per-org, so building on one
-// site never blocks building on another (a site normally has a single resumable
-// session, so the natural limit is the number of sites). Uses ai_sessions_org_site_idx.
-func (q *Queries) CountActiveAISessions(ctx context.Context, arg CountActiveAISessionsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveAISessions, arg.OrgID, arg.SiteID)
-	var n int64
-	err := row.Scan(&n)
-	return n, err
 }
 
 const countChatLogsForOrg = `-- name: CountChatLogsForOrg :one
@@ -226,51 +165,6 @@ func (q *Queries) CountSkillsForOrg(ctx context.Context, orgID string) (int64, e
 	var n int64
 	err := row.Scan(&n)
 	return n, err
-}
-
-const createAISession = `-- name: CreateAISession :one
-
-INSERT INTO app.ai_sessions (org_id, site_id, created_by, model, base_version_id)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-          base_version_id, latest_version_id, created_at, last_activity_at
-`
-
-type CreateAISessionParams struct {
-	OrgID         string
-	SiteID        string
-	CreatedBy     string
-	Model         string
-	BaseVersionID *string
-}
-
-// ===========================================================================
-// AI builder — sessions, transcript, cost ledger
-// ===========================================================================
-func (q *Queries) CreateAISession(ctx context.Context, arg CreateAISessionParams) (AppAiSession, error) {
-	row := q.db.QueryRow(ctx, createAISession,
-		arg.OrgID,
-		arg.SiteID,
-		arg.CreatedBy,
-		arg.Model,
-		arg.BaseVersionID,
-	)
-	var i AppAiSession
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.SiteID,
-		&i.CreatedBy,
-		&i.Status,
-		&i.Model,
-		&i.SandboxID,
-		&i.SandboxExpiresAt,
-		&i.BaseVersionID,
-		&i.LatestVersionID,
-		&i.CreatedAt,
-		&i.LastActivityAt,
-	)
-	return i, err
 }
 
 const createAPIKey = `-- name: CreateAPIKey :one
@@ -669,21 +563,6 @@ func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersion
 	return i, err
 }
 
-const deleteAISession = `-- name: DeleteAISession :exec
-DELETE FROM app.ai_sessions
-WHERE id = $1 AND org_id = $2
-`
-
-type DeleteAISessionParams struct {
-	ID    string
-	OrgID string
-}
-
-func (q *Queries) DeleteAISession(ctx context.Context, arg DeleteAISessionParams) error {
-	_, err := q.db.Exec(ctx, deleteAISession, arg.ID, arg.OrgID)
-	return err
-}
-
 const deleteAllowlistEntry = `-- name: DeleteAllowlistEntry :exec
 DELETE FROM app.allowlist_entries
 WHERE site_id = $1 AND email = $2 AND org_id = $3
@@ -1036,8 +915,7 @@ type DeleteSitePreviewRoutesExceptParams struct {
 }
 
 // Drop a site's preview routes except the one pinning keep_version_id, returning
-// the removed hosts for KV cleanup. Keeps at most one live preview per site: a new
-// AI draft removes the earlier drafts' previews (pass the new version to keep).
+// the removed hosts for KV cleanup. Keeps at most one live preview per site.
 // Pass NULL for keep_version_id to remove ALL of the site's previews (publish).
 func (q *Queries) DeleteSitePreviewRoutesExcept(ctx context.Context, arg DeleteSitePreviewRoutesExceptParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, deleteSitePreviewRoutesExcept, arg.SiteID, arg.OrgID, arg.KeepVersionID)
@@ -1159,38 +1037,6 @@ ON CONFLICT (org_id) DO NOTHING
 func (q *Queries) EnsureOrgUsage(ctx context.Context, orgID string) error {
 	_, err := q.db.Exec(ctx, ensureOrgUsage, orgID)
 	return err
-}
-
-const getAISession = `-- name: GetAISession :one
-SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-       base_version_id, latest_version_id, created_at, last_activity_at
-FROM app.ai_sessions
-WHERE id = $1 AND org_id = $2
-`
-
-type GetAISessionParams struct {
-	ID    string
-	OrgID string
-}
-
-func (q *Queries) GetAISession(ctx context.Context, arg GetAISessionParams) (AppAiSession, error) {
-	row := q.db.QueryRow(ctx, getAISession, arg.ID, arg.OrgID)
-	var i AppAiSession
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.SiteID,
-		&i.CreatedBy,
-		&i.Status,
-		&i.Model,
-		&i.SandboxID,
-		&i.SandboxExpiresAt,
-		&i.BaseVersionID,
-		&i.LatestVersionID,
-		&i.CreatedAt,
-		&i.LastActivityAt,
-	)
-	return i, err
 }
 
 const getAPIKey = `-- name: GetAPIKey :one
@@ -1539,7 +1385,7 @@ func (q *Queries) GetOrgMemoryByHash(ctx context.Context, arg GetOrgMemoryByHash
 }
 
 const getOrgMeta = `-- name: GetOrgMeta :one
-SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, ai_enabled, ai_monthly_cap_usd, api_keys_enabled
+SELECT id, plan_tier, allow_external_sharing, default_visibility, created_at, mcp_enabled, api_keys_enabled
 FROM app.org_meta
 WHERE id = $1
 `
@@ -1551,8 +1397,6 @@ type GetOrgMetaRow struct {
 	DefaultVisibility    string
 	CreatedAt            time.Time
 	McpEnabled           bool
-	AiEnabled            bool
-	AiMonthlyCapUsd      float64
 	ApiKeysEnabled       bool
 }
 
@@ -1566,8 +1410,6 @@ func (q *Queries) GetOrgMeta(ctx context.Context, id string) (GetOrgMetaRow, err
 		&i.DefaultVisibility,
 		&i.CreatedAt,
 		&i.McpEnabled,
-		&i.AiEnabled,
-		&i.AiMonthlyCapUsd,
 		&i.ApiKeysEnabled,
 	)
 	return i, err
@@ -2036,53 +1878,6 @@ func (q *Queries) IncSiteCount(ctx context.Context, orgID string) (int32, error)
 	return sites_count, err
 }
 
-const insertAIUsage = `-- name: InsertAIUsage :one
-INSERT INTO app.ai_usage (org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd)
-VALUES ($1, $2, $3, $4, $5, $6, $7::float8)
-ON CONFLICT (openrouter_generation_id) DO NOTHING
-RETURNING id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
-`
-
-type InsertAIUsageParams struct {
-	OrgID                  string
-	SessionID              *string
-	Model                  string
-	OpenrouterGenerationID string
-	PromptTokens           int64
-	CompletionTokens       int64
-	Column7                float64
-}
-
-// Append one OpenRouter generation to the cost ledger. Idempotent on the
-// generation id (a retried turn never double-counts); RETURNING yields a row
-// only when the generation is genuinely new (pgx.ErrNoRows = already recorded),
-// mirroring InsertOrgBlob's dedup contract.
-func (q *Queries) InsertAIUsage(ctx context.Context, arg InsertAIUsageParams) (AppAiUsage, error) {
-	row := q.db.QueryRow(ctx, insertAIUsage,
-		arg.OrgID,
-		arg.SessionID,
-		arg.Model,
-		arg.OpenrouterGenerationID,
-		arg.PromptTokens,
-		arg.CompletionTokens,
-		arg.Column7,
-	)
-	var i AppAiUsage
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.SessionID,
-		&i.Model,
-		&i.OpenrouterGenerationID,
-		&i.PromptTokens,
-		&i.CompletionTokens,
-		&i.CostUsd,
-		&i.ReportedToBillingAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const insertChatMessage = `-- name: InsertChatMessage :one
 INSERT INTO app.chat_messages (org_id, chat_log_id, seq, version_id, created_by, role, kind, content, meta)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -2256,182 +2051,6 @@ func (q *Queries) InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (i
 	var size_bytes int64
 	err := row.Scan(&size_bytes)
 	return size_bytes, err
-}
-
-const listAIMessages = `-- name: ListAIMessages :many
-SELECT id, org_id, session_id, seq, role, content, created_at
-FROM app.ai_messages
-WHERE session_id = $1 AND seq > $2 AND org_id = $3
-ORDER BY seq
-`
-
-type ListAIMessagesParams struct {
-	SessionID string
-	Seq       int32
-	OrgID     string
-}
-
-// The transcript in order, optionally resuming after a seq (SSE Last-Event-ID;
-// pass 0 for the full history).
-func (q *Queries) ListAIMessages(ctx context.Context, arg ListAIMessagesParams) ([]AppAiMessage, error) {
-	rows, err := q.db.Query(ctx, listAIMessages, arg.SessionID, arg.Seq, arg.OrgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AppAiMessage{}
-	for rows.Next() {
-		var i AppAiMessage
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.SessionID,
-			&i.Seq,
-			&i.Role,
-			&i.Content,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAISessionsForOrg = `-- name: ListAISessionsForOrg :many
-SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-       base_version_id, latest_version_id, created_at, last_activity_at
-FROM app.ai_sessions
-WHERE org_id = $1 AND status <> 'archived'
-ORDER BY last_activity_at DESC
-`
-
-func (q *Queries) ListAISessionsForOrg(ctx context.Context, orgID string) ([]AppAiSession, error) {
-	rows, err := q.db.Query(ctx, listAISessionsForOrg, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AppAiSession{}
-	for rows.Next() {
-		var i AppAiSession
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.SiteID,
-			&i.CreatedBy,
-			&i.Status,
-			&i.Model,
-			&i.SandboxID,
-			&i.SandboxExpiresAt,
-			&i.BaseVersionID,
-			&i.LatestVersionID,
-			&i.CreatedAt,
-			&i.LastActivityAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAISessionsForSite = `-- name: ListAISessionsForSite :many
-SELECT id, org_id, site_id, created_by, status, model, sandbox_id, sandbox_expires_at,
-       base_version_id, latest_version_id, created_at, last_activity_at
-FROM app.ai_sessions
-WHERE site_id = $1 AND org_id = $2 AND status <> 'archived'
-ORDER BY last_activity_at DESC
-`
-
-type ListAISessionsForSiteParams struct {
-	SiteID string
-	OrgID  string
-}
-
-func (q *Queries) ListAISessionsForSite(ctx context.Context, arg ListAISessionsForSiteParams) ([]AppAiSession, error) {
-	rows, err := q.db.Query(ctx, listAISessionsForSite, arg.SiteID, arg.OrgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AppAiSession{}
-	for rows.Next() {
-		var i AppAiSession
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.SiteID,
-			&i.CreatedBy,
-			&i.Status,
-			&i.Model,
-			&i.SandboxID,
-			&i.SandboxExpiresAt,
-			&i.BaseVersionID,
-			&i.LatestVersionID,
-			&i.CreatedAt,
-			&i.LastActivityAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAIUsageForOrg = `-- name: ListAIUsageForOrg :many
-SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
-FROM app.ai_usage
-WHERE org_id = $1 AND created_at >= $2
-ORDER BY created_at DESC
-LIMIT $3
-`
-
-type ListAIUsageForOrgParams struct {
-	OrgID     string
-	CreatedAt time.Time
-	Limit     int32
-}
-
-// Recent ledger rows for the billing page's usage detail.
-func (q *Queries) ListAIUsageForOrg(ctx context.Context, arg ListAIUsageForOrgParams) ([]AppAiUsage, error) {
-	rows, err := q.db.Query(ctx, listAIUsageForOrg, arg.OrgID, arg.CreatedAt, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AppAiUsage{}
-	for rows.Next() {
-		var i AppAiUsage
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.SessionID,
-			&i.Model,
-			&i.OpenrouterGenerationID,
-			&i.PromptTokens,
-			&i.CompletionTokens,
-			&i.CostUsd,
-			&i.ReportedToBillingAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listAPIKeys = `-- name: ListAPIKeys :many
@@ -3726,52 +3345,6 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]ListS
 	return items, nil
 }
 
-const listUnreportedAIUsage = `-- name: ListUnreportedAIUsage :many
-SELECT id, org_id, session_id, model, openrouter_generation_id, prompt_tokens, completion_tokens, cost_usd, reported_to_billing_at, created_at
-FROM app.ai_usage
-WHERE org_id = $1 AND reported_to_billing_at IS NULL
-ORDER BY created_at
-LIMIT $2
-`
-
-type ListUnreportedAIUsageParams struct {
-	OrgID string
-	Limit int32
-}
-
-// Ledger rows the cloud meter has not acked yet (reported_to_billing_at IS
-// NULL), oldest first, for the per-row meter send + the ops retry sweep.
-func (q *Queries) ListUnreportedAIUsage(ctx context.Context, arg ListUnreportedAIUsageParams) ([]AppAiUsage, error) {
-	rows, err := q.db.Query(ctx, listUnreportedAIUsage, arg.OrgID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AppAiUsage{}
-	for rows.Next() {
-		var i AppAiUsage
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.SessionID,
-			&i.Model,
-			&i.OpenrouterGenerationID,
-			&i.PromptTokens,
-			&i.CompletionTokens,
-			&i.CostUsd,
-			&i.ReportedToBillingAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listVersionsForGC = `-- name: ListVersionsForGC :many
 
 SELECT
@@ -3844,18 +3417,6 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':chat_append'))
 // appends can't both slip past the cap or over-prune.
 func (q *Queries) LockChatLogAppend(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockChatLogAppend, dollar_1)
-	return err
-}
-
-const lockOrgAISessionQuota = `-- name: LockOrgAISessionQuota :exec
-SELECT pg_advisory_xact_lock(hashtext($1::text || ':ai_sessions'))
-`
-
-// Serialize concurrent session creates for the SAME org (TOCTOU guard for the
-// active-session concurrency cap, same pattern as LockOrgSiteQuota). The cap
-// itself is counted per-site; this org-wide lock is a coarser-but-correct guard.
-func (q *Queries) LockOrgAISessionQuota(ctx context.Context, dollar_1 string) error {
-	_, err := q.db.Exec(ctx, lockOrgAISessionQuota, dollar_1)
 	return err
 }
 
@@ -3972,22 +3533,6 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'))
 // folder; see quota.ResourceSkillPerFolder).
 func (q *Queries) LockSkillFolderQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockSkillFolderQuota, dollar_1)
-	return err
-}
-
-const markAIUsageReported = `-- name: MarkAIUsageReported :exec
-UPDATE app.ai_usage
-SET reported_to_billing_at = now()
-WHERE id = $1 AND org_id = $2
-`
-
-type MarkAIUsageReportedParams struct {
-	ID    string
-	OrgID string
-}
-
-func (q *Queries) MarkAIUsageReported(ctx context.Context, arg MarkAIUsageReportedParams) error {
-	_, err := q.db.Exec(ctx, markAIUsageReported, arg.ID, arg.OrgID)
 	return err
 }
 
@@ -4402,98 +3947,6 @@ func (q *Queries) SearchOrgMemories(ctx context.Context, arg SearchOrgMemoriesPa
 	return items, nil
 }
 
-const setAIEnabled = `-- name: SetAIEnabled :exec
-UPDATE app.org_meta
-SET ai_enabled = $2
-WHERE id = $1
-`
-
-type SetAIEnabledParams struct {
-	ID        string
-	AiEnabled bool
-}
-
-// Org-level AI builder kill switch (owner/admin only, enforced in Go), the
-// exact analog of SetMcpEnabled.
-func (q *Queries) SetAIEnabled(ctx context.Context, arg SetAIEnabledParams) error {
-	_, err := q.db.Exec(ctx, setAIEnabled, arg.ID, arg.AiEnabled)
-	return err
-}
-
-const setAIMonthlyCap = `-- name: SetAIMonthlyCap :exec
-UPDATE app.org_meta
-SET ai_monthly_cap_usd = $2::float8
-WHERE id = $1
-`
-
-type SetAIMonthlyCapParams struct {
-	ID      string
-	Column2 float64
-}
-
-func (q *Queries) SetAIMonthlyCap(ctx context.Context, arg SetAIMonthlyCapParams) error {
-	_, err := q.db.Exec(ctx, setAIMonthlyCap, arg.ID, arg.Column2)
-	return err
-}
-
-const setAISessionLatestVersion = `-- name: SetAISessionLatestVersion :exec
-UPDATE app.ai_sessions
-SET latest_version_id = $2, last_activity_at = now()
-WHERE id = $1 AND org_id = $3
-`
-
-type SetAISessionLatestVersionParams struct {
-	ID              string
-	LatestVersionID *string
-	OrgID           string
-}
-
-func (q *Queries) SetAISessionLatestVersion(ctx context.Context, arg SetAISessionLatestVersionParams) error {
-	_, err := q.db.Exec(ctx, setAISessionLatestVersion, arg.ID, arg.LatestVersionID, arg.OrgID)
-	return err
-}
-
-const setAISessionSandbox = `-- name: SetAISessionSandbox :exec
-UPDATE app.ai_sessions
-SET sandbox_id = $2, sandbox_expires_at = $3, last_activity_at = now()
-WHERE id = $1 AND org_id = $4
-`
-
-type SetAISessionSandboxParams struct {
-	ID               string
-	SandboxID        pgtype.Text
-	SandboxExpiresAt pgtype.Timestamptz
-	OrgID            string
-}
-
-// Cache the live sandbox handle (NULLs clear it after a reap/destroy).
-func (q *Queries) SetAISessionSandbox(ctx context.Context, arg SetAISessionSandboxParams) error {
-	_, err := q.db.Exec(ctx, setAISessionSandbox,
-		arg.ID,
-		arg.SandboxID,
-		arg.SandboxExpiresAt,
-		arg.OrgID,
-	)
-	return err
-}
-
-const setAISessionStatus = `-- name: SetAISessionStatus :exec
-UPDATE app.ai_sessions
-SET status = $2, last_activity_at = now()
-WHERE id = $1 AND org_id = $3
-`
-
-type SetAISessionStatusParams struct {
-	ID     string
-	Status string
-	OrgID  string
-}
-
-func (q *Queries) SetAISessionStatus(ctx context.Context, arg SetAISessionStatusParams) error {
-	_, err := q.db.Exec(ctx, setAISessionStatus, arg.ID, arg.Status, arg.OrgID)
-	return err
-}
-
 const setAllowExternalSharing = `-- name: SetAllowExternalSharing :exec
 
 UPDATE app.org_meta
@@ -4695,8 +4148,7 @@ type SetMemoryEnabledParams struct {
 	MemoryEnabled bool
 }
 
-// Org-level memory kill switch (owner/admin only, enforced in Go), the exact
-// analog of SetAIEnabled.
+// Org-level memory kill switch (owner/admin only, enforced in Go).
 func (q *Queries) SetMemoryEnabled(ctx context.Context, arg SetMemoryEnabledParams) error {
 	_, err := q.db.Exec(ctx, setMemoryEnabled, arg.ID, arg.MemoryEnabled)
 	return err
@@ -5158,26 +4610,6 @@ func (q *Queries) SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) er
 	return err
 }
 
-const sumAIUsageSince = `-- name: SumAIUsageSince :one
-SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total_cost_usd
-FROM app.ai_usage
-WHERE org_id = $1 AND created_at >= $2
-`
-
-type SumAIUsageSinceParams struct {
-	OrgID     string
-	CreatedAt time.Time
-}
-
-// The org's AI spend since a period start (the spend-cap check input and the
-// dashboard usage figure).
-func (q *Queries) SumAIUsageSince(ctx context.Context, arg SumAIUsageSinceParams) (float64, error) {
-	row := q.db.QueryRow(ctx, sumAIUsageSince, arg.OrgID, arg.CreatedAt)
-	var total_cost_usd float64
-	err := row.Scan(&total_cost_usd)
-	return total_cost_usd, err
-}
-
 const touchAPIKeyLastUsed = `-- name: TouchAPIKeyLastUsed :exec
 UPDATE app.api_keys
 SET last_used_at = now()
@@ -5213,30 +4645,6 @@ type TouchOrgMemoriesUsedParams struct {
 func (q *Queries) TouchOrgMemoriesUsed(ctx context.Context, arg TouchOrgMemoriesUsedParams) error {
 	_, err := q.db.Exec(ctx, touchOrgMemoriesUsed, arg.OrgID, arg.Column2)
 	return err
-}
-
-const tryBeginAITurn = `-- name: TryBeginAITurn :one
-UPDATE app.ai_sessions
-SET status = 'running', last_activity_at = now()
-WHERE id = $1 AND org_id = $2 AND status IN ('active', 'idle')
-RETURNING id
-`
-
-type TryBeginAITurnParams struct {
-	ID    string
-	OrgID string
-}
-
-// Atomically claim a session for a turn: flip active/idle -> running and RETURN
-// the id ONLY if the claim won. A session already 'running' matches no row
-// (no-rows), so a concurrent second turn is rejected instead of racing on the
-// ai_messages (session_id, seq) unique key. The single-writer guarantee this
-// gives is what AppendAIMessage relies on.
-func (q *Queries) TryBeginAITurn(ctx context.Context, arg TryBeginAITurnParams) (string, error) {
-	row := q.db.QueryRow(ctx, tryBeginAITurn, arg.ID, arg.OrgID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
 }
 
 const updateDomainStatus = `-- name: UpdateDomainStatus :one
@@ -5578,7 +4986,7 @@ type UpsertPreviewRouteParams struct {
 }
 
 // ===========================================================================
-// preview routes (AI builder / version previews) — time-limited draft hosts
+// preview routes — time-limited draft hosts pinned to one version
 // ===========================================================================
 // Register (or renew) a preview host pinned to a specific draft version. PK on
 // host enforces global uniqueness like every other route; ON CONFLICT updates

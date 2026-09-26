@@ -186,33 +186,16 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Put("/{id}/collab", api.SetSiteCollab)
 		})
 
-		// AI website builder: chat sessions whose LLM (via OpenRouter) edits the
-		// site in an isolated sandbox, landing results as time-limited preview
-		// drafts the user publishes by hand. Messages stream the turn as SSE.
-		r.Route("/ai", func(r chi.Router) {
-			r.Post("/sessions", api.CreateAISession)
-			r.Get("/sessions", api.ListAISessions)
-			r.Get("/sessions/{id}", api.GetAISession)
-			r.Delete("/sessions/{id}", api.DeleteAISession)
-			r.Post("/sessions/{id}/messages", api.PostAIMessage)
-			r.Get("/sessions/{id}/events", api.GetAIEvents)
-			r.Get("/models", api.ListAIModels)
-
-			// Org memory ("your agent knows your company"): the curation list,
-			// manual create, semantic search (shared by the dashboard, the MCP
-			// search_memory tool, and the CLI), and admin edit/delete.
-			r.Route("/memories", func(r chi.Router) {
-				r.Get("/", api.ListMemories)
-				r.Post("/", api.CreateMemory)
-				r.Post("/search", api.SearchMemories)
-				r.Patch("/{id}", api.PatchMemory)
-				r.Delete("/{id}", api.DeleteMemory)
-			})
+		// Org memory ("your agent knows your company"): the curation list,
+		// manual create, semantic search (shared by the dashboard, the MCP
+		// search_memory tool, and the CLI), and admin edit/delete.
+		r.Route("/ai/memories", func(r chi.Router) {
+			r.Get("/", api.ListMemories)
+			r.Post("/", api.CreateMemory)
+			r.Post("/search", api.SearchMemories)
+			r.Patch("/{id}", api.PatchMemory)
+			r.Delete("/{id}", api.DeleteMemory)
 		})
-
-		// Org AI settings: the kill switch + spend cap + current-period spend.
-		r.Get("/orgs/ai", api.GetAIOrgSettings)
-		r.Patch("/orgs/ai", api.PatchAIOrgSettings)
 
 		// Org memory settings: the memory kill switch + row count/cap. Reachable
 		// while the flag is off (that's how it gets turned on).
