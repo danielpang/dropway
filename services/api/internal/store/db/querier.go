@@ -323,10 +323,13 @@ type Querier interface {
 	// ===========================================================================
 	// Every version of every site in the active org, newest first within each site,
 	// flagged with whether it is the site's CURRENT (live) version. Drives the R2
-	// version GC retention policy (keep current + last N): the GC groups by site, keeps
-	// the current version + the top-N by version_no, reads those versions' manifests to
-	// collect referenced blob shas, and deletes every org blob not in that set. RLS
-	// scopes the rows to the active org. r2_prefix + id locate the manifest object.
+	// version GC retention policy (keep current + last N, plus versions whose
+	// preview deadline is still inside the recreate window): the GC groups by site,
+	// keeps those versions, reads their manifests to collect referenced blob shas,
+	// and deletes every org blob not in that set. RLS scopes the rows to the active
+	// org. r2_prefix + id locate the manifest object. preview_expires_at is the
+	// version's preview deadline (NULL = no preview); the GC pins it so a live or
+	// recently expired preview can still be served and re-created.
 	ListVersionsForGC(ctx context.Context, orgID string) ([]ListVersionsForGCRow, error)
 	// Serialize appends/prunes/deletes on ONE log: the append tx holds this across
 	// COUNT → policy (hard cap) or INSERT → prune (window), so two concurrent

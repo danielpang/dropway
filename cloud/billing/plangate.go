@@ -36,10 +36,16 @@ func (g *PlanGate) AllowMemoryForOrg(ctx context.Context, orgID string) (bool, s
 	if err != nil {
 		return false, "", err
 	}
-	if tier == TierFree || tier == "" {
+	if !memoryPlanAllowed(tier) {
 		return false, "plan_required", nil
 	}
 	return true, "", nil
+}
+
+// memoryPlanAllowed is the paid-plan bar for org memory: anything other than
+// Free (including a missing tier) is denied.
+func memoryPlanAllowed(tier PlanTier) bool {
+	return tier != TierFree && tier != ""
 }
 
 func (g *PlanGate) planTier(ctx context.Context, orgID string) (PlanTier, error) {

@@ -27,8 +27,8 @@ type previewResponse struct {
 
 // CreatePreview registers (or renews) the time-limited preview host for one
 // site version and projects it to the edge. Re-creating an expired or deleted
-// preview is the same call: the draft's blobs + manifest are retained by the
-// draft-aware GC, so this is one row + one KV write.
+// preview is the same call while the version's blobs are still retained (the
+// GC keeps them through PreviewBlobRetention after the preview deadline).
 func (a *API) CreatePreview(w http.ResponseWriter, r *http.Request) {
 	t, ok := tenant(r.Context())
 	if !ok {

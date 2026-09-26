@@ -643,17 +643,21 @@ RETURNING id, org_id, actor_user, actor_token, action, target, metadata, ip, req
 -- name: ListVersionsForGC :many
 -- Every version of every site in the active org, newest first within each site,
 -- flagged with whether it is the site's CURRENT (live) version. Drives the R2
--- version GC retention policy (keep current + last N): the GC groups by site, keeps
--- the current version + the top-N by version_no, reads those versions' manifests to
--- collect referenced blob shas, and deletes every org blob not in that set. RLS
--- scopes the rows to the active org. r2_prefix + id locate the manifest object.
+-- version GC retention policy (keep current + last N, plus versions whose
+-- preview deadline is still inside the recreate window): the GC groups by site,
+-- keeps those versions, reads their manifests to collect referenced blob shas,
+-- and deletes every org blob not in that set. RLS scopes the rows to the active
+-- org. r2_prefix + id locate the manifest object. preview_expires_at is the
+-- version's preview deadline (NULL = no preview); the GC pins it so a live or
+-- recently expired preview can still be served and re-created.
 SELECT
-    v.id            AS version_id,
-    v.site_id       AS site_id,
-    v.version_no    AS version_no,
-    v.r2_prefix     AS r2_prefix,
-    v.created_via   AS created_via,
-    v.created_at    AS created_at,
+    v.id                  AS version_id,
+    v.site_id             AS site_id,
+    v.version_no          AS version_no,
+    v.r2_prefix           AS r2_prefix,
+    v.created_via         AS created_via,
+    v.created_at          AS created_at,
+    v.preview_expires_at  AS preview_expires_at,
     (s.current_version_id IS NOT NULL AND s.current_version_id = v.id) AS is_current
 FROM app.site_versions v
 JOIN app.sites s ON s.id = v.site_id

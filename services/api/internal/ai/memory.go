@@ -22,8 +22,8 @@ type Embedder interface {
 
 // MemoryGate plan-gates org memory (the cloud build requires Pro+; OSS leaves
 // it nil = allowed). The same cloud adapter satisfies the handlers' gate, so
-// the loop's retrieval/extraction/indexing can never run for an org the API
-// surface refuses.
+// extraction and content indexing can never run for an org the API surface
+// refuses.
 type MemoryGate interface {
 	AllowMemory(ctx context.Context, t store.Tenant) (allowed bool, reason string, err error)
 }

@@ -18,9 +18,8 @@ func TestAllowMemoryReason(t *testing.T) {
 		{TierBusiness, true},
 		{TierEnterprise, true},
 	} {
-		allowed := !(tc.tier == TierFree || tc.tier == "")
-		if allowed != tc.allowed {
-			t.Errorf("tier %q: allowed = %v, want %v", tc.tier, allowed, tc.allowed)
+		if got := memoryPlanAllowed(tc.tier); got != tc.allowed {
+			t.Errorf("tier %q: allowed = %v, want %v", tc.tier, got, tc.allowed)
 		}
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
@@ -21,6 +23,11 @@ import (
 // orphan to be older than the presign TTL PLUS a 1h safety margin (covers clock
 // skew + a slow upload/commit) before it is eligible for deletion.
 const DefaultGCMinAge = 15*time.Minute + time.Hour
+
+// PreviewBlobRetention is how long a version's blobs stay after its preview
+// deadline so an expired preview can be re-created without re-uploading.
+// A live preview (deadline still in the future) is always inside this window.
+const PreviewBlobRetention = 30 * 24 * time.Hour
 
 // GCPolicy configures the R2 version GC retention.
 type GCPolicy struct {
@@ -101,7 +108,7 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 		if err != nil {
 			return err
 		}
-		retained = selectRetained(rows, pol.KeepLastN)
+		retained = selectRetained(rows, pol.KeepLastN, time.Now())
 		skillRetained, err = q.ListCurrentSkillVersionsForGC(ctx, orgID)
 		if isUndefinedTable(err) {
 			// The skills tables (migration 0008) aren't applied yet — deploy ran
@@ -276,11 +283,12 @@ func (s *Store) GCAllOrgs(ctx context.Context, obj storage.Store, pol GCPolicy) 
 }
 
 // selectRetained picks, per site, the set of versions whose blobs must be kept: the
-// CURRENT (live) version plus the most-recent keepLastN by version_no. The input
+// CURRENT (live) version plus the most-recent keepLastN by version_no, plus any
+// version whose preview deadline is still inside PreviewBlobRetention. The input
 // rows are ordered (site_id, version_no DESC) by the query, so the first keepLastN
 // rows of each site are the newest. The current version is always included (it
 // may be older than the newest N — e.g. after a rollback — and must never be GC'd).
-func selectRetained(rows []db.ListVersionsForGCRow, keepLastN int) []db.ListVersionsForGCRow {
+func selectRetained(rows []db.ListVersionsForGCRow, keepLastN int, now time.Time) []db.ListVersionsForGCRow {
 	if keepLastN < 0 {
 		keepLastN = 0
 	}
@@ -311,5 +319,24 @@ func selectRetained(rows []db.ListVersionsForGCRow, keepLastN int) []db.ListVers
 		perSiteKept[v.SiteID]++
 		add(v)
 	}
+	// Third pass: pin versions that still have a preview, including a recreate
+	// window after the deadline. Without this, keep-last-N drops the draft a
+	// live preview URL is serving.
+	for _, v := range rows {
+		if previewBlobsRetained(v.PreviewExpiresAt, now) {
+			add(v)
+		}
+	}
 	return out
+}
+
+// previewBlobsRetained reports whether a version's preview deadline still
+// protects its blobs. NULL means no preview. A deadline in the future is a
+// live preview; one in the past stays protected until PreviewBlobRetention
+// after that deadline.
+func previewBlobsRetained(exp pgtype.Timestamptz, now time.Time) bool {
+	if !exp.Valid {
+		return false
+	}
+	return now.Before(exp.Time.Add(PreviewBlobRetention))
 }

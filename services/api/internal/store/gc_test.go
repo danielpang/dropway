@@ -118,7 +118,7 @@ func TestGC_OrphanDeletedReferencedKeptCurrentUntouched(t *testing.T) {
 		ver("v1", "site-1", 1, false),
 	}
 	// Keep last 2 (newest): retains v3 (current+newest) and v2 (2nd newest); v1 drops.
-	retained := selectRetained(rows, 2)
+	retained := selectRetained(rows, 2, time.Now())
 
 	res, err := gcCollectAndDelete(ctx, obj, org, retained, nil, GCPolicy{KeepLastN: 2}, gcNow)
 	if err != nil {
@@ -212,7 +212,7 @@ func TestGC_AgeGuard_FreshOrphanSurvivesOldOrphanDeleted(t *testing.T) {
 	// One site, current version v1 → blobCurrent. blobOld and blobFresh are
 	// referenced by NO retained version (both are orphans by the reference rule).
 	must(t, obj.PutManifest(ctx, org, "site-1", "v1", manifestJSON(blobCurrent)))
-	retained := selectRetained([]db.ListVersionsForGCRow{ver("v1", "site-1", 1, true)}, 5)
+	retained := selectRetained([]db.ListVersionsForGCRow{ver("v1", "site-1", 1, true)}, 5, time.Now())
 
 	res, err := gcCollectAndDelete(ctx, obj, org, retained, nil, GCPolicy{KeepLastN: 5}, gcNow)
 	if err != nil {
@@ -279,7 +279,7 @@ func TestSelectRetained_KeepsCurrentEvenIfOld(t *testing.T) {
 		ver("v2", "s", 2, false),
 		ver("v1", "s", 1, true), // current, but oldest
 	}
-	got := selectRetained(rows, 2)
+	got := selectRetained(rows, 2, time.Now())
 	keep := map[string]bool{}
 	for _, v := range got {
 		keep[v.VersionID] = true
@@ -295,6 +295,32 @@ func TestSelectRetained_KeepsCurrentEvenIfOld(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("expected 3 retained, got %d (%v)", len(got), keep)
+	}
+}
+
+// TestSelectRetained_PinsPreviewWithinRecreateWindow keeps a non-current
+// version outside keep-last-N while its preview deadline is still inside
+// PreviewBlobRetention, and drops it once that window has passed.
+func TestSelectRetained_PinsPreviewWithinRecreateWindow(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	live := ver("draft", "s", 1, false)
+	live.PreviewExpiresAt = pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true}
+	recent := ver("recent", "s", 2, false)
+	recent.PreviewExpiresAt = pgtype.Timestamptz{Time: now.Add(-24 * time.Hour), Valid: true}
+	stale := ver("stale", "s", 3, false)
+	stale.PreviewExpiresAt = pgtype.Timestamptz{Time: now.Add(-PreviewBlobRetention - time.Hour), Valid: true}
+	current := ver("live", "s", 4, true)
+
+	got := selectRetained([]db.ListVersionsForGCRow{current, stale, recent, live}, 0, now)
+	keep := map[string]bool{}
+	for _, v := range got {
+		keep[v.VersionID] = true
+	}
+	if !keep["live"] || !keep["draft"] || !keep["recent"] {
+		t.Fatalf("current, live preview, and recently expired preview must be retained, got %v", keep)
+	}
+	if keep["stale"] {
+		t.Fatal("a preview past the recreate window must not be pinned")
 	}
 }
 

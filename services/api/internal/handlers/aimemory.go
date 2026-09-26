@@ -121,7 +121,6 @@ func (a *API) requireMemoryPlan(w http.ResponseWriter, r *http.Request, t store.
 // requireMemory guards the memory routes: the feature must be wired
 // (Memory + MemoryEmbedder set), the org's plan must allow it (Pro+ on the
 // hosted build), and, unless settingsOnly, the org's memory_enabled flag on.
-// Mirrors requireAI's shape.
 func (a *API) requireMemory(w http.ResponseWriter, r *http.Request, t store.Tenant, settingsOnly bool) bool {
 	if a.Memory == nil || a.MemoryEmbedder == nil {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable,

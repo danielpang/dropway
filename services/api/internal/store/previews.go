@@ -33,9 +33,10 @@ type PreviewResult struct {
 // CreatePreviewRoute registers (or renews) the time-limited preview host for
 // one site version: `<shortVersionID>--<org>--<slug>.<ContentDomain>` pinned to
 // exactly that version, expiring ttl from now. Calling it again extends the
-// deadline and re-registers an expired/deleted preview (the draft's blobs +
-// manifest stay in R2 under the draft-retention GC policy, so re-creation is
-// one row + one KV write).
+// deadline and re-registers an expired/deleted preview. Blobs stay in R2 while
+// the version's preview deadline is inside the GC recreate window
+// (PreviewBlobRetention after preview_expires_at), so re-creation is one row
+// + one KV write.
 //
 // The route write to KV is the CALLER's job (post-commit, like Publish); this
 // only makes Postgres authoritative. Confused-deputy guards mirror Publish:
@@ -173,7 +174,7 @@ func (s *Store) DeletePreviewRoutes(ctx context.Context, t Tenant, siteID, versi
 
 // DeleteOtherSitePreviewRoutes drops every preview route of the site EXCEPT the
 // one pinning keepVersionID, so a site has at most one live preview at a time (a
-// new AI draft supersedes the earlier drafts' previews). Returns the removed
+// newer preview supersedes the earlier one). Returns the removed
 // hosts so the caller deletes their KV keys. RLS scopes the delete to the tenant.
 func (s *Store) DeleteOtherSitePreviewRoutes(ctx context.Context, t Tenant, siteID, keepVersionID string) ([]string, error) {
 	var hosts []string
