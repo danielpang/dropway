@@ -188,9 +188,9 @@ export default async function SiteDetailPage({
         </div>
       </div>
 
-      {/* Actions. On mobile the buttons sit two-up; from sm+ they form one row. */}
+      {/* Actions. Two-up and full width on mobile; one right-aligned row from sm+. */}
       <div className="border-y border-border py-3">
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
           <Button asChild variant="outline" size="sm" className="w-full sm:w-auto">
             <Link href={`/sites/${id}/settings`}>
               <Settings aria-hidden />
