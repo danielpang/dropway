@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, ShieldAlert } from "lucide-react";
 
 import { setSiteCollabAction } from "@/app/(app)/sites/[id]/settings/actions";
@@ -18,7 +17,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api, ApiError, type AllowlistEntry, type Site } from "@/lib/api";
+import { api, type AllowlistEntry, type Site } from "@/lib/api";
+import { settleApiRead } from "@/lib/api-read";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
 export const dynamic = "force-dynamic";
@@ -51,8 +51,7 @@ export default async function SiteAccessSettingsPage({
   try {
     site = await api.getSite(id);
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404) notFound();
-    throw err;
+    settleApiRead(err, `/sites/${id}/settings`);
   }
 
   const org = await loadActiveOrg();

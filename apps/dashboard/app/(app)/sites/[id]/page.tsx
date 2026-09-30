@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import {
   ArrowLeft,
   ExternalLink,
@@ -30,7 +29,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { CopyButton } from "@/components/ui/copy-button";
-import { api, ApiError, type PlanTier, type Site, type SiteComment } from "@/lib/api";
+import { api, type PlanTier, type Site, type SiteComment } from "@/lib/api";
+import { settleApiRead } from "@/lib/api-read";
 import { customDomainsEntitled, embedBadgeRemovable } from "@/lib/billing";
 import { MCP_URL } from "@/lib/env";
 import { canManage, loadActiveOrg } from "@/lib/org";
@@ -119,9 +119,10 @@ export default async function SiteDetailPage({
   try {
     site = await sitePromise;
   } catch (err) {
-    // 404 (absent or invisible under the tenant) → Next.js not-found page.
-    if (err instanceof ApiError && err.status === 404) notFound();
-    throw err;
+    // 404 (absent or invisible under the tenant) → not-found. 401 is the API's
+    // re-auth signal (no bearer, rejected JWT, or a token with no org) — redirect
+    // to sign-in instead of throwing into onRequestError. Anything else rethrows.
+    settleApiRead(err, `/sites/${id}`);
   }
 
   const [
