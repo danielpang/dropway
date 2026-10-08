@@ -6,6 +6,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { auth } from "@/lib/auth";
 import { landingUrl, requireEmailVerification } from "@/lib/env";
 import { oauthResumePath, safeNextPath } from "@/lib/authz-host";
+import { isReauthRequest } from "@/lib/reauth";
 
 export const metadata: Metadata = { title: "Sign up" };
 
@@ -23,9 +24,11 @@ export default async function SignUpPage({
   const callbackURL =
     oauthResumePath(sp) ?? (raw ? safeNextPath(raw) : "/dashboard");
 
-  // Already authenticated → honor the destination (resumes authorize if present).
+  // Already authenticated → honor the destination (resumes authorize if present),
+  // unless sign-in handed off a forced re-login (see isReauthRequest).
   const session = await auth.api.getSession({ headers: await headers() });
-  if (session) redirect(callbackURL);
+  const reauth = isReauthRequest(sp.reauth);
+  if (session && !reauth) redirect(callbackURL);
 
   // Mirror the server's verification policy so the form doesn't show a dead-end
   // "verify your email" screen when verification is off (a no-email self-host).
@@ -33,6 +36,7 @@ export default async function SignUpPage({
     <AuthForm
       mode="sign-up"
       callbackURL={callbackURL}
+      reauth={reauth}
       requireEmailVerification={requireEmailVerification()}
       landingUrl={landingUrl()}
     />

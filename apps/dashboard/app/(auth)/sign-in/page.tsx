@@ -6,6 +6,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { auth } from "@/lib/auth";
 import { landingUrl } from "@/lib/env";
 import { oauthResumePath, safeNextPath } from "@/lib/authz-host";
+import { isReauthRequest } from "@/lib/reauth";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -25,11 +26,20 @@ export default async function SignInPage({
   const callbackURL =
     oauthResumePath(sp) ?? (raw ? safeNextPath(raw) : "/dashboard");
 
-  // Already authenticated → honor the requested destination.
+  // Already authenticated → honor the requested destination, unless this visit
+  // is a forced re-login. reauth=1 is set when the API rejected the credential
+  // (401) while a session cookie may still be present; bouncing that cookie
+  // back to callbackURL would loop. Show the form so they can sign in again.
   const session = await auth.api.getSession({ headers: await headers() });
-  if (session) redirect(callbackURL);
+  const reauth = isReauthRequest(sp.reauth);
+  if (session && !reauth) redirect(callbackURL);
 
   return (
-    <AuthForm mode="sign-in" callbackURL={callbackURL} landingUrl={landingUrl()} />
+    <AuthForm
+      mode="sign-in"
+      callbackURL={callbackURL}
+      reauth={reauth}
+      landingUrl={landingUrl()}
+    />
   );
 }

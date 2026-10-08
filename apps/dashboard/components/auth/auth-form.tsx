@@ -17,6 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
+import { authScreenSwitchHref } from "@/lib/reauth";
 
 type Mode = "sign-in" | "sign-up";
 
@@ -44,11 +45,14 @@ function describeError(err: unknown): string {
 export function AuthForm({
   mode,
   callbackURL = DEFAULT_CALLBACK_URL,
+  reauth = false,
   requireEmailVerification = false,
   landingUrl,
 }: {
   mode: Mode;
   callbackURL?: string;
+  /** Keep the sign-in/sign-up switch on the forced re-login path (API 401). */
+  reauth?: boolean;
   /**
    * Whether the server requires email verification before sign-in (mirrors the
    * Better Auth config). When false, sign-up signs the user in immediately, so we
@@ -364,11 +368,12 @@ export function AuthForm({
         <p className="text-sm text-muted-foreground">
           {isSignUp ? "Already have an account? " : "New to Dropway? "}
           <a
-            href={`${isSignUp ? "/sign-in" : "/sign-up"}${
-              callbackURL && callbackURL !== DEFAULT_CALLBACK_URL
-                ? `?callbackURL=${encodeURIComponent(callbackURL)}`
-                : ""
-            }`}
+            href={authScreenSwitchHref(
+              isSignUp ? "sign-in" : "sign-up",
+              callbackURL,
+              reauth,
+              DEFAULT_CALLBACK_URL,
+            )}
             className="font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
           >
             {isSignUp ? "Sign in" : "Create one"}
