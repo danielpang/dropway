@@ -34,6 +34,12 @@ export type Version = components["schemas"]["Version"];
 /** One immutable deploy in a site's history (the rollback picker rows). */
 export type SiteVersion = components["schemas"]["SiteVersion"];
 export type ManifestFile = components["schemas"]["ManifestFile"];
+/** One manifest entry of a site's current published version. */
+export type SiteFile = components["schemas"]["SiteFile"];
+/** One file's inline bytes from GET /v1/sites/{id}/download or /files/content. */
+export type SiteFilePayload = components["schemas"]["SiteFilePayload"];
+/** Successful body of GET /v1/sites/{id}/download. */
+export type SiteDownload = components["schemas"]["SiteDownload"];
 export type AccessMode = NonNullable<Site["access_mode"]>;
 export type Role = NonNullable<Me["role"]>;
 export type Member = components["schemas"]["Member"];
@@ -474,6 +480,34 @@ export const api = {
   /** Get one site by id (404 → ApiError with status 404). */
   getSite(id: string): Promise<Site> {
     return apiGet(`/v1/sites/${id}`) as Promise<Site>;
+  },
+
+  /**
+   * The current published version's manifest (path/size/type/sha256). 400 when
+   * the site has no published version yet.
+   */
+  async listSiteFiles(id: string): Promise<SiteFile[]> {
+    const body = (await apiGet(`/v1/sites/${id}/files`)) as { files?: SiteFile[] };
+    return body.files ?? [];
+  },
+
+  /**
+   * One file's bytes from the live version (utf8 / base64). 404 if the path is
+   * not in the manifest; 400 if the file is over the per-read cap.
+   */
+  readSiteFile(id: string, path: string): Promise<SiteFilePayload> {
+    return apiFetch<SiteFilePayload>(
+      `/v1/sites/${id}/files/content?path=${encodeURIComponent(path)}`,
+    );
+  },
+
+  /**
+   * Every live-version file inline, up to the API's 10 MiB budget
+   * (`truncated` past that). The dashboard completes omitted files via
+   * listSiteFiles + readSiteFile before zipping.
+   */
+  downloadSite(id: string): Promise<SiteDownload> {
+    return apiFetch<SiteDownload>(`/v1/sites/${id}/download`);
   },
 
   /**

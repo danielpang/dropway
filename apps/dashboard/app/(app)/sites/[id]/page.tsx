@@ -15,6 +15,7 @@ import { ChatPanelToggle } from "@/components/chats/chat-panel-toggle";
 import { sourceToolLabel } from "@/components/chats/source-tools";
 import { DeployDropzone } from "@/components/sites/deploy-dropzone";
 import { DeployTabs } from "@/components/sites/deploy-tabs";
+import { DownloadSite } from "@/components/sites/download-site";
 import { RollbackDialog } from "@/components/sites/rollback-dialog";
 import { SiteDetailTabs } from "@/components/sites/site-detail-tabs";
 import { ShareEmbedDialog } from "@/components/sites/share-embed-dialog";
@@ -303,6 +304,23 @@ export default async function SiteDetailPage({
                       ? new Date(site.created_at).toLocaleString()
                       : "Unknown"
                   }
+                />
+              </CardContent>
+            </Card>
+
+            {/* Download the live version's files as a zip. */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Download</CardTitle>
+                <CardDescription>
+                  Get a copy of the files this site is serving right now.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DownloadSite
+                  siteId={site.id ?? id}
+                  slug={site.slug ?? id}
+                  isLive={isLive}
                 />
               </CardContent>
             </Card>
