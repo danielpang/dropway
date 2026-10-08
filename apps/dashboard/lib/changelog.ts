@@ -33,6 +33,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "download-site",
+    date: "2026-10-08",
+    label: "New",
+    title: "Download a site's files",
+    summary:
+      "Save a zip of the files a site is serving right now, from the Details tab.",
+    changes: [
+      {
+        id: "download-site-details",
+        title: "Download from Details",
+        body: "Open a site, switch to Details, and download the current published files as a zip. The button stays off until the site has a live version, since there is nothing to fetch before then.",
+      },
+    ],
+  },
+  {
     id: "api-keys",
     date: "2026-07-19",
     label: "New",

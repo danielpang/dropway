@@ -9,9 +9,57 @@ import {
   type PublishResult,
   type QuotaExceeded,
   type SiteComment,
+  type SiteDownload,
   type Version,
 } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/action-errors";
+import { completeTruncatedSiteDownload } from "@/lib/site-download";
+
+export type DownloadSiteActionResult =
+  | { ok: true; download: SiteDownload; skipped?: string[] }
+  | { ok: false; message: string };
+
+/**
+ * Fetch the live version's files (GET /v1/sites/{id}/download). When the bulk
+ * payload is truncated, remaining paths are filled in via /files + /files/content
+ * so the client can zip a complete archive. Files that still fail (over the
+ * per-read cap) are listed in `skipped`.
+ */
+export async function downloadSiteAction(siteId: string): Promise<DownloadSiteActionResult> {
+  const id = siteId.trim();
+  if (!id) {
+    return { ok: false, message: "Missing site id." };
+  }
+  try {
+    const download = await api.downloadSite(id);
+    if (!download.truncated) {
+      return { ok: true, download };
+    }
+    try {
+      const listed = await api.listSiteFiles(id);
+      const { files, skipped } = await completeTruncatedSiteDownload(
+        download,
+        listed,
+        (path) => api.readSiteFile(id, path),
+      );
+      return {
+        ok: true,
+        download: { ...download, files, truncated: skipped.length > 0 },
+        skipped: skipped.length ? skipped : undefined,
+      };
+    } catch {
+      // Keep the partial bulk payload rather than failing the whole download.
+      return { ok: true, download };
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      message: apiErrorMessage(err, "Could not download the site.", {
+        400: "This site has no published version to download yet.",
+      }),
+    };
+  }
+}
 
 export type AddCommentActionResult =
   | { ok: true; comment: SiteComment }

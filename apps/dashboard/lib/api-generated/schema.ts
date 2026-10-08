@@ -354,7 +354,11 @@ export interface paths {
         get: operations["getSite"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a site
+         * @description Permanently deletes the site and everything under it (versions, routes, domains, access policy, allowlist). The site owner may delete their own site; deleting a site owned by someone else requires an org admin. This cannot be undone.
+         */
+        delete: operations["deleteSite"];
         options?: never;
         head?: never;
         patch?: never;
@@ -372,6 +376,66 @@ export interface paths {
          * @description Returns every immutable version of the site, newest first, each flagged with whether it is the live version. Drives the dashboard rollback picker.
          */
         get: operations["listVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current published version's files
+         * @description Returns the live version's manifest entries (path, size, content type, sha256), sorted by path. Any org member may read (RLS-scoped). 400 when the site has no published version yet.
+         */
+        get: operations["listSiteFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/files/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one file from the current published version
+         * @description Returns one path's bytes: utf8 text inline, binary base64-encoded. A path absent from the manifest is 404. Files larger than 10 MiB are refused (400) rather than truncated. 400 when the site has no published version yet.
+         */
+        get: operations["readSiteFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a site's current published files inline
+         * @description Returns every file of the live version, utf8 text inline and binary base64-encoded — the shape the dashboard zips for a one-click download and the MCP download_site tool inlines. Bounded by a 10 MiB total response budget; truncated=true means later files were omitted and should be fetched via GET /v1/sites/{id}/files/content. 400 when the site has no published version yet.
+         */
+        get: operations["downloadSite"];
         put?: never;
         post?: never;
         delete?: never;
@@ -459,6 +523,83 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the org memory settings (kill switch + row count/cap) */
+        get: operations["getMemorySettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update the org memory kill switch (admin/owner) */
+        patch: operations["patchMemorySettings"];
+        trace?: never;
+    };
+    "/v1/ai/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the org's memories (pinned first, then most recently updated) */
+        get: operations["listMemories"];
+        put?: never;
+        /**
+         * Record a memory (member)
+         * @description Records one durable fact about the organization. Content dedupes per org on its normalized hash — a repeat refreshes the existing entry instead of inserting (created=false). 422 when the org is at its memory cap.
+         */
+        post: operations["createMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/memories/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Semantic memory search (member)
+         * @description Returns the org's pinned memories plus the top-k entries closest to the query by cosine distance. The query is embedded server-side. Shared by the dashboard, the MCP search_memory tool, and the CLI.
+         */
+        post: operations["searchMemories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai/memories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a memory (admin/owner) */
+        delete: operations["deleteMemory"];
+        options?: never;
+        head?: never;
+        /** Edit / pin / disable a memory (admin/owner) */
+        patch: operations["patchMemory"];
         trace?: never;
     };
     "/v1/sites/{id}/access": {
@@ -1329,6 +1470,51 @@ export interface components {
                 alg?: string;
             }[];
         };
+        MemorySettings: {
+            memory_enabled?: boolean;
+            /**
+             * Format: int64
+             * @description Memory rows stored for the org.
+             */
+            count?: number;
+            /** @description Per-org row cap (absent/0 = unlimited). */
+            max?: number;
+            /** @description False when the org's plan tier excludes memory (free on hosted Dropway; memory is Pro and above). Gated endpoints return 402 plan_required. Always true on OSS/self-host. */
+            plan_allowed?: boolean;
+        };
+        Memory: {
+            /** Format: uuid */
+            id?: string;
+            /** @enum {string} */
+            kind?: "fact" | "preference" | "style" | "correction" | "manual";
+            content?: string;
+            /** @enum {string} */
+            source_kind?: "ai_session" | "chat_log" | "site_version" | "manual";
+            /** Format: uuid */
+            source_id?: string | null;
+            /** @description Recording agent for externally added rows (claude-code, cursor, cli, …). */
+            source_tool?: string;
+            /** @description Pinned memories are always injected into builder context. */
+            pinned?: boolean;
+            /** @description Suppressed — never retrieved */
+            disabled?: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            /** Format: date-time */
+            last_used_at?: string;
+            /** @description Cosine distance to the query (search results only; lower = closer). */
+            distance?: number;
+        };
+        MemoryList: {
+            memories?: components["schemas"]["Memory"][];
+        };
+        MemoryWrite: {
+            memory?: components["schemas"]["Memory"];
+            /** @description False when the content deduped against an existing entry (refreshed instead). */
+            created?: boolean;
+        };
         Site: {
             /** Format: uuid */
             id?: string;
@@ -1358,6 +1544,32 @@ export interface components {
             description?: string;
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description One manifest entry of a site's current published version. */
+        SiteFile: {
+            path?: string;
+            /** Format: int64 */
+            size?: number;
+            content_type?: string;
+            sha256?: string;
+        };
+        /** @description One file's bytes: utf8 text inline or binary base64-encoded. size is the raw byte count (before any base64 expansion). */
+        SiteFilePayload: {
+            path?: string;
+            content?: string;
+            /** @enum {string} */
+            encoding?: "utf8" | "base64";
+            content_type?: string;
+            /** Format: int64 */
+            size?: number;
+        };
+        /** @description A site's current published files inline. truncated=true means the 10 MiB response budget ran out before every file was inlined — fetch the rest via GET /v1/sites/{id}/files/content?path=... */
+        SiteDownload: {
+            slug?: string;
+            /** Format: uuid */
+            site_id?: string;
+            truncated?: boolean;
+            files?: components["schemas"]["SiteFilePayload"][];
         };
         /** @description One post in the unified org feed: a site OR a skill, tagged by `kind`, plus its social metadata (net vote score, the caller's own vote, comment count). Site-only fields (access_mode, live_url, storage_bytes) and skill-only fields (is_seeded, size_bytes) are present only for the matching kind. */
         FeedItem: {
@@ -2283,6 +2495,30 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listVersions: {
         parameters: {
             query?: never;
@@ -2306,6 +2542,89 @@ export interface operations {
                     };
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listSiteFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Manifest entries of the current published version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        files?: components["schemas"]["SiteFile"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    readSiteFile: {
+        parameters: {
+            query: {
+                /** @description The served path, e.g. index.html or assets/app.js. */
+                path: string;
+            };
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's contents */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteFilePayload"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteDownload"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
         };
@@ -2475,6 +2794,309 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getMemorySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Memory settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    patchMemorySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    memory_enabled?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettings"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listMemories: {
+        parameters: {
+            query?: {
+                kind?: "fact" | "preference" | "style" | "correction" | "manual";
+                /** @description Substring filter over content. */
+                q?: string;
+                /** @description Only pinned entries. */
+                pinned?: boolean;
+                /** @description Include disabled entries (curation UI). */
+                disabled?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Memories */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    content: string;
+                    /** @enum {string} */
+                    kind?: "fact" | "preference" | "style" | "correction" | "manual";
+                    /** @description Recording agent, e.g. claude-code, cursor, cli. */
+                    source_tool?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Deduped (existing entry refreshed) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryWrite"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryWrite"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Org memory cap reached */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    searchMemories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    query: string;
+                    k?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Pinned + retrieved memories */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Embeddings provider unavailable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    deleteMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    patchMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    content?: string;
+                    /** @enum {string} */
+                    kind?: "fact" | "preference" | "style" | "correction" | "manual";
+                    pinned?: boolean;
+                    disabled?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated memory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        memory?: components["schemas"]["Memory"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Plan does not include org memory (Pro+ required) */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["Unavailable"];
         };
     };
     setSiteAccess: {

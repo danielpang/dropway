@@ -549,6 +549,80 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/sites/{id}/files:
+    get:
+      summary: List the current published version's files
+      description: >
+        Returns the live version's manifest entries (path, size, content type,
+        sha256), sorted by path. Any org member may read (RLS-scoped). 400 when
+        the site has no published version yet.
+      operationId: listSiteFiles
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: Manifest entries of the current published version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteFile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/files/content:
+    get:
+      summary: Read one file from the current published version
+      description: >
+        Returns one path's bytes: utf8 text inline, binary base64-encoded. A
+        path absent from the manifest is 404. Files larger than 10 MiB are
+        refused (400) rather than truncated. 400 when the site has no published
+        version yet.
+      operationId: readSiteFile
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+        - name: path
+          in: query
+          required: true
+          schema: { type: string }
+          description: The served path, e.g. index.html or assets/app.js.
+      responses:
+        "200":
+          description: The file's contents
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteFilePayload" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sites/{id}/download:
+    get:
+      summary: Download a site's current published files inline
+      description: >
+        Returns every file of the live version, utf8 text inline and binary
+        base64-encoded — the shape the dashboard zips for a one-click download
+        and the MCP download_site tool inlines. Bounded by a 10 MiB total
+        response budget; truncated=true means later files were omitted and
+        should be fetched via GET /v1/sites/{id}/files/content. 400 when the
+        site has no published version yet.
+      operationId: downloadSite
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+      responses:
+        "200":
+          description: The site's files
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SiteDownload" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /v1/sites/{id}/deployments/prepare:
     post:
       summary: Prepare a deployment — discover missing blobs + presigned uploads
@@ -2737,6 +2811,41 @@ components:
           type: string
           description: Owner-set description shown in the org feed (empty when unset).
         created_at: { type: string, format: date-time }
+
+    SiteFile:
+      type: object
+      description: One manifest entry of a site's current published version.
+      properties:
+        path: { type: string }
+        size: { type: integer, format: int64 }
+        content_type: { type: string }
+        sha256: { type: string }
+
+    SiteFilePayload:
+      type: object
+      description: >
+        One file's bytes: utf8 text inline or binary base64-encoded. size is the
+        raw byte count (before any base64 expansion).
+      properties:
+        path: { type: string }
+        content: { type: string }
+        encoding: { type: string, enum: [utf8, base64] }
+        content_type: { type: string }
+        size: { type: integer, format: int64 }
+
+    SiteDownload:
+      type: object
+      description: >
+        A site's current published files inline. truncated=true means the 10 MiB
+        response budget ran out before every file was inlined — fetch the rest
+        via GET /v1/sites/{id}/files/content?path=...
+      properties:
+        slug: { type: string }
+        site_id: { type: string, format: uuid }
+        truncated: { type: boolean }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/SiteFilePayload" }
 
     FeedItem:
       type: object
