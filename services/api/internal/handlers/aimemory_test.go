@@ -182,9 +182,31 @@ func callMemory(t *testing.T, api *API, handler http.HandlerFunc, method, path, 
 
 func TestMemoryRoutes503WhenUnwired(t *testing.T) {
 	api := &API{Store: newFakeStore()} // Memory + MemoryEmbedder nil
-	rr := callMemory(t, api, api.ListMemories, http.MethodGet, "/v1/ai/memories", "", "member-user", "member", "")
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rr.Code)
+	// The MCP memory tools match this body exactly so a missing embeddings
+	// backend is a tool outcome, not an unhandled exception.
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		method  string
+		body    string
+	}{
+		{"list", api.ListMemories, http.MethodGet, ""},
+		{"search", api.SearchMemories, http.MethodPost, `{"query":"brand"}`},
+		{"create", api.CreateMemory, http.MethodPost, `{"content":"navy"}`},
+	}
+	for _, c := range cases {
+		rr := callMemory(t, api, c.handler, c.method, "/v1/ai/memories", c.body, "member-user", "member", "")
+		if rr.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s: status = %d, want 503", c.name, rr.Code)
+			continue
+		}
+		var e struct{ Error, Message string }
+		if err := json.Unmarshal(rr.Body.Bytes(), &e); err != nil {
+			t.Fatalf("%s: decode body: %v", c.name, err)
+		}
+		if e.Error != "unavailable" || e.Message != "org memory is not configured" {
+			t.Errorf("%s: body = %+v, want unavailable / org memory is not configured", c.name, e)
+		}
 	}
 }
 
