@@ -101,7 +101,12 @@ type Service struct {
 // err is a no-op. Called by addTool for every registered tool, so a failure at any
 // tool endpoint is observable without each handler opting in.
 func (svc *Service) reportToolError(ctx context.Context, tool string, err error) {
-	if svc.Reporter == nil || err == nil {
+	// A deployment with no embeddings backend answers memory calls with
+	// 503 "org memory is not configured". That is an expected tool outcome
+	// (search/list fail open; add returns a clear message), not a fault to
+	// page on. Other failures, including a 503 with a different message,
+	// are still captured.
+	if svc.Reporter == nil || err == nil || orgMemoryUnconfigured(err) {
 		return
 	}
 	t, _ := auth.TenantFromContext(ctx)
@@ -1105,6 +1110,44 @@ type MemoryInfo struct {
 
 type memoryListOut struct {
 	Memories []MemoryInfo `json:"memories"`
+	// Unavailable is set when the API has org memory unwired (HTTP 503
+	// "org memory is not configured"). The call still succeeds so an agent
+	// can continue the task without company memory.
+	Unavailable bool   `json:"unavailable,omitempty" jsonschema:"true when org memory is not configured on this server; continue the task without company memory"`
+	Note        string `json:"note,omitempty" jsonschema:"why memory was skipped; set only when unavailable is true"`
+}
+
+// orgMemoryUnconfiguredMessage is the API's requireMemory body when the
+// process has no memory store or embedder (no EMBEDDINGS_API_KEY, or no
+// database). See services/api/internal/handlers/aimemory.go.
+const orgMemoryUnconfiguredMessage = "org memory is not configured"
+
+// orgMemoryUnconfiguredNote is what the memory tools tell the calling agent
+// so a missing embeddings backend does not abort the task.
+const orgMemoryUnconfiguredNote = "Org memory is not configured on this Dropway server, so company memory is unavailable. Continue the task without it."
+
+// orgMemoryUnconfigured reports whether err is that expected 503. It is a
+// deployment configuration state, not a fault in the tool call.
+func orgMemoryUnconfigured(err error) bool {
+	var apiErr *apiclient.Error
+	return errors.As(err, &apiErr) &&
+		apiErr.Status == http.StatusServiceUnavailable &&
+		strings.Contains(apiErr.Message, orgMemoryUnconfiguredMessage)
+}
+
+func logMemoryUnconfigured(ctx context.Context, tool string) {
+	t, _ := auth.TenantFromContext(ctx)
+	slog.InfoContext(ctx, "mcp org memory not configured",
+		"tool", tool, "user_id", t.UserID, "org_id", t.OrgID)
+}
+
+func memoryUnavailableList(ctx context.Context, tool string) memoryListOut {
+	logMemoryUnconfigured(ctx, tool)
+	return memoryListOut{
+		Memories:    []MemoryInfo{},
+		Unavailable: true,
+		Note:        orgMemoryUnconfiguredNote,
+	}
 }
 
 type listMemoriesIn struct {
@@ -1139,6 +1182,12 @@ func (svc *Service) SearchMemory(ctx context.Context, token, query string, k int
 		return memoryListOut{}, fmt.Errorf("query is required")
 	}
 	rows, err := svc.API.SearchMemory(ctx, token, query, k)
+	if orgMemoryUnconfigured(err) {
+		// Fail open: retrieval with no embeddings backend is "no memory",
+		// matching the org-memory scope's memory-less fallback. Returning
+		// the 503 would be captured as an unhandled exception.
+		return memoryUnavailableList(ctx, "search_memory"), nil
+	}
 	if err != nil {
 		return memoryListOut{}, err
 	}
@@ -1148,6 +1197,9 @@ func (svc *Service) SearchMemory(ctx context.Context, token, query string, k int
 // ListMemories browses the org's memory (pinned first, then most recent).
 func (svc *Service) ListMemories(ctx context.Context, token string, limit int) (memoryListOut, error) {
 	rows, err := svc.API.ListMemories(ctx, token, limit)
+	if orgMemoryUnconfigured(err) {
+		return memoryUnavailableList(ctx, "list_memories"), nil
+	}
 	if err != nil {
 		return memoryListOut{}, err
 	}
@@ -1160,6 +1212,12 @@ func (svc *Service) AddMemory(ctx context.Context, token, content, kind, sourceT
 		return addMemoryOut{}, fmt.Errorf("content is required")
 	}
 	mem, created, err := svc.API.AddMemory(ctx, token, content, kind, sourceTool)
+	if orgMemoryUnconfigured(err) {
+		// A write must not pretend the fact was saved. Return a clear tool
+		// error (the caller sees it; reportToolError does not capture it).
+		logMemoryUnconfigured(ctx, "add_memory")
+		return addMemoryOut{}, fmt.Errorf("%s Nothing was stored: %w", orgMemoryUnconfiguredNote, err)
+	}
 	if err != nil {
 		return addMemoryOut{}, err
 	}
@@ -1337,19 +1395,22 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	}, svc.appendChatHandler)
 	// Org memory: reads and writes both ride the API (search embeds server-side;
 	// writes stay on the API's quota/audit path), so all three register behind
-	// the same control-plane gate as the write tools. Orgs that haven't enabled
-	// memory get a clear 403 from the API.
+	// the same control-plane gate as the write tools. A deployment with no
+	// embeddings backend answers 503 "org memory is not configured": search and
+	// list fail open (empty list, unavailable=true) and add returns a clear
+	// tool error. Neither is reported as an unhandled exception. Orgs that
+	// have memory wired but turned off get a 403 from the API.
 	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "search_memory",
-		Description: "Fetch this Dropway organization's remembered brand, style, and preference context BEFORE building or editing anything for it. Returns pinned company facts plus the memories most relevant to your query (e.g. 'brand colors and tone for a pricing page'). Args: query, k (optional).",
+		Description: "Fetch this Dropway organization's remembered brand, style, and preference context BEFORE building or editing anything for it. Returns pinned company facts plus the memories most relevant to your query (e.g. 'brand colors and tone for a pricing page'). Args: query, k (optional). If org memory is not configured, returns an empty list with unavailable=true and a note — continue the task without memory.",
 	}, svc.searchMemoryHandler)
 	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_memories",
-		Description: "Browse everything Dropway remembers about this organization (pinned first, then most recently updated). Args: limit (optional, default 50).",
+		Description: "Browse everything Dropway remembers about this organization (pinned first, then most recently updated). Args: limit (optional, default 50). If org memory is not configured, returns an empty list with unavailable=true and a note — continue without memory.",
 	}, svc.listMemoriesHandler)
 	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "add_memory",
-		Description: "Record a durable fact about this organization that future builds should know (brand voice, color palette, product names, structural preferences, standing corrections). One self-contained sentence per call; duplicates dedupe server-side. Args: content, kind (optional: fact|preference|style|correction), source_tool (optional: your agent name, e.g. 'claude-code').",
+		Description: "Record a durable fact about this organization that future builds should know (brand voice, color palette, product names, structural preferences, standing corrections). One self-contained sentence per call; duplicates dedupe server-side. Args: content, kind (optional: fact|preference|style|correction), source_tool (optional: your agent name, e.g. 'claude-code'). If org memory is not configured, the tool returns an error and nothing is stored; continue without saving.",
 	}, svc.addMemoryHandler)
 }
 
