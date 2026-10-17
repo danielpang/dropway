@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // Unit tests for the Sites listing rule (lib/sites-visibility.ts): which sites
-// the org-wide /dashboard list shows, and the owner byline label. Both are pure,
-// so they're covered here rather than through a render — the page itself is an
-// RSC and there is no DOM runner.
+// the org-wide /dashboard list shows — org-shared sites plus the viewer's own,
+// for every role — and the owner byline label. Both are pure, so they're covered
+// here rather than through a render — the page itself is an RSC and there is no
+// DOM runner.
 //
 // The two footguns these pin down: `feed_visible` is OPTIONAL on the generated
 // Site schema (absent must read as visible, matching the API default of true),
@@ -16,15 +17,18 @@ import { isSiteVisibleTo, ownerLabel } from "@/lib/sites-visibility";
 const ME = "user-me";
 const THEM = "user-them";
 
-const member = { userId: ME, canManage: false };
-const admin = { userId: ME, canManage: true };
-const anonymous = { userId: null, canManage: false };
+// The rule is role-blind, so `member` and `admin` are the same shape; `admin`
+// stays a named viewer because the cases below pin that the role deliberately
+// stopped changing the outcome.
+const member = { userId: ME };
+const admin = { userId: ME };
+const anonymous = { userId: null };
 
 describe("isSiteVisibleTo", () => {
   const cases: Array<{
     name: string;
     site: { owner_id?: string; feed_visible?: boolean };
-    viewer: { userId: string | null; canManage: boolean };
+    viewer: { userId: string | null };
     visible: boolean;
   }> = [
     {
@@ -46,14 +50,20 @@ describe("isSiteVisibleTo", () => {
       visible: true,
     },
     {
-      name: "admin sees a teammate's hidden site",
+      name: "admin does NOT see a teammate's hidden site",
       site: { owner_id: THEM, feed_visible: false },
       viewer: admin,
-      visible: true,
+      visible: false,
     },
     {
-      name: "admin sees an unowned hidden site",
+      name: "admin does NOT see an unowned hidden site",
       site: { feed_visible: false },
+      viewer: admin,
+      visible: false,
+    },
+    {
+      name: "admin sees their OWN hidden site",
+      site: { owner_id: ME, feed_visible: false },
       viewer: admin,
       visible: true,
     },
@@ -105,12 +115,9 @@ describe("isSiteVisibleTo", () => {
     expect(
       sites.filter((s) => isSiteVisibleTo(s, member)).map((s) => s.id),
     ).toEqual(["a", "c", "d"]);
-    expect(sites.filter((s) => isSiteVisibleTo(s, admin)).map((s) => s.id)).toEqual([
-      "a",
-      "b",
-      "c",
-      "d",
-    ]);
+    expect(
+      sites.filter((s) => isSiteVisibleTo(s, admin)).map((s) => s.id),
+    ).toEqual(["a", "c", "d"]);
   });
 });
 

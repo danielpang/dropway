@@ -19,13 +19,12 @@ import type { Site } from "@/lib/api";
 export interface SiteViewer {
   /** The viewer's user id, or null when the org/session couldn't be resolved. */
   userId: string | null;
-  /** True for org owners/admins — `canManage(myRole)` from lib/org.ts. */
-  canManage: boolean;
 }
 
 /**
  * Whether `site` belongs in the viewer's Sites list: everything shared to the
- * org, plus the viewer's own sites, plus everything for owners/admins.
+ * org, plus the viewer's own sites. The rule is the same for every role — org
+ * owners/admins don't get a private-site inventory here (reverses #142).
  *
  * `feed_visible !== false` (not `=== true`) is deliberate: every field on the
  * generated `Site` schema is optional, and the API defaults the flag to true, so
@@ -36,7 +35,6 @@ export function isSiteVisibleTo(
   site: Pick<Site, "owner_id" | "feed_visible">,
   viewer: SiteViewer,
 ): boolean {
-  if (viewer.canManage) return true; // owners/admins keep a full inventory
   if (site.feed_visible !== false) return true;
   return Boolean(viewer.userId) && Boolean(site.owner_id) && site.owner_id === viewer.userId;
 }
