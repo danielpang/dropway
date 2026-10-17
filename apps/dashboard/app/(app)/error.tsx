@@ -2,8 +2,8 @@
 
 import { useEffect } from "react";
 import { RefreshCw } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 
+import { captureClientException } from "@/lib/analytics-client";
 import { ErrorPageMetric } from "@/components/error/error-page-metric";
 import { BurstPipe } from "@/components/error/burst-pipe";
 import { Button } from "@/components/ui/button";
@@ -26,16 +26,10 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const posthog = usePostHog();
-
   useEffect(() => {
     console.error(error);
-    try {
-      posthog?.captureException?.(error);
-    } catch {
-      /* analytics must never mask the original error */
-    }
-  }, [error, posthog]);
+    captureClientException(error);
+  }, [error]);
 
   return (
     <div className="mx-auto max-w-2xl">

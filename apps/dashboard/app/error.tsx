@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
 
+import { captureClientException } from "@/lib/analytics-client";
 import { ErrorPageMetric } from "@/components/error/error-page-metric";
 import { BurstPipe } from "@/components/error/burst-pipe";
 import { Button } from "@/components/ui/button";
@@ -27,17 +27,11 @@ export default function GlobalRouteError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const posthog = usePostHog();
-
   useEffect(() => {
-    // Surface to logs + PostHog error tracking (best-effort; never re-throws).
+    // Surface to logs + the vendor-neutral error sink (best-effort; never re-throws).
     console.error(error);
-    try {
-      posthog?.captureException?.(error);
-    } catch {
-      /* analytics must never mask the original error */
-    }
-  }, [error, posthog]);
+    captureClientException(error);
+  }, [error]);
 
   return (
     <main className="grid min-h-dvh place-items-center px-4">
