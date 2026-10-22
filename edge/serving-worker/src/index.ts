@@ -310,6 +310,21 @@ function rateLimitPolicy(env: Env): RateLimitPolicy {
   };
 }
 
+let warnedKVRateLimitFallback = false;
+
+/**
+ * Log (once per isolate) that the native RATE_LIMITER binding is missing and the
+ * KV counter is in use. The fallback costs a KV read AND write on EVERY request,
+ * which silently exhausts the KV write quota — make the misconfiguration visible.
+ */
+function warnKVRateLimitFallback(): void {
+  if (warnedKVRateLimitFallback) return;
+  warnedKVRateLimitFallback = true;
+  console.warn(
+    "rate limit: RATE_LIMITER binding missing; using the LIMITS KV counter (1 KV read + 1 write per request)",
+  );
+}
+
 /** The KV backing the org-status read (the LIMITS namespace, when configured). */
 function statusKV(env: Env): StatusKVLike | undefined {
   return env.LIMITS;
@@ -414,6 +429,7 @@ async function dispatch(
   //    in the Go API.
   const policy = rateLimitPolicy(env);
   const identity = rateLimitIdentity(request, url.host);
+  if (!env.RATE_LIMITER && env.LIMITS) warnKVRateLimitFallback();
   const rl = env.RATE_LIMITER
     ? await rateLimitNative(env.RATE_LIMITER, identity, policy.windowSeconds)
     : await rateLimitDecision(env.LIMITS, identity, nowDate.getTime(), policy);
