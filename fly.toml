@@ -24,11 +24,13 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   # it the sink is a no-op.
   ENVIRONMENT = "production"
   POSTHOG_HOST = "https://us.i.posthog.com"
-  # Postgres pool ceiling (internal/pgpool; default 8 in the API). Raise together
-  # with the pooler's capacity if error tracking shows "postgres pool saturated" /
-  # canceled acquires WITH acquired_conns pinned at max_conns. DATABASE_URL should
-  # point at the TRANSACTION-mode pooler (Supabase port 6543) so these connections
-  # multiplex onto few backends.
+  # Postgres pool (internal/pgpool). Each process keeps one warm connection and
+  # caps the burst at 8 unless DB_MAX_CONNS is set. Raise that cap together with
+  # the pooler's capacity only when error tracking shows "postgres pool exhausted"
+  # with acquired_conns pinned at max_conns. A canceled acquire while
+  # acquired_conns is below max_conns is a caller deadline during dial, not a full
+  # pool. DATABASE_URL should point at the TRANSACTION-mode pooler (Supabase port
+  # 6543) so these connections multiplex onto few backends.
   # DB_MAX_CONNS = "8"
 
 [http_service]
