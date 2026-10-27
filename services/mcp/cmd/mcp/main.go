@@ -72,7 +72,9 @@ func main() {
 	port := getenv("MCP_PORT", "8092")
 
 	// Read-only, lighter traffic than the API: a small cap is plenty and leaves
-	// shared-pooler headroom. DB_MAX_CONNS overrides.
+	// shared-pooler headroom. pgpool keeps one connection warm so this process's
+	// only DB callers — /healthz (3s budget) and the mcp_enabled check — reuse it
+	// instead of dialing inside their own deadline. DB_MAX_CONNS overrides the cap.
 	pool, err := pgpool.New(ctx, dbURL, 4)
 	if err != nil {
 		fatal("db pool", err)
