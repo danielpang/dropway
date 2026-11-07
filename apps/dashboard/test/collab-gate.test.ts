@@ -13,6 +13,7 @@ import {
   isCollabReviewEnabled,
   previewFrameDecision,
   supportedKinds,
+  trustedDashboardOrigin,
 } from "@/lib/collab";
 
 describe("supportedKinds", () => {
@@ -50,8 +51,26 @@ describe("bridgePrerequisites", () => {
     expect(report.platformContentSuffixConfigured).toBe(true);
     expect(report.customDomainsTrusted).toBe(false);
     expect(report.servingWorkerInjectsBridge).toBe(false);
+    expect(report.opaqueFrameSelections).toBe(false);
     expect(report.reasons.join(" ")).toMatch(/default off/i);
     expect(report.reasons.join(" ")).toMatch(/custom domain/i);
+    expect(report.reasons.join(" ")).toMatch(/opaque/i);
+  });
+});
+
+describe("trustedDashboardOrigin", () => {
+  it("uses only an explicit dashboard origin and ignores content hosts", () => {
+    expect(trustedDashboardOrigin({})).toBeNull();
+    expect(trustedDashboardOrigin({ BETTER_AUTH_URL: "https://app.dropway.dev" })).toBe(
+      "https://app.dropway.dev",
+    );
+    expect(trustedDashboardOrigin({ NEXT_PUBLIC_BETTER_AUTH_URL: "http://127.0.0.1:3000" })).toBe(
+      "http://127.0.0.1:3000",
+    );
+    expect(trustedDashboardOrigin({ BETTER_AUTH_URL: "https://acme.dropwaycontent.com" })).toBeNull();
+    expect(trustedDashboardOrigin({ BETTER_AUTH_URL: "https://app.dropway.dev/extra" })).toBeNull();
+    expect(trustedDashboardOrigin({ BETTER_AUTH_URL: "http://evil.example" })).toBeNull();
+    expect(trustedDashboardOrigin({ BETTER_AUTH_URL: "*" })).toBeNull();
   });
 });
 

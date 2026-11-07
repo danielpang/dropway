@@ -13,6 +13,35 @@ export function candidatePreviewSandbox(): string {
   return "allow-scripts";
 }
 
+/**
+ * A handle the arming step can configure before any navigation.
+ * `credentialless` must become true as a result of setAttribute. If the
+ * browser does not reflect it, src stays unset.
+ */
+export interface PreviewFrameHandle {
+  credentialless: boolean;
+  src: string;
+  setAttribute(name: string, value: string): void;
+}
+
+/**
+ * Set sandbox, referrer policy, and credentialless, and only then assign src.
+ * Callers append the element after this returns. Assigning src first lets the
+ * browser send cookies on the first request; setting the attribute afterwards
+ * does not rewind that request.
+ */
+export function armPreviewFrame(
+  frame: PreviewFrameHandle,
+  src: string,
+): { ok: true } | { ok: false; reason: "credentialless-unsupported" } {
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("referrerpolicy", "no-referrer");
+  frame.setAttribute("credentialless", "");
+  if (frame.credentialless !== true) return { ok: false, reason: "credentialless-unsupported" };
+  frame.src = src;
+  return { ok: true };
+}
+
 const CREDENTIAL_PARAM = /^(?:token|access_token|authorization|jwt|cookie|key|secret)$/i;
 
 export type PreviewFrameDecision =

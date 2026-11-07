@@ -4,6 +4,8 @@
 // a different source window, a bad nonce, and malformed or oversized payloads
 // are dropped. The parent handshake carries no credential and no thread.
 
+import vm from "node:vm";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -24,7 +26,6 @@ const session = {
   previewOrigin: "https://acme.dropwaycontent.com",
   source,
   parentOrigin: "https://app.dropway.dev",
-  allowOpaqueOrigin: false,
 };
 
 function hello(overrides: Record<string, unknown> = {}) {
@@ -72,17 +73,14 @@ describe("validateBridgeEvent", () => {
     ).toEqual({ ok: false, reason: "origin" });
   });
 
-  it("accepts an opaque sandbox origin only for the known source window", () => {
-    const opaque = { ...session, allowOpaqueOrigin: true };
+  it("rejects an opaque frame even when the source window and nonce match", () => {
     const data = hello();
+    expect(validateBridgeEvent(session, { origin: "null", source, data })).toEqual({
+      ok: false,
+      reason: "opaque-origin",
+    });
     expect(
-      validateBridgeEvent(opaque, { origin: "null", source, data }),
-    ).toMatchObject({ ok: true });
-    expect(
-      validateBridgeEvent(session, { origin: "null", source, data }),
-    ).toEqual({ ok: false, reason: "origin" });
-    expect(
-      validateBridgeEvent(opaque, { origin: "null", source: otherSource, data }),
+      validateBridgeEvent(session, { origin: "null", source: otherSource, data }),
     ).toEqual({ ok: false, reason: "source" });
   });
 
@@ -212,11 +210,8 @@ describe("parent handshake", () => {
       parentOrigin: session.parentOrigin,
       opaqueSandbox: true,
     });
-    expect(delivery).toEqual({
-      ok: true,
-      payload,
-      targetOrigin: "*",
-    });
+    expect(delivery).toEqual({ ok: false, reason: "opaque-origin" });
+    expect(JSON.stringify(delivery)).not.toContain("*");
   });
 
   it("addresses a platform content origin directly when the frame is not opaque", () => {
@@ -337,17 +332,69 @@ describe("stampPreviewTarget", () => {
 });
 
 describe("guestBridgeSource", () => {
-  it("stays idle unless the document opts in and never reads credentials", () => {
-    const src = guestBridgeSource();
-    expect(src).toContain('data-dropway-review');
-    expect(src).toContain("dropway.collab.v1");
-    expect(src).toContain("window.parent");
+  it("does not post selections when no dashboard origin is configured", () => {
+    const src = guestBridgeSource({});
+    expect(src).not.toContain("postMessage");
+    expect(src).not.toContain("addEventListener");
+    expect(src).not.toContain("*");
+  });
+
+  it("accepts ready only from the configured origin and posts selections only there", () => {
+    const origin = "https://app.dropway.dev";
+    const src = guestBridgeSource({ BETTER_AUTH_URL: origin });
+    expect(src).toContain(JSON.stringify(origin));
+    expect(src).toContain("event.origin");
+    expect(src).toContain("event.source");
+    expect(src).not.toContain("data.origin");
+    expect(src).not.toMatch(/postMessage\([^)]*,\s*["']\*["']\)/);
     const lower = src.toLowerCase();
     expect(lower).not.toContain("cookie");
     expect(lower).not.toContain("localstorage");
     expect(lower).not.toContain("authorization");
     expect(lower).not.toContain("bearer");
     expect(src).not.toContain("eval(");
+
+    const messages: { message: unknown; target: string }[] = [];
+    const parent = {
+      postMessage(message: unknown, target: string) {
+        messages.push({ message, target });
+      },
+    };
+    const listeners: Array<(event: unknown) => void> = [];
+    const sandbox = {
+      window: {
+        parent,
+        addEventListener(_type: string, fn: (event: unknown) => void) {
+          listeners.push(fn);
+        },
+        getSelection() {
+          return { isCollapsed: false, toString: () => "hello unique" };
+        },
+      },
+      document: {
+        documentElement: { getAttribute: () => "1" },
+        body: { innerText: "hello unique" },
+      },
+      location: { pathname: "/index.html" },
+    };
+    vm.runInNewContext(src, sandbox);
+    const ready = {
+      source: parent,
+      data: {
+        channel: "dropway.collab.v1",
+        type: "ready",
+        nonce: "n".repeat(24),
+        origin: origin,
+      },
+    };
+    listeners[0]?.({ ...ready, origin: "https://evil.example" });
+    listeners[1]?.({});
+    expect(messages).toEqual([]);
+    listeners[0]?.({ ...ready, origin });
+    listeners[1]?.({});
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.target).toBe(origin);
+    expect(JSON.stringify(messages[0]?.message)).toContain("hello unique");
   });
 });
 

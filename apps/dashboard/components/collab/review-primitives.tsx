@@ -14,12 +14,14 @@ import { CandidatePreviewFrame } from "@/components/collab/candidate-preview-fra
 import { FeedbackPin } from "@/components/collab/feedback-pin";
 import {
   acceptGuestMessage,
+  acceptLiveFrameMessage,
   adoptSelection,
   captureImagePoint,
   commentSubmission,
-  handshakeDelivery,
+  createFrameSession,
   initialReviewState,
   isCollabReviewEnabled,
+  noteFrameLoad,
   previewFrameDecision,
   reduceReview,
   type AdoptedSelection,
@@ -66,6 +68,7 @@ export function CollabReviewPrimitives({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const [nonce] = React.useState(() => crypto.randomUUID().replace(/-/g, ""));
+  const sessionRef = React.useRef(createFrameSession(nonce));
 
   const dispatch = React.useCallback(
     (event: ReviewEvent) => {
@@ -100,10 +103,24 @@ export function CollabReviewPrimitives({
   }, [active, ui.mode]);
 
   React.useEffect(() => {
+    sessionRef.current = createFrameSession(nonce);
+  }, [nonce, previewSrc]);
+
+  React.useEffect(() => {
     if (!active || surface !== "instrumented-html") return;
     function onMessage(event: MessageEvent) {
       const frame = frameRef.current?.contentWindow;
       if (!frame || !previewSrc) return;
+      const claimedNonce =
+        event.data !== null &&
+        typeof event.data === "object" &&
+        "nonce" in event.data &&
+        typeof event.data.nonce === "string"
+          ? event.data.nonce
+          : "";
+      // A sandboxed child can navigate without a second load. Opaque messages
+      // are rejected below; this also drops a parent-observed reload.
+      if (!acceptLiveFrameMessage(sessionRef.current, claimedNonce).ok) return;
       let previewOrigin = "";
       try {
         previewOrigin = new URL(previewSrc).origin;
@@ -118,7 +135,6 @@ export function CollabReviewPrimitives({
           previewOrigin,
           source: frame,
           parentOrigin,
-          allowOpaqueOrigin: true,
         },
         { origin: event.origin, source, data: event.data },
         previewTarget,
@@ -194,23 +210,8 @@ export function CollabReviewPrimitives({
     );
   }
 
-  function postHandshake() {
-    const frame = frameRef.current?.contentWindow;
-    if (!frame || !previewSrc || surface !== "instrumented-html") return;
-    let origin = "";
-    try {
-      origin = new URL(previewSrc).origin;
-    } catch {
-      return;
-    }
-    const delivery = handshakeDelivery({
-      nonce,
-      previewOrigin: origin,
-      parentOrigin,
-      opaqueSandbox: true,
-    });
-    if (!delivery.ok) return;
-    frame.postMessage(delivery.payload, delivery.targetOrigin);
+  function onFrameLoad() {
+    sessionRef.current = noteFrameLoad(sessionRef.current);
   }
 
   return (
@@ -262,13 +263,20 @@ export function CollabReviewPrimitives({
           parentOrigin={parentOrigin}
           title="Candidate preview"
           frameRef={frameRef}
-          onLoad={postHandshake}
+          onLoad={onFrameLoad}
         />
       ) : null}
       {surface === "html" || surface === "unknown" ? (
         <p className="text-sm text-muted-foreground">
           This page is not instrumented. Text, component, and point anchors are unavailable.
           Comments attach to the whole page on the original version.
+        </p>
+      ) : null}
+      {surface === "instrumented-html" ? (
+        <p className="text-sm text-muted-foreground">
+          Precise selections stay off in this sandboxed preview. Its origin is opaque, a
+          navigated document is not visible on the frame src, and no handshake is sent into
+          the frame. Page comments stay on this side.
         </p>
       ) : null}
       <ul className="space-y-2">

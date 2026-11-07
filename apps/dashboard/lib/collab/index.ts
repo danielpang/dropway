@@ -65,17 +65,20 @@ export type {
 
 export { guestBridgeSource } from "@/lib/collab/guest-bridge";
 
+export { acceptLiveFrameMessage, createFrameSession, noteFrameLoad } from "@/lib/collab/frame-session";
+export type { FrameSession } from "@/lib/collab/frame-session";
+
 export { initialReviewState, reduceReview } from "@/lib/collab/keyboard";
 export type { ReviewEvent, ReviewMode, ReviewSessionState, SubmittedComment } from "@/lib/collab/keyboard";
 
 export { commentControls, commentSubmission, feedbackPinA11y } from "@/lib/collab/comment";
 export type { CommentSubmission } from "@/lib/collab/comment";
 
-export { bridgePrerequisites, canOpenCandidatePreview, isCollabReviewEnabled } from "@/lib/collab/gate";
-export type { BridgePrerequisites, CollabReviewEnv } from "@/lib/collab/gate";
+export { bridgePrerequisites, canOpenCandidatePreview, isCollabReviewEnabled, trustedDashboardOrigin } from "@/lib/collab/gate";
+export type { BridgePrerequisites, CollabReviewEnv, DashboardOriginEnv } from "@/lib/collab/gate";
 
-export { candidatePreviewSandbox, previewFrameDecision } from "@/lib/collab/preview-frame";
-export type { PreviewFrameDecision } from "@/lib/collab/preview-frame";
+export { armPreviewFrame, candidatePreviewSandbox, previewFrameDecision } from "@/lib/collab/preview-frame";
+export type { PreviewFrameDecision, PreviewFrameHandle } from "@/lib/collab/preview-frame";
 
 import type { AnchorRecord, FeedbackAnchor } from "@/lib/collab/types";
 

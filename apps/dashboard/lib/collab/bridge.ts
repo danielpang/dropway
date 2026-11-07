@@ -30,7 +30,6 @@ export interface BridgeSession {
   previewOrigin: string;
   source: object;
   parentOrigin: string;
-  allowOpaqueOrigin: boolean;
 }
 
 export interface BridgeEnvelope {
@@ -54,9 +53,18 @@ export interface SelectionMessage {
   anchor: FeedbackAnchor;
 }
 
+export type BridgeFailureReason =
+  | "origin"
+  | "opaque-origin"
+  | "source"
+  | "nonce"
+  | "malformed"
+  | "oversize"
+  | "channel";
+
 export type BridgeVerdict =
   | { ok: true; message: HelloMessage | SelectionMessage }
-  | { ok: false; reason: "origin" | "source" | "nonce" | "malformed" | "oversize" | "channel" };
+  | { ok: false; reason: BridgeFailureReason };
 
 export interface ParentHandshake {
   channel: typeof BRIDGE_CHANNEL;
@@ -235,9 +243,9 @@ function isSurface(value: unknown): value is SurfaceKind {
 }
 
 function originAllowed(session: BridgeSession, origin: string): boolean {
+  if (origin === "null") return false;
   if (!canOpenCandidatePreview(session.previewOrigin, session.parentOrigin).ok) return false;
   if (origin === session.parentOrigin) return false;
-  if (origin === "null") return session.allowOpaqueOrigin;
   return origin === session.previewOrigin;
 }
 
@@ -248,6 +256,9 @@ export function validateBridgeEvent(session: BridgeSession, event: BridgeEnvelop
     return { ok: false, reason: "oversize" };
   }
   if (event.source === null || event.source !== session.source) return { ok: false, reason: "source" };
+  // "null" is every opaque document. A navigated frame keeps the same window and
+  // the same serialized origin, so it is not a usable peer.
+  if (event.origin === "null") return { ok: false, reason: "opaque-origin" };
   if (!originAllowed(session, event.origin)) return { ok: false, reason: "origin" };
 
   const record = plainRecord(event.data);
@@ -288,7 +299,7 @@ export function stampPreviewTarget<T extends AnchorTarget>(anchor: T, preview: A
 }
 
 export type AcceptedGuestMessage =
-  | { ok: false; reason: "origin" | "source" | "nonce" | "malformed" | "oversize" | "channel" }
+  | { ok: false; reason: BridgeFailureReason }
   | { ok: true; type: "hello"; surface: SurfaceKind }
   | { ok: true; type: "selection"; adopted: AdoptedSelection };
 
@@ -318,13 +329,16 @@ export function handshakeDelivery(opts: {
   previewOrigin: string;
   parentOrigin: string;
   opaqueSandbox: boolean;
-}): { ok: true; payload: ParentHandshake; targetOrigin: string } | { ok: false; reason: "origin" } {
+}): { ok: true; payload: ParentHandshake; targetOrigin: string } | { ok: false; reason: "origin" | "opaque-origin" } {
+  // Chrome rejects targetOrigin "null". "*" would deliver to whichever
+  // document is active, including one the parent cannot see via iframe.src.
+  if (opts.opaqueSandbox) return { ok: false, reason: "opaque-origin" };
   if (!canOpenCandidatePreview(opts.previewOrigin, opts.parentOrigin).ok) {
     return { ok: false, reason: "origin" };
   }
   return {
     ok: true,
     payload: parentHandshake(opts.nonce),
-    targetOrigin: opts.opaqueSandbox ? "*" : opts.previewOrigin,
+    targetOrigin: opts.previewOrigin,
   };
 }
