@@ -17,6 +17,7 @@ import (
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/projectroom"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -385,6 +386,16 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrExternalSharingDisabled):
 		// The org's allow_external_sharing policy forbids a public site.
 		httpx.WriteError(w, fmt.Errorf("%w: external sharing is disabled for this org; an admin must enable it", httpx.ErrForbidden))
+	case errors.Is(err, store.ErrProjectRoomsDisabled):
+		httpx.WriteError(w, fmt.Errorf("%w: project rooms are disabled for this organization", httpx.ErrForbidden))
+	case errors.Is(err, store.ErrRoomForbidden), errors.Is(err, projectroom.ErrHumanRequired), errors.Is(err, projectroom.ErrCandidateDenied):
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrForbidden, err.Error()))
+	case errors.Is(err, store.ErrRoomConflict), errors.Is(err, projectroom.ErrCandidateTerminal), errors.Is(err, projectroom.ErrCandidateMismatch), errors.Is(err, projectroom.ErrCandidateConflict), errors.Is(err, store.ErrCandidateState):
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrConflict, err.Error()))
+	case errors.Is(err, store.ErrApplicationDisabled):
+		httpx.WriteError(w, fmt.Errorf("%w: candidate application is not enabled", httpx.ErrForbidden))
+	case errors.Is(err, projectroom.ErrInvalidAnchor):
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err.Error()))
 	case errors.Is(err, store.ErrInvalidMode):
 		httpx.WriteError(w, fmt.Errorf("%w: invalid access mode", httpx.ErrBadRequest))
 	case errors.Is(err, store.ErrInvalidDomainStatus):

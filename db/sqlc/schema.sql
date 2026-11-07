@@ -35,7 +35,10 @@ CREATE TABLE app.org_meta (
     api_keys_enabled       boolean NOT NULL DEFAULT true,
     -- Org-memory kill switch (migration 0017). Defaults FALSE: memory rolls
     -- out opt-in per org, unlike the other feature flags.
-    memory_enabled         boolean NOT NULL DEFAULT false
+    memory_enabled         boolean NOT NULL DEFAULT false,
+    -- Project rooms (migration 0019). Defaults FALSE: private review rooms
+    -- are opt-in per org and are not part of public serving.
+    project_rooms_enabled  boolean NOT NULL DEFAULT false
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -450,4 +453,130 @@ CREATE TABLE app.org_content_chunks (
         (source_kind = 'site_version' AND version_id IS NOT NULL AND skill_id IS NULL)
         OR (source_kind = 'skill' AND skill_id IS NOT NULL AND version_id IS NULL)
     )
+);
+
+-- project_rooms: same-org review rooms that reference existing sites.
+-- They do not copy sites or change sites.owner_user_id. Private to members
+-- (RLS is org-wide; membership is enforced on every query).
+CREATE TABLE app.project_rooms (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    name          text NOT NULL,
+    owner_user_id uuid NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT project_rooms_name_check CHECK (char_length(name) BETWEEN 1 AND 80)
+);
+
+CREATE TABLE app.project_room_members (
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id    uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    user_id    uuid NOT NULL,
+    role       text NOT NULL CHECK (role IN ('owner', 'editor', 'reviewer', 'viewer')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (room_id, user_id)
+);
+
+CREATE TABLE app.project_room_sites (
+    org_id     uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id    uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    site_id    uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    created_by uuid NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (room_id, site_id)
+);
+
+CREATE TABLE app.review_threads (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id      uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    site_id      uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    version_id   uuid NOT NULL REFERENCES app.site_versions (id) ON DELETE CASCADE,
+    content_hash text NOT NULL,
+    page         text NOT NULL,
+    anchor_kind  text NOT NULL CHECK (anchor_kind IN ('point', 'text', 'component', 'page')),
+    anchor       jsonb NOT NULL,
+    anchor_state text NOT NULL DEFAULT 'anchored' CHECK (anchor_state IN ('anchored', 'orphaned')),
+    status       text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+    created_by   uuid NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    resolved_by  uuid,
+    resolved_at  timestamptz,
+    CONSTRAINT review_threads_page_check CHECK (char_length(page) BETWEEN 1 AND 512)
+);
+
+CREATE TABLE app.review_anchor_revisions (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    thread_id      uuid NOT NULL REFERENCES app.review_threads (id) ON DELETE CASCADE,
+    anchor_kind    text NOT NULL CHECK (anchor_kind IN ('point', 'text', 'component', 'page')),
+    anchor         jsonb NOT NULL,
+    page           text NOT NULL,
+    anchor_state   text NOT NULL CHECK (anchor_state IN ('anchored', 'orphaned')),
+    reason         text NOT NULL CHECK (reason IN ('created', 'reanchored', 'orphaned')),
+    actor_user_id  uuid NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE app.review_replies (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    thread_id      uuid NOT NULL REFERENCES app.review_threads (id) ON DELETE CASCADE,
+    author_user_id uuid NOT NULL,
+    body           text NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT review_replies_body_check CHECK (char_length(body) BETWEEN 1 AND 4000)
+);
+
+CREATE TABLE app.review_version_approvals (
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id      uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    site_id      uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    version_id   uuid NOT NULL REFERENCES app.site_versions (id) ON DELETE CASCADE,
+    content_hash text NOT NULL,
+    user_id      uuid NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (room_id, version_id, user_id)
+);
+
+CREATE TABLE app.review_read_state (
+    org_id       uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id      uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    user_id      uuid NOT NULL,
+    last_read_at timestamptz NOT NULL,
+    PRIMARY KEY (room_id, user_id)
+);
+
+CREATE TABLE app.review_activity (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id        uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id       uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    actor_user_id uuid NOT NULL,
+    kind          text NOT NULL,
+    thread_id     uuid,
+    site_id       uuid,
+    version_id    uuid,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Immutable proposed change. Approve-change is not version sign-off.
+-- No timeout column: pending never becomes approved by default.
+CREATE TABLE app.review_candidates (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id            uuid NOT NULL REFERENCES app.org_meta (id) ON DELETE CASCADE,
+    room_id           uuid NOT NULL REFERENCES app.project_rooms (id) ON DELETE CASCADE,
+    site_id           uuid NOT NULL REFERENCES app.sites (id) ON DELETE CASCADE,
+    base_version_id   uuid NOT NULL REFERENCES app.site_versions (id) ON DELETE CASCADE,
+    base_content_hash text NOT NULL,
+    content_hash      text NOT NULL,
+    diff_hash         text NOT NULL,
+    summary           text NOT NULL,
+    state             text NOT NULL DEFAULT 'pending',
+    created_by        uuid NOT NULL,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    approved_by       uuid,
+    approved_at       timestamptz,
+    rejected_by       uuid,
+    rejected_at       timestamptz
 );

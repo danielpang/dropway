@@ -33,6 +33,17 @@ type claimsKey struct{}
 // audit_log.actor_token.
 type apiKeyIDKey struct{}
 
+// apiKeyGrantKey stores the key's scopes and optional site restriction.
+type apiKeyGrantKey struct{}
+
+// APIKeyGrant is the stored scope and optional single-site restriction.
+// A nil SiteID means the key is not site-restricted. Scopes are not wildcards
+// unless the value is exactly the legacy full grant "sites:*".
+type APIKeyGrant struct {
+	Scopes []string
+	SiteID *string
+}
+
 // Verifier is the slice of *auth.Verifier the middleware depends on. Defining it
 // as an interface keeps the middleware unit-testable with a fake verifier (no
 // live JWKS endpoint needed).
@@ -42,12 +53,13 @@ type Verifier interface {
 
 // KeyPrincipal is the resolved identity for an API-key-authenticated request: the
 // SYNTHESIZED claims (sub = the key's created_by, org_id, and the creator's LIVE
-// role) plus the key id for audit/rate-limit/ceiling. Everything downstream
-// consumes *auth.Claims, so a keyed request flows through the exact same tenant
-// context, quota, and handler paths as a session request.
+// role) plus the key id for audit/rate-limit/ceiling. Scopes and SiteID are the
+// stored grant. Empty scopes are not a wildcard.
 type KeyPrincipal struct {
 	Claims *auth.Claims
 	KeyID  string
+	Scopes []string
+	SiteID *string
 }
 
 // KeyAuthenticator authenticates a presented API-key secret at the boundary: it
@@ -134,6 +146,7 @@ func AuthWithKeysObserved(v Verifier, keys KeyAuthenticator, emitter analytics.E
 				}
 				ctx := context.WithValue(r.Context(), claimsKey{}, princ.Claims)
 				ctx = context.WithValue(ctx, apiKeyIDKey{}, princ.KeyID)
+				ctx = context.WithValue(ctx, apiKeyGrantKey{}, APIKeyGrant{Scopes: append([]string(nil), princ.Scopes...), SiteID: princ.SiteID})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -176,6 +189,12 @@ func ClaimsFromContext(ctx context.Context) (*auth.Claims, bool) {
 func APIKeyIDFromContext(ctx context.Context) (string, bool) {
 	id, ok := ctx.Value(apiKeyIDKey{}).(string)
 	return id, ok && id != ""
+}
+
+// APIKeyGrantFromContext returns the key grant for a keyed request.
+func APIKeyGrantFromContext(ctx context.Context) (APIKeyGrant, bool) {
+	g, ok := ctx.Value(apiKeyGrantKey{}).(APIKeyGrant)
+	return g, ok
 }
 
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header.

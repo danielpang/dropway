@@ -21,6 +21,7 @@ import (
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/quota"
 	"github.com/danielpang/dropway/internal/skillseeds"
+	"github.com/danielpang/dropway/services/api/internal/sprites"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -140,6 +141,12 @@ type API struct {
 	// MemoryIndex chunks + embeds published site/skill content for retrieval
 	// (*ai.Runner). nil → publishes aren't indexed.
 	MemoryIndex MemoryIndexer
+
+	// Rooms is the project-room store. nil → room routes return 503.
+	// The feature flag inside the store still defaults off.
+	Rooms ProjectRoomStore
+	// Sprites is the remote execution adapter. nil uses the disabled adapter.
+	Sprites sprites.Runner
 
 	// seededOrgs is a process-local set of org ids already observed as
 	// skills-seeded, so ensureSkillsSeeded can skip its per-request DB round-trip

@@ -46,6 +46,8 @@ type APIKeyPrincipal struct {
 	RevokedAt      *time.Time
 	OrgStatus      string
 	APIKeysEnabled bool
+	Scopes         []string
+	SiteID         *string
 }
 
 // CreateAPIKeyParams is the input to CreateAPIKey. KeyHash is the sha256 of the
@@ -68,10 +70,10 @@ func (s *Store) ResolveAPIKey(ctx context.Context, keyHash string) (APIKeyPrinci
 	var p APIKeyPrincipal
 	var expiresAt, revokedAt *time.Time
 	row := s.pool.QueryRow(ctx,
-		`SELECT id, org_id, created_by, expires_at, revoked_at, org_status, api_keys_enabled
+		`SELECT id, org_id, created_by, expires_at, revoked_at, org_status, api_keys_enabled, scopes, site_id
 		   FROM app.resolve_api_key($1)`, keyHash)
 	if err := row.Scan(&p.ID, &p.OrgID, &p.CreatedBy, &expiresAt, &revokedAt,
-		&p.OrgStatus, &p.APIKeysEnabled); err != nil {
+		&p.OrgStatus, &p.APIKeysEnabled, &p.Scopes, &p.SiteID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKeyPrincipal{}, ErrNotFound
 		}

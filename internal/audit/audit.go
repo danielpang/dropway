@@ -143,6 +143,14 @@ const (
 	// ActionAPIKeysToggle records the org api_keys_enabled kill switch flip
 	// (PATCH /v1/orgs/api-keys).
 	ActionAPIKeysToggle Action = "api_keys.toggle"
+	// Project rooms. Approve-change is not reviewer version sign-off.
+	ActionProjectRoomsToggle   Action = "org.project_rooms_toggle"
+	ActionProjectRoomCreate    Action = "room.create"
+	ActionProjectRoomSiteAdd   Action = "room.site_add"
+	ActionProjectRoomMemberAdd Action = "room.member_add"
+	ActionCandidateApprove     Action = "candidate.approve_change"
+	ActionCandidateReject      Action = "candidate.reject_change"
+	ActionCandidateConflict    Action = "candidate.conflict"
 )
 
 // Context carries the request provenance attached to an audit row: who acted,

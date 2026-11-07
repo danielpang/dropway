@@ -43,7 +43,7 @@ import (
 const (
 	pgPort    = "55432"
 	minioPort = "59000"
-	pgImage   = "postgres:16"
+	pgImage   = "pgvector/pgvector:pg16"
 	// MinIO's Docker Hub and Quay community images no longer allow anonymous
 	// pulls. Same public build the self-host compose file pins.
 	minioImage  = "ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9"

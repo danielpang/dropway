@@ -139,7 +139,7 @@ func (k *keyAuthenticator) AuthenticateAPIKey(ctx context.Context, secret, clien
 	claims := &auth.Claims{OrgID: princ.OrgID, Role: role}
 	claims.Subject = princ.CreatedBy
 	claims.IssuedAt = jwt.NewNumericDate(time.Now())
-	return &middleware.KeyPrincipal{Claims: claims, KeyID: princ.ID}, nil
+	return &middleware.KeyPrincipal{Claims: claims, KeyID: princ.ID, Scopes: princ.Scopes, SiteID: princ.SiteID}, nil
 }
 
 // liveRole returns the creator's current role, failing closed when membership can't

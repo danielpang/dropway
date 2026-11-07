@@ -164,6 +164,10 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
+	if err := rejectAgentLiveMutation(r); err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
 	if !a.requireStore(w) || !a.requireObjects(w) {
 		return
 	}
@@ -332,6 +336,10 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 	t, ok := tenant(r.Context())
 	if !ok {
 		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if err := rejectAgentLiveMutation(r); err != nil {
+		httpx.WriteError(w, err)
 		return
 	}
 	if !a.requireStore(w) || !a.requireProjection(w) {
