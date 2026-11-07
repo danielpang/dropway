@@ -9,6 +9,14 @@ import { API_URL } from "@/lib/env";
 import { getCurrentSession } from "@/lib/session";
 import { TokenCache, tokenCacheKey } from "@/lib/token-cache";
 import type { components, operations } from "@/lib/api-generated/schema";
+import type {
+  ApprovalBinding,
+  CandidateDecisionBody,
+  ProjectRoom,
+  ReviewReply,
+  ReviewThread,
+  VersionSignoff,
+} from "@/lib/project-room/contract";
 
 /**
  * Typed client for the Go control-plane API (api.dropway.dev).
@@ -1488,5 +1496,80 @@ export const api = {
     await apiFetch<void>(`/v1/ai/memories/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
+  },
+
+  /** Org opt-in for project rooms. Default false on the server. */
+  async projectRoomSettings(): Promise<{ enabled: boolean }> {
+    return apiFetch<{ enabled: boolean }>("/v1/orgs/project-rooms");
+  },
+
+  async listProjectRooms(): Promise<ProjectRoom[]> {
+    const body = await apiFetch<{ rooms?: ProjectRoom[] | null }>("/v1/project-rooms");
+    return body.rooms ?? [];
+  },
+
+  async createProjectRoom(name: string): Promise<ProjectRoom> {
+    const body = await apiFetch<{ room: ProjectRoom }>("/v1/project-rooms", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    return body.room;
+  },
+
+  async createReviewThread(input: {
+    roomId: string;
+    siteId: string;
+    versionId: string;
+    page: string;
+    kind: "page" | "point";
+    anchor: unknown;
+  }): Promise<ReviewThread> {
+    const body = await apiFetch<{ thread: ReviewThread }>(
+      `/v1/project-rooms/${encodeURIComponent(input.roomId)}/threads`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          site_id: input.siteId,
+          version_id: input.versionId,
+          page: input.page,
+          kind: input.kind,
+          anchor: input.anchor,
+        }),
+      },
+    );
+    return body.thread;
+  },
+
+  async addReviewReply(roomId: string, threadId: string, bodyText: string): Promise<ReviewReply> {
+    const body = await apiFetch<{ reply: ReviewReply }>(
+      `/v1/project-rooms/${encodeURIComponent(roomId)}/threads/${encodeURIComponent(threadId)}/replies`,
+      { method: "POST", body: JSON.stringify({ body: bodyText }) },
+    );
+    return body.reply;
+  },
+
+  async signoffProjectRoomVersion(roomId: string, siteId: string, versionId: string): Promise<VersionSignoff> {
+    const body = await apiFetch<{ version_signoff: VersionSignoff }>(
+      `/v1/project-rooms/${encodeURIComponent(roomId)}/version-signoffs`,
+      { method: "POST", body: JSON.stringify({ site_id: siteId, version_id: versionId }) },
+    );
+    return body.version_signoff;
+  },
+
+  /**
+   * Human approve or reject. The body is the candidate's own hashes, never a
+   * substituted live baseline. 409 is thrown as ApiError with the decision body
+   * when the baseline conflicts.
+   */
+  async decideProjectRoomCandidate(
+    roomId: string,
+    candidateId: string,
+    decision: "approve" | "reject",
+    binding: ApprovalBinding,
+  ): Promise<CandidateDecisionBody> {
+    return apiFetch<CandidateDecisionBody>(
+      `/v1/project-rooms/${encodeURIComponent(roomId)}/candidates/${encodeURIComponent(candidateId)}/${decision}`,
+      { method: "POST", body: JSON.stringify(binding) },
+    );
   },
 };
