@@ -48,6 +48,7 @@ type fakeStore struct {
 	// is "org--<slug>.dropwaycontent.com" in tests that don't override it.
 	orgSlug    string
 	orgSlugErr error
+	controlled map[string]bool
 
 	lastTenant  store.Tenant
 	provisioned bool
@@ -63,6 +64,13 @@ func (f *fakeStore) OrgSlug(_ context.Context, t store.Tenant) (string, error) {
 		return f.orgSlug, nil
 	}
 	return "org", nil
+}
+
+func (f *fakeStore) ProjectReviewControlled(_ context.Context, _ store.Tenant, siteID string) (bool, error) {
+	if f.controlled == nil {
+		return false, nil
+	}
+	return f.controlled[siteID], nil
 }
 
 func newFakeStore() *fakeStore {

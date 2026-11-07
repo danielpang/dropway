@@ -68,7 +68,7 @@ func (a *API) PrepareDeployment(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if !a.requireStore(w) || !a.requireObjects(w) {
+	if !a.requireStore(w) {
 		return
 	}
 	siteID := chi.URLParam(r, "id")
@@ -81,6 +81,12 @@ func (a *API) PrepareDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.requireSiteEditor(w, r, t, site) {
+		return
+	}
+	if !a.allowControlledSiteMutation(w, r, t, siteID) {
+		return
+	}
+	if !a.requireObjects(w) {
 		return
 	}
 
@@ -164,11 +170,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if err := rejectAgentLiveMutation(r); err != nil {
-		httpx.WriteError(w, err)
-		return
-	}
-	if !a.requireStore(w) || !a.requireObjects(w) {
+	if !a.requireStore(w) {
 		return
 	}
 	siteID := chi.URLParam(r, "id")
@@ -181,6 +183,12 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.requireSiteEditor(w, r, t, site) {
+		return
+	}
+	if !a.allowControlledSiteMutation(w, r, t, siteID) {
+		return
+	}
+	if !a.requireObjects(w) {
 		return
 	}
 
@@ -338,10 +346,6 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if err := rejectAgentLiveMutation(r); err != nil {
-		httpx.WriteError(w, err)
-		return
-	}
 	if !a.requireStore(w) || !a.requireProjection(w) {
 		return
 	}
@@ -364,6 +368,9 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.requireSiteEditor(w, r, t, site) {
+		return
+	}
+	if !a.allowControlledSiteMutation(w, r, t, siteID) {
 		return
 	}
 

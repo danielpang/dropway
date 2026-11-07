@@ -342,13 +342,14 @@ type PublishResult struct {
 func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string) (PublishResult, error) {
 	var res PublishResult
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
-		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
+		locked, err := q.LockSite(ctx, db.LockSiteParams{ID: siteID, OrgID: t.OrgID})
 		if err != nil {
 			if isNoRows(err) {
 				return ErrNotFound
 			}
 			return err
 		}
+		site := locked
 		if site.OrgID != t.OrgID {
 			return ErrNotFound
 		}

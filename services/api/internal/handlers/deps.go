@@ -51,6 +51,9 @@ type SiteStore interface {
 	GetSiteVersion(ctx context.Context, t store.Tenant, id string) (store.SiteVersion, error)
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)
 	Publish(ctx context.Context, t store.Tenant, siteID, versionID string) (store.PublishResult, error)
+	// ProjectReviewControlled reports whether this site is referenced by a
+	// project room while that feature is enabled for the org.
+	ProjectReviewControlled(ctx context.Context, t store.Tenant, siteID string) (bool, error)
 
 	// Logical storage (current-version size; NOT deduplicated) for the usage views:
 	// per site on the site page, aggregated per user on the members page. The

@@ -36,6 +36,28 @@ type apiKeyIDKey struct{}
 // apiKeyGrantKey stores the key's scopes and optional site restriction.
 type apiKeyGrantKey struct{}
 
+// credentialClassKey stores the class assigned by the authenticator that
+// actually verified the credential. Handlers must not derive it from headers.
+type credentialClassKey struct{}
+
+// CredentialClass is the server-authenticated kind of caller.
+type CredentialClass string
+
+const (
+	// CredentialHumanSession is a JWT whose verified audience is this API's
+	// interactive audience.
+	CredentialHumanSession CredentialClass = "human_session"
+	// CredentialOrgAPIKey is an org key resolved by app.resolve_api_key.
+	// Agent and CI keys are not distinguishable, so controlled-site mutations
+	// fail closed for every key.
+	CredentialOrgAPIKey CredentialClass = "org_api_key"
+	// CredentialMCPOAuth is a JWT admitted only by an MCP resource audience.
+	CredentialMCPOAuth CredentialClass = "mcp_oauth"
+	// CredentialUnknown is a verified token this middleware could not classify.
+	// Controlled-site mutations fail closed.
+	CredentialUnknown CredentialClass = "unknown"
+)
+
 // APIKeyGrant is the stored scope and optional single-site restriction.
 // A nil SiteID means the key is not site-restricted. Scopes are not wildcards
 // unless the value is exactly the legacy full grant "sites:*".
@@ -147,6 +169,7 @@ func AuthWithKeysObserved(v Verifier, keys KeyAuthenticator, emitter analytics.E
 				ctx := context.WithValue(r.Context(), claimsKey{}, princ.Claims)
 				ctx = context.WithValue(ctx, apiKeyIDKey{}, princ.KeyID)
 				ctx = context.WithValue(ctx, apiKeyGrantKey{}, APIKeyGrant{Scopes: append([]string(nil), princ.Scopes...), SiteID: princ.SiteID})
+				ctx = context.WithValue(ctx, credentialClassKey{}, CredentialOrgAPIKey)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -170,6 +193,7 @@ func AuthWithKeysObserved(v Verifier, keys KeyAuthenticator, emitter analytics.E
 				return
 			}
 			ctx := context.WithValue(r.Context(), claimsKey{}, claims)
+			ctx = context.WithValue(ctx, credentialClassKey{}, classifyCredential(v, claims))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -195,6 +219,34 @@ func APIKeyIDFromContext(ctx context.Context) (string, bool) {
 func APIKeyGrantFromContext(ctx context.Context) (APIKeyGrant, bool) {
 	g, ok := ctx.Value(apiKeyGrantKey{}).(APIKeyGrant)
 	return g, ok
+}
+
+// CredentialClassFromContext returns the class stamped by Auth after verification.
+func CredentialClassFromContext(ctx context.Context) (CredentialClass, bool) {
+	c, ok := ctx.Value(credentialClassKey{}).(CredentialClass)
+	return c, ok && c != ""
+}
+
+// credentialClassifier is implemented by *auth.Verifier. Test verifiers that
+// do not implement it are treated as interactive human sessions, which is the
+// historical JWT path.
+type credentialClassifier interface {
+	CredentialClass(*auth.Claims) string
+}
+
+func classifyCredential(v Verifier, claims *auth.Claims) CredentialClass {
+	c, ok := v.(credentialClassifier)
+	if !ok {
+		return CredentialHumanSession
+	}
+	switch c.CredentialClass(claims) {
+	case string(CredentialHumanSession):
+		return CredentialHumanSession
+	case string(CredentialMCPOAuth):
+		return CredentialMCPOAuth
+	default:
+		return CredentialUnknown
+	}
 }
 
 // bearerToken extracts the token from an "Authorization: Bearer <token>" header.
