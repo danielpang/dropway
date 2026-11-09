@@ -307,6 +307,7 @@ type Querier interface {
 	// (not just the canonical one), or a verified custom host keeps serving at the
 	// OLD access_mode after the policy tightened (revocation).
 	ListHostRoutesForSite(ctx context.Context, arg ListHostRoutesForSiteParams) ([]AppHostRoute, error)
+	ListLiveContentHashes(ctx context.Context, orgID string) ([]ListLiveContentHashesRow, error)
 	// Filterable list for the dashboard/CLI: empty kind/query match everything;
 	// pinned_only/include_disabled narrow or widen. Pinned rows sort first.
 	ListOrgMemories(ctx context.Context, arg ListOrgMemoriesParams) ([]ListOrgMemoriesRow, error)
@@ -429,6 +430,7 @@ type Querier interface {
 	// per-folder cap check → INSERT is a critical section (free tier caps skills per
 	// folder; see quota.ResourceSkillPerFolder).
 	LockSkillFolderQuota(ctx context.Context, dollar_1 string) error
+	MemorySourceSite(ctx context.Context, arg MemorySourceSiteParams) (string, error)
 	// The extraction dedupe probe: nearest neighbor over ALL rows — pinned and
 	// disabled INCLUDED (unlike SearchOrgMemories) — so a reworded restatement of
 	// a pinned fact can't duplicate it and a disabled fact can't sneak back in

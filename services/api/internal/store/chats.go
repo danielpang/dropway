@@ -101,6 +101,9 @@ func (s *Store) CreateChatLog(ctx context.Context, t Tenant, title, sourceTool s
 			if err := assertSiteInOrgTx(ctx, q, t, *siteID); err != nil {
 				return err
 			}
+			if err := guardControlledSite(ctx, q, t.OrgID, *siteID); err != nil {
+				return err
+			}
 		}
 		row, err := q.CreateChatLog(ctx, db.CreateChatLogParams{
 			OrgID:      t.OrgID,
@@ -192,8 +195,14 @@ func (s *Store) ListChatLogs(ctx context.Context, t Tenant) ([]ChatLog, error) {
 // DeleteChatLog removes a log and (via FK cascade) its messages.
 func (s *Store) DeleteChatLog(ctx context.Context, t Tenant, id string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
-		if _, err := getChatLogTx(ctx, q, t, id); err != nil {
+		log, err := getChatLogTx(ctx, q, t, id)
+		if err != nil {
 			return err
+		}
+		if log.SiteID != nil {
+			if err := guardControlledSite(ctx, q, t.OrgID, *log.SiteID); err != nil {
+				return err
+			}
 		}
 		n, err := q.DeleteChatLog(ctx, db.DeleteChatLogParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
@@ -212,11 +221,20 @@ func (s *Store) DeleteChatLog(ctx context.Context, t Tenant, id string) error {
 func (s *Store) SetChatLogSite(ctx context.Context, t Tenant, id string, siteID *string) (ChatLog, error) {
 	var out ChatLog
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		if _, err := getChatLogTx(ctx, q, t, id); err != nil {
+		log, err := getChatLogTx(ctx, q, t, id)
+		if err != nil {
 			return err
+		}
+		if log.SiteID != nil {
+			if err := guardControlledSite(ctx, q, t.OrgID, *log.SiteID); err != nil {
+				return err
+			}
 		}
 		if siteID != nil {
 			if err := assertSiteInOrgTx(ctx, q, t, *siteID); err != nil {
+				return err
+			}
+			if err := guardControlledSite(ctx, q, t.OrgID, *siteID); err != nil {
 				return err
 			}
 		}
@@ -238,8 +256,14 @@ func (s *Store) SetChatLogSite(ctx context.Context, t Tenant, id string, siteID 
 func (s *Store) SetChatLogPanel(ctx context.Context, t Tenant, id string, enabled bool) (ChatLog, error) {
 	var out ChatLog
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		if _, err := getChatLogTx(ctx, q, t, id); err != nil {
+		log, err := getChatLogTx(ctx, q, t, id)
+		if err != nil {
 			return err
+		}
+		if log.SiteID != nil {
+			if err := guardControlledSite(ctx, q, t.OrgID, *log.SiteID); err != nil {
+				return err
+			}
 		}
 		row, err := q.SetChatLogPanelEnabled(ctx, db.SetChatLogPanelEnabledParams{ID: id, PanelEnabled: enabled, OrgID: t.OrgID})
 		if err != nil {
@@ -274,6 +298,11 @@ func (s *Store) AppendChatMessages(ctx context.Context, t Tenant, logID string, 
 		log, err := getChatLogTx(ctx, q, t, logID)
 		if err != nil {
 			return err
+		}
+		if log.SiteID != nil {
+			if err := guardControlledSite(ctx, q, t.OrgID, *log.SiteID); err != nil {
+				return err
+			}
 		}
 		planTier, err := q.GetPlanTier(ctx, t.OrgID)
 		if err != nil {

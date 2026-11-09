@@ -823,6 +823,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/project-rooms/{roomID}/candidates/{candidateID}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a candidate diff against its pinned base
+         * @description Human session or MCP OAuth. Returns the file list and bounded before/after text. Bodies are untrusted. The manifest digest is checked against the candidate content hash and the base hash; any mismatch is 409 and returns no file text. Binary files are metadata only. Truncation is explicit.
+         */
+        get: operations["getCandidateDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/project-rooms/{roomID}/candidates/{candidateID}": {
         parameters: {
             query?: never;
@@ -1745,6 +1765,8 @@ export interface components {
             access_mode?: "public" | "password" | "allowlist" | "org_only";
             /** Format: uuid */
             current_version_id?: string | null;
+            /** @description SHA-256 of the live version. Empty when the site has no live version. Compare with a candidate base_content_hash. */
+            current_content_hash?: string;
             /** Format: uri */
             live_url?: string;
             /**
@@ -3705,6 +3727,62 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getCandidateDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                candidateID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified diff */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        candidate_id: string;
+                        /** Format: uuid */
+                        site_id?: string;
+                        /** Format: uuid */
+                        base_version_id: string;
+                        base_content_hash: string;
+                        content_hash: string;
+                        /** @enum {boolean} */
+                        verified: true;
+                        truncated?: boolean;
+                        omitted_files?: number;
+                        /** @enum {string} */
+                        comment_content: "untrusted_data";
+                        files: {
+                            path: string;
+                            /** @enum {string} */
+                            change: "added" | "removed" | "modified" | "unchanged";
+                            binary: boolean;
+                            before_sha256?: string;
+                            after_sha256?: string;
+                            before_size?: number;
+                            after_size?: number;
+                            before?: string;
+                            after?: string;
+                            before_truncated?: boolean;
+                            after_truncated?: boolean;
+                            untrusted: boolean;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getRoomCandidate: {

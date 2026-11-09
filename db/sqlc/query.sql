@@ -1715,6 +1715,28 @@ SELECT EXISTS (
       AND m.project_rooms_enabled
 ) AS controlled;
 
+-- name: ListLiveContentHashes :many
+SELECT s.id AS site_id, v.content_hash
+FROM app.sites s
+JOIN app.site_versions v ON v.id = s.current_version_id AND v.org_id = s.org_id
+WHERE s.org_id = sqlc.arg(org_id);
+
+-- name: MemorySourceSite :one
+SELECT site_id FROM (
+    SELECT v.site_id
+    FROM app.org_memories m
+    JOIN app.site_versions v
+      ON m.source_kind = 'site_version' AND v.id = m.source_id AND v.org_id = m.org_id
+    WHERE m.id = sqlc.arg(id) AND m.org_id = sqlc.arg(org_id)
+    UNION ALL
+    SELECT c.site_id
+    FROM app.org_memories m
+    JOIN app.chat_logs c
+      ON m.source_kind = 'chat_log' AND c.id = m.source_id AND c.org_id = m.org_id
+    WHERE m.id = sqlc.arg(id) AND m.org_id = sqlc.arg(org_id) AND c.site_id IS NOT NULL
+) src
+LIMIT 1;
+
 -- name: CountUnreadReviewActivity :one
 SELECT count(*)::bigint AS count
 FROM app.review_activity a

@@ -49,6 +49,10 @@ type ProjectRoomStore interface {
 
 // rejectAgentLiveMutation was a caller-controlled header check. Credential
 // class now comes only from the middleware that verified the request.
+func sessionCtx(r *http.Request) context.Context {
+	return store.WithHumanSession(r.Context(), humanSession(r))
+}
+
 func allowCommentRead(r *http.Request) bool {
 	class, ok := middleware.CredentialClassFromContext(r.Context())
 	return ok && (class == middleware.CredentialHumanSession || class == middleware.CredentialMCPOAuth)

@@ -95,7 +95,13 @@ func (a *API) SetSiteCollab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bytes, _ := a.Store.SiteStorageBytes(r.Context(), t, siteID)
-	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
+	hash := ""
+	if site.CurrentVersionID != nil {
+		if ver, verr := a.Store.GetSiteVersion(r.Context(), t, *site.CurrentVersionID); verr == nil {
+			hash = ver.ContentHash
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes, hash))
 }
 
 // requireSiteOwnerOrAdmin gates a site meta-mutation to its creator (who must
@@ -168,7 +174,7 @@ func (a *API) SetChatLogCollab(w http.ResponseWriter, r *http.Request) {
 	if !a.requireChatLogOwnerOrAdmin(w, r, t, log) {
 		return
 	}
-	log, err = a.Store.SetChatLogAllowMemberEdits(r.Context(), t, id, req.AllowMemberEdits)
+	log, err = a.Store.SetChatLogAllowMemberEdits(sessionCtx(r), t, id, req.AllowMemberEdits)
 	if err != nil {
 		writeStoreError(w, err)
 		return

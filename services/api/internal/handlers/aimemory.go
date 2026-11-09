@@ -276,7 +276,7 @@ func (a *API) CreateMemory(w http.ResponseWriter, r *http.Request) {
 		vecs = [][]float32{nil}
 	}
 	uid := t.UserID
-	mem, created, err := a.Memory.UpsertOrgMemory(r.Context(), t, store.NewMemoryInput{
+	mem, created, err := a.Memory.UpsertOrgMemory(sessionCtx(r), t, store.NewMemoryInput{
 		Kind:           kind,
 		Content:        req.Content,
 		Embedding:      vecs[0],
@@ -428,21 +428,21 @@ func (a *API) PatchMemory(w http.ResponseWriter, r *http.Request) {
 		if err != nil || len(vecs) != 1 {
 			vecs = [][]float32{nil} // repairable later; the edit still lands
 		}
-		cur, err = a.Memory.UpdateOrgMemoryContent(r.Context(), t, id, content, vecs[0], a.MemoryEmbedder.ModelID(), kind)
+		cur, err = a.Memory.UpdateOrgMemoryContent(sessionCtx(r), t, id, content, vecs[0], a.MemoryEmbedder.ModelID(), kind)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
 	}
 	if req.Pinned != nil {
-		cur, err = a.Memory.SetOrgMemoryPinned(r.Context(), t, id, *req.Pinned)
+		cur, err = a.Memory.SetOrgMemoryPinned(sessionCtx(r), t, id, *req.Pinned)
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
 	}
 	if req.Disabled != nil {
-		cur, err = a.Memory.SetOrgMemoryDisabled(r.Context(), t, id, *req.Disabled)
+		cur, err = a.Memory.SetOrgMemoryDisabled(sessionCtx(r), t, id, *req.Disabled)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -467,7 +467,7 @@ func (a *API) DeleteMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := a.Memory.DeleteOrgMemory(r.Context(), t, id); err != nil {
+	if err := a.Memory.DeleteOrgMemory(sessionCtx(r), t, id); err != nil {
 		writeStoreError(w, err)
 		return
 	}

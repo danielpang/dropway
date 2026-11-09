@@ -304,6 +304,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/{roomID}/threads/{threadID}/reanchor", api.ReanchorReviewThread)
 			r.Post("/{roomID}/version-signoffs", api.SignoffVersion)
 			r.Get("/{roomID}/candidates", api.ListRoomCandidates)
+			r.Get("/{roomID}/candidates/{candidateID}/diff", api.GetCandidateDiff)
 			r.Get("/{roomID}/candidates/{candidateID}", api.GetRoomCandidate)
 			r.Post("/{roomID}/candidates", api.SubmitCandidate)
 			r.Post("/{roomID}/candidates/{candidateID}/approve", api.ApproveCandidate)

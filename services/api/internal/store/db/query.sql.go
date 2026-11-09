@@ -3634,6 +3634,38 @@ func (q *Queries) ListHostRoutesForSite(ctx context.Context, arg ListHostRoutesF
 	return items, nil
 }
 
+const listLiveContentHashes = `-- name: ListLiveContentHashes :many
+SELECT s.id AS site_id, v.content_hash
+FROM app.sites s
+JOIN app.site_versions v ON v.id = s.current_version_id AND v.org_id = s.org_id
+WHERE s.org_id = $1
+`
+
+type ListLiveContentHashesRow struct {
+	SiteID      string
+	ContentHash string
+}
+
+func (q *Queries) ListLiveContentHashes(ctx context.Context, orgID string) ([]ListLiveContentHashesRow, error) {
+	rows, err := q.db.Query(ctx, listLiveContentHashes, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLiveContentHashesRow{}
+	for rows.Next() {
+		var i ListLiveContentHashesRow
+		if err := rows.Scan(&i.SiteID, &i.ContentHash); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrgMemories = `-- name: ListOrgMemories :many
 SELECT id, org_id, kind, content, content_hash, embedding_model, source_kind, source_id, source_tool, pinned, disabled, created_by, created_at, updated_at, last_used_at
 FROM app.org_memories
@@ -4996,6 +5028,35 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':folder_items'))
 func (q *Queries) LockSkillFolderQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockSkillFolderQuota, dollar_1)
 	return err
+}
+
+const memorySourceSite = `-- name: MemorySourceSite :one
+SELECT site_id FROM (
+    SELECT v.site_id
+    FROM app.org_memories m
+    JOIN app.site_versions v
+      ON m.source_kind = 'site_version' AND v.id = m.source_id AND v.org_id = m.org_id
+    WHERE m.id = $1 AND m.org_id = $2
+    UNION ALL
+    SELECT c.site_id
+    FROM app.org_memories m
+    JOIN app.chat_logs c
+      ON m.source_kind = 'chat_log' AND c.id = m.source_id AND c.org_id = m.org_id
+    WHERE m.id = $1 AND m.org_id = $2 AND c.site_id IS NOT NULL
+) src
+LIMIT 1
+`
+
+type MemorySourceSiteParams struct {
+	ID    string
+	OrgID string
+}
+
+func (q *Queries) MemorySourceSite(ctx context.Context, arg MemorySourceSiteParams) (string, error) {
+	row := q.db.QueryRow(ctx, memorySourceSite, arg.ID, arg.OrgID)
+	var site_id string
+	err := row.Scan(&site_id)
+	return site_id, err
 }
 
 const nearestOrgMemory = `-- name: NearestOrgMemory :one

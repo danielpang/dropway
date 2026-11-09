@@ -105,4 +105,46 @@ Reads accept `human_session` or `mcp_oauth` and recheck org membership and room 
 
 `GET /v1/project-rooms` and `POST /v1/project-rooms` still use the existing Go JSON names. Page order is `(created_at, id)` as text, merged site comments also order `feed` before `room` at the same timestamp. Default limit 50, maximum 100.
 
-MCP tools `list_site_comments`, `get_comment_thread`, `get_project_room`, `list_room_threads`, `list_room_candidates`, and `get_room_candidate` forward the verified OAuth token to those GET routes only.
+MCP tools `list_site_comments`, `get_comment_thread`, `get_project_room`, `list_room_threads`, `list_room_candidates`, `get_room_candidate`, and `get_candidate_diff` forward the verified OAuth token to those GET routes only.
+
+## Candidate diff
+
+`GET /v1/project-rooms/{roomID}/candidates/{candidateID}/diff` is a human or MCP read. It loads the pinned base version and the site version whose content hash is the candidate hash. It recomputes each manifest digest and each included blob hash. Any mismatch is 409 and the response contains no file text.
+
+```json
+{
+  "candidate_id": "uuid",
+  "site_id": "uuid",
+  "base_version_id": "uuid",
+  "base_content_hash": "hex",
+  "content_hash": "hex",
+  "verified": true,
+  "truncated": false,
+  "omitted_files": 0,
+  "comment_content": "untrusted_data",
+  "files": [
+    {
+      "path": "index.html",
+      "change": "modified",
+      "binary": false,
+      "before_sha256": "hex",
+      "after_sha256": "hex",
+      "before_size": 1,
+      "after_size": 2,
+      "before": "old",
+      "after": "new",
+      "before_truncated": false,
+      "after_truncated": false,
+      "untrusted": true
+    }
+  ]
+}
+```
+
+`change` is `added`, `removed`, `modified`, or `unchanged`. Unchanged files omit bodies. Binary files and files over 64 KiB are metadata only. Text bodies stop at 2048 bytes and then end with `\n...[truncated]`. More than 80 paths sets `truncated` and `omitted_files`.
+
+`GET /v1/sites` and `GET /v1/sites/{id}` include `current_content_hash` for the live version. It is omitted when nothing is published. Compare it with `base_content_hash`.
+
+## Site-linked chats and memories
+
+A non-human caller cannot create, append, delete, move, or retarget a chat attached to a site in an enabled room, and cannot edit or delete a memory whose source is that site's version or attached chat. The store locks the org row, then the site row, in the same transaction. Chats and manual memories with no site stay available to org keys. Skills have no site foreign key, so org-wide skill writes are unchanged.

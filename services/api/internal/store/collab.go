@@ -68,8 +68,14 @@ func (s *Store) SetSkillAllowMemberEdits(ctx context.Context, t Tenant, skillID 
 func (s *Store) SetChatLogAllowMemberEdits(ctx context.Context, t Tenant, logID string, allow bool) (ChatLog, error) {
 	var out ChatLog
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		if _, err := getChatLogTx(ctx, q, t, logID); err != nil {
+		log, err := getChatLogTx(ctx, q, t, logID)
+		if err != nil {
 			return err
+		}
+		if log.SiteID != nil {
+			if err := guardControlledSite(ctx, q, t.OrgID, *log.SiteID); err != nil {
+				return err
+			}
 		}
 		row, err := q.SetChatLogAllowMemberEdits(ctx, db.SetChatLogAllowMemberEditsParams{
 			ID: logID, AllowMemberEdits: allow, OrgID: t.OrgID,

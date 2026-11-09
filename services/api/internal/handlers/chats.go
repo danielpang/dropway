@@ -225,7 +225,7 @@ func (a *API) CreateChatLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log, err := a.Store.CreateChatLog(r.Context(), t, req.Title, req.SourceTool, req.SiteID)
+	log, err := a.Store.CreateChatLog(sessionCtx(r), t, req.Title, req.SourceTool, req.SiteID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -233,11 +233,11 @@ func (a *API) CreateChatLog(w http.ResponseWriter, r *http.Request) {
 
 	var res store.AppendChatResult
 	if len(msgs) > 0 {
-		res, err = a.Store.AppendChatMessages(r.Context(), t, log.ID, msgs)
+		res, err = a.Store.AppendChatMessages(sessionCtx(r), t, log.ID, msgs)
 		if err != nil {
 			// The inline import failed (e.g. a hard-cap 402): don't leave a
 			// half-created empty log behind — create+import is one gesture.
-			if derr := a.Store.DeleteChatLog(r.Context(), t, log.ID); derr != nil {
+			if derr := a.Store.DeleteChatLog(sessionCtx(r), t, log.ID); derr != nil {
 				logger(r).Error("chat log cleanup after failed import", "chat_id", log.ID, "err", derr)
 			}
 			writeStoreError(w, err)
@@ -332,7 +332,7 @@ func (a *API) DeleteChatLog(w http.ResponseWriter, r *http.Request) {
 	if !a.requireChatLogOwnerOrAdmin(w, r, t, log) {
 		return
 	}
-	if err := a.Store.DeleteChatLog(r.Context(), t, id); err != nil {
+	if err := a.Store.DeleteChatLog(sessionCtx(r), t, id); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -388,7 +388,7 @@ func (a *API) appendToLog(w http.ResponseWriter, r *http.Request, t store.Tenant
 		httpx.WriteError(w, fmt.Errorf("%w: no messages to append", httpx.ErrBadRequest))
 		return
 	}
-	res, err := a.Store.AppendChatMessages(r.Context(), t, log.ID, msgs)
+	res, err := a.Store.AppendChatMessages(sessionCtx(r), t, log.ID, msgs)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -504,7 +504,7 @@ func (a *API) SetChatLogSite(w http.ResponseWriter, r *http.Request) {
 	if !a.requireChatLogEditor(w, r, t, before) {
 		return
 	}
-	log, err := a.Store.SetChatLogSite(r.Context(), t, id, req.SiteID)
+	log, err := a.Store.SetChatLogSite(sessionCtx(r), t, id, req.SiteID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -547,7 +547,7 @@ func (a *API) SetChatLogPanel(w http.ResponseWriter, r *http.Request) {
 	if !a.requireChatLogEditor(w, r, t, before) {
 		return
 	}
-	log, err := a.Store.SetChatLogPanel(r.Context(), t, id, req.Enabled)
+	log, err := a.Store.SetChatLogPanel(sessionCtx(r), t, id, req.Enabled)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -606,7 +606,7 @@ func (a *API) AppendSiteChat(w http.ResponseWriter, r *http.Request) {
 	log, err := a.Store.GetChatLogForSite(r.Context(), t, siteID)
 	if errors.Is(err, store.ErrNotFound) {
 		sid := siteID
-		log, err = a.Store.CreateChatLog(r.Context(), t, "", "", &sid)
+		log, err = a.Store.CreateChatLog(sessionCtx(r), t, "", "", &sid)
 		if err == nil {
 			a.recordAudit(r, t, audit.ActionChatLogCreate, "chatlog:"+log.ID, map[string]any{
 				"site_id": siteID, "via": "site_append",

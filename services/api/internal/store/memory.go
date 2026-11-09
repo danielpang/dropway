@@ -132,6 +132,9 @@ func (s *Store) UpsertOrgMemory(ctx context.Context, t Tenant, in NewMemoryInput
 			return err
 		}
 		hash := MemoryContentHash(in.Content)
+		if err := guardNewMemorySource(ctx, q, t, in); err != nil {
+			return err
+		}
 		if maxPerOrg > 0 && n >= int64(maxPerOrg) {
 			// At cap: allow the refresh path (existing hash) but refuse new rows.
 			if _, err := q.GetOrgMemoryByHash(ctx, db.GetOrgMemoryByHashParams{OrgID: t.OrgID, ContentHash: hash}); err != nil {
@@ -278,6 +281,9 @@ func (s *Store) GetOrgMemory(ctx context.Context, t Tenant, id string) (OrgMemor
 func (s *Store) UpdateOrgMemoryContent(ctx context.Context, t Tenant, id, content string, embedding []float32, model, kind string) (OrgMemory, error) {
 	var out OrgMemory
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := guardMemorySite(ctx, q, t, id); err != nil {
+			return err
+		}
 		r, err := q.UpdateOrgMemoryContent(ctx, db.UpdateOrgMemoryContentParams{
 			ID:             id,
 			OrgID:          t.OrgID,
@@ -303,6 +309,9 @@ func (s *Store) UpdateOrgMemoryContent(ctx context.Context, t Tenant, id, conten
 func (s *Store) SetOrgMemoryPinned(ctx context.Context, t Tenant, id string, pinned bool) (OrgMemory, error) {
 	var out OrgMemory
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := guardMemorySite(ctx, q, t, id); err != nil {
+			return err
+		}
 		r, err := q.SetOrgMemoryPinned(ctx, db.SetOrgMemoryPinnedParams{ID: id, OrgID: t.OrgID, Pinned: pinned})
 		if err != nil {
 			if isNoRows(err) {
@@ -320,6 +329,9 @@ func (s *Store) SetOrgMemoryPinned(ctx context.Context, t Tenant, id string, pin
 func (s *Store) SetOrgMemoryDisabled(ctx context.Context, t Tenant, id string, disabled bool) (OrgMemory, error) {
 	var out OrgMemory
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := guardMemorySite(ctx, q, t, id); err != nil {
+			return err
+		}
 		r, err := q.SetOrgMemoryDisabled(ctx, db.SetOrgMemoryDisabledParams{ID: id, OrgID: t.OrgID, Disabled: disabled})
 		if err != nil {
 			if isNoRows(err) {
@@ -336,6 +348,9 @@ func (s *Store) SetOrgMemoryDisabled(ctx context.Context, t Tenant, id string, d
 // DeleteOrgMemory hard-deletes a memory.
 func (s *Store) DeleteOrgMemory(ctx context.Context, t Tenant, id string) error {
 	return s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := guardMemorySite(ctx, q, t, id); err != nil {
+			return err
+		}
 		n, err := q.DeleteOrgMemory(ctx, db.DeleteOrgMemoryParams{ID: id, OrgID: t.OrgID})
 		if err != nil {
 			return err
@@ -506,6 +521,48 @@ func (s *Store) SearchContentChunks(ctx context.Context, t Tenant, embedding []f
 }
 
 // ---------------------------------------------------------------------------
+
+func guardMemorySite(ctx context.Context, q *db.Queries, t Tenant, id string) error {
+	siteID, err := q.MemorySourceSite(ctx, db.MemorySourceSiteParams{ID: id, OrgID: t.OrgID})
+	if err != nil {
+		if isNoRows(err) {
+			return nil
+		}
+		return err
+	}
+	return guardControlledSite(ctx, q, t.OrgID, siteID)
+}
+
+func guardNewMemorySource(ctx context.Context, q *db.Queries, t Tenant, in NewMemoryInput) error {
+	if in.SourceID == nil || *in.SourceID == "" {
+		return nil
+	}
+	switch in.SourceKind {
+	case "site_version":
+		ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: *in.SourceID, OrgID: t.OrgID})
+		if err != nil {
+			if isNoRows(err) {
+				return nil
+			}
+			return err
+		}
+		return guardControlledSite(ctx, q, t.OrgID, ver.SiteID)
+	case "chat_log":
+		log, err := q.GetChatLog(ctx, db.GetChatLogParams{ID: *in.SourceID, OrgID: t.OrgID})
+		if err != nil {
+			if isNoRows(err) {
+				return nil
+			}
+			return err
+		}
+		if log.SiteID == nil {
+			return nil
+		}
+		return guardControlledSite(ctx, q, t.OrgID, *log.SiteID)
+	default:
+		return nil
+	}
+}
 
 func memoryFromUpsert(r db.UpsertOrgMemoryRow) OrgMemory {
 	return memoryFromParts(r.ID, r.OrgID, r.Kind, r.Content, r.ContentHash, r.EmbeddingModel, r.SourceKind, r.SourceID, r.SourceTool, r.Pinned, r.Disabled, r.CreatedBy, r.CreatedAt, r.UpdatedAt, r.LastUsedAt)
