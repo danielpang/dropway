@@ -16,6 +16,7 @@ import {
   createThreadAction,
   decideAction,
   detachSiteAction,
+  loadCandidateDiffAction,
   loadMoreCandidatesAction,
   loadMoreThreadsAction,
   loadRoomAction,
@@ -26,7 +27,7 @@ import {
   signoffAction,
   submitCandidateAction,
 } from "@/app/(app)/rooms/actions";
-import type { ProjectRoom, ReviewCandidate, ReviewThread, RoomMemberRow, RoomSiteRef, SiteCommentItem } from "@/lib/project-room/contract";
+import type { CandidateDiffView, ProjectRoom, ReviewCandidate, ReviewThread, RoomMemberRow, RoomSiteRef, SiteCommentItem } from "@/lib/project-room/contract";
 
 export function RoomSession({
   orgEnabled: initialOrgEnabled,
@@ -44,6 +45,8 @@ export function RoomSession({
   const [roomList, setRoomList] = React.useState(rooms);
   const [threads, setThreads] = React.useState<ReviewThread[]>([]);
   const [candidates, setCandidates] = React.useState<ReviewCandidate[]>([]);
+  const [diffs, setDiffs] = React.useState<Record<string, CandidateDiffView>>({});
+  const requestedDiffs = React.useRef(new Set<string>());
   const [members, setMembers] = React.useState<RoomMemberRow[]>([]);
   const [attachedSites, setAttachedSites] = React.useState<RoomSiteRef[]>([]);
   const [siteComments, setSiteComments] = React.useState<SiteCommentItem[]>([]);
@@ -93,12 +96,29 @@ export function RoomSession({
     loadError ?? (initialOrgEnabled ? null : "The org has not enabled project rooms."),
   );
 
+  React.useEffect(() => {
+    for (const candidate of candidates) {
+      if (requestedDiffs.current.has(candidate.ID)) continue;
+      requestedDiffs.current.add(candidate.ID);
+      setDiffs((prev) => ({ ...prev, [candidate.ID]: { status: "loading" } }));
+      void loadCandidateDiffAction(candidate.RoomID, candidate.ID).then((result) => {
+        const next: CandidateDiffView = result.ok
+          ? { status: "verified", diff: result.diff }
+          : "unverified" in result && result.unverified
+            ? { status: "unverified" }
+            : { status: "unavailable" };
+        setDiffs((prev) => ({ ...prev, [candidate.ID]: next }));
+      });
+    }
+  }, [candidates]);
+
   return (
     <RoomWorkspace
       rooms={roomList}
       sites={sites}
       threads={threads}
       candidates={candidates}
+      diffs={diffs}
       members={members}
       attachedSites={attachedSites}
       siteComments={siteComments}

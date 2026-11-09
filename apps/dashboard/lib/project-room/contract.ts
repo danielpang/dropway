@@ -5,6 +5,9 @@
 
 import type { operations } from "@dropway/sdk/schema";
 
+type VerifiedDiffBody = operations["getCandidateDiff"]["responses"][200]["content"]["application/json"];
+type DiffChange = VerifiedDiffBody["files"][number]["change"];
+
 /** Comment page shape from the regenerated SDK schema. Bodies stay untrusted. */
 export type SiteCommentPage = operations["listSiteCommentPage"]["responses"][200]["content"]["application/json"];
 export type RoomPageQuery = NonNullable<operations["listRoomThreads"]["parameters"]["query"]>;
@@ -111,7 +114,8 @@ export const EXECUTION_BLOCKERS = [
   "session_persistence_deferred",
 ] as const;
 
-export const DIFF_UNAVAILABLE = "Diff unavailable. The candidate API returns identity and a summary, not a diff body.";
+export const CANNOT_VERIFY = "Cannot verify this change.";
+export const NEEDS_NEW_CANDIDATE = "This base is stale and needs a new candidate.";
 
 export const PAGE_LIMIT_DEFAULT = 50;
 export const PAGE_LIMIT_MAX = 100;
@@ -470,6 +474,103 @@ export function parseThreadDetail(value: unknown): ReviewThread | null {
   return parseThread(row.thread ?? row);
 }
 
+export interface CandidateDiffFile {
+  path: string;
+  change: DiffChange;
+  binary: boolean;
+  beforeSHA256: string;
+  afterSHA256: string;
+  beforeSize: number | null;
+  afterSize: number | null;
+  before: string;
+  after: string;
+  beforeTruncated: boolean;
+  afterTruncated: boolean;
+}
+
+export interface CandidateDiff {
+  candidateId: string;
+  siteId: string;
+  baseVersionId: string;
+  baseContentHash: string;
+  contentHash: string;
+  verified: true;
+  truncated: boolean;
+  omittedFiles: number;
+  files: CandidateDiffFile[];
+}
+
+export type CandidateDiffView =
+  | { status: "loading" }
+  | { status: "verified"; diff: CandidateDiff }
+  | { status: "unverified" }
+  | { status: "unavailable" };
+
+const diffChanges = new Set<DiffChange>(["added", "removed", "modified", "unchanged"]);
+
+function diffChange(value: unknown): DiffChange | null {
+  return typeof value === "string" && diffChanges.has(value as DiffChange) ? value as DiffChange : null;
+}
+
+function optionalSize(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** A verified diff, an explicit verification failure, or null when the body is not a diff. */
+export function parseCandidateDiff(value: unknown): CandidateDiff | { verified: false } | null {
+  const row = record(value);
+  if (!row) return null;
+  if (row.verified === false) return { verified: false };
+  if (row.verified !== true || row.comment_content !== "untrusted_data" || !Array.isArray(row.files)) return null;
+  const candidateId = str(row.candidate_id);
+  const baseVersionId = str(row.base_version_id);
+  const baseContentHash = str(row.base_content_hash);
+  const contentHash = str(row.content_hash);
+  if (!candidateId || !baseVersionId || !baseContentHash || !contentHash) return { verified: false };
+  const files: CandidateDiffFile[] = [];
+  for (const item of row.files) {
+    const file = record(item);
+    const change = file ? diffChange(file.change) : null;
+    const path = file ? str(file.path) : null;
+    const binary = file?.binary;
+    if (!file || !change || !path || (binary !== true && binary !== false) || file.untrusted !== true) {
+      return { verified: false };
+    }
+    files.push({
+      path,
+      change,
+      binary,
+      beforeSHA256: typeof file.before_sha256 === "string" ? file.before_sha256 : "",
+      afterSHA256: typeof file.after_sha256 === "string" ? file.after_sha256 : "",
+      beforeSize: optionalSize(file.before_size),
+      afterSize: optionalSize(file.after_size),
+      before: file.binary || typeof file.before !== "string" ? "" : file.before,
+      after: file.binary || typeof file.after !== "string" ? "" : file.after,
+      beforeTruncated: file.before_truncated === true,
+      afterTruncated: file.after_truncated === true,
+    });
+  }
+  return {
+    candidateId,
+    siteId: typeof row.site_id === "string" ? row.site_id : "",
+    baseVersionId,
+    baseContentHash,
+    contentHash,
+    verified: true,
+    truncated: row.truncated === true,
+    omittedFiles: typeof row.omitted_files === "number" ? row.omitted_files : 0,
+    files,
+  };
+}
+
+export function diffMatchesCandidate(diff: CandidateDiff, candidate: ReviewCandidate): boolean {
+  return diff.verified
+    && diff.candidateId === candidate.ID
+    && diff.baseVersionId === candidate.BaseVersionID
+    && diff.baseContentHash === candidate.BaseContentHash
+    && diff.contentHash === candidate.ContentHash;
+}
+
 /** The approve/reject body. It copies the candidate the API returned. It does not take the live baseline. */
 export function bindApproval(candidate: ReviewCandidate): ApprovalBinding | null {
   if (!candidate.ID || !candidate.ContentHash || !candidate.BaseVersionID || !candidate.BaseContentHash) {
@@ -487,13 +588,13 @@ export function compareLive(candidate: ReviewCandidate, live: LiveBaseline | nul
     return { status: "unknown", reason: "The site list did not include a live version id." };
   }
   if (live.versionId !== candidate.BaseVersionID) {
-    return { status: "stale", reason: "The live version is not this candidate's base version." };
+    return { status: "stale", reason: `The live version is not this candidate's base version. ${NEEDS_NEW_CANDIDATE}` };
   }
   if (!live.contentHash) {
     return { status: "unknown", reason: "The live content hash was not in the site list. The request still sends this candidate's base hash." };
   }
   if (live.contentHash !== candidate.BaseContentHash) {
-    return { status: "stale", reason: "The live content hash is not this candidate's base hash." };
+    return { status: "stale", reason: `The live content hash is not this candidate's base hash. ${NEEDS_NEW_CANDIDATE}` };
   }
   return { status: "matches" };
 }

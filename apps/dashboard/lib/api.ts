@@ -1593,6 +1593,12 @@ export const api = {
     );
   },
 
+  async getCandidateDiff(roomId: string, candidateId: string): Promise<unknown> {
+    return apiFetch(
+      `/v1/project-rooms/${encodeURIComponent(roomId)}/candidates/${encodeURIComponent(candidateId)}/diff`,
+    );
+  },
+
   async listSiteCommentPages(siteId: string, cursor?: string): Promise<unknown> {
     return apiFetch(`/v1/sites/${encodeURIComponent(siteId)}/comment-pages?${pageQuery(cursor)}`);
   },

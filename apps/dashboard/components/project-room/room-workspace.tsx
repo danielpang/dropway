@@ -23,6 +23,7 @@ import {
   parseRole,
   shippedPreciseHtmlSelection,
   untrustedText,
+  type CandidateDiffView,
   type LiveBaseline,
   type ProjectRoom,
   type ReviewCandidate,
@@ -36,6 +37,7 @@ export interface RoomSiteOption {
   slug: string;
   liveUrl: string | null;
   currentVersionId: string | null;
+  currentContentHash: string | null;
 }
 
 export function RoomWorkspace({
@@ -43,6 +45,7 @@ export function RoomWorkspace({
   sites,
   threads,
   candidates,
+  diffs,
   members,
   attachedSites,
   siteComments,
@@ -74,6 +77,7 @@ export function RoomWorkspace({
   sites: RoomSiteOption[];
   threads: ReviewThread[];
   candidates: ReviewCandidate[];
+  diffs: Record<string, CandidateDiffView>;
   members: { userId: string; role: string }[];
   attachedSites: { siteId: string; createdBy: string }[];
   siteComments: SiteCommentItem[];
@@ -147,7 +151,7 @@ export function RoomWorkspace({
   const imagePreview = preview !== null && /\.(png|jpe?g|gif|webp)(\?|$)/i.test(preview);
   const live: LiveBaseline = {
     versionId: site?.currentVersionId ?? null,
-    contentHash: null,
+    contentHash: site?.currentContentHash ?? null,
   };
 
   return (
@@ -510,14 +514,15 @@ export function RoomWorkspace({
         </form>
         <h2 className="text-sm font-medium text-foreground">Proposed changes</h2>
         <p className="text-sm text-muted-foreground">
-          Candidates are loaded from the room. The summary is untrusted text. The diff body is not
-          part of the response.
+          Candidates are loaded from the room. The summary and the diff text are untrusted and
+          shown as text.
         </p>
         {candidates.map((candidate) => (
           <CandidateReview
             key={candidate.ID}
             candidate={candidate}
             live={candidate.SiteID === siteId ? live : { versionId: null, contentHash: null }}
+            diff={diffs[candidate.ID] ?? { status: "loading" }}
             canDecide={decideOk}
             onDecide={(decision) => {
               if (room) onDecide(room.ID, candidate, decision);

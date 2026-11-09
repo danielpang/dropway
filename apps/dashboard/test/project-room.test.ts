@@ -20,6 +20,7 @@ import {
   pageCommentAnchor,
   pageQuery,
   parseCandidate,
+  parseCandidateDiff,
   parseSiteCommentPage,
   shippedPreciseHtmlSelection,
   terminalCopy,
@@ -133,15 +134,70 @@ describe("project room contract", () => {
     expect(comments?.items[0]?.body).toBe("<b>caption</b>");
     expect(comments?.nextCursor).toBe("next");
     expect(parseSiteCommentPage({ items: [] })).toBeNull();
+    const diff = parseCandidateDiff({
+      candidate_id: "cand-1",
+      site_id: "site-1",
+      base_version_id: "ver-1",
+      base_content_hash: "hash-base",
+      content_hash: "hash-next",
+      verified: true,
+      truncated: true,
+      omitted_files: 3,
+      comment_content: "untrusted_data",
+      files: [{
+        path: "index.html",
+        change: "modified",
+        binary: false,
+        before: "old",
+        after: "<script>alert(1)</script>",
+        before_truncated: false,
+        after_truncated: true,
+        untrusted: true,
+      }],
+    });
+    expect(diff && "files" in diff ? diff.files[0]?.after : "").toBe("<script>alert(1)</script>");
+    expect(parseCandidateDiff({ verified: false, files: [{ before: "secret" }] })).toEqual({ verified: false });
+    expect(parseCandidateDiff({
+      verified: true,
+      comment_content: "untrusted_data",
+      candidate_id: "cand-1",
+      base_version_id: "ver-1",
+      base_content_hash: "hash-base",
+      content_hash: "hash-next",
+      files: [{ path: "index.html", change: "modified", binary: false, before: "x", after: "y", untrusted: false }],
+    })).toEqual({ verified: false });
   });
 });
 
+function buttonDisabled(html: string, label: string): boolean {
+  const match = html.match(new RegExp(`<button([^>]*)>${label}</button>`));
+  return /(?:^|\s)disabled(?:=""|=|\s|$)/.test(match?.[1] ?? "disabled");
+}
+
 describe("project room markup", () => {
   it("keeps Approve and Reject visible and does not offer precise HTML selection or a secret field", () => {
+    const verified = {
+      candidateId: "cand-1",
+      siteId: "site-1",
+      baseVersionId: "ver-1",
+      baseContentHash: "hash-base",
+      contentHash: "hash-next",
+      verified: true as const,
+      truncated: true,
+      omittedFiles: 2,
+      files: [
+        { path: "index.html", change: "modified" as const, binary: false, beforeSHA256: "a", afterSHA256: "b", beforeSize: 3, afterSize: 3, before: "old", after: "<script>alert(1)</script>", beforeTruncated: false, afterTruncated: true },
+        { path: "new.css", change: "added" as const, binary: false, beforeSHA256: "", afterSHA256: "c", beforeSize: null, afterSize: 4, before: "", after: "body{}", beforeTruncated: false, afterTruncated: false },
+        { path: "old.js", change: "removed" as const, binary: false, beforeSHA256: "d", afterSHA256: "", beforeSize: 2, afterSize: null, before: "go", after: "", beforeTruncated: false, afterTruncated: false },
+        { path: "keep.txt", change: "unchanged" as const, binary: false, beforeSHA256: "e", afterSHA256: "e", beforeSize: 1, afterSize: 1, before: "", after: "", beforeTruncated: false, afterTruncated: false },
+        { path: "hero.png", change: "modified" as const, binary: true, beforeSHA256: "f", afterSHA256: "g", beforeSize: 90000, afterSize: 90000, before: "<script>hidden</script>", after: "<script>hidden</script>", beforeTruncated: false, afterTruncated: false },
+      ],
+    };
     const html = renderToStaticMarkup(
       createElement(CandidateReview, {
         candidate,
-        live: { versionId: "ver-2", contentHash: "other" },
+        live: { versionId: "ver-1", contentHash: "hash-base" },
+        diff: { status: "verified", diff: verified },
         canDecide: true,
         onDecide: () => undefined,
       }),
@@ -150,9 +206,46 @@ describe("project room markup", () => {
     expect(html).toContain("Reject");
     expect(html).toContain("Apply");
     expect(html).toContain("not enabled");
-    expect(html).toContain("not this candidate");
+    expect(buttonDisabled(html, "Approve")).toBe(false);
+    expect(buttonDisabled(html, "Reject")).toBe(false);
+    expect(html).toContain("modified");
+    expect(html).toContain("added");
+    expect(html).toContain("removed");
+    expect(html).toContain("unchanged");
+    expect(html).toContain("2 files omitted");
+    expect(html).toContain("Text truncated");
+    expect(html).toContain("Binary or oversized file. Metadata only.");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert");
+    expect(html).not.toContain("<script>hidden");
     expect(html).not.toContain("type=\"password\"");
     expect(html).toContain("Replace the hero caption");
+
+    const stale = renderToStaticMarkup(
+      createElement(CandidateReview, {
+        candidate,
+        live: { versionId: "ver-1", contentHash: "other" },
+        diff: { status: "verified", diff: verified },
+        canDecide: true,
+        onDecide: () => undefined,
+      }),
+    );
+    expect(stale).toContain("needs a new candidate");
+    expect(buttonDisabled(stale, "Approve")).toBe(true);
+    expect(buttonDisabled(stale, "Reject")).toBe(false);
+
+    const mismatch = renderToStaticMarkup(
+      createElement(CandidateReview, {
+        candidate,
+        live: { versionId: "ver-1", contentHash: "hash-base" },
+        diff: { status: "unverified" },
+        canDecide: true,
+        onDecide: () => undefined,
+      }),
+    );
+    expect(mismatch).toContain("Cannot verify this change.");
+    expect(buttonDisabled(mismatch, "Approve")).toBe(true);
+    expect(buttonDisabled(mismatch, "Reject")).toBe(false);
 
     const room = renderToStaticMarkup(
       createElement(RoomWorkspace, {
@@ -166,8 +259,36 @@ describe("project room markup", () => {
           UpdatedAt: "",
           Unread: 0,
         }],
-        sites: [{ id: "site-1", slug: "report", liveUrl: "https://docs.example.com", currentVersionId: "ver-1" }],
+        sites: [{ id: "site-1", slug: "report", liveUrl: "https://docs.example.com", currentVersionId: "ver-1", currentContentHash: "hash-base" }],
         candidates: [candidate],
+        diffs: {
+          "cand-1": {
+            status: "verified",
+            diff: {
+              candidateId: "cand-1",
+              siteId: "site-1",
+              baseVersionId: "ver-1",
+              baseContentHash: "hash-base",
+              contentHash: "hash-next",
+              verified: true,
+              truncated: false,
+              omittedFiles: 0,
+              files: [{
+                path: "index.html",
+                change: "modified",
+                binary: false,
+                beforeSHA256: "a",
+                afterSHA256: "b",
+                beforeSize: 3,
+                afterSize: 28,
+                before: "old",
+                after: "<script>alert(1)</script>",
+                beforeTruncated: false,
+                afterTruncated: false,
+              }],
+            },
+          },
+        },
         parentOrigin: "https://app.dropway.dev",
         orgEnabled: true,
         onEnableRooms: () => undefined,
@@ -236,7 +357,8 @@ describe("project room markup", () => {
         onReanchor: () => undefined,
       }),
     );
-    expect(room).toContain("Diff unavailable");
+    expect(room).toContain("modified");
+    expect(room).not.toContain("Diff unavailable");
     expect(room).toContain("Expand reply");
     expect(room).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(room).not.toContain("<script>alert");

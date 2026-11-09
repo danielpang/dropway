@@ -5,6 +5,7 @@ import { ApiError, api } from "@/lib/api";
 import {
   bindApproval,
   parseCandidate,
+  parseCandidateDiff,
   parseCandidatePage,
   parseRoom,
   parseRoomDetail,
@@ -183,6 +184,23 @@ export async function loadMoreCandidatesAction(roomId: string, cursor: string) {
     };
   } catch (error) {
     return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadCandidateDiffAction(roomId: string, candidateId: string) {
+  if (!enabled()) return closed();
+  try {
+    const parsed = parseCandidateDiff(await api.getCandidateDiff(roomId, candidateId));
+    if (!parsed) return { ok: false as const, unverified: false, message: "The diff was not usable." };
+    if (!("files" in parsed) || parsed.candidateId !== candidateId) {
+      return { ok: false as const, unverified: true, message: "Cannot verify this change." };
+    }
+    return { ok: true as const, diff: parsed };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      return { ok: false as const, unverified: true, message: "Cannot verify this change." };
+    }
+    return { ok: false as const, unverified: false, message: messageOf(error) };
   }
 }
 

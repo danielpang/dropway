@@ -5,6 +5,7 @@ import { RoomSession } from "@/components/project-room/room-session";
 import { isCollabReviewEnabled } from "@/lib/collab";
 import { ApiError, api, type Site } from "@/lib/api";
 import { betterAuthUrl } from "@/lib/env";
+import type { components as SdkComponents } from "@dropway/sdk/schema";
 import { parseRoom } from "@/lib/project-room/contract";
 
 export const metadata: Metadata = { title: "Project rooms" };
@@ -54,5 +55,11 @@ function siteOption(site: Site) {
     slug: site.slug,
     liveUrl: site.live_url ?? null,
     currentVersionId: site.current_version_id ?? null,
+    currentContentHash: liveContentHash(site),
   }];
+}
+
+function liveContentHash(site: Site): string | null {
+  const hash = (site as Site & Pick<SdkComponents["schemas"]["Site"], "current_content_hash">).current_content_hash;
+  return typeof hash === "string" && hash.length > 0 ? hash : null;
 }
