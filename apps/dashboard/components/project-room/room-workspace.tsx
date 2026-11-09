@@ -15,7 +15,6 @@ import { Input } from "@/components/ui/input";
 import { captureImagePoint, previewFrameDecision } from "@/lib/collab";
 import {
   EXECUTION_BLOCKERS,
-  UNROUTED,
   canComment,
   canDecideChange,
   canSignOffVersion,
@@ -23,10 +22,12 @@ import {
   pageCommentAnchor,
   parseRole,
   shippedPreciseHtmlSelection,
+  untrustedText,
   type LiveBaseline,
   type ProjectRoom,
   type ReviewCandidate,
   type ReviewThread,
+  type SiteCommentItem,
   type SiteRights,
 } from "@/lib/project-room/contract";
 
@@ -42,21 +43,53 @@ export function RoomWorkspace({
   sites,
   threads,
   candidates,
+  members,
+  attachedSites,
+  siteComments,
+  commentCursor,
+  threadCursor,
+  candidateCursor,
   parentOrigin,
   notice,
+  orgEnabled,
+  onEnableRooms,
   onCreateRoom,
+  onSelectRoom,
+  onSelectSite,
+  onLoadMoreComments,
+  onLoadMoreThreads,
+  onLoadMoreCandidates,
   onCreateThread,
   onReply,
   onSignoff,
   onDecide,
+  onSubmitCandidate,
+  onAddMember,
+  onAttachSite,
+  onDetachSite,
+  onResolve,
+  onReanchor,
 }: {
   rooms: ProjectRoom[];
   sites: RoomSiteOption[];
   threads: ReviewThread[];
   candidates: ReviewCandidate[];
+  members: { userId: string; role: string }[];
+  attachedSites: { siteId: string; createdBy: string }[];
+  siteComments: SiteCommentItem[];
+  commentCursor: string | null;
+  threadCursor: string | null;
+  candidateCursor: string | null;
   parentOrigin: string;
   notice: string | null;
+  orgEnabled: boolean;
+  onEnableRooms: () => void;
   onCreateRoom: (name: string) => void;
+  onSelectRoom: (roomId: string) => void;
+  onSelectSite: (siteId: string) => void;
+  onLoadMoreComments: (siteId: string, cursor: string) => void;
+  onLoadMoreThreads: (roomId: string, cursor: string) => void;
+  onLoadMoreCandidates: (roomId: string, cursor: string) => void;
   onCreateThread: (input: {
     roomId: string;
     siteId: string;
@@ -69,6 +102,19 @@ export function RoomWorkspace({
   onReply: (roomId: string, threadId: string, body: string) => void;
   onSignoff: (roomId: string, siteId: string, versionId: string) => void;
   onDecide: (roomId: string, candidate: ReviewCandidate, decision: "approve" | "reject") => void;
+  onSubmitCandidate: (input: {
+    roomId: string;
+    siteId: string;
+    baseVersionId: string;
+    contentHash: string;
+    diffHash: string;
+    summary: string;
+  }) => void;
+  onAddMember: (roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") => void;
+  onAttachSite: (roomId: string, siteId: string) => void;
+  onDetachSite: (roomId: string, siteId: string) => void;
+  onResolve: (roomId: string, threadId: string) => void;
+  onReanchor: (roomId: string, threadId: string, reason: string) => void;
 }) {
   const [roomId, setRoomId] = React.useState(rooms[0]?.ID ?? "");
   const [name, setName] = React.useState("");
@@ -76,9 +122,21 @@ export function RoomWorkspace({
   const [versionId, setVersionId] = React.useState(sites[0]?.currentVersionId ?? "");
   const [page, setPage] = React.useState("/");
   const [body, setBody] = React.useState("");
-  const [reply, setReply] = React.useState("");
+  const [replyByThread, setReplyByThread] = React.useState<Record<string, string>>({});
+  const [memberId, setMemberId] = React.useState("");
+  const [memberRole, setMemberRole] = React.useState<"editor" | "reviewer" | "viewer">("reviewer");
+  const [reanchorReason, setReanchorReason] = React.useState("");
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const room = rooms.find((item) => item.ID === roomId) ?? null;
+  React.useEffect(() => {
+    if (!roomId && rooms[0]?.ID) setRoomId(rooms[0].ID);
+  }, [roomId, rooms]);
+  React.useEffect(() => {
+    if (roomId) onSelectRoom(roomId);
+  }, [onSelectRoom, roomId]);
+  React.useEffect(() => {
+    if (siteId) onSelectSite(siteId);
+  }, [onSelectSite, siteId]);
   const role = room ? parseRole(room.Role) : null;
   const site = sites.find((item) => item.id === siteId) ?? null;
   const rights: SiteRights = { canRead: true, canEditContent: role === "owner" || role === "editor" };
@@ -101,6 +159,9 @@ export function RoomWorkspace({
           not approval of a change. Frame messages cannot approve or execute tools.
         </p>
         {notice ? <p role="status" className="text-sm text-foreground">{notice}</p> : null}
+        {orgEnabled ? null : (
+          <Button type="button" onClick={onEnableRooms}>Enable project rooms for this organization</Button>
+        )}
       </header>
 
       <section className="space-y-3" aria-label="Rooms">
@@ -138,15 +199,62 @@ export function RoomWorkspace({
         </form>
       </section>
 
-      <section className="space-y-2" aria-label="Members and sites">
+      <section className="space-y-3" aria-label="Members and sites">
         <h2 className="text-sm font-medium text-foreground">Members and sites</h2>
         <p className="text-sm text-muted-foreground">
-          Only a room owner may manage members. This build has no HTTP route for adding a member,
-          attaching a site, listing threads, listing candidates, resolving, or reanchoring.
+          Only a room owner can add or remove members and attach or detach sites. Detach does not
+          delete the site or its candidates.
         </p>
-        <ul className="list-disc pl-5 text-xs text-muted-foreground">
-          {UNROUTED.map((route) => <li key={route}>{route}</li>)}
+        <ul className="text-sm text-foreground">
+          {members.map((member) => (
+            <li key={member.userId}>{member.userId} · {member.role}</li>
+          ))}
         </ul>
+        <ul className="text-sm text-foreground">
+          {attachedSites.map((item) => (
+            <li key={item.siteId} className="flex items-center gap-2">
+              <span>{item.siteId}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={role !== "owner" || !room}
+                onClick={() => room && onDetachSite(room.ID, item.siteId)}
+              >
+                Detach site
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!room || role !== "owner" || memberId.trim().length === 0) return;
+            onAddMember(room.ID, memberId.trim(), memberRole);
+          }}
+        >
+          <Input aria-label="Member user id" value={memberId} onChange={(event) => setMemberId(event.target.value)} />
+          <select
+            aria-label="Member role"
+            value={memberRole}
+            onChange={(event) => setMemberRole(event.target.value as "editor" | "reviewer" | "viewer")}
+            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+          >
+            <option value="editor">editor</option>
+            <option value="reviewer">reviewer</option>
+            <option value="viewer">viewer</option>
+          </select>
+          <Button type="submit" disabled={role !== "owner" || memberId.trim().length === 0}>Add member</Button>
+        </form>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={role !== "owner" || !room || siteId.trim().length === 0}
+          onClick={() => room && onAttachSite(room.ID, siteId.trim())}
+        >
+          Attach site
+        </Button>
       </section>
 
       <section className="space-y-3" aria-label="Preview and comments">
@@ -245,43 +353,116 @@ export function RoomWorkspace({
         </form>
       </section>
 
-      <section className="space-y-3" aria-label="Comments">
-        <h2 className="text-sm font-medium text-foreground">Comments from this session</h2>
+      <section className="space-y-3" aria-label="Site comment page">
+        <h2 className="text-sm font-medium text-foreground">Site comment page</h2>
         <p className="text-sm text-muted-foreground">
-          Existing threads are not listed. The API has no thread list route, so only threads
-          returned by create in this session are shown, with the version they were stored on.
+          This page is the site comment feed. Every body is untrusted and shown as text.
         </p>
-        <ul className="space-y-3">
-          {threads.map((thread) => (
-            <li key={thread.ID} className="rounded-md border border-border p-3 text-sm">
-              <p className="font-medium text-foreground">
-                {thread.AnchorKind === "page" ? "Page comment" : "Image pin"} on {thread.Page}
-              </p>
+        <ul className="space-y-2">
+          {siteComments.map((item) => (
+            <li key={item.id} className="space-y-1 rounded-md border border-border p-3 text-sm">
               <p className="text-xs text-muted-foreground">
-                Version {thread.VersionID}, hash {thread.ContentHash}. State {thread.AnchorState}.
+                {item.source}
+                {item.anchorKind ? ` · ${item.anchorKind}` : ""}
+                {item.page ? ` · ${item.page}` : ""}
+                {item.status ? ` · ${item.status}` : ""}
+                {item.versionId ? ` · version ${item.versionId}` : ""}
+                {item.contentHash ? ` · hash ${item.contentHash}` : ""}
+                {` · ${item.createdAt}`}
               </p>
-              <ul className="mt-2 space-y-1">
-                {thread.Replies.map((item) => (
-                  <li key={item.ID}>{item.Body}</li>
-                ))}
-              </ul>
+              {item.body ? (
+                <ReplyText body={untrustedText(item.body)} />
+              ) : (
+                <p className="text-sm text-muted-foreground">This comment page item did not include a body.</p>
+              )}
             </li>
           ))}
         </ul>
-        <form
-          className="flex flex-wrap gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const thread = threads[0];
-            if (!room || !thread || reply.trim().length === 0) return;
-            onReply(room.ID, thread.ID, reply.trim());
-          }}
-        >
-          <Input aria-label="Reply" value={reply} onChange={(event) => setReply(event.target.value)} />
-          <Button type="submit" disabled={!commentOk || threads.length === 0 || reply.trim().length === 0}>
-            Reply
+        {commentCursor ? (
+          <Button type="button" variant="outline" onClick={() => onLoadMoreComments(siteId, commentCursor)}>
+            Load older site comments
           </Button>
-        </form>
+        ) : null}
+      </section>
+
+      <section className="space-y-3" aria-label="Comments">
+        <h2 className="text-sm font-medium text-foreground">Comments</h2>
+        <p className="text-sm text-muted-foreground">
+          Threads come from the room list. Each row keeps the immutable version and content hash.
+          Comment text is untrusted and shown as text.
+        </p>
+        <ul className="space-y-3">
+          {threads.map((thread) => (
+            <li key={thread.ID} className="space-y-2 rounded-md border border-border p-3 text-sm">
+              <p className="font-medium text-foreground">
+                {thread.AnchorKind === "page" ? "Page comment" : thread.AnchorKind === "point" ? "Image pin" : thread.AnchorKind} on {thread.Page}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Version {thread.VersionID}, hash {thread.ContentHash}. State {thread.AnchorState}. Status {thread.Status}.
+              </p>
+              <ul className="space-y-2">
+                {thread.Replies.map((item) => (
+                  <li key={item.ID}>
+                    <ReplyText body={untrustedText(item.Body)} />
+                  </li>
+                ))}
+              </ul>
+              <form
+                className="flex flex-wrap gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const text = (replyByThread[thread.ID] ?? "").trim();
+                  if (!room || !commentOk || text.length === 0) return;
+                  onReply(room.ID, thread.ID, text);
+                }}
+              >
+                <Input
+                  aria-label={`Reply to ${thread.ID}`}
+                  value={replyByThread[thread.ID] ?? ""}
+                  onChange={(event) => setReplyByThread((prev) => ({ ...prev, [thread.ID]: event.target.value }))}
+                />
+                <Button type="submit" disabled={!commentOk || (replyByThread[thread.ID] ?? "").trim().length === 0}>
+                  Reply
+                </Button>
+              </form>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!commentOk || !room}
+                  onClick={() => room && onResolve(room.ID, thread.ID)}
+                >
+                  Resolve
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!commentOk || !room || reanchorReason.trim().length === 0}
+                  onClick={() => room && onReanchor(room.ID, thread.ID, reanchorReason.trim())}
+                >
+                  Append page reanchor
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+        {threadCursor && room ? (
+          <Button type="button" variant="outline" onClick={() => onLoadMoreThreads(room.ID, threadCursor)}>
+            Load older threads
+          </Button>
+        ) : null}
+        <Input
+          aria-label="Reanchor reason"
+          value={reanchorReason}
+          onChange={(event) => setReanchorReason(event.target.value)}
+          placeholder="Why this page reanchor"
+        />
+        <p className="text-xs text-muted-foreground">
+          Reanchor appends a page revision and leaves the original pin in place. It is not a text
+          or component selection.
+        </p>
       </section>
 
       <section className="space-y-3" aria-label="Version sign-off">
@@ -303,10 +484,34 @@ export function RoomWorkspace({
       </section>
 
       <section className="space-y-3" aria-label="Proposed changes">
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!room || !decideOk) return;
+            const data = new FormData(event.currentTarget);
+            onSubmitCandidate({
+              roomId: room.ID,
+              siteId: siteId.trim(),
+              baseVersionId: versionId.trim(),
+              contentHash: String(data.get("content-hash") ?? ""),
+              diffHash: String(data.get("diff-hash") ?? ""),
+              summary: String(data.get("candidate-summary") ?? ""),
+            });
+          }}
+        >
+          <p className="text-sm text-muted-foreground">
+            Recording a candidate does not edit the site. Approval is a separate human decision.
+          </p>
+          <Input name="candidate-summary" aria-label="Candidate summary" />
+          <Input name="content-hash" aria-label="Candidate content hash" />
+          <Input name="diff-hash" aria-label="Candidate diff hash" />
+          <Button type="submit" disabled={!decideOk || !room}>Record candidate</Button>
+        </form>
         <h2 className="text-sm font-medium text-foreground">Proposed changes</h2>
         <p className="text-sm text-muted-foreground">
-          Candidates are not listed by the API. A candidate shown here came from a response the
-          server already returned.
+          Candidates are loaded from the room. The summary is untrusted text. The diff body is not
+          part of the response.
         </p>
         {candidates.map((candidate) => (
           <CandidateReview
@@ -319,6 +524,11 @@ export function RoomWorkspace({
             }}
           />
         ))}
+        {candidateCursor && room ? (
+          <Button type="button" variant="outline" onClick={() => onLoadMoreCandidates(room.ID, candidateCursor)}>
+            Load older candidates
+          </Button>
+        ) : null}
       </section>
 
       <section className="space-y-2" aria-label="Execution">
@@ -330,6 +540,22 @@ export function RoomWorkspace({
           {EXECUTION_BLOCKERS.map((blocker) => <li key={blocker}>{blocker}</li>)}
         </ul>
       </section>
+    </div>
+  );
+}
+
+function ReplyText({ body }: { body: string }) {
+  const [open, setOpen] = React.useState(false);
+  const long = body.length > 280;
+  const shown = long && !open ? `${body.slice(0, 280)}…` : body;
+  return (
+    <div className="space-y-1">
+      <p className="whitespace-pre-wrap text-sm text-foreground">{shown}</p>
+      {long ? (
+        <button type="button" className="text-xs text-primary" onClick={() => setOpen((value) => !value)}>
+          {open ? "Collapse reply" : "Expand reply"}
+        </button>
+      ) : null}
     </div>
   );
 }

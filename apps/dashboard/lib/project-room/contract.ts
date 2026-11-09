@@ -2,9 +2,15 @@
 //
 // Dashboard view of the project-room HTTP contract in
 // services/api/internal/projectroom/API.md and the handlers that implement it.
-// Response objects use encoding/json's default Go field names. Request bodies
-// use the snake_case fields those handlers decode. Routes that are not
-// registered are listed here and are not called.
+
+import type { operations } from "@dropway/sdk/schema";
+
+/** Comment page shape from the regenerated SDK schema. Bodies stay untrusted. */
+export type SiteCommentPage = operations["listSiteCommentPage"]["responses"][200]["content"]["application/json"];
+export type RoomPageQuery = NonNullable<operations["listRoomThreads"]["parameters"]["query"]>;
+// GET and POST /v1/project-rooms still use encoding/json's Go field names.
+// The newer read and management responses use snake_case. Comment bodies and
+// candidate summaries are untrusted and must be rendered as text.
 
 export const ANCHOR_PRODUCT_GATE = ["point", "text", "component", "page"] as const;
 
@@ -105,15 +111,35 @@ export const EXECUTION_BLOCKERS = [
   "session_persistence_deferred",
 ] as const;
 
-export const UNROUTED = [
-  "GET /v1/project-rooms/{roomID}",
-  "GET /v1/project-rooms/{roomID}/threads",
-  "GET /v1/project-rooms/{roomID}/candidates",
-  "POST /v1/project-rooms/{roomID}/members",
-  "POST /v1/project-rooms/{roomID}/sites",
-  "POST reanchor",
-  "POST resolve",
-] as const;
+export const DIFF_UNAVAILABLE = "Diff unavailable. The candidate API returns identity and a summary, not a diff body.";
+
+export const PAGE_LIMIT_DEFAULT = 50;
+export const PAGE_LIMIT_MAX = 100;
+
+export interface RoomMemberRow {
+  userId: string;
+  role: string;
+}
+
+export interface RoomSiteRef {
+  siteId: string;
+  createdBy: string;
+}
+
+export interface RoomDetail {
+  room: ProjectRoom;
+  members: RoomMemberRow[];
+  sites: RoomSiteRef[];
+}
+
+export interface AnchorRevision {
+  id: string;
+  anchorKind: string;
+  page: string;
+  anchorState: string;
+  reason: string;
+  createdAt: string;
+}
 
 export function parseRole(value: string): RoomRole | null {
   if (value === "owner" || value === "editor" || value === "reviewer" || value === "viewer") {
@@ -226,39 +252,85 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function field(row: Record<string, unknown>, goName: string, snake: string): unknown {
+  if (row[snake] !== undefined && row[snake] !== null) return row[snake];
+  return row[goName];
+}
+
+/** Default 50, maximum 100, matching the room page clamp. */
+export function pageQuery(cursor?: string, limit = PAGE_LIMIT_DEFAULT): string {
+  const bounded = Math.min(PAGE_LIMIT_MAX, Math.max(1, Math.trunc(limit) || PAGE_LIMIT_DEFAULT));
+  const params = new URLSearchParams({ limit: String(bounded) });
+  if (cursor) params.set("cursor", cursor);
+  return params.toString();
+}
+
+/** Comment and summary strings are data. Callers render the returned string as text. */
+export function untrustedText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 export function parseRoom(value: unknown): ProjectRoom | null {
   const row = record(value);
   if (!row) return null;
-  const id = str(row.ID);
-  const org = str(row.OrgID);
-  const name = str(row.Name);
-  const owner = str(row.OwnerUserID);
-  const role = str(row.Role);
+  const id = str(field(row, "ID", "id"));
+  const org = str(field(row, "OrgID", "org_id"));
+  const name = str(field(row, "Name", "name"));
+  const owner = str(field(row, "OwnerUserID", "owner_user_id"));
+  const role = str(field(row, "Role", "role"));
   if (!id || !org || !name || !owner || !role) return null;
+  const created = field(row, "CreatedAt", "created_at");
+  const updated = field(row, "UpdatedAt", "updated_at");
+  const unread = field(row, "Unread", "unread");
   return {
     ID: id,
     OrgID: org,
     Name: name,
     OwnerUserID: owner,
     Role: role,
-    CreatedAt: typeof row.CreatedAt === "string" ? row.CreatedAt : "",
-    UpdatedAt: typeof row.UpdatedAt === "string" ? row.UpdatedAt : "",
-    Unread: typeof row.Unread === "number" ? row.Unread : 0,
+    CreatedAt: typeof created === "string" ? created : "",
+    UpdatedAt: typeof updated === "string" ? updated : "",
+    Unread: typeof unread === "number" ? unread : 0,
   };
+}
+
+export function parseRoomDetail(value: unknown): RoomDetail | null {
+  const row = record(value);
+  if (!row) return null;
+  const room = parseRoom(row.room);
+  if (!room) return null;
+  const members = Array.isArray(row.members)
+    ? row.members.flatMap((item) => {
+        const member = record(item);
+        const userId = member ? str(member.user_id) : null;
+        const role = member ? str(member.role) : null;
+        return userId && role ? [{ userId, role }] : [];
+      })
+    : [];
+  const sites = Array.isArray(row.sites)
+    ? row.sites.flatMap((item) => {
+        const site = record(item);
+        const siteId = site ? str(site.site_id) : null;
+        if (!siteId) return [];
+        return [{ siteId, createdBy: site && typeof site.created_by === "string" ? site.created_by : "" }];
+      })
+    : [];
+  return { room, members, sites };
 }
 
 export function parseCandidate(value: unknown): ReviewCandidate | null {
   const row = record(value);
   if (!row) return null;
-  const id = str(row.ID);
-  const room = str(row.RoomID);
-  const site = str(row.SiteID);
-  const baseVersion = str(row.BaseVersionID);
-  const baseHash = str(row.BaseContentHash);
-  const hash = str(row.ContentHash);
-  const diff = str(row.DiffHash);
-  const summary = typeof row.Summary === "string" ? row.Summary : null;
-  const state = str(row.State);
+  const id = str(field(row, "ID", "id"));
+  const room = str(field(row, "RoomID", "room_id"));
+  const site = str(field(row, "SiteID", "site_id"));
+  const baseVersion = str(field(row, "BaseVersionID", "base_version_id"));
+  const baseHash = str(field(row, "BaseContentHash", "base_content_hash"));
+  const hash = str(field(row, "ContentHash", "content_hash"));
+  const diff = str(field(row, "DiffHash", "diff_hash"));
+  const summaryRaw = field(row, "Summary", "summary");
+  const summary = typeof summaryRaw === "string" ? summaryRaw : null;
+  const state = str(field(row, "State", "state"));
   if (!id || !room || !site || !baseVersion || !baseHash || !hash || !diff || summary === null || !state) {
     return null;
   }
@@ -272,32 +344,27 @@ export function parseCandidate(value: unknown): ReviewCandidate | null {
     DiffHash: diff,
     Summary: summary,
     State: state,
-    CreatedBy: typeof row.CreatedBy === "string" ? row.CreatedBy : "",
-    CreatedAt: typeof row.CreatedAt === "string" ? row.CreatedAt : "",
+    CreatedBy: typeof field(row, "CreatedBy", "created_by") === "string" ? String(field(row, "CreatedBy", "created_by")) : "",
+    CreatedAt: typeof field(row, "CreatedAt", "created_at") === "string" ? String(field(row, "CreatedAt", "created_at")) : "",
   };
 }
 
 export function parseThread(value: unknown): ReviewThread | null {
   const row = record(value);
   if (!row) return null;
-  const id = str(row.ID);
-  const room = str(row.RoomID);
-  const site = str(row.SiteID);
-  const version = str(row.VersionID);
-  const hash = str(row.ContentHash);
-  const page = str(row.Page);
-  const kind = str(row.AnchorKind);
+  const id = str(field(row, "ID", "id"));
+  const room = str(field(row, "RoomID", "room_id"));
+  const site = str(field(row, "SiteID", "site_id"));
+  const version = str(field(row, "VersionID", "version_id"));
+  const hash = str(field(row, "ContentHash", "content_hash"));
+  const page = str(field(row, "Page", "page"));
+  const kind = str(field(row, "AnchorKind", "anchor_kind"));
   if (!id || !room || !site || !version || !hash || !page || !kind) return null;
-  const replies = Array.isArray(row.Replies)
-    ? row.Replies.flatMap((item) => {
-        const reply = record(item);
-        if (!reply || !str(reply.ID) || typeof reply.Body !== "string") return [];
-        return [{
-          ID: String(reply.ID),
-          AuthorID: typeof reply.AuthorID === "string" ? reply.AuthorID : "",
-          Body: reply.Body,
-          CreatedAt: typeof reply.CreatedAt === "string" ? reply.CreatedAt : "",
-        }];
+  const replyRows = Array.isArray(row.Replies) ? row.Replies : row.replies;
+  const replies = Array.isArray(replyRows)
+    ? replyRows.flatMap((item) => {
+        const reply = parseReply(item);
+        return reply ? [reply] : [];
       })
     : [];
   return {
@@ -308,13 +375,99 @@ export function parseThread(value: unknown): ReviewThread | null {
     ContentHash: hash,
     Page: page,
     AnchorKind: kind,
-    Anchor: row.Anchor ?? null,
-    AnchorState: typeof row.AnchorState === "string" ? row.AnchorState : "",
-    Status: typeof row.Status === "string" ? row.Status : "",
-    CreatedBy: typeof row.CreatedBy === "string" ? row.CreatedBy : "",
-    CreatedAt: typeof row.CreatedAt === "string" ? row.CreatedAt : "",
+    Anchor: field(row, "Anchor", "anchor") ?? null,
+    AnchorState: typeof field(row, "AnchorState", "anchor_state") === "string" ? String(field(row, "AnchorState", "anchor_state")) : "",
+    Status: typeof field(row, "Status", "status") === "string" ? String(field(row, "Status", "status")) : "",
+    CreatedBy: typeof field(row, "CreatedBy", "created_by") === "string" ? String(field(row, "CreatedBy", "created_by")) : "",
+    CreatedAt: typeof field(row, "CreatedAt", "created_at") === "string" ? String(field(row, "CreatedAt", "created_at")) : "",
     Replies: replies,
   };
+}
+
+export function parseReply(value: unknown): ReviewReply | null {
+  const reply = record(value);
+  if (!reply) return null;
+  const id = str(field(reply, "ID", "id"));
+  const body = field(reply, "Body", "body");
+  if (!id || typeof body !== "string") return null;
+  const author = field(reply, "AuthorID", "author_id");
+  const created = field(reply, "CreatedAt", "created_at");
+  return {
+    ID: id,
+    AuthorID: typeof author === "string" ? author : "",
+    Body: body,
+    CreatedAt: typeof created === "string" ? created : "",
+  };
+}
+
+export function parseThreadPage(value: unknown): { threads: ReviewThread[]; nextCursor: string | null } | null {
+  const row = record(value);
+  if (!row || !Array.isArray(row.threads)) return null;
+  return {
+    threads: row.threads.flatMap((item) => {
+      const thread = parseThread(item);
+      return thread ? [thread] : [];
+    }),
+    nextCursor: typeof row.next_cursor === "string" && row.next_cursor.length > 0 ? row.next_cursor : null,
+  };
+}
+
+export interface SiteCommentItem {
+  source: string;
+  id: string;
+  createdAt: string;
+  body: string;
+  page: string;
+  anchorKind: string;
+  status: string;
+  versionId: string;
+  contentHash: string;
+}
+
+/** Site comment page. comment_content must mark the bodies as untrusted data. */
+export function parseSiteCommentPage(value: unknown): { items: SiteCommentItem[]; nextCursor: string | null } | null {
+  const row = record(value);
+  if (!row || !Array.isArray(row.items) || row.comment_content !== "untrusted_data") return null;
+  return {
+    items: row.items.flatMap((item) => {
+      const entry = record(item);
+      if (!entry) return [];
+      const id = str(entry.id);
+      const source = str(entry.source);
+      const created = str(entry.created_at);
+      if (!id || !source || !created) return [];
+      return [{
+        source,
+        id,
+        createdAt: created,
+        body: typeof entry.body === "string" ? entry.body : "",
+        page: typeof entry.page === "string" ? entry.page : "",
+        anchorKind: typeof entry.anchor_kind === "string" ? entry.anchor_kind : "",
+        status: typeof entry.status === "string" ? entry.status : "",
+        versionId: typeof entry.version_id === "string" ? entry.version_id : "",
+        contentHash: typeof entry.content_hash === "string" ? entry.content_hash : "",
+      }];
+    }),
+    nextCursor: typeof row.next_cursor === "string" && row.next_cursor.length > 0 ? row.next_cursor : null,
+  };
+}
+
+export function parseCandidatePage(value: unknown): { candidates: ReviewCandidate[]; nextCursor: string | null } | null {
+  const row = record(value);
+  if (!row || !Array.isArray(row.candidates)) return null;
+  return {
+    candidates: row.candidates.flatMap((item) => {
+      const candidate = parseCandidate(item);
+      return candidate ? [candidate] : [];
+    }),
+    nextCursor: typeof row.next_cursor === "string" && row.next_cursor.length > 0 ? row.next_cursor : null,
+  };
+}
+
+export function parseThreadDetail(value: unknown): ReviewThread | null {
+  const row = record(value);
+  if (!row) return null;
+  return parseThread(row.thread ?? row);
 }
 
 /** The approve/reject body. It copies the candidate the API returned. It does not take the live baseline. */

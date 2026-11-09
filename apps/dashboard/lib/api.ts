@@ -9,13 +9,14 @@ import { API_URL } from "@/lib/env";
 import { getCurrentSession } from "@/lib/session";
 import { TokenCache, tokenCacheKey } from "@/lib/token-cache";
 import type { components, operations } from "@/lib/api-generated/schema";
-import type {
-  ApprovalBinding,
-  CandidateDecisionBody,
-  ProjectRoom,
-  ReviewReply,
-  ReviewThread,
-  VersionSignoff,
+import {
+  pageQuery,
+  type ApprovalBinding,
+  type CandidateDecisionBody,
+  type ProjectRoom,
+  type ReviewReply,
+  type ReviewThread,
+  type VersionSignoff,
 } from "@/lib/project-room/contract";
 
 /**
@@ -395,7 +396,9 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 /**
@@ -1503,6 +1506,13 @@ export const api = {
     return apiFetch<{ enabled: boolean }>("/v1/orgs/project-rooms");
   },
 
+  async setProjectRoomsEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
+    return apiFetch<{ enabled: boolean }>("/v1/orgs/project-rooms", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
   async listProjectRooms(): Promise<ProjectRoom[]> {
     const body = await apiFetch<{ rooms?: ProjectRoom[] | null }>("/v1/project-rooms");
     return body.rooms ?? [];
@@ -1561,6 +1571,95 @@ export const api = {
    * substituted live baseline. 409 is thrown as ApiError with the decision body
    * when the baseline conflicts.
    */
+  async getProjectRoom(roomId: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}`);
+  },
+
+  async listRoomThreads(roomId: string, cursor?: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/threads?${pageQuery(cursor)}`);
+  },
+
+  async getReviewThread(threadId: string, cursor?: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/threads/${encodeURIComponent(threadId)}?${pageQuery(cursor)}`);
+  },
+
+  async listRoomCandidates(roomId: string, cursor?: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/candidates?${pageQuery(cursor)}`);
+  },
+
+  async getRoomCandidate(roomId: string, candidateId: string): Promise<unknown> {
+    return apiFetch(
+      `/v1/project-rooms/${encodeURIComponent(roomId)}/candidates/${encodeURIComponent(candidateId)}`,
+    );
+  },
+
+  async listSiteCommentPages(siteId: string, cursor?: string): Promise<unknown> {
+    return apiFetch(`/v1/sites/${encodeURIComponent(siteId)}/comment-pages?${pageQuery(cursor)}`);
+  },
+
+  async addProjectRoomMember(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer"): Promise<void> {
+    await apiFetch<void>(`/v1/project-rooms/${encodeURIComponent(roomId)}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, role }),
+    });
+  },
+
+  async addProjectRoomSite(roomId: string, siteId: string): Promise<void> {
+    await apiFetch<void>(`/v1/project-rooms/${encodeURIComponent(roomId)}/sites`, {
+      method: "POST",
+      body: JSON.stringify({ site_id: siteId }),
+    });
+  },
+
+  async removeProjectRoomSite(roomId: string, siteId: string): Promise<void> {
+    await apiFetch<void>(`/v1/project-rooms/${encodeURIComponent(roomId)}/sites/${encodeURIComponent(siteId)}`, {
+      method: "DELETE",
+    });
+  },
+
+  async resolveReviewThread(roomId: string, threadId: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/threads/${encodeURIComponent(threadId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  async reanchorReviewThread(
+    roomId: string,
+    threadId: string,
+    input: { kind: "page"; anchor: Record<string, never>; anchorState: "anchored" | "orphaned"; reason: string },
+  ): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/threads/${encodeURIComponent(threadId)}/reanchor`, {
+      method: "POST",
+      body: JSON.stringify({
+        kind: input.kind,
+        anchor: input.anchor,
+        anchor_state: input.anchorState,
+        reason: input.reason,
+      }),
+    });
+  },
+
+  async submitProjectRoomCandidate(input: {
+    roomId: string;
+    siteId: string;
+    baseVersionId: string;
+    contentHash: string;
+    diffHash: string;
+    summary: string;
+  }): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(input.roomId)}/candidates`, {
+      method: "POST",
+      body: JSON.stringify({
+        site_id: input.siteId,
+        base_version_id: input.baseVersionId,
+        content_hash: input.contentHash,
+        diff_hash: input.diffHash,
+        summary: input.summary,
+      }),
+    });
+  },
+
   async decideProjectRoomCandidate(
     roomId: string,
     candidateId: string,
