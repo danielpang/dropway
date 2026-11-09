@@ -1678,6 +1678,15 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
           summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at;
 
+-- name: LockOrgMeta :one
+-- Lock the org row before a site lock. Publish, access changes, deletes, and
+-- room attach/detach all take this lock first so the feature flag and the
+-- site row cannot deadlock.
+SELECT id, project_rooms_enabled
+FROM app.org_meta
+WHERE id = sqlc.arg(org_id)
+FOR UPDATE;
+
 -- name: LockSite :one
 -- Row lock shared with candidate approval so a live-pointer publish and an
 -- approval decision cannot observe a stale baseline.

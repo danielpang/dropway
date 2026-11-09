@@ -310,6 +310,9 @@ func (s *Store) AddProjectRoomSite(ctx context.Context, t Tenant, roomID, siteID
 			return err
 		}
 		ownerBefore := site.OwnerUserID
+		if _, err := lockOrgThenSite(ctx, q, t.OrgID, siteID); err != nil {
+			return err
+		}
 		if _, err := q.InsertProjectRoomSite(ctx, db.InsertProjectRoomSiteParams{
 			OrgID: t.OrgID, RoomID: roomID, SiteID: siteID, CreatedBy: t.UserID,
 		}); err != nil {
@@ -625,10 +628,7 @@ func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, re
 			}
 			return err
 		}
-		if _, err := q.LockSite(ctx, db.LockSiteParams{ID: peek.SiteID, OrgID: t.OrgID}); err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
-			}
+		if _, err := lockOrgThenSite(ctx, q, t.OrgID, peek.SiteID); err != nil {
 			return err
 		}
 		row, err := q.LockReviewCandidateForMember(ctx, db.LockReviewCandidateForMemberParams{
@@ -799,11 +799,8 @@ func (s *Store) ApplyCandidate(ctx context.Context, t Tenant, roomID string, req
 			}
 			return err
 		}
-		locked, err := q.LockSite(ctx, db.LockSiteParams{ID: row.SiteID, OrgID: t.OrgID})
+		locked, err := lockOrgThenSite(ctx, q, t.OrgID, row.SiteID)
 		if err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		rights, _, err := s.siteRights(ctx, q, t, row.SiteID)

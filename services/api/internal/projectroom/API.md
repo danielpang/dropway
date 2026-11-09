@@ -51,7 +51,11 @@ For a site that **is** referenced by a project room while `project_rooms_enabled
 
 Approval and publish lock `app.sites` before deciding, then lock the candidate. A second decision does not write a second audit. A hash or base version that belongs to a different candidate does not change either row.
 
-Skills, chats, and memories are outside this boundary. An org-wide key (`sites:*`, null `site_id`) can still call them. A non-null `site_id` cannot. Deleting a controlled site or changing its access mode is also outside this slice.
+`DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. There is no route that removes a site from a room.
+
+Publish and rollback re-check that membership inside the same transaction that locks `app.org_meta` and then `app.sites`. Attaching a site, approving a candidate, and applying a candidate take those locks in that order. A non-human publish that is still waiting on the site lock sees a membership committed by the transaction that held the lock. Disabling `project_rooms_enabled` is a human admin action; it locks the same org row, so a key cannot observe the old flag and then publish after the flag has changed.
+
+Skills, chats, and memories are outside this boundary. An org-wide key (`sites:*`, null `site_id`) can still call them. A non-null `site_id` cannot.
 
 ## Execution seam
 

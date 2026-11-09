@@ -51,7 +51,8 @@ const (
 	// Agent and CI keys are not distinguishable, so controlled-site mutations
 	// fail closed for every key.
 	CredentialOrgAPIKey CredentialClass = "org_api_key"
-	// CredentialMCPOAuth is a JWT admitted only by an MCP resource audience.
+	// CredentialMCPOAuth is a JWT whose verified audience includes an MCP
+	// resource audience. A mixed audience that also names this API is still MCP.
 	CredentialMCPOAuth CredentialClass = "mcp_oauth"
 	// CredentialUnknown is a verified token this middleware could not classify.
 	// Controlled-site mutations fail closed.
@@ -227,17 +228,16 @@ func CredentialClassFromContext(ctx context.Context) (CredentialClass, bool) {
 	return c, ok && c != ""
 }
 
-// credentialClassifier is implemented by *auth.Verifier. Test verifiers that
-// do not implement it are treated as interactive human sessions, which is the
-// historical JWT path.
+// credentialClassifier is implemented by *auth.Verifier. A verifier that
+// cannot classify the token is not a human session.
 type credentialClassifier interface {
 	CredentialClass(*auth.Claims) string
 }
 
 func classifyCredential(v Verifier, claims *auth.Claims) CredentialClass {
 	c, ok := v.(credentialClassifier)
-	if !ok {
-		return CredentialHumanSession
+	if !ok || c == nil {
+		return CredentialUnknown
 	}
 	switch c.CredentialClass(claims) {
 	case string(CredentialHumanSession):

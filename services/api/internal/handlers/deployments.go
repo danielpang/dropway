@@ -374,7 +374,7 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := a.Store.Publish(r.Context(), t, siteID, req.VersionID)
+	res, err := a.Store.Publish(store.WithHumanSession(r.Context(), humanSession(r)), t, siteID, req.VersionID)
 	if err != nil {
 		writeStoreError(w, err)
 		return

@@ -149,7 +149,7 @@ func TestIntegration_ApprovalRaces(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, publishErr = st.Publish(ctx, tn, site.ID, v2.ID)
+			_, publishErr = st.Publish(store.WithHumanSession(ctx, true), tn, site.ID, v2.ID)
 		}()
 		close(start)
 		wg.Wait()
@@ -192,7 +192,7 @@ func TestIntegration_ApprovalRaces(t *testing.T) {
 			t.Fatalf("apply moved live pointer to %v", live.CurrentVersionID)
 		}
 		// Put the live pointer back so later subtests that assume v1 still publish explicitly.
-		if _, err := st.Publish(ctx, tn, site.ID, v1.ID); err != nil {
+		if _, err := st.Publish(store.WithHumanSession(ctx, true), tn, site.ID, v1.ID); err != nil {
 			t.Fatal(err)
 		}
 	})

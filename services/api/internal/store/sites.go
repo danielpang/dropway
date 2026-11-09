@@ -539,6 +539,12 @@ func (s *Store) GetSite(ctx context.Context, t Tenant, id string) (Site, error) 
 func (s *Store) DeleteSite(ctx context.Context, t Tenant, id string) ([]string, error) {
 	var hosts []string
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if _, err := lockOrgThenSite(ctx, q, t.OrgID, id); err != nil {
+			return err
+		}
+		if err := rejectNonHumanControlledSite(ctx, q, t.OrgID, id); err != nil {
+			return err
+		}
 		routes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: id, OrgID: t.OrgID})
 		if err != nil {
 			return err

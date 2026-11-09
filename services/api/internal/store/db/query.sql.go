@@ -4694,6 +4694,28 @@ func (q *Queries) LockOrgMemoryQuota(ctx context.Context, dollar_1 string) error
 	return err
 }
 
+const lockOrgMeta = `-- name: LockOrgMeta :one
+SELECT id, project_rooms_enabled
+FROM app.org_meta
+WHERE id = $1
+FOR UPDATE
+`
+
+type LockOrgMetaRow struct {
+	ID                  string
+	ProjectRoomsEnabled bool
+}
+
+// Lock the org row before a site lock. Publish, access changes, deletes, and
+// room attach/detach all take this lock first so the feature flag and the
+// site row cannot deadlock.
+func (q *Queries) LockOrgMeta(ctx context.Context, orgID string) (LockOrgMetaRow, error) {
+	row := q.db.QueryRow(ctx, lockOrgMeta, orgID)
+	var i LockOrgMetaRow
+	err := row.Scan(&i.ID, &i.ProjectRoomsEnabled)
+	return i, err
+}
+
 const lockOrgSiteQuota = `-- name: LockOrgSiteQuota :exec
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':sites'))
 `

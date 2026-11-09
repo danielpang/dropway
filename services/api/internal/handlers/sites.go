@@ -263,8 +263,11 @@ func (a *API) DeleteSite(w http.ResponseWriter, r *http.Request) {
 	if !a.requireSiteOwnerOrAdmin(w, r, t, site) {
 		return
 	}
+	if !a.allowControlledSiteMutation(w, r, t, id) {
+		return
+	}
 
-	hosts, err := a.Store.DeleteSite(r.Context(), t, id)
+	hosts, err := a.Store.DeleteSite(store.WithHumanSession(r.Context(), humanSession(r)), t, id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -394,6 +397,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrConflict, err.Error()))
 	case errors.Is(err, store.ErrApplicationDisabled):
 		httpx.WriteError(w, fmt.Errorf("%w: candidate application is not enabled", httpx.ErrForbidden))
+	case errors.Is(err, store.ErrControlledSite):
+		httpx.WriteError(w, fmt.Errorf("%w: this site is under project review; publish, rollback, and source writes require an authenticated human session", httpx.ErrForbidden))
 	case errors.Is(err, projectroom.ErrInvalidAnchor):
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err.Error()))
 	case errors.Is(err, store.ErrInvalidMode):

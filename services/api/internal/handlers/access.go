@@ -48,6 +48,9 @@ func (a *API) SetSiteAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	siteID := chi.URLParam(r, "id")
+	if !a.allowControlledSiteMutation(w, r, t, siteID) {
+		return
+	}
 
 	var req setAccessRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -87,7 +90,7 @@ func (a *API) SetSiteAccess(w http.ResponseWriter, r *http.Request) {
 		p.ExpiresAt = &ts
 	}
 
-	res, err := a.Store.SetSiteAccess(r.Context(), t, p)
+	res, err := a.Store.SetSiteAccess(store.WithHumanSession(r.Context(), humanSession(r)), t, p)
 	if err != nil {
 		writeStoreError(w, err)
 		return

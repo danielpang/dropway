@@ -391,6 +391,10 @@ type Querier interface {
 	// Serialize concurrent memory creates for the SAME org (the same COUNT →
 	// policy → INSERT critical section the site/skill/chat caps use).
 	LockOrgMemoryQuota(ctx context.Context, dollar_1 string) error
+	// Lock the org row before a site lock. Publish, access changes, deletes, and
+	// room attach/detach all take this lock first so the feature flag and the
+	// site row cannot deadlock.
+	LockOrgMeta(ctx context.Context, orgID string) (LockOrgMetaRow, error)
 	// Serialize concurrent site creates for the SAME org: take a transaction-scoped
 	// advisory lock keyed by hashtext(org||':sites'). Held until the create-site tx
 	// commits/rolls back, it makes the COUNT → policy check → INSERT a critical

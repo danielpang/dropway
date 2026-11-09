@@ -329,6 +329,61 @@ func TestAuthWithKeysObserved_JWTRejection_CapturesEvent(t *testing.T) {
 	}
 }
 
+type classedVerifier struct {
+	fakeVerifier
+	class string
+}
+
+func (c classedVerifier) CredentialClass(*auth.Claims) string { return c.class }
+
+func TestAuth_UnclassifiedVerifierIsNotAHumanSession(t *testing.T) {
+	claims := &auth.Claims{OrgID: "org_1", Role: "owner"}
+	claims.Subject = "user_1"
+	fv := &fakeVerifier{wantToken: "t", claims: claims}
+	var class CredentialClass
+	var ok bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		class, ok = CredentialClassFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer t")
+	rr := httptest.NewRecorder()
+	Auth(fv)(next).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !ok || class != CredentialUnknown {
+		t.Fatalf("status=%d class=%q ok=%v", rr.Code, class, ok)
+	}
+}
+
+func TestAuth_ClassifierOutput(t *testing.T) {
+	claims := &auth.Claims{OrgID: "org_1"}
+	claims.Subject = "user_1"
+	cases := []struct {
+		class string
+		want  CredentialClass
+	}{
+		{string(CredentialHumanSession), CredentialHumanSession},
+		{string(CredentialMCPOAuth), CredentialMCPOAuth},
+		{"", CredentialUnknown},
+		{"other", CredentialUnknown},
+	}
+	for _, tc := range cases {
+		fv := &classedVerifier{fakeVerifier: fakeVerifier{wantToken: "t", claims: claims}, class: tc.class}
+		var got CredentialClass
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got, _ = CredentialClassFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		})
+		req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+		req.Header.Set("Authorization", "Bearer t")
+		rr := httptest.NewRecorder()
+		Auth(fv)(next).ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK || got != tc.want {
+			t.Fatalf("class %q: status=%d got=%q", tc.class, rr.Code, got)
+		}
+	}
+}
+
 // A rejected API key is captured as auth_rejected kind=api_key.
 func TestAuthWithKeysObserved_KeyRejection_CapturesEvent(t *testing.T) {
 	em := &fakeEmitter{}

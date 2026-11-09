@@ -197,19 +197,25 @@ const (
 )
 
 // CredentialClass reports which verified audience admitted the token.
-// The primary API audience is an interactive human session. A token accepted
-// only through an extra MCP audience is MCP OAuth, even though it names a user.
+// Any MCP resource audience classifies the token as MCP OAuth, including a
+// token that also carries the interactive API audience, in either order.
+// Only a verified audience set that contains the primary audience and no MCP
+// audience is an interactive human session. Anything else is unclassified.
 func (v *Verifier) CredentialClass(c *Claims) string {
 	if v == nil || c == nil {
 		return ""
 	}
 	for _, a := range c.Audience {
+		for _, extra := range v.extraAudiences {
+			if a == extra {
+				return ClassMCPOAuth
+			}
+		}
+	}
+	for _, a := range c.Audience {
 		if a == v.audience {
 			return ClassHumanSession
 		}
-	}
-	if len(v.extraAudiences) > 0 {
-		return ClassMCPOAuth
 	}
 	return ""
 }
