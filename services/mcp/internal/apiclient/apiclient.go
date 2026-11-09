@@ -861,3 +861,12 @@ func (c *Client) AddMemory(ctx context.Context, token, content, kind, sourceTool
 	}
 	return out.Memory, out.Created, nil
 }
+
+// GetJSON calls a read-only API path and returns the JSON body.
+func (c *Client) GetJSON(ctx context.Context, token, path string) (json.RawMessage, error) {
+	var out json.RawMessage
+	if err := c.do(ctx, http.MethodGet, path, token, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

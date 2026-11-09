@@ -194,6 +194,7 @@ type Querier interface {
 	// Membership is filtered in every query. RLS remains the org backstop.
 	// ===========================================================================
 	GetProjectRoomsEnabled(ctx context.Context, orgID string) (bool, error)
+	GetReadableReviewThread(ctx context.Context, arg GetReadableReviewThreadParams) (GetReadableReviewThreadRow, error)
 	GetReviewApproval(ctx context.Context, arg GetReviewApprovalParams) (AppReviewVersionApproval, error)
 	GetReviewCandidate(ctx context.Context, arg GetReviewCandidateParams) (AppReviewCandidate, error)
 	GetReviewCandidateForMember(ctx context.Context, arg GetReviewCandidateForMemberParams) (GetReviewCandidateForMemberRow, error)
@@ -265,6 +266,7 @@ type Querier interface {
 	// (org_id, created_at DESC) index backs the order. Keyset-free LIMIT/OFFSET paging is
 	// adequate for an admin audit viewer (small N per page).
 	ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AppAuditLog, error)
+	ListCandidatesForArtifact(ctx context.Context, arg ListCandidatesForArtifactParams) ([]AppReviewCandidate, error)
 	// The org's chat library, newest first, with a live message count per log.
 	ListChatLogs(ctx context.Context, orgID string) ([]ListChatLogsRow, error)
 	// Ascending seq page: seq > $2, LIMIT $3 (the panel and API both page forward).
@@ -438,6 +440,11 @@ type Querier interface {
 	// ===========================================================================
 	// The next monotonic version number for a site (1 on the first deploy).
 	NextVersionNo(ctx context.Context, arg NextVersionNoParams) (int32, error)
+	PageReviewReplies(ctx context.Context, arg PageReviewRepliesParams) ([]AppReviewReply, error)
+	PageRoomCandidates(ctx context.Context, arg PageRoomCandidatesParams) ([]AppReviewCandidate, error)
+	PageRoomThreads(ctx context.Context, arg PageRoomThreadsParams) ([]AppReviewThread, error)
+	PageSiteFeedComments(ctx context.Context, arg PageSiteFeedCommentsParams) ([]AppPostComment, error)
+	PageSiteRoomThreads(ctx context.Context, arg PageSiteRoomThreadsParams) ([]AppReviewThread, error)
 	// Free-tier rolling window: keep the NEWEST $2 rows of the log, delete the
 	// rest. Runs under LockChatLogAppend in the same tx as the INSERT.
 	PruneChatMessages(ctx context.Context, arg PruneChatMessagesParams) (int64, error)

@@ -34,10 +34,26 @@ type ProjectRoomStore interface {
 	RejectCandidate(ctx context.Context, t store.Tenant, roomID string, req projectroom.ApprovalRequest, rec store.AuditRecord) (store.CandidateDecision, error)
 	ApplyCandidate(ctx context.Context, t store.Tenant, roomID string, req projectroom.ApprovalRequest) (store.Candidate, error)
 	RoomAccess(ctx context.Context, t store.Tenant, roomID, siteID string) (string, projectroom.SiteRights, error)
+	GetProjectRoom(ctx context.Context, t store.Tenant, roomID string) (store.RoomDetail, error)
+	AddProjectRoomMember(ctx context.Context, t store.Tenant, roomID, userID, role string, rec store.AuditRecord) error
+	UpdateProjectRoomMemberRole(ctx context.Context, t store.Tenant, roomID, userID, role string, rec store.AuditRecord) error
+	RemoveProjectRoomMember(ctx context.Context, t store.Tenant, roomID, userID string, rec store.AuditRecord) error
+	AddProjectRoomSite(ctx context.Context, t store.Tenant, roomID, siteID string, rec store.AuditRecord) error
+	RemoveProjectRoomSite(ctx context.Context, t store.Tenant, roomID, siteID string, rec store.AuditRecord) error
+	PageRoomThreads(ctx context.Context, t store.Tenant, roomID, cursor string, limit int) (store.ThreadPage, error)
+	PageRoomCandidates(ctx context.Context, t store.Tenant, roomID, cursor string, limit int) (store.CandidatePage, error)
+	GetRoomCandidate(ctx context.Context, t store.Tenant, roomID, candidateID string) (store.Candidate, error)
+	ResolveReviewThread(ctx context.Context, t store.Tenant, roomID, threadID string, rec store.AuditRecord) (store.ReviewThread, error)
+	ReanchorReviewThread(ctx context.Context, t store.Tenant, roomID, threadID, kind, state, reason string, anchor json.RawMessage, rec store.AuditRecord) (store.ReviewThread, error)
 }
 
 // rejectAgentLiveMutation was a caller-controlled header check. Credential
 // class now comes only from the middleware that verified the request.
+func allowCommentRead(r *http.Request) bool {
+	class, ok := middleware.CredentialClassFromContext(r.Context())
+	return ok && (class == middleware.CredentialHumanSession || class == middleware.CredentialMCPOAuth)
+}
+
 func humanSession(r *http.Request) bool {
 	class, ok := middleware.CredentialClassFromContext(r.Context())
 	return ok && class == middleware.CredentialHumanSession
@@ -143,8 +159,8 @@ func (a *API) CreateProjectRoom(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if _, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
-		httpx.WriteError(w, fmt.Errorf("%w: project rooms require an interactive login", httpx.ErrForbidden))
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: project room changes require an authenticated human session", httpx.ErrForbidden))
 		return
 	}
 	var req struct {
@@ -171,8 +187,8 @@ func (a *API) ListProjectRooms(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if _, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
-		httpx.WriteError(w, fmt.Errorf("%w: project rooms require an interactive login", httpx.ErrForbidden))
+	if !allowCommentRead(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: reading project rooms requires a human session or MCP OAuth", httpx.ErrForbidden))
 		return
 	}
 	rooms, err := a.Rooms.ListProjectRooms(r.Context(), t)
@@ -195,8 +211,8 @@ func (a *API) CreateReviewThread(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if _, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
-		httpx.WriteError(w, fmt.Errorf("%w: project rooms require an interactive login", httpx.ErrForbidden))
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: project room changes require an authenticated human session", httpx.ErrForbidden))
 		return
 	}
 	var req struct {
@@ -227,6 +243,10 @@ func (a *API) AddReviewReply(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: project room changes require an authenticated human session", httpx.ErrForbidden))
+		return
+	}
 	var req struct {
 		Body string `json:"body"`
 	}
@@ -249,6 +269,10 @@ func (a *API) SignoffVersion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: project room changes require an authenticated human session", httpx.ErrForbidden))
 		return
 	}
 	var req struct {
@@ -289,6 +313,10 @@ func (a *API) SubmitCandidate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: project room changes require an authenticated human session", httpx.ErrForbidden))
 		return
 	}
 	var req struct {
@@ -400,8 +428,8 @@ func (a *API) ClaimExecution(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, wrapUnauthorized())
 		return
 	}
-	if _, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
-		httpx.WriteError(w, fmt.Errorf("%w: execution requires an interactive login", httpx.ErrForbidden))
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: execution requires an authenticated human session", httpx.ErrForbidden))
 		return
 	}
 	var req struct {
@@ -479,6 +507,10 @@ func (a *API) ClarifySession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.WriteError(w, wrapUnauthorized())
+		return
+	}
+	if !humanSession(r) {
+		httpx.WriteError(w, fmt.Errorf("%w: execution requires an authenticated human session", httpx.ErrForbidden))
 		return
 	}
 	var req struct {

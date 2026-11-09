@@ -399,6 +399,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: candidate application is not enabled", httpx.ErrForbidden))
 	case errors.Is(err, store.ErrControlledSite):
 		httpx.WriteError(w, fmt.Errorf("%w: this site is under project review; publish, rollback, and source writes require an authenticated human session", httpx.ErrForbidden))
+	case errors.Is(err, store.ErrCandidatePublishDenied):
+		httpx.WriteError(w, fmt.Errorf("%w: this version matches a review candidate and has no approved decision for the current baseline", httpx.ErrConflict))
+	case errors.Is(err, projectroom.ErrBadCursor):
+		httpx.WriteError(w, fmt.Errorf("%w: invalid cursor", httpx.ErrBadRequest))
 	case errors.Is(err, projectroom.ErrInvalidAnchor):
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err.Error()))
 	case errors.Is(err, store.ErrInvalidMode):

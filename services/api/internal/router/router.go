@@ -160,10 +160,12 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			// Up/down vote a feed post (any member; +1/-1/0 to clear).
 			r.Put("/{id}/vote", api.SetSiteVote)
 
+			r.Get("/{id}/comment-pages", api.ListSiteCommentPage)
 			// Site comments: any org member may read + post (org-internal thread,
 			// RLS-scoped). Posting can tag teammates (@mentions).
 			r.Get("/{id}/comments", api.ListComments)
 			r.Post("/{id}/comments", api.AddComment)
+			r.Get("/{id}/comment-pages", api.ListSiteCommentPage)
 
 			// Phase 4 — generic admin hard-revoke of a site's edge tokens (a
 			// "kill the share now" affordance independent of an access change).
@@ -288,9 +290,21 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		r.Route("/project-rooms", func(r chi.Router) {
 			r.Get("/", api.ListProjectRooms)
 			r.Post("/", api.CreateProjectRoom)
+			r.Get("/threads/{threadID}", api.GetReviewThreadPage)
+			r.Get("/{roomID}", api.GetProjectRoom)
+			r.Post("/{roomID}/members", api.AddProjectRoomMember)
+			r.Patch("/{roomID}/members/{userID}", api.UpdateProjectRoomMember)
+			r.Delete("/{roomID}/members/{userID}", api.RemoveProjectRoomMember)
+			r.Post("/{roomID}/sites", api.AddProjectRoomSite)
+			r.Delete("/{roomID}/sites/{siteID}", api.RemoveProjectRoomSite)
+			r.Get("/{roomID}/threads", api.ListRoomThreads)
 			r.Post("/{roomID}/threads", api.CreateReviewThread)
 			r.Post("/{roomID}/threads/{threadID}/replies", api.AddReviewReply)
+			r.Post("/{roomID}/threads/{threadID}/resolve", api.ResolveReviewThread)
+			r.Post("/{roomID}/threads/{threadID}/reanchor", api.ReanchorReviewThread)
 			r.Post("/{roomID}/version-signoffs", api.SignoffVersion)
+			r.Get("/{roomID}/candidates", api.ListRoomCandidates)
+			r.Get("/{roomID}/candidates/{candidateID}", api.GetRoomCandidate)
 			r.Post("/{roomID}/candidates", api.SubmitCandidate)
 			r.Post("/{roomID}/candidates/{candidateID}/approve", api.ApproveCandidate)
 			r.Post("/{roomID}/candidates/{candidateID}/reject", api.RejectCandidate)
