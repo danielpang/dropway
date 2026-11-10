@@ -72,13 +72,24 @@ export function readEdgeCookie(request: Request): string | null {
  * page they wanted. The dashboard requires a Better Auth session there — the
  * Worker stays JWT-free.
  */
-export function redirectToAuthz(cfg: GatedConfig, host: string, nextPath: string): Response {
+export function redirectToAuthz(
+  cfg: GatedConfig,
+  host: string,
+  nextPath: string,
+  accessMode?: string,
+): Response {
   const url = new URL(cfg.appAuthzUrl);
   url.searchParams.set("host", host);
   // `next` is the path (+query) the viewer was trying to reach; the dashboard
   // echoes it back to the content-host callback. It is a redirect hint only,
   // never an authorization input.
   url.searchParams.set("next", safeNextPath(nextPath));
+  // `mode=password` tells the dashboard to render the password form straight
+  // away, WITHOUT requiring a Dropway sign-in: a password site is open to anyone
+  // holding the password. It is a UI hint only — the password endpoint re-resolves
+  // the host's real mode and verifies the password, so a forged hint grants
+  // nothing. Identity-gated modes carry no hint (the dashboard requires a session).
+  if (accessMode === "password") url.searchParams.set("mode", "password");
   const headers = noStoreHeaders();
   headers.set("Location", url.toString());
   return new Response(null, { status: 302, headers });
@@ -173,7 +184,7 @@ export async function handleAuthzCallback(
 
   if (claims === null) {
     // Bad/expired/mismatched token at the callback → back to the exchange.
-    return redirectToAuthz(cfg, url.host, nextPath);
+    return redirectToAuthz(cfg, url.host, nextPath, route.access_mode);
   }
 
   const headers = noStoreHeaders();

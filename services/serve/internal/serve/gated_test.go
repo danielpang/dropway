@@ -55,6 +55,10 @@ func TestGated_NoCookieRedirectsToAuthz(t *testing.T) {
 	if u.Query().Get("next") != "/secret" {
 		t.Errorf("authz next = %q, want /secret", u.Query().Get("next"))
 	}
+	// A password site tells the dashboard to show the password form without a sign-in.
+	if u.Query().Get("mode") != "password" {
+		t.Errorf("authz mode = %q, want password", u.Query().Get("mode"))
+	}
 	if strings.Contains(rec.Body.String(), "secret") {
 		t.Errorf("no-cookie response must not leak content")
 	}
