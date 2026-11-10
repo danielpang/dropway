@@ -1136,7 +1136,28 @@ describe("serve() gated path — edge-token verification", () => {
     expect(loc.origin + loc.pathname).toBe(AUTHZ_URL);
     expect(loc.searchParams.get("host")).toBe(GATED_HOST);
     expect(loc.searchParams.get("next")).toBe("/docs/x?y=1");
+    // Identity-gated → no password hint (the dashboard requires a sign-in).
+    expect(loc.searchParams.get("mode")).toBeNull();
     expect(res.headers.get("Cache-Control")).toContain("no-store");
+  });
+
+  it("302s a PASSWORD site to /authz with mode=password (no sign-in required)", async () => {
+    const signer = await makeEdgeSigner();
+    const route: RouteValue = { ...PUBLIC_ROUTE, access_mode: "password" };
+    const { objects } = gatedDeploy();
+    const env = gatedEnv(route, GATED_HOST, objects);
+
+    const res = await serve(get(GATED_HOST, "/docs/x"), env, {
+      cache: null,
+      fetchImpl: mockJwksFetch(signer.jwks),
+    });
+
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("Location")!);
+    expect(loc.origin + loc.pathname).toBe(AUTHZ_URL);
+    expect(loc.searchParams.get("host")).toBe(GATED_HOST);
+    expect(loc.searchParams.get("next")).toBe("/docs/x");
+    expect(loc.searchParams.get("mode")).toBe("password");
   });
 
   it("302s to /authz when the token has the WRONG aud (host mismatch / replay)", async () => {

@@ -29,7 +29,13 @@ export const dynamic = "force-dynamic";
  * 302s an unauthenticated request here as
  * `/authz?host=<content_host>&next=<path>`. This server route:
  *
- *  1. Requires a Better Auth session, else bounces to sign-in and returns here.
+ *  0. PASSWORD sites (`mode=password` hint from the edge): render the password
+ *     form immediately, NO sign-in. A password site is open to anyone holding
+ *     the password, account or not. The hint only picks the UI: the JWT-free
+ *     /v1/authz/password endpoint re-resolves the host's real mode and verifies
+ *     the password, so a forged hint on a non-password site just fails.
+ *  1. Otherwise requires a Better Auth session, else bounces to sign-in and
+ *     returns here.
  *  2. Validates `host` (must be a real content host) + `next` (a same-site path)
  *     to close the open-redirect / token-exfiltration hole.
  *  3. Attempts to MINT a host-scoped edge token for the viewer (org_only /
@@ -52,6 +58,7 @@ export default async function AuthzPage({
   const sp = await searchParams;
   const rawHost = typeof sp.host === "string" ? sp.host : undefined;
   const rawNext = typeof sp.next === "string" ? sp.next : undefined;
+  const passwordHint = sp.mode === "password";
 
   const host = normalizeContentHost(rawHost);
   const next = safeNextPath(rawNext);
@@ -65,6 +72,12 @@ export default async function AuthzPage({
         description="The address is missing or malformed. Ask whoever shared it for a fresh link."
       />
     );
+  }
+
+  // 0) Password-mode site: the password is the only credential, so never demand
+  //    a Dropway account. Render the platform-controlled form right away.
+  if (passwordHint) {
+    return <PasswordPrompt host={host} next={next} />;
   }
 
   // 1) Require a session; bounce to sign-in and come straight back here.
@@ -91,12 +104,7 @@ export default async function AuthzPage({
 
     if (err.status === 400) {
       // Password-mode site → render the platform-controlled password form.
-      return (
-        <div className="space-y-6">
-          <Header host={host} />
-          <PasswordGate host={host} next={next} />
-        </div>
-      );
+      return <PasswordPrompt host={host} next={next} />;
     }
 
     if (err.status === 403) {
@@ -147,6 +155,16 @@ export default async function AuthzPage({
       title="Something went wrong"
       description="We couldn't verify your access just now. Refresh to try again."
     />
+  );
+}
+
+/** The password form plus its heading, for a password-protected site. */
+function PasswordPrompt({ host, next }: { host: string; next: string }) {
+  return (
+    <div className="space-y-6">
+      <Header host={host} />
+      <PasswordGate host={host} next={next} />
+    </div>
   );
 }
 

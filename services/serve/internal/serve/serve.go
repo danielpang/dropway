@@ -352,13 +352,13 @@ func (h *Handler) serveGated(w http.ResponseWriter, r *http.Request, rt *Route, 
 	// Read + verify the __Host-edge cookie against THIS route.
 	token := h.readEdgeCookie(r)
 	if token == "" || h.verifier == nil {
-		h.redirectToAuthz(w, r, host)
+		h.redirectToAuthz(w, r, rt, host)
 		return
 	}
 	if _, ok := h.verifier.Verify(r.Context(), token, host, rt.SiteID, rt.AccessMode, rt.OrgID); !ok {
 		// No/invalid cookie, JWKS outage, mode/site mismatch, expired, or revoked ⇒
 		// bounce to the dashboard exchange. All collapse to a single fail-closed 302.
-		h.redirectToAuthz(w, r, host)
+		h.redirectToAuthz(w, r, rt, host)
 		return
 	}
 
@@ -431,7 +431,7 @@ func (h *Handler) handleAuthzCallback(w http.ResponseWriter, r *http.Request, rt
 		_, ok = h.verifier.Verify(r.Context(), token, host, rt.SiteID, rt.AccessMode, rt.OrgID)
 	}
 	if !ok {
-		h.redirectToAuthz(w, r, host)
+		h.redirectToAuthz(w, r, rt, host)
 		return
 	}
 
@@ -465,7 +465,7 @@ func (h *Handler) contentURL(host, pathAndQuery string) string {
 
 // redirectToAuthz 302s an unauthenticated / invalid-token gated request to the
 // dashboard /authz exchange with host + a safe next (no-store).
-func (h *Handler) redirectToAuthz(w http.ResponseWriter, r *http.Request, host string) {
+func (h *Handler) redirectToAuthz(w http.ResponseWriter, r *http.Request, rt *Route, host string) {
 	nextPath := route.SafeNextPath(rawPathAndQuery(r))
 	u, err := url.Parse(h.cfg.AppAuthzURL)
 	if err != nil {
@@ -477,6 +477,13 @@ func (h *Handler) redirectToAuthz(w http.ResponseWriter, r *http.Request, host s
 	qs := u.Query()
 	qs.Set("host", host)
 	qs.Set("next", nextPath)
+	// mode=password lets the dashboard render the password form WITHOUT a Dropway
+	// sign-in (a password site is open to anyone holding the password). UI hint only:
+	// the password endpoint re-resolves the real mode + verifies the password, so a
+	// forged hint grants nothing. Mirrors authz.ts redirectToAuthz.
+	if rt != nil && rt.AccessMode == projection.AccessPassword {
+		qs.Set("mode", "password")
+	}
 	u.RawQuery = qs.Encode()
 
 	hd := w.Header()

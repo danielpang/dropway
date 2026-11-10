@@ -87,7 +87,7 @@ export async function serveGated(
     // No/invalid edge cookie → bounce to the dashboard exchange. The `next` is
     // the path+query the viewer wanted, returned to the content-host callback.
     const nextPath = url.pathname + url.search;
-    return redirectToAuthz(opts.cfg, url.host, nextPath);
+    return redirectToAuthz(opts.cfg, url.host, nextPath, route.access_mode);
   }
 
   // HARD REVOCATION (Phase 4): the token verified, but a ban /
@@ -104,7 +104,7 @@ export async function serveGated(
   });
   if (revoked) {
     const nextPath = url.pathname + url.search;
-    return redirectToAuthz(opts.cfg, url.host, nextPath);
+    return redirectToAuthz(opts.cfg, url.host, nextPath, route.access_mode);
   }
 
   // Authorized. Serve the protected bytes, but FORCE private/no-store so the

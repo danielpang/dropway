@@ -86,6 +86,9 @@ func TestIntegration_OrgOnly_ServeFromObjectStore(t *testing.T) {
 	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "/authz") || !strings.Contains(loc, "host="+testHost) {
 		t.Fatalf("no-token: Location = %q, want the /authz exchange with host=%s", loc, testHost)
 	}
+	if loc := rec.Header().Get("Location"); strings.Contains(loc, "mode=password") {
+		t.Fatalf("no-token: org_only Location = %q must not carry the password hint", loc)
+	}
 	if strings.Contains(rec.Body.String(), "members only") {
 		t.Fatal("no-token response leaked content")
 	}
