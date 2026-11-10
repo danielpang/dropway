@@ -120,7 +120,10 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
             JOIN app.review_candidates c ON c.org_id=v.org_id AND c.site_id=v.site_id AND c.content_hash=v.content_hash
              WHERE c.org_id=$1 AND c.state IN ('pending','approved')
             UNION
-            SELECT version_id::text FROM app.review_threads WHERE org_id=$1`, orgID)
+            SELECT version_id::text FROM app.review_threads WHERE org_id=$1
+            UNION
+            SELECT version_id::text FROM app.execution_jobs
+             WHERE org_id=$1 AND state IN ('queued','running','clarification')`, orgID)
 		if err != nil {
 			return err
 		}

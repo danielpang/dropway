@@ -112,12 +112,12 @@ describe("pin", () => {
       /expired/,
     );
     expect(() => assertNoSecretFields({ apiKey: "sk-ant-secret", nested: { flyToken: "x" } })).toThrow(/not accepted/);
-    expect(EXECUTION_WIRED).toBe(false);
+    expect(EXECUTION_WIRED).toBe(true);
   });
 });
 
 describe("package boundary", () => {
-  it("does not call Sprites, spawn a host shell, or approve a candidate", async () => {
+  it("uses the SDK boundary without a host shell or candidate approval", async () => {
     const root = join(process.cwd(), "src");
     const files = await sourceFiles(root);
     const source = (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");

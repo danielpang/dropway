@@ -129,7 +129,7 @@ export function validatePin(pin: RunPin): void {
 }
 
 export function validateCapability(capability: GatewayCapability, pin: RunPin, now: Date): void {
-  if (!/^dw_gateway_[A-Za-z0-9_-]{8,}$/.test(capability.token)) {
+  if (!/^dw_gateway_[A-Za-z0-9_.-]{8,}$/.test(capability.token)) {
     fail("gateway_capability", "gateway capability must be an expiring dw_gateway_ token");
   }
   if (/^sk-/i.test(capability.token)) {

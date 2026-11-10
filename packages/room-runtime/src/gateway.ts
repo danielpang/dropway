@@ -4,7 +4,16 @@ import { InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { fail } from "./errors.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { GatewayCapability, ProviderId, RunPin } from "./pin.js";
+
+const trustedTransport = new AsyncLocalStorage<boolean>();
+let modelTransportActive = false;
+
+/** Only the trusted control plane gets this function, never a model tool. */
+export function withControlPlaneTransport<T>(operation: () => Promise<T>): Promise<T> {
+  return trustedTransport.run(true, operation);
+}
 
 export interface TurnObservation {
   usagePresent: boolean;
@@ -47,8 +56,8 @@ export class GatewayObserver {
     } else if ("choices" in event || "usage" in event) {
       this.noteUsage(event.usage);
     }
-    const choice = Array.isArray(event.choices) ? (event.choices[0] as { finish_reason?: string } | undefined) : undefined;
-    if (event.type === "message_stop" || choice?.finish_reason) this.finishTurn();
+    // OpenAI/OpenRouter usage may arrive in a separate chunk AFTER finish_reason.
+    if (event.type === "message_stop") this.finishTurn();
   }
 
   finishTurn(): void {
@@ -136,12 +145,17 @@ export async function createGatewayRuntime(pin: RunPin, capability: GatewayCapab
  * Pi starts tool calls.
  */
 export async function withGatewayFetch(
-  origin: string,
+  baseURL: string,
   observer: GatewayObserver,
   fn: () => Promise<void>,
 ): Promise<void> {
+  if (modelTransportActive) fail("concurrent_attempt", "one model attempt per worker process is required");
+  modelTransportActive = true;
+  const base = new URL(baseURL);
+  const prefix = base.pathname.replace(/\/$/, "");
   const previous = globalThis.fetch;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (trustedTransport.getStore() === true) return previous(input, init);
     if (observer.blockFurtherModelCalls) {
       fail("model_blocked", "further model calls are blocked for this attempt");
     }
@@ -152,19 +166,21 @@ export async function withGatewayFetch(
     } catch {
       fail("gateway_fetch", `refusing non-absolute request ${url}`);
     }
-    if (parsed.origin !== origin) {
+    if (parsed.origin !== base.origin || parsed.username || parsed.password || (parsed.search !== "" && !(parsed.pathname === `${prefix}/v1/messages` && parsed.search === "?beta=true")) || parsed.hash ||
+        ![`${prefix}/v1/messages`, `${prefix}/v1/chat/completions`].includes(parsed.pathname)) {
       fail("gateway_fetch", `refusing request outside the model gateway: ${parsed.origin}`);
     }
     const headers = headersOf(init?.headers);
     const body = typeof init?.body === "string" ? init.body : init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : "";
     observer.requests.push({ url: parsed.pathname + parsed.search, headers, body });
-    const response = await previous(input, init);
+    const response = await previous(input, { ...init, redirect: "error" });
     return tapResponse(response, observer);
   }) as typeof fetch;
   try {
     await fn();
   } finally {
     globalThis.fetch = previous;
+    modelTransportActive = false;
   }
 }
 
@@ -217,7 +233,8 @@ function drainEvents(buffer: string, observer: GatewayObserver): string {
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trim())
       .join("");
-    if (!data || data === "[DONE]") continue;
+    if (!data) continue;
+    if (data === "[DONE]") { observer.finishTurn(); continue; }
     try {
       observer.note(JSON.parse(data) as unknown);
     } catch {

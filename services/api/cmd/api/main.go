@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -235,6 +236,18 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		siteStore = st
 	}
 	api := handlers.NewFull(qp, siteStore, obj, proj)
+	var credentialKey []byte
+	executionEnabled := os.Getenv("ROOM_EXECUTION_ENABLED") == "1"
+	if executionEnabled {
+		credentialKey, err = base64.StdEncoding.DecodeString(os.Getenv("ROOM_CREDENTIAL_MASTER_KEY"))
+		if err != nil || len(credentialKey) != 32 {
+			return fmt.Errorf("ROOM_CREDENTIAL_MASTER_KEY must encode exactly 32 bytes")
+		}
+	}
+	api.Hosted, err = handlers.NewHostedRuntime(st, credentialKey, os.Getenv("ROOM_WORKER_TOKEN"), os.Getenv("ROOM_API_PUBLIC_URL"), executionEnabled)
+	if err != nil {
+		return fmt.Errorf("hosted execution configuration is invalid: %w", err)
+	}
 	if st != nil {
 		api.Rooms = st
 		stopRecovery := startCandidateProjectionRecovery(st, proj)

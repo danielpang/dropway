@@ -1,5 +1,8 @@
 "use server";
 
+import { createHash } from "node:crypto";
+import { prepareStaticSnapshot, verifiedRasterDataURL } from "@/lib/collab/static-renderer";
+import { snapshotPagePath } from "@/lib/collab/static-snapshot";
 import { isCollabReviewEnabled } from "@/lib/collab";
 import { ApiError, api } from "@/lib/api";
 import {
@@ -78,12 +81,12 @@ export async function createThreadAction(input: {
   siteId: string;
   versionId: string;
   page: string;
-  kind: "page" | "point";
+  kind: "page" | "point" | "text" | "component";
   anchor: unknown;
   body: string;
 }) {
   if (!enabled()) return closed();
-  if (input.kind !== "page" && input.kind !== "point") {
+  if (!["page", "point", "text", "component"].includes(input.kind)) {
     return { ok: false as const, message: "That anchor is not available." };
   }
   try {
@@ -258,12 +261,12 @@ export async function resolveAction(roomId: string, threadId: string) {
   }
 }
 
-export async function reanchorAction(roomId: string, threadId: string, reason: string) {
+export async function reanchorAction(roomId: string, threadId: string, reason: string, selection?: { kind: "point" | "text" | "component"; anchor: Record<string, unknown> }) {
   if (!enabled()) return closed();
   try {
     const thread = parseThreadDetail(await api.reanchorReviewThread(roomId, threadId, {
-      kind: "page",
-      anchor: {},
+      kind: selection?.kind ?? "page",
+      anchor: selection?.anchor ?? {},
       anchorState: "anchored",
       reason,
     }));
@@ -419,5 +422,43 @@ export async function loadThreadRevisionsAction(roomId: string, threadId: string
     return { ok: true as const, thread };
   } catch (error) {
     return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+
+function verifiedSnapshotFile(value: unknown, siteId: string, versionId: string, path: string) {
+  if (!value || typeof value !== "object") throw new Error("Invalid snapshot file.");
+  const row = value as Record<string, unknown>;
+  if (row.site_id !== siteId || row.version_id !== versionId || row.path !== path || typeof row.content_base64 !== "string"
+    || typeof row.content_type !== "string" || typeof row.sha256 !== "string" || typeof row.content_hash !== "string"
+    || !/^[0-9a-f]{64}$/.test(row.content_hash) || row.content_base64.length > 2800000) throw new Error("Invalid snapshot identity.");
+  const bytes = Buffer.from(row.content_base64, "base64");
+  if (bytes.toString("base64") !== row.content_base64 || createHash("sha256").update(bytes).digest("hex") !== row.sha256) throw new Error("Snapshot verification failed.");
+  return { bytes, contentType: row.content_type, contentHash: row.content_hash };
+}
+
+export async function loadStaticSnapshotAction(roomId: string, siteId: string, versionId: string, page: string) {
+  if (!enabled()) return closed();
+  const path = snapshotPagePath(page);
+  if (!path) return { ok: false as const, message: "Choose a file path inside this version." };
+  try {
+    const file = verifiedSnapshotFile(await api.getRoomVersionFile(roomId, siteId, versionId, path), siteId, versionId, path);
+    const mime = file.contentType.split(";")[0]!.trim().toLowerCase();
+    if (mime !== "text/html" && mime !== "application/xhtml+xml") return { ok: false as const, message: "Static review currently supports HTML pages. Other files keep page comments." };
+    const html = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
+    const prepared = prepareStaticSnapshot(html, `/${path}`);
+    const images = new Map<string, string>();
+    await Promise.all(prepared.imagePaths.slice(0, 8).map(async (assetPath) => {
+      try {
+        const asset = verifiedSnapshotFile(await api.getRoomVersionFile(roomId, siteId, versionId, assetPath), siteId, versionId, assetPath);
+        if (asset.contentHash !== file.contentHash) return;
+        const url = verifiedRasterDataURL(asset.bytes, asset.contentType);
+        if (url) images.set(assetPath, url);
+      } catch { /* Missing, oversized or unsupported assets stay visibly omitted. */ }
+    }));
+    return { ok: true as const, snapshot: prepared.render(images, { siteId, versionId, contentHash: file.contentHash, page }) };
+  } catch {
+    // Never return source bytes, object-store details, or raw parser errors.
+    return { ok: false as const, message: "This immutable page could not be verified or is too large for static review. Page comments remain available." };
   }
 }

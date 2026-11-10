@@ -1531,7 +1531,7 @@ export const api = {
     siteId: string;
     versionId: string;
     page: string;
-    kind: "page" | "point";
+    kind: "page" | "point" | "text" | "component";
     anchor: unknown;
   }): Promise<ReviewThread> {
     const body = await apiFetch<{ thread: ReviewThread }>(
@@ -1605,6 +1605,24 @@ export const api = {
     return apiFetch(`/v1/sites/${encodeURIComponent(siteId)}/comment-pages?${pageQuery(cursor)}`);
   },
 
+  async listProviderCredentials(): Promise<unknown> { return apiFetch("/v1/provider-credentials"); },
+  async saveProviderCredential(input: { provider: string; label: string; api_key: string }, id?: string): Promise<unknown> {
+    return apiFetch(id ? `/v1/provider-credentials/${encodeURIComponent(id)}` : "/v1/provider-credentials", { method: id ? "PUT" : "POST", body: JSON.stringify(input) });
+  },
+  async validateProviderCredential(id: string): Promise<unknown> { return apiFetch(`/v1/provider-credentials/${encodeURIComponent(id)}/validate`, { method: "POST", body: "{}" }); },
+  async revokeProviderCredential(id: string): Promise<void> { await apiFetch(`/v1/provider-credentials/${encodeURIComponent(id)}`, { method: "DELETE" }); },
+  async listHostedJobs(roomId: string): Promise<unknown> { return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/executions`); },
+  async getHostedJob(roomId: string, jobId: string): Promise<unknown> { return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/executions/${encodeURIComponent(jobId)}`); },
+  async runHostedJob(roomId: string, input: unknown): Promise<unknown> { return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/executions`, { method: "POST", body: JSON.stringify(input) }); },
+  async cancelHostedJob(roomId: string, jobId: string): Promise<void> { await apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/executions/${encodeURIComponent(jobId)}/cancel`, { method: "POST", body: "{}" }); },
+  async resumeHostedJob(roomId: string, sessionId: string, answer: string, idempotencyKey: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/sessions/${encodeURIComponent(sessionId)}/resume`, { method: "POST", body: JSON.stringify({ answer, idempotency_key: idempotencyKey }) });
+  },
+
+  async getRoomVersionFile(roomId: string, siteId: string, versionId: string, path: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/sites/${encodeURIComponent(siteId)}/versions/${encodeURIComponent(versionId)}/files/content?path=${encodeURIComponent(path)}`);
+  },
+
   async listRoomActivity(roomId: string, cursor?: string): Promise<unknown> {
     return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/activity?${pageQuery(cursor)}`);
   },
@@ -1659,7 +1677,7 @@ export const api = {
   async reanchorReviewThread(
     roomId: string,
     threadId: string,
-    input: { kind: "page"; anchor: Record<string, never>; anchorState: "anchored" | "orphaned"; reason: string },
+    input: { kind: "page" | "point" | "text" | "component"; anchor: Record<string, unknown>; anchorState: "anchored" | "orphaned"; reason: string },
   ): Promise<unknown> {
     return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/threads/${encodeURIComponent(threadId)}/reanchor`, {
       method: "POST",

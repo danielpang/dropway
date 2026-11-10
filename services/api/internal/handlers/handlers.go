@@ -49,6 +49,7 @@ func (a *API) previewTTL() time.Duration {
 // JWKS) and Domains (the Cloudflare-for-SaaS custom-hostname provider). Both are
 // optional: routes that need them return 503 when unset.
 type API struct {
+	Hosted     *HostedRuntime
 	Quota      quota.Provider
 	Store      SiteStore
 	Objects    ObjectStore

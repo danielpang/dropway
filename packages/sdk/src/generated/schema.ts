@@ -1669,10 +1669,251 @@ export interface paths {
         patch: operations["patchChatSettings"];
         trace?: never;
     };
+    "/v1/provider-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List personal credential metadata
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        get: operations["listProviderCredentials"];
+        put?: never;
+        /**
+         * Encrypt a personal provider credential
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        post: operations["saveProviderCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/provider-credentials/{credentialID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace and invalidate a credential generation
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        put: operations["replaceProviderCredential"];
+        post?: never;
+        /**
+         * Revoke a personal credential
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        delete: operations["revokeProviderCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/provider-credentials/{credentialID}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate a credential with its provider
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        post: operations["validateProviderCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List recent room execution jobs
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        get: operations["listHostedExecutions"];
+        put?: never;
+        /**
+         * Queue a bounded revision of immutable site assets
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        post: operations["queueHostedExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/executions/{jobID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read execution progress and clarification
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        get: operations["getHostedExecution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/executions/{jobID}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel an execution and revoke its capabilities
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        post: operations["cancelHostedExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/sessions/{sessionID}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume clarification in a fresh attempt
+         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         */
+        post: operations["resumeHostedExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/sites/{siteID}/versions/{versionID}/files/content": {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+                siteID: string;
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read authorized immutable bytes for a static review rendition
+         * @description Human session or MCP OAuth. Rechecks live room membership/site access and verifies manifest/blob integrity. Maximum 2 MiB per file. Response is private and not cacheable. The content must never be executed on the application origin.
+         */
+        get: operations["readReviewVersionFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProviderCredential: {
+            id: string;
+            /** @enum {string} */
+            provider: "anthropic" | "openrouter";
+            label: string;
+            last_four: string;
+            generation: number;
+            validated_at: string | null;
+            revoked_at: string | null;
+            created_at: string;
+        };
+        ExecutionBudget: {
+            max_tokens: number;
+            max_calls: number;
+            max_seconds: number;
+            max_output_bytes: number;
+        };
+        ExecutionConfig: {
+            provider: string;
+            model_id: string;
+            harness_id: string;
+            harness_version: string;
+            prompt: string;
+            budget: components["schemas"]["ExecutionBudget"];
+            tool_policy: string;
+        };
+        ExecutionJob: {
+            id: string;
+            org_id: string;
+            room_id: string;
+            site_id: string;
+            version_id: string;
+            content_hash: string;
+            initiator_user_id: string;
+            credential_ref: string;
+            created_at: string;
+            updated_at: string;
+            /** @enum {string} */
+            state: "queued" | "running" | "clarification" | "completed" | "failed" | "cancelled";
+            config: components["schemas"]["ExecutionConfig"];
+            attempt_count: number;
+            tokens_used: number;
+            calls_used: number;
+            credential_generation: number;
+            candidate_id: string | null;
+            session_id: string | null;
+            failure_code: string | null;
+        };
         RoomActivity: {
             /** Format: uuid */
             id: string;
@@ -5710,6 +5951,400 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listProviderCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        credentials: components["schemas"]["ProviderCredential"][];
+                        execution_enabled: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    saveProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    provider: "anthropic" | "openrouter";
+                    label: string;
+                    api_key: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        credential: components["schemas"]["ProviderCredential"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    replaceProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    provider: "anthropic" | "openrouter";
+                    label: string;
+                    api_key: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        credential: components["schemas"]["ProviderCredential"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    revokeProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    validateProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        validated: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listHostedExecutions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        jobs: components["schemas"]["ExecutionJob"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    queueHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    site_id: string;
+                    version_id: string;
+                    credential_ref: string;
+                    /** @enum {string} */
+                    provider: "anthropic" | "openrouter";
+                    model_id: string;
+                    prompt: string;
+                    idempotency_key: string;
+                    budget: components["schemas"]["ExecutionBudget"];
+                    thread_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job: components["schemas"]["ExecutionJob"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job: components["schemas"]["ExecutionJob"];
+                        events: {
+                            id: string;
+                            kind: string;
+                            message: string;
+                            created_at: string;
+                        }[];
+                        question?: string;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resumeHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    answer: string;
+                    idempotency_key: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job: components["schemas"]["ExecutionJob"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution is disabled or unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readReviewVersionFile: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+                siteID: string;
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        site_id: string;
+                        version_id: string;
+                        content_hash: string;
+                        path: string;
+                        content_base64: string;
+                        content_type: string;
+                        sha256: string;
+                    };
+                };
+            };
             403: components["responses"]["Forbidden"];
         };
     };

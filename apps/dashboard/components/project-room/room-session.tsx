@@ -396,15 +396,15 @@ export function RoomSession({
           setNotice("Thread resolved. The anchor history was not rewritten.");
         });
       }}
-      onReanchor={(roomId, threadId, reason) => {
-        void reanchorAction(roomId, threadId, reason).then((result) => {
+      onReanchor={(roomId, threadId, reason, selection) => {
+        void reanchorAction(roomId, threadId, reason, selection).then((result) => {
           if (loadedRoom.current !== roomId) return;
           if (!result.ok) {
             setNotice(result.message);
             return;
           }
           setThreads((prev) => prev.map((item) => item.ID === threadId ? { ...item, AnchorState: result.thread.AnchorState } : item));
-          setNotice("Page reanchor appended. The original pin is unchanged.");
+          setNotice("Anchor revision appended. The original pin is unchanged.");
           void loadThreadLinkAction(roomId, threadId).then((refreshed) => {
             if (loadedRoom.current !== roomId || !refreshed.ok) return;
             setThreads((prev) => prev.map((thread) => thread.ID === threadId ? {

@@ -13,7 +13,10 @@ import { fail } from "./errors.js";
  * Specific allow rules beat the `*` deny. Docs:
  * https://docs.fly.io/sprites/concepts/networking/
  */
-export const ATTEMPT_EGRESS_POLICY: NetworkPolicy = {
+export const ATTEMPT_EGRESS_POLICY: NetworkPolicy = {rules: [{domain: "*", action: "deny"}]};
+
+/** Only an explicitly authorized build may opt into package downloads. */
+export const BUILD_EGRESS_POLICY: NetworkPolicy = {
   rules: [
     { domain: "*", action: "deny" },
     { domain: "registry.npmjs.org", action: "allow" },
@@ -45,7 +48,7 @@ const BLOCKED_ALLOW = new Set([
 ]);
 
 export function policyHash(policy: NetworkPolicy): string {
-  return createHash("sha256").update(JSON.stringify(policy.rules)).digest("hex");
+  return createHash("sha256").update(JSON.stringify(policy.rules.map((rule) => ({domain: rule.domain, action: rule.action, include: rule.include})))).digest("hex");
 }
 
 export function assertEgressPolicy(policy: NetworkPolicy): void {
@@ -60,7 +63,7 @@ export function assertEgressPolicy(policy: NetworkPolicy): void {
       fail("egress_too_wide", `Sprite policy must not allow ${rule.domain}`);
     }
   }
-  if (policyHash(policy) !== policyHash(ATTEMPT_EGRESS_POLICY)) {
+  if (policyHash(policy) !== policyHash(ATTEMPT_EGRESS_POLICY) && policyHash(policy) !== policyHash(BUILD_EGRESS_POLICY)) {
     fail("egress_unpinned", "Sprite policy is not the pinned deny-all allowlist");
   }
 }

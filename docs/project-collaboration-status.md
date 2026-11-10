@@ -38,21 +38,31 @@ The continuation branch integrates PR 167 (which includes the review stack), PR 
 - Durable projection effects recover post-commit failures from current database routes, never an obsolete route snapshot. A 30-second worker retries queued effects; successful sites reconcile again after five minutes to repair delayed legacy writes. Edge consistency remains eventual.
 - Garbage collection retains original thread versions and outstanding candidate bases/proposals.
 
-Both the dashboard review flag and organization setting remain off by default. No production migration, deployment, or provider-key collection is part of this continuation.
+## Hosted continuation (items 1–3)
+
+The next branch, `feat/hosted-collaboration-loop`, adds:
+
+- AES-GCM encrypted personal provider credentials with owner-bound validation, replacement/generation invalidation and revocation; no secrets returned to the dashboard or model worker.
+- Postgres jobs, leased attempts, bounded progress events and persisted clarification sessions; queue/claim/terminal submission idempotency, cumulative token/call/time budgets and current membership/site/credential rechecks.
+- A capability-bound Anthropic/OpenRouter gateway with conservative reservations and verified usage accounting, fixed provider origins and no fallback. Model output is buffered until usage settles.
+- A dedicated Node 24 Fly worker and pinned Sprites SDK adapter. It stages authorized immutable uploaded assets, exposes remote-only tools, exports verified files, destroys the Sprite and then submits a pending candidate. Clarification preserves modified files and transcript without a waiting VM.
+- Credential/model/budget setup and explicit run, progress, cancel and clarification controls in the dashboard. API, worker and dashboard enablement remain explicit.
+- Authorized immutable historical file reads and a strict static HTML rendition with precise text/component/document/image point selections. Source scripts, CSS, URLs, forms and embeds are removed; this is a semantic review rendition, not pixel-exact interactive playback.
+- Local security coverage for capability scope, missing usage, stale baselines, revoked credentials, lease expiry, cleanup, hostile HTML and forbidden sandbox operations. An opt-in live Sprite verification script is provided for the project owner's development testing.
+
+See [development setup and acceptance walkthrough](hosted-collaboration-development.md) for configuration, limits and recovery behavior.
 
 ## Remaining release work
 
-The complete PRD is **not release-ready** merely because the human review changes pass tests.
+1. **Live development verification:** the project owner will test actual Sprite and model integration. DNS/direct-IP/private-IP isolation, private URLs, cancellation/destruction, orphan recovery and provider/Sprite charges still require live observations. No paid resources were provisioned during implementation.
+2. **Release verification:** signed-in browser coverage of the complete hosted review cycle, Firefox/Safari behavior, a deployment/migration/rollback rehearsal and remaining technical-plan acceptance criteria.
+3. **Later source integrations:** GitHub checkout/build is intentionally outside this first integration; the selected scope is existing uploaded HTML/CSS/JS assets. Network access for package installation remains disabled.
 
-1. **Hosted execution:** encrypted personal provider credentials with validation/replacement/revocation; curated pinned model/preset selection; bounded gateway accounting; durable task/attempt/session records; actual API-to-worker orchestration; a real Sprite control-plane adapter; authorized source hydration and candidate capture; and thread-based clarification/resume with no waiting VM. The existing Pi spike is not this integration.
-2. **Live isolation verification:** real Sprite DNS/egress/direct-IP/private-IP enforcement, private URLs, cancellation/destruction/orphan cleanup, sleep/wake/checkpoints, and billing ceilings. Mock tests cannot establish these properties.
-3. **Precise HTML selections:** text/component/document-point targeting needs a trusted rendering architecture that satisfies the sandbox constraints. Opaque frames remain page-only; image pins are measured by the parent. Do not use wildcard handshakes or add same-origin privileges to claim support.
-4. **Original artifact reopening:** thread permalinks preserve original version/page/anchor metadata. A durable authorized preview of an old version must be verified separately; a live site URL is not an immutable preview.
-5. **Release verification:** signed-in browser coverage of the complete review cycle, unsupported-browser behavior, a production migration/rollback rehearsal, and the remaining acceptance criteria in the technical plan. Enable flags only as an explicit rollout action.
+No production migration, deployment or automatic merge occurred. The implemented controls and local tests do not replace the live release checks above.
 
 ## Validation
 
-Local validation on the continuation branch:
+Earlier human-review continuation validation (PR 169):
 
 - `go test ./...`, `go build ./...`, `go vet ./...`, and `go build -tags cloud ./...` passed.
 - Dashboard: 303 tests in 37 files passed, including all three real Chromium sandbox probes. Dashboard lint passed.
@@ -60,4 +70,13 @@ Local validation on the continuation branch:
 - Pi runtime spike: 18 mock tests passed; typecheck passed. This does not establish live Sprite behavior.
 - Real Postgres tests cover candidate application races, activity authorization, approval races, publish protection, version-insert protection, tenant RLS, complete comment/history pagination, GC retention, projection outage/restart recovery, stale-edge repair, and migration 0020 Down/Up.
 
-An authenticated full-browser review walkthrough, Firefox/Safari verification, and hosted execution end-to-end tests were not performed. No production migration, paid resource provisioning, deployment or automatic merge occurred.
+Hosted continuation validation:
+
+- Full Go unit suite and cloud build passed; `go vet ./...` passed.
+- Dashboard: 312 tests passed, including Chromium hostile-content and selection probes; lint passed.
+- All workspace typechecks passed; OpenAPI SDK generation passed.
+- Real local Postgres plus fake-provider integration covers credential lifecycle, claims, source binding, budget accounting, immutable candidate capture, retries, clarification/resume, cancellation, expired leases and revocation.
+- Runtime: 36 tests pass, including actual Pi orchestration against fake API/Sprite boundaries, scoped model transport and guest filesystem security.
+- The dedicated Node 24 worker image builds and loads its entrypoint with network access disabled and no credentials.
+
+An authenticated full-browser hosted walkthrough and Firefox/Safari verification were not performed. Real model calls and Sprite isolation checks remain for the owner's development tests. No production migration, paid resource provisioning, deployment or automatic merge occurred.

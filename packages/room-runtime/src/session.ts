@@ -61,16 +61,18 @@ export async function openLockedSession(input: {
   pin: RunPin;
   capability: GatewayCapability;
   gatewayOrigin: string;
+  gatewayBaseUrl?: string;
   transcript: TranscriptMessage[];
   executor: AttemptExecutor;
   observer: GatewayObserver;
   stop(status: RunStatus): void;
+  clarify?: (question: string) => void;
 }) {
   const settings = SettingsManager.inMemory();
   settings.setRetryEnabled(false);
   settings.setCompactionEnabled(false);
   settings.setCacheWarmingMode("off");
-  const model = pinnedModel(input.pin, input.gatewayOrigin);
+  const model = pinnedModel(input.pin, input.gatewayBaseUrl ?? input.gatewayOrigin);
   const sessionManager = SessionManager.inMemory(input.dir);
   seedTranscript(sessionManager, input.transcript, model);
   const guard: ToolGuard = {
@@ -78,6 +80,7 @@ export async function openLockedSession(input: {
     observer: input.observer,
     maxTotalTokens: input.pin.budget.maxTotalTokens,
     stop: input.stop,
+    clarify: input.clarify,
   };
   const modelRuntime = await createGatewayRuntime(input.pin, input.capability);
   const customTools = remoteTools(guard);
