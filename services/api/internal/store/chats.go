@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/danielpang/dropway/internal/chatspec"
@@ -225,16 +226,23 @@ func (s *Store) SetChatLogSite(ctx context.Context, t Tenant, id string, siteID 
 		if err != nil {
 			return err
 		}
+		// Both affected sites use a stable lock order now that unrelated sites
+		// share the org flag lock (opposite moves must not deadlock).
+		ids := []string{}
 		if log.SiteID != nil {
-			if err := guardControlledSite(ctx, q, t.OrgID, *log.SiteID); err != nil {
-				return err
-			}
+			ids = append(ids, *log.SiteID)
 		}
 		if siteID != nil {
 			if err := assertSiteInOrgTx(ctx, q, t, *siteID); err != nil {
 				return err
 			}
-			if err := guardControlledSite(ctx, q, t.OrgID, *siteID); err != nil {
+			if log.SiteID == nil || *log.SiteID != *siteID {
+				ids = append(ids, *siteID)
+			}
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			if err := guardControlledSite(ctx, q, t.OrgID, id); err != nil {
 				return err
 			}
 		}

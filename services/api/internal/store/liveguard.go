@@ -34,8 +34,9 @@ func HumanSessionFromContext(ctx context.Context) bool {
 	return human
 }
 
-// lockOrgThenSite locks the org flag row and then the site. Callers that add
-// or remove project-room protection use the same order.
+// lockOrgThenSite holds a shared org flag lock, then an exclusive site lock.
+// Unrelated site mutations can proceed concurrently; feature-flag updates wait
+// for these readers, and attachment changes serialize on the same site lock.
 func lockOrgThenSite(ctx context.Context, q *db.Queries, orgID, siteID string) (db.AppSite, error) {
 	if _, err := q.LockOrgMeta(ctx, orgID); err != nil {
 		if isNoRows(err) {

@@ -1685,13 +1685,13 @@ RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, cont
           summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at;
 
 -- name: LockOrgMeta :one
--- Lock the org row before a site lock. Publish, access changes, deletes, and
--- room attach/detach all take this lock first so the feature flag and the
--- site row cannot deadlock.
+-- Share-lock the org flag before exclusively locking a site. Unrelated sites
+-- proceed concurrently, while feature toggles wait for all in-flight mutations.
+-- Publish, access, deletes, and room attach/detach use the same lock order.
 SELECT id, project_rooms_enabled
 FROM app.org_meta
 WHERE id = sqlc.arg(org_id)
-FOR UPDATE;
+FOR SHARE;
 
 -- name: LockSite :one
 -- Row lock shared with candidate approval so a live-pointer publish and an

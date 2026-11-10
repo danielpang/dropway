@@ -216,7 +216,7 @@ export function RoomSession({
             return;
           }
           setOrgEnabled(true);
-          setNotice("Project rooms are enabled for this organization. Sites are still unchanged.");
+          setNotice("Project rooms are enabled. API-key and MCP deployment and publish writes to attached sites are now blocked.");
         });
       }}
       onSelectRoom={applyRoom}
@@ -370,7 +370,7 @@ export function RoomSession({
           }
           loadedRoom.current = "";
           applyRoom(roomId);
-          setNotice("Site attached. The site files were not changed.");
+          setNotice("Site attached. Direct API-key and MCP deployment and publish writes are now blocked while project rooms are enabled.");
         });
       }}
       onDetachSite={(roomId, siteId) => {

@@ -289,6 +289,12 @@ func (s *Store) LiveContentHashes(ctx context.Context, t Tenant) (map[string]str
 }
 
 func authorizeLockedCandidatePublish(ctx context.Context, q *db.Queries, orgID string, site db.AppSite, ver db.AppSiteVersion) error {
+	// Disabled or detached sites return to ordinary deployment behavior. The
+	// caller holds the org/site locks, so protection cannot change mid-publish.
+	controlled, err := q.SiteInEnabledProjectRoom(ctx, db.SiteInEnabledProjectRoomParams{OrgID: orgID, SiteID: site.ID})
+	if err != nil || !controlled {
+		return err
+	}
 	cands, err := q.ListCandidatesForArtifact(ctx, db.ListCandidatesForArtifactParams{
 		OrgID: orgID, SiteID: site.ID, ContentHash: ver.ContentHash,
 	})

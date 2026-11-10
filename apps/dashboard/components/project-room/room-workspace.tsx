@@ -250,7 +250,14 @@ export function RoomWorkspace({
         {room ? <Button type="button" size="sm" variant="outline" disabled={!onRefreshRoom || busyCandidates.length > 0}
           onClick={() => onRefreshRoom?.(room.ID)}>Refresh room</Button> : null}
         {orgEnabled ? null : (
-          <Button type="button" onClick={onEnableRooms}>Enable project rooms for this organization</Button>
+          <div className="space-y-2">
+            <p id="room-enable-impact" className="text-sm text-muted-foreground">
+              Enabling rooms makes attached sites subject to human review. API-key and MCP deployment and publish writes
+              to those sites will be blocked, including existing automated deployments.
+              Unattached sites are unaffected.
+            </p>
+            <Button type="button" aria-describedby="room-enable-impact" onClick={onEnableRooms}>Enable project rooms for this organization</Button>
+          </div>
         )}
       </header>
 
@@ -371,9 +378,15 @@ export function RoomWorkspace({
           </select>
           <Button type="submit" disabled={role !== "owner" || memberId.trim().length === 0}>Add member</Button>
         </form>
+        <p id="room-attach-impact" className="text-sm text-muted-foreground">
+          Attaching this site blocks direct API-key and MCP deployment and publish writes while project rooms are enabled,
+          including existing automated deployments. Automated changes must go through review and
+          human approval before they are applied.
+        </p>
         <Button
           type="button"
           variant="outline"
+          aria-describedby="room-attach-impact"
           disabled={(role !== "owner" && role !== "editor") || !room || siteId.trim().length === 0 || attachedSites.some((item) => item.siteId === siteId)}
           onClick={() => room && onAttachSite(room.ID, siteId.trim())}
         >

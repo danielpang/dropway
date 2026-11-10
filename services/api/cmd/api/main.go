@@ -103,6 +103,18 @@ func wireTelemetry(service string) (posthog.Client, errtrack.Reporter, string, a
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		if len(os.Args) != 2 || os.Args[1] != "--check-schema" {
+			fmt.Fprintln(os.Stderr, "usage: api [--check-schema]")
+			os.Exit(2)
+		}
+		if err := checkDeploymentSchema(os.Getenv("DATABASE_URL")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("Database schema is compatible with this API (through migration 0022).")
+		return
+	}
 	// Build the single shared posthog client + wire both telemetry seams over it
 	// (see wireTelemetry). Error tracking is wired here, before config.Load, so the
 	// default logger is wrapped immediately and captures even startup failures.
@@ -161,6 +173,12 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		}
 		pool = p
 		defer pool.Close()
+		checkCtx, finishCheck := context.WithTimeout(ctx, 30*time.Second)
+		err = store.CheckSchema(checkCtx, pool)
+		finishCheck()
+		if err != nil {
+			return err
+		}
 		st = store.New(pool, qp)
 		slog.Info("store wired (RLS tenant context per request)")
 	} else {

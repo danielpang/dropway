@@ -17,6 +17,13 @@ primary_region = "iad"   # set to the region nearest your Supabase DB (iad = US 
   [build.args]
     DROPWAY_BUILD_TAGS = "cloud"
 
+[deploy]
+  # Replaces CMD while the image ENTRYPOINT remains /usr/local/bin/api.
+  # Check only: privileged migrations run separately before this release.
+  # A failed release check leaves the existing serving Machines untouched.
+  release_command = "--check-schema"
+  release_command_timeout = "60s"
+
 [env]
   # Error tracking (internal/errtrack). Non-secret config only; the project key is
   # set out-of-band with `fly secrets set POSTHOG_KEY=phc_...`. With the key set,

@@ -4,9 +4,19 @@ This branch adds hosted editing of existing uploaded static site assets. A perso
 
 No production migration, deployment, paid model call, or Sprite provisioning was performed during implementation. Live development testing is the project owner's next step. Mock tests do not establish real network isolation or billing behavior.
 
+## Rollout safety
+
+Follow [API schema rollout](../deploy/API-ROLLOUT.md) before deploying. Fly runs a read-only `--check-schema` release check; a missing migration or runtime grant rejects the new release before serving instances are updated. The API repeats this check before opening its listener. Apply migrations separately; keep the expanded schema if rolling back application code.
+
+The ordinary API-key publishing/rollback path remains available for sites outside enabled rooms, including sites detached from rooms or in organizations that disable rooms. Enrolled sites continue to require human review. The enable/attach UI explains this change before the action. Disabling a room does not revoke an API key's own explicit scope/site restrictions.
+
+Normal keys created by Dropway have `sites:*` and no site restriction, so their existing unenrolled-site workflows remain compatible. Narrower scopes or a site restriction are security boundaries and remain enforced; do not broaden a key's privileges just to bypass an expected denial. Before rollout, audit any custom-provisioned restricted keys and test their intended routes.
+
+Ordinary site mutations share the organization configuration lock and lock only their target site exclusively. This preserves concurrent publishing to different sites while still serializing enrollment and configuration changes. Recovery polls only organizations with due candidate projections, so organizations with no collaboration history do not incur one query each every polling interval. These concurrency properties have local Postgres regression tests; production capacity still requires normal monitoring.
+
 ## Configuration
 
-Apply migrations through `0021_hosted_execution.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
+Apply migrations through `0022_projection_polling.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
 
 | Process | Setting | Value / purpose |
 | --- | --- | --- |
