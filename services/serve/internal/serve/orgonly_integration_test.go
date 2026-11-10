@@ -146,9 +146,37 @@ func stageServeITVersion(t *testing.T, ctx context.Context, s3 *storage.S3Store,
 
 // startServeITMinio starts a throwaway MinIO container and returns an S3Store
 // pointed at it. Torn down via t.Cleanup.
+// pullServeITMinioImage pulls the MinIO image before `docker run`, retrying with
+// backoff. Anonymous ghcr.io pulls are intermittently refused with a registry
+// rate-limit error ("error from registry: retry-after: …"), and `docker run`'s
+// implicit pull fails on the first refusal, so without this the test fails before
+// any assertion runs. A cached image skips the pull entirely.
+func pullServeITMinioImage(t *testing.T) {
+	t.Helper()
+	if exec.Command("docker", "image", "inspect", serveITMinioImage).Run() == nil {
+		return
+	}
+	var out []byte
+	var err error
+	backoff := 2 * time.Second
+	for attempt := 1; attempt <= 5; attempt++ {
+		out, err = exec.Command("docker", "pull", serveITMinioImage).CombinedOutput()
+		if err == nil {
+			return
+		}
+		t.Logf("docker pull minio (attempt %d/5): %v\n%s", attempt, err, out)
+		if attempt < 5 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+	t.Fatalf("docker pull minio: %v\n%s", err, out)
+}
+
 func startServeITMinio(t *testing.T, ctx context.Context) *storage.S3Store {
 	t.Helper()
 	_ = exec.Command("docker", "rm", "-f", serveITMinioName).Run()
+	pullServeITMinioImage(t)
 	out, err := exec.Command("docker", "run", "-d", "--name", serveITMinioName,
 		"-e", "MINIO_ROOT_USER="+serveITMinioUser, "-e", "MINIO_ROOT_PASSWORD="+serveITMinioPass,
 		"-p", serveITMinioPort+":9000", serveITMinioImage, "server", "/data").CombinedOutput()
