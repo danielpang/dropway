@@ -43,20 +43,21 @@ type CommentPage struct {
 
 // ReplyPage is one page of replies plus the thread anchor context.
 type ReplyPage struct {
-	ThreadID    string
-	RoomID      string
-	SiteID      string
-	VersionID   string
-	ContentHash string
-	Page        string
-	AnchorKind  string
-	Anchor      json.RawMessage
-	AnchorState string
-	Status      string
-	Revisions   []AnchorRevision
-	Replies     []ReviewReply
-	NextCursor  string
-	Untrusted   bool
+	ThreadID           string
+	RoomID             string
+	SiteID             string
+	VersionID          string
+	ContentHash        string
+	Page               string
+	AnchorKind         string
+	Anchor             json.RawMessage
+	AnchorState        string
+	Status             string
+	Revisions          []AnchorRevision
+	Replies            []ReviewReply
+	NextCursor         string
+	NextRevisionCursor string
+	Untrusted          bool
 }
 
 // ThreadPage is one keyset page of review threads still attached to the room.
@@ -75,7 +76,8 @@ type CandidatePage struct {
 // threads this user can read. Room membership is evaluated on this request.
 func (s *Store) PageSiteComments(ctx context.Context, t Tenant, siteID, cursor string, limit int) (CommentPage, error) {
 	limit = clampPage(limit)
-	at, kind, id, err := projectroom.DecodePageCursor(cursor)
+	page, err := s.beginReviewPage(t, "site-comments", siteID, cursor, false)
+	at, kind, id := page.At, page.Kind, page.ID
 	if err != nil {
 		return CommentPage{}, err
 	}
@@ -91,7 +93,7 @@ func (s *Store) PageSiteComments(ctx context.Context, t Tenant, siteID, cursor s
 			return err
 		}
 		feed, err := q.PageSiteFeedComments(ctx, db.PageSiteFeedCommentsParams{
-			OrgID: t.OrgID, SiteID: siteID, CursorAt: at, CursorKind: kind, CursorID: id, Lim: int32(limit),
+			OrgID: t.OrgID, SiteID: siteID, CursorAt: at, CursorKind: kind, CursorID: id, Lim: int32(limit + 1), Watermark: page.Watermark,
 		})
 		if err != nil {
 			return err
@@ -104,16 +106,24 @@ func (s *Store) PageSiteComments(ctx context.Context, t Tenant, siteID, cursor s
 		if enabled {
 			rooms, err = q.PageSiteRoomThreads(ctx, db.PageSiteRoomThreadsParams{
 				UserID: t.UserID, OrgID: t.OrgID, SiteID: siteID,
-				CursorAt: at, CursorKind: kind, CursorID: id, Lim: int32(limit),
+				CursorAt: at, CursorKind: kind, CursorID: id, Lim: int32(limit + 1), Watermark: page.Watermark,
 			})
 			if err != nil {
 				return err
 			}
 		}
-		out.Items = mergeCommentHeads(feed, rooms, limit)
-		if len(out.Items) == limit {
+		out.Items = mergeCommentHeads(feed, rooms, limit+1)
+		var more bool
+		out.Items, more, err = boundedReviewRows(out.Items, limit)
+		if err != nil {
+			return err
+		}
+		if more {
 			last := out.Items[len(out.Items)-1]
-			out.NextCursor = projectroom.EncodePageCursor(last.CreatedAt, last.Source, last.ID)
+			out.NextCursor, err = s.nextReviewPage(page, last.CreatedAt, last.Source, last.ID)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -122,14 +132,23 @@ func (s *Store) PageSiteComments(ctx context.Context, t Tenant, siteID, cursor s
 
 // PageReviewReplies returns the thread and one page of replies. A caller who
 // lost room membership, or a thread whose site left the room, gets not-found.
-func (s *Store) PageReviewReplies(ctx context.Context, t Tenant, threadID, cursor string, limit int) (ReplyPage, error) {
+func (s *Store) PageReviewReplies(ctx context.Context, t Tenant, threadID, cursor string, limit int, revisionCursor ...string) (ReplyPage, error) {
 	limit = clampPage(limit)
-	at, kind, id, err := projectroom.DecodePageCursor(cursor)
+	page, err := s.beginReviewPage(t, "thread-replies", threadID, cursor, false)
+	at, kind, id := page.At, page.Kind, page.ID
 	if err != nil {
 		return ReplyPage{}, err
 	}
 	if cursor != "" && kind != "reply" {
 		return ReplyPage{}, projectroom.ErrBadCursor
+	}
+	revisionToken := ""
+	if len(revisionCursor) > 0 {
+		revisionToken = revisionCursor[0]
+	}
+	revisionPage, err := s.beginReviewPage(t, "thread-revisions", threadID, revisionToken, false)
+	if err != nil {
+		return ReplyPage{}, err
 	}
 	var out ReplyPage
 	err = s.withTx(ctx, t, func(q *db.Queries) error {
@@ -152,13 +171,21 @@ func (s *Store) PageReviewReplies(ctx context.Context, t Tenant, threadID, curso
 			}
 			return err
 		}
-		revs, err := q.ListReviewAnchorRevisions(ctx, db.ListReviewAnchorRevisionsParams{OrgID: t.OrgID, ThreadID: threadID})
+		revs, err := q.PageReviewAnchorRevisions(ctx, db.PageReviewAnchorRevisionsParams{OrgID: t.OrgID, ThreadID: threadID, CursorAt: revisionPage.At, CursorID: revisionPage.ID, Watermark: revisionPage.Watermark, Lim: int32(limit + 1)})
 		if err != nil {
 			return err
 		}
 		replies, err := q.PageReviewReplies(ctx, db.PageReviewRepliesParams{
-			OrgID: t.OrgID, ThreadID: threadID, CursorAt: at, CursorID: id, Lim: int32(limit),
+			OrgID: t.OrgID, ThreadID: threadID, CursorAt: at, CursorID: id, Lim: int32(limit + 1), Watermark: page.Watermark,
 		})
+		if err != nil {
+			return err
+		}
+		revs, moreRevisions, err := boundedReviewRows(revs, limit)
+		if err != nil {
+			return err
+		}
+		replies, moreReplies, err := boundedReviewRows(replies, limit)
 		if err != nil {
 			return err
 		}
@@ -178,9 +205,19 @@ func (s *Store) PageReviewReplies(ctx context.Context, t Tenant, threadID, curso
 		for i, rp := range replies {
 			out.Replies[i] = ReviewReply{ID: rp.ID, AuthorID: rp.AuthorUserID, Body: rp.Body, CreatedAt: rp.CreatedAt}
 		}
-		if len(replies) == limit {
+		if moreReplies {
 			last := replies[len(replies)-1]
-			out.NextCursor = projectroom.EncodePageCursor(last.CreatedAt, "reply", last.ID)
+			out.NextCursor, err = s.nextReviewPage(page, last.CreatedAt, "reply", last.ID)
+			if err != nil {
+				return err
+			}
+		}
+		if moreRevisions {
+			last := revs[len(revs)-1]
+			out.NextRevisionCursor, err = s.nextReviewPage(revisionPage, last.CreatedAt, "revision", last.ID)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -261,24 +298,10 @@ func authorizeLockedCandidatePublish(ctx context.Context, q *db.Queries, orgID s
 	if len(cands) == 0 {
 		return nil
 	}
-	if site.CurrentVersionID == nil {
-		return ErrCandidatePublishDenied
-	}
-	live, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: *site.CurrentVersionID, OrgID: orgID})
-	if err != nil {
-		return err
-	}
-	matches := 0
-	for _, c := range cands {
-		if c.State == projectroom.CandidateApproved && c.ContentHash == ver.ContentHash &&
-			c.BaseVersionID == live.ID && c.BaseContentHash == live.ContentHash {
-			matches++
-		}
-	}
-	if matches != 1 {
-		return ErrCandidatePublishDenied
-	}
-	return nil
+	// Candidate artifacts must use the dedicated application path, which
+	// verifies all bytes and consumes the approval with an atomic receipt.
+	// Legacy publish must not bypass that receipt, even for human sessions.
+	return ErrCandidatePublishDenied
 }
 
 func mergeCommentHeads(feed []db.AppPostComment, rooms []db.AppReviewThread, limit int) []CommentFeedItem {

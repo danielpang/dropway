@@ -51,6 +51,9 @@ type ApprovalRequest struct {
 	LiveVersionID   string
 	LiveContentHash string
 	HumanSession    bool
+	// VerifiedVersionID is set only by the server after verifying the complete
+	// manifest and blobs. It is never decoded from the approval payload.
+	VerifiedVersionID string
 }
 
 // ApprovalResult is a single effect. Idempotent is true when the row was
@@ -110,7 +113,7 @@ func DecideReject(c Candidate, req ApprovalRequest) (ApprovalResult, error) {
 }
 
 // CanApply reports whether a candidate may be applied. Approved is necessary
-// and not sufficient: this slice still refuses application. Pending, rejected,
+// and not sufficient: application also checks the locked live baseline. Pending, rejected,
 // conflict, and unknown are denied.
 func CanApply(c Candidate, req ApprovalRequest) error {
 	if !req.HumanSession {

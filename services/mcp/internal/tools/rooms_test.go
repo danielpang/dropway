@@ -5,6 +5,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	mcpauth "github.com/danielpang/dropway/services/mcp/internal/auth"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -29,5 +31,22 @@ func TestRoomReadsForwardTokenAndCursor(t *testing.T) {
 	}
 	if _, err := svc.readJSON(context.Background(), readTok, "/v1/project-rooms/room-1/candidates/cand-1"); err != nil || api.jsonPath != "/v1/project-rooms/room-1/candidates/cand-1" {
 		t.Fatalf("candidate path=%s err=%v", api.jsonPath, err)
+	}
+}
+
+func TestCommentThreadForwardsIndependentHistoryCursor(t *testing.T) {
+	api := &fakeAPI{jsonDoc: json.RawMessage(`{"thread":{"next_cursor":"replies","next_revision_cursor":"history"}}`)}
+	svc := &Service{API: api}
+	ctx := mcpauth.WithToken(context.Background(), readTok)
+	_, out, err := svc.getCommentThreadHandler(ctx, nil, threadReadIn{ThreadID: "thread", Cursor: "reply+/=", RevisionsCursor: "history+/=", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(api.jsonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("cursor") != "reply+/=" || parsed.Query().Get("revisions_cursor") != "history+/=" || api.readToken != readTok || out.CommentContent != "untrusted_data" {
+		t.Fatalf("bad forwarded request %s", api.jsonPath)
 	}
 }

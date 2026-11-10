@@ -16,6 +16,11 @@ func TestPermissionMatrix(t *testing.T) {
 		ok   func(Role, SiteRights) bool
 		want bool
 	}{
+		{"owner attaches", RoleOwner, read, CanAttachSite, true},
+		{"editor attaches readable site", RoleEditor, read, CanAttachSite, true},
+		{"editor cannot attach unreadable site", RoleEditor, none, CanAttachSite, false},
+		{"reviewer cannot attach", RoleReviewer, edit, CanAttachSite, false},
+		{"viewer cannot attach", RoleViewer, read, CanAttachSite, false},
 		{"owner comments", RoleOwner, read, CanComment, true},
 		{"editor comments", RoleEditor, read, CanComment, true},
 		{"reviewer comments", RoleReviewer, read, CanComment, true},

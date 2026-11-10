@@ -30,6 +30,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		baseLogger = slog.Default()
 	}
 	r := chi.NewRouter()
+	reviewReads := handlers.ReviewReadLimiter()
 
 	// Baseline middleware: SANITIZE the inbound X-Request-Id (drop a forgeable value
 	// so chi mints a fresh one — prevents log/audit forgery via injected newlines /
@@ -160,12 +161,11 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			// Up/down vote a feed post (any member; +1/-1/0 to clear).
 			r.Put("/{id}/vote", api.SetSiteVote)
 
-			r.Get("/{id}/comment-pages", api.ListSiteCommentPage)
+			r.With(reviewReads).Get("/{id}/comment-pages", api.ListSiteCommentPage)
 			// Site comments: any org member may read + post (org-internal thread,
 			// RLS-scoped). Posting can tag teammates (@mentions).
 			r.Get("/{id}/comments", api.ListComments)
 			r.Post("/{id}/comments", api.AddComment)
-			r.Get("/{id}/comment-pages", api.ListSiteCommentPage)
 
 			// Phase 4 — generic admin hard-revoke of a site's edge tokens (a
 			// "kill the share now" affordance independent of an access change).
@@ -288,10 +288,13 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		r.Get("/orgs/project-rooms", api.GetProjectRoomSettings)
 		r.Patch("/orgs/project-rooms", api.SetProjectRoomSettings)
 		r.Route("/project-rooms", func(r chi.Router) {
+			r.Use(reviewReads)
 			r.Get("/", api.ListProjectRooms)
 			r.Post("/", api.CreateProjectRoom)
 			r.Get("/threads/{threadID}", api.GetReviewThreadPage)
 			r.Get("/{roomID}", api.GetProjectRoom)
+			r.Get("/{roomID}/activity", api.ListRoomActivity)
+			r.Post("/{roomID}/read", api.MarkProjectRoomRead)
 			r.Post("/{roomID}/members", api.AddProjectRoomMember)
 			r.Patch("/{roomID}/members/{userID}", api.UpdateProjectRoomMember)
 			r.Delete("/{roomID}/members/{userID}", api.RemoveProjectRoomMember)

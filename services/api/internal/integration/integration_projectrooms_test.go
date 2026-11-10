@@ -137,7 +137,7 @@ func TestIntegration_ProjectRooms(t *testing.T) {
 	if _, err := st.ApproveCandidate(ctx, tOwner, room.ID, replay, store.AuditRecord{}); !errors.Is(err, store.ErrNotFound) && !errors.Is(err, projectroom.ErrCandidateMismatch) {
 		t.Fatalf("replay err=%v", err)
 	}
-	if _, err := st.ApplyCandidate(ctx, tOwner, room.ID, req); !errors.Is(err, store.ErrApplicationDisabled) {
+	if _, err := st.ApplyCandidate(store.WithHumanSession(ctx, true), tOwner, room.ID, req); !errors.Is(err, store.ErrCandidateArtifact) {
 		t.Fatalf("apply err=%v", err)
 	}
 	live, err := st.GetSite(ctx, tOwner, site.ID)

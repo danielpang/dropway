@@ -143,6 +143,57 @@ func TestIntegration_CommentReadsAndCandidatePublish(t *testing.T) {
 	if len(gotReplies) != len(replies) {
 		t.Fatalf("replies %d", len(gotReplies))
 	}
+	// Anchor history and replies have separate signed cursors and watermarks.
+	for i := 0; i < 4; i++ {
+		if _, err := st.ReanchorReviewThread(ctx, tr, room.ID, threads[0], "page", "anchored", "reviewed", []byte(`{}`), store.AuditRecord{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initial, err := st.PageReviewReplies(ctx, tr, threads[0], "", 2)
+	if err != nil || len(initial.Revisions) != 2 || initial.NextRevisionCursor == "" || initial.NextCursor == "" {
+		t.Fatalf("independent pages %+v %v", initial, err)
+	}
+	// New history after the first page is excluded from its continuation.
+	if _, err := st.ReanchorReviewThread(ctx, tr, room.ID, threads[0], "page", "orphaned", "later", []byte(`{}`), store.AuditRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	revisionIDs := map[string]bool{}
+	for _, revision := range initial.Revisions {
+		revisionIDs[revision.ID] = true
+	}
+	revisionCursor := initial.NextRevisionCursor
+	for revisionCursor != "" {
+		page, err := st.PageReviewReplies(ctx, tr, threads[0], "", 2, revisionCursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, revision := range page.Revisions {
+			if revisionIDs[revision.ID] {
+				t.Fatalf("duplicate revision %s", revision.ID)
+			}
+			revisionIDs[revision.ID] = true
+		}
+		if page.Replies[0].ID != initial.Replies[0].ID {
+			t.Fatal("history cursor moved reply position")
+		}
+		revisionCursor = page.NextRevisionCursor
+	}
+	if len(revisionIDs) != 5 {
+		t.Fatalf("history traversal includes late/missing revision: %d", len(revisionIDs))
+	}
+	fresh, err := st.PageReviewReplies(ctx, tr, threads[0], "", 100)
+	if err != nil || len(fresh.Revisions) != 6 {
+		t.Fatalf("fresh history %+v %v", fresh, err)
+	}
+	if _, err := st.PageReviewReplies(ctx, tr, threads[0], "", 2, initial.NextCursor); !errors.Is(err, projectroom.ErrBadCursor) {
+		t.Fatalf("reply cursor accepted as history: %v", err)
+	}
+	if _, err := st.PageReviewReplies(ctx, tr, threads[1], "", 2, initial.NextRevisionCursor); !errors.Is(err, projectroom.ErrBadCursor) {
+		t.Fatalf("foreign thread cursor accepted: %v", err)
+	}
+	if _, err := st.PageReviewReplies(ctx, tn, threads[0], "", 2, initial.NextRevisionCursor); !errors.Is(err, projectroom.ErrBadCursor) {
+		t.Fatalf("foreign user history cursor accepted: %v", err)
+	}
 	cand, err := st.SubmitCandidate(ctx, tn, room.ID, site.ID, v1.ID, strings.Repeat("cd", 32), strings.Repeat("ef", 32), "rename")
 	if err != nil {
 		t.Fatal(err)

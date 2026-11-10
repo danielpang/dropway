@@ -1,7 +1,7 @@
 # Project rooms API contract (phase 1)
 
 This slice is default-off (`app.org_meta.project_rooms_enabled`, default `false`).
-It does not run Pi, start Sprites, store provider keys, or publish a candidate.
+It does not run Pi, start Sprites, or store provider keys. An authenticated human can explicitly apply an approved candidate.
 
 ## Rooms
 
@@ -16,7 +16,7 @@ Site reads stay org-wide. There is no finer per-user site ACL. Content edit righ
 | reviewer | yes | yes, if the caller can read the site | yes | no |
 | viewer | yes | no | no | no |
 
-The room owner manages members and site references. Non-members in the same org get not-found. API keys cannot call room routes.
+The room owner manages members and may detach site references. Owners and editors may attach same-org sites they can read. Non-members in the same org get not-found. API keys cannot call room routes.
 
 Version sign-off (`POST /v1/project-rooms/{roomID}/version-signoffs`) records that a person has looked at a specific version. It does not publish and it does not authorize applying a change.
 
@@ -34,7 +34,8 @@ Thread pins are immutable: `site_id`, `version_id`, `content_hash` (copied from 
 - Repeating approve on the same artifact does not write a second effect and cannot be replayed onto another candidate or version.
 - If the live baseline is not that base version, the candidate becomes `conflict` and is not applied.
 - Reject is terminal.
-- `POST .../candidates/{id}/apply` checks those rules and then returns `candidate application is not enabled`. It does not call publish.
+- `POST .../candidates/{id}/apply` verifies every base/proposed manifest and blob, then rechecks membership, site attachment, edit rights, exact identity, and the locked live baseline. It publishes and inserts an immutable application receipt in one transaction. The response includes `applied`, `changed`, `version_id`, `live_url`, and `candidate`. A retry at the same live version returns `changed: false`; a retry after later publication is a conflict and never rolls back the site.
+- Applied candidates include `applied_version_id` in snake_case reads and `AppliedVersionID` in existing Go-shaped decision/application responses. Approval and application remain separate actions.
 
 ## Live mutation boundary
 
@@ -47,15 +48,15 @@ Credential class is stamped by the auth middleware after it verifies the bearer.
 
 For a site that is **not** in an enabled project room, prepare, finalize, and publish behave as before, including `sites:*` CI keys.
 
-For a site that **is** referenced by a project room while `project_rooms_enabled` is true, `POST /v1/sites/{id}/deployments/prepare`, `POST /v1/sites/{id}/deployments`, and `POST /v1/sites/{id}/publish` (including rollback) require `human_session`. Org API keys and MCP OAuth receive 403. Omitting `X-Dropway-Attempt-Token` does not change that. Candidate apply stays disabled and re-checks the live baseline under the same site row lock publish uses.
+For a site that **is** referenced by a project room while `project_rooms_enabled` is true, `POST /v1/sites/{id}/deployments/prepare`, `POST /v1/sites/{id}/deployments`, and `POST /v1/sites/{id}/publish` (including rollback) require `human_session`. Org API keys and MCP OAuth receive 403. Omitting `X-Dropway-Attempt-Token` does not change that. Candidate apply rechecks the live baseline under the same site row lock publish uses.
 
 Approval and publish lock `app.sites` before deciding, then lock the candidate. A second decision does not write a second audit. A hash or base version that belongs to a different candidate does not change either row.
 
-`DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. A human room owner can detach a site with `DELETE /v1/project-rooms/{roomID}/sites/{siteID}`. That locks the site first and does not delete candidates. A version whose content hash equals a review candidate can be published only when exactly one approved candidate for that hash still matches the locked live baseline.
+`DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. A human room owner can detach a site with `DELETE /v1/project-rooms/{roomID}/sites/{siteID}`. That locks the site first and does not delete candidates. A version whose content hash equals a review candidate cannot use legacy publish, even after approval. It must pass complete artifact verification and the application receipt transaction through candidate Apply.
 
 Publish and rollback re-check that membership inside the same transaction that locks `app.org_meta` and then `app.sites`. Attaching a site, approving a candidate, and applying a candidate take those locks in that order. A non-human publish that is still waiting on the site lock sees a membership committed by the transaction that held the lock. Disabling `project_rooms_enabled` is a human admin action; it locks the same org row, so a key cannot observe the old flag and then publish after the flag has changed.
 
-Skills, chats, and memories are outside this boundary. An org-wide key (`sites:*`, null `site_id`) can still call them. A non-null `site_id` cannot.
+Site-linked chats and memories are protected as described below. Org-wide skill writes and chats/manual memories with no site remain available to org keys; a non-null key `site_id` cannot access those org-wide routes.
 
 ## Execution seam
 
@@ -98,7 +99,7 @@ Reads accept `human_session` or `mcp_oauth` and recheck org membership and room 
 | POST | `/v1/project-rooms/{roomID}/members` | Owner. `{user_id, role}` of `editor`, `reviewer`, or `viewer`. |
 | PATCH | `/v1/project-rooms/{roomID}/members/{userID}` | Owner. Cannot change the owner. |
 | DELETE | `/v1/project-rooms/{roomID}/members/{userID}` | Owner. Cannot remove the owner. The next read by that user is not-found. |
-| POST | `/v1/project-rooms/{roomID}/sites` | Owner. `{site_id}`. |
+| POST | `/v1/project-rooms/{roomID}/sites` | Owner or editor with site read rights. `{site_id}`. |
 | DELETE | `/v1/project-rooms/{roomID}/sites/{siteID}` | Owner. Detach only. |
 | POST | `/v1/project-rooms/{roomID}/threads/{threadID}/resolve` | Owner, editor, or reviewer who can read the site. |
 | POST | `/v1/project-rooms/{roomID}/threads/{threadID}/reanchor` | Same callers. `{kind, anchor, anchor_state, reason}` appends a revision and does not change the pin. |
@@ -148,3 +149,19 @@ MCP tools `list_site_comments`, `get_comment_thread`, `get_project_room`, `list_
 ## Site-linked chats and memories
 
 A non-human caller cannot create, append, delete, move, or retarget a chat attached to a site in an enabled room, and cannot edit or delete a memory whose source is that site's version or attached chat. The store locks the org row, then the site row, in the same transaction. Chats and manual memories with no site stay available to org keys. Skills have no site foreign key, so org-wide skill writes are unchanged.
+
+## Activity and read state
+
+`GET /v1/project-rooms/{roomID}/activity?cursor&limit` accepts human sessions and MCP OAuth. It returns `{items, next_cursor, unread}` newest first. Each item contains `id`, `room_id`, `actor_user_id`, `kind`, `created_at`, and optional `thread_id`, `site_id`, and `version_id`. It contains references, never comment bodies. Cursors are bound to the room and membership is rechecked for each page. Activity for detached or deleted sites is excluded from both results and unread counts.
+
+`POST /v1/project-rooms/{roomID}/read` accepts human members only and returns `{last_read_at}`. It marks only that human's room activity as read. A GET, MCP read, or mark-read never approves, resolves, or applies a candidate.
+
+## Pagination and publication recovery
+
+Review cursors are authenticated and encrypted, bound to org, connecting user, endpoint namespace and target, with a fixed creation watermark and 30-minute expiry. Key rotation invalidates outstanding cursors. All API replicas must use the same `EDGE_SIGNING_KEY`; the API derives a separate cursor key from it. Development stores use a random ephemeral key. Unknown filters are rejected rather than silently ignored.
+
+Thread replies and anchor revisions paginate independently: `cursor` / `next_cursor` for replies, `revisions_cursor` / `next_revision_cursor` for anchor history. Original thread pins stay immutable. Responses are byte-bounded with explicit continuations; a single oversized item returns 413 rather than truncating silently. Review reads share a per-process user/org budget of 120 requests/minute with burst 30; throttled reads return 429 and `Retry-After`.
+
+Candidate application writes a durable projection intent with its receipt. The API tries immediate delivery and polls recovery every 30 seconds with a 20-second deadline. Recovery derives the current database route under publication locks, including current access policy and custom hosts. A successful site is reconciled again after five minutes to repair delayed stale writes from legacy handlers. Delivery is bounded to 100 sites per org per pass, with randomized tenant scheduling. KV convergence is eventual; this does not promise linearizable edge reads.
+
+Apply migration 0020 before starting this API revision. The organization and dashboard review flags remain off by default; migration, flag enablement, and production deployment are separate rollout actions.

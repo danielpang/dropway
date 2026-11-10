@@ -196,6 +196,11 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	if err != nil {
 		return err
 	}
+	if st != nil {
+		if err := st.SetCursorKey(edgeSigner.ReviewCursorKey()); err != nil {
+			return fmt.Errorf("configure review pagination: %w", err)
+		}
+	}
 	if generated {
 		slog.Warn("EDGE_SIGNING_KEY not set — generated an EPHEMERAL edge signer; set EDGE_SIGNING_KEY to persist",
 			"kid", edgeSigner.Kid(), "seed_base64url", seed)
@@ -232,6 +237,8 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 	api := handlers.NewFull(qp, siteStore, obj, proj)
 	if st != nil {
 		api.Rooms = st
+		stopRecovery := startCandidateProjectionRecovery(st, proj)
+		defer stopRecovery()
 	}
 	api.EdgeSigner = edgeSigner
 	api.Domains = domains

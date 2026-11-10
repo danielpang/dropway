@@ -1579,8 +1579,10 @@ export const api = {
     return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/threads?${pageQuery(cursor)}`);
   },
 
-  async getReviewThread(threadId: string, cursor?: string): Promise<unknown> {
-    return apiFetch(`/v1/project-rooms/threads/${encodeURIComponent(threadId)}?${pageQuery(cursor)}`);
+  async getReviewThread(threadId: string, cursor?: string, revisionsCursor?: string): Promise<unknown> {
+    const query = new URLSearchParams(pageQuery(cursor));
+    if (revisionsCursor) query.set("revisions_cursor", revisionsCursor);
+    return apiFetch(`/v1/project-rooms/threads/${encodeURIComponent(threadId)}?${query.toString()}`);
   },
 
   async listRoomCandidates(roomId: string, cursor?: string): Promise<unknown> {
@@ -1603,10 +1605,34 @@ export const api = {
     return apiFetch(`/v1/sites/${encodeURIComponent(siteId)}/comment-pages?${pageQuery(cursor)}`);
   },
 
+  async listRoomActivity(roomId: string, cursor?: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/activity?${pageQuery(cursor)}`);
+  },
+
+  async markRoomRead(roomId: string): Promise<void> {
+    await apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/read`, { method: "POST", body: JSON.stringify({}) });
+  },
+
   async addProjectRoomMember(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer"): Promise<void> {
     await apiFetch<void>(`/v1/project-rooms/${encodeURIComponent(roomId)}/members`, {
       method: "POST",
       body: JSON.stringify({ user_id: userId, role }),
+    });
+  },
+
+  async updateProjectRoomMember(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer"): Promise<void> {
+    await apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(userId)}`, {
+      method: "PATCH", body: JSON.stringify({ role }),
+    });
+  },
+
+  async removeProjectRoomMember(roomId: string, userId: string): Promise<void> {
+    await apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  },
+
+  async applyProjectRoomCandidate(roomId: string, candidateId: string, binding: ApprovalBinding): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/candidates/${encodeURIComponent(candidateId)}/apply`, {
+      method: "POST", body: JSON.stringify(binding),
     });
   },
 

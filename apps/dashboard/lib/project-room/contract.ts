@@ -48,6 +48,9 @@ export interface ReviewReply {
 }
 
 export interface ReviewThread {
+  NextReplyCursor?: string | null;
+  NextRevisionCursor?: string | null;
+  Revisions?: AnchorRevision[];
   ID: string;
   RoomID: string;
   SiteID: string;
@@ -72,6 +75,7 @@ export interface VersionSignoff {
 }
 
 export interface ReviewCandidate {
+  AppliedVersionID?: string | null;
   ID: string;
   RoomID: string;
   SiteID: string;
@@ -346,6 +350,7 @@ export function parseCandidate(value: unknown): ReviewCandidate | null {
     BaseContentHash: baseHash,
     ContentHash: hash,
     DiffHash: diff,
+    AppliedVersionID: str(field(row, "AppliedVersionID", "applied_version_id")),
     Summary: summary,
     State: state,
     CreatedBy: typeof field(row, "CreatedBy", "created_by") === "string" ? String(field(row, "CreatedBy", "created_by")) : "",
@@ -385,6 +390,14 @@ export function parseThread(value: unknown): ReviewThread | null {
     CreatedBy: typeof field(row, "CreatedBy", "created_by") === "string" ? String(field(row, "CreatedBy", "created_by")) : "",
     CreatedAt: typeof field(row, "CreatedAt", "created_at") === "string" ? String(field(row, "CreatedAt", "created_at")) : "",
     Replies: replies,
+    NextReplyCursor: str(row.next_cursor),
+    NextRevisionCursor: str(row.next_revision_cursor),
+    Revisions: Array.isArray(row.revisions) ? row.revisions.flatMap((item) => {
+      const revision = record(item);
+      if (!revision || !str(revision.id) || !str(revision.anchor_kind) || !str(revision.page) || !str(revision.anchor_state) || typeof revision.reason !== "string" || !str(revision.created_at)) return [];
+      return [{ id: String(revision.id), anchorKind: String(revision.anchor_kind), page: String(revision.page),
+        anchorState: String(revision.anchor_state), reason: revision.reason, createdAt: String(revision.created_at) }];
+    }) : [],
   };
 }
 
@@ -565,6 +578,7 @@ export function parseCandidateDiff(value: unknown): CandidateDiff | { verified: 
 
 export function diffMatchesCandidate(diff: CandidateDiff, candidate: ReviewCandidate): boolean {
   return diff.verified
+    && diff.siteId === candidate.SiteID
     && diff.candidateId === candidate.ID
     && diff.baseVersionId === candidate.BaseVersionID
     && diff.baseContentHash === candidate.BaseContentHash
@@ -606,6 +620,55 @@ export function decisionPath(roomId: string, candidateId: string, decision: "app
 export function terminalCopy(state: string): string | null {
   if (state === "rejected") return "Rejected. That decision is terminal and was not applied.";
   if (state === "conflict") return "Conflict. The live baseline did not match, so the change was not applied.";
-  if (state === "approved") return "Approved. Application is still disabled, and repeating approval does not write a second effect.";
+  if (state === "applied") return "Applied. This approved change was published.";
+  if (state === "approved") return "Approved. Ready to apply after verifying the diff and live base.";
   return null;
+}
+
+export interface RoomActivity {
+  id: string;
+  actorUserId: string;
+  kind: string;
+  threadId: string | null;
+  siteId: string | null;
+  versionId: string | null;
+  createdAt: string;
+}
+
+export function parseRoomActivity(value: unknown): { items: RoomActivity[]; nextCursor: string | null; unread: number } | null {
+  const row = record(value);
+  if (!row || !Array.isArray(row.items)) return null;
+  const items: RoomActivity[] = [];
+  for (const item of row.items) {
+    const entry = record(item);
+    if (!entry || !str(entry.id) || !str(entry.kind) || !str(entry.created_at)) return null;
+    items.push({ id: String(entry.id), actorUserId: typeof entry.actor_user_id === "string" ? entry.actor_user_id : "",
+      kind: String(entry.kind), threadId: str(entry.thread_id), siteId: str(entry.site_id), versionId: str(entry.version_id), createdAt: String(entry.created_at) });
+  }
+  return { items, nextCursor: str(row.next_cursor), unread: typeof row.unread === "number" ? row.unread : 0 };
+}
+
+/** Room membership never grants the site's independent content-edit permission. */
+export function canEditRoomSite(site: { owner_id?: string; allow_member_edits?: boolean }, me: { user_id?: string; role?: string }): boolean {
+  return Boolean(me.user_id) && (site.allow_member_edits === true || site.owner_id === me.user_id || me.role === "admin" || me.role === "owner");
+}
+
+/** Resolve an immutable thread's page only within the already-approved content origin. */
+export function threadPageUrl(liveUrl: string, page: string): string | null {
+  if (!page.startsWith("/") || page.startsWith("//") || page.includes("\\")) return null;
+  try {
+    const base = new URL(liveUrl);
+    const target = new URL(page, base);
+    return target.origin === base.origin ? target.href : null;
+  } catch { return null; }
+}
+
+/** Historical revisions never replace the immutable thread pin or its independently paged replies. */
+export function appendThreadRevisions(thread: ReviewThread, page: ReviewThread): ReviewThread {
+  if (thread.ID !== page.ID || thread.RoomID !== page.RoomID || thread.SiteID !== page.SiteID
+    || thread.VersionID !== page.VersionID || thread.ContentHash !== page.ContentHash || thread.Page !== page.Page) return thread;
+  const existing = thread.Revisions ?? [];
+  const seen = new Set(existing.map((revision) => revision.id));
+  return { ...thread, NextRevisionCursor: page.NextRevisionCursor,
+    Revisions: [...existing, ...(page.Revisions ?? []).filter((revision) => !seen.has(revision.id))] };
 }

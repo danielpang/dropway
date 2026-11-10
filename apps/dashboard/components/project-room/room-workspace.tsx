@@ -23,16 +23,18 @@ import {
   parseRole,
   shippedPreciseHtmlSelection,
   untrustedText,
+  threadPageUrl,
   type CandidateDiffView,
-  type LiveBaseline,
   type ProjectRoom,
   type ReviewCandidate,
   type ReviewThread,
   type SiteCommentItem,
   type SiteRights,
+  type RoomActivity,
 } from "@/lib/project-room/contract";
 
 export interface RoomSiteOption {
+  canEditContent?: boolean;
   id: string;
   slug: string;
   liveUrl: string | null;
@@ -41,6 +43,10 @@ export interface RoomSiteOption {
 }
 
 export function RoomWorkspace({
+  activity = [],
+  activityCursor = null,
+  onLoadMoreActivity,
+  onMarkRead,
   rooms,
   sites,
   threads,
@@ -58,21 +64,32 @@ export function RoomWorkspace({
   onEnableRooms,
   onCreateRoom,
   onSelectRoom,
+  onRefreshRoom,
   onSelectSite,
   onLoadMoreComments,
   onLoadMoreThreads,
   onLoadMoreCandidates,
   onCreateThread,
   onReply,
+  onLoadMoreReplies,
+  onLoadMoreRevisions,
   onSignoff,
   onDecide,
+  onApply,
+  busyCandidates = [],
   onSubmitCandidate,
   onAddMember,
+  onUpdateMember,
+  onRemoveMember,
   onAttachSite,
   onDetachSite,
   onResolve,
   onReanchor,
 }: {
+  activity?: RoomActivity[];
+  activityCursor?: string | null;
+  onLoadMoreActivity?: (roomId: string, cursor: string) => void;
+  onMarkRead?: (roomId: string) => void;
   rooms: ProjectRoom[];
   sites: RoomSiteOption[];
   threads: ReviewThread[];
@@ -90,6 +107,7 @@ export function RoomWorkspace({
   onEnableRooms: () => void;
   onCreateRoom: (name: string) => void;
   onSelectRoom: (roomId: string) => void;
+  onRefreshRoom?: (roomId: string) => void;
   onSelectSite: (siteId: string) => void;
   onLoadMoreComments: (siteId: string, cursor: string) => void;
   onLoadMoreThreads: (roomId: string, cursor: string) => void;
@@ -103,9 +121,13 @@ export function RoomWorkspace({
     anchor: unknown;
     body: string;
   }) => void;
+  onLoadMoreRevisions?: (roomId: string, threadId: string, cursor: string) => void;
+  onLoadMoreReplies?: (roomId: string, threadId: string, cursor: string) => void;
   onReply: (roomId: string, threadId: string, body: string) => void;
   onSignoff: (roomId: string, siteId: string, versionId: string) => void;
   onDecide: (roomId: string, candidate: ReviewCandidate, decision: "approve" | "reject") => void;
+  onApply?: (roomId: string, candidate: ReviewCandidate) => void;
+  busyCandidates?: string[];
   onSubmitCandidate: (input: {
     roomId: string;
     siteId: string;
@@ -115,12 +137,21 @@ export function RoomWorkspace({
     summary: string;
   }) => void;
   onAddMember: (roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") => void;
+  onUpdateMember?: (roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") => void;
+  onRemoveMember?: (roomId: string, userId: string) => void;
   onAttachSite: (roomId: string, siteId: string) => void;
   onDetachSite: (roomId: string, siteId: string) => void;
   onResolve: (roomId: string, threadId: string) => void;
   onReanchor: (roomId: string, threadId: string, reason: string) => void;
 }) {
   const [roomId, setRoomId] = React.useState(rooms[0]?.ID ?? "");
+  const restoredRoomLink = React.useRef(false);
+  React.useEffect(() => {
+    if (restoredRoomLink.current || rooms.length === 0) return;
+    restoredRoomLink.current = true;
+    const requested = new URLSearchParams(window.location.search).get("room");
+    if (requested && rooms.some((item) => item.ID === requested)) setRoomId(requested);
+  }, [rooms]);
   const [name, setName] = React.useState("");
   const [siteId, setSiteId] = React.useState(sites[0]?.id ?? "");
   const [versionId, setVersionId] = React.useState(sites[0]?.currentVersionId ?? "");
@@ -130,6 +161,23 @@ export function RoomWorkspace({
   const [memberId, setMemberId] = React.useState("");
   const [memberRole, setMemberRole] = React.useState<"editor" | "reviewer" | "viewer">("reviewer");
   const [reanchorReason, setReanchorReason] = React.useState("");
+  const [linkedThreadId, setLinkedThreadId] = React.useState("");
+  React.useEffect(() => {
+    const readLink = () => setLinkedThreadId(window.location.hash.startsWith("#thread-") ? window.location.hash.slice(8) : "");
+    readLink();
+    window.addEventListener("hashchange", readLink);
+    return () => window.removeEventListener("hashchange", readLink);
+  }, []);
+  const linkedThread = threads.find((item) => item.ID === linkedThreadId && item.RoomID === roomId) ?? null;
+  const linkedSiteId = linkedThread?.SiteID;
+  const linkedVersionId = linkedThread?.VersionID;
+  const linkedPage = linkedThread?.Page;
+  React.useEffect(() => {
+    if (!linkedSiteId || !linkedVersionId || !linkedPage) return;
+    setSiteId(linkedSiteId);
+    setVersionId(linkedVersionId);
+    setPage(linkedPage);
+  }, [linkedSiteId, linkedVersionId, linkedPage]);
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const room = rooms.find((item) => item.ID === roomId) ?? null;
   React.useEffect(() => {
@@ -143,16 +191,15 @@ export function RoomWorkspace({
   }, [onSelectSite, siteId]);
   const role = room ? parseRole(room.Role) : null;
   const site = sites.find((item) => item.id === siteId) ?? null;
-  const rights: SiteRights = { canRead: true, canEditContent: role === "owner" || role === "editor" };
+  const rights: SiteRights = { canRead: site !== null, canEditContent: site?.canEditContent === true };
   const commentOk = role ? canComment(role, rights) : false;
   const decideOk = role ? canDecideChange(role, rights) : false;
   const signoffOk = role ? canSignOffVersion(role, rights) : false;
-  const preview = site?.liveUrl && previewFrameDecision(site.liveUrl, parentOrigin).ok ? site.liveUrl : null;
+  const originalUnavailable = linkedThread !== null && (linkedThread.VersionID !== site?.currentVersionId || linkedThread.ContentHash !== site?.currentContentHash);
+  const previewUrl = site?.liveUrl ? (linkedThread ? threadPageUrl(site.liveUrl, linkedThread.Page) : site.liveUrl) : null;
+  const preview = !originalUnavailable && previewUrl && previewFrameDecision(previewUrl, parentOrigin).ok ? previewUrl : null;
   const imagePreview = preview !== null && /\.(png|jpe?g|gif|webp)(\?|$)/i.test(preview);
-  const live: LiveBaseline = {
-    versionId: site?.currentVersionId ?? null,
-    contentHash: site?.currentContentHash ?? null,
-  };
+
 
   return (
     <div className="space-y-8">
@@ -163,6 +210,8 @@ export function RoomWorkspace({
           not approval of a change. Frame messages cannot approve or execute tools.
         </p>
         {notice ? <p role="status" className="text-sm text-foreground">{notice}</p> : null}
+        {room ? <Button type="button" size="sm" variant="outline" disabled={!onRefreshRoom || busyCandidates.length > 0}
+          onClick={() => onRefreshRoom?.(room.ID)}>Refresh room</Button> : null}
         {orgEnabled ? null : (
           <Button type="button" onClick={onEnableRooms}>Enable project rooms for this organization</Button>
         )}
@@ -184,7 +233,7 @@ export function RoomWorkspace({
                 >
                   <span className="font-medium text-foreground">{item.Name}</span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Role {item.Role}. Owner {item.OwnerUserID}.
+                    Role {item.Role}. Owner {item.OwnerUserID}. {item.Unread > 0 ? `${item.Unread} unread activities.` : ""}
                   </span>
                 </button>
               </li>
@@ -203,15 +252,49 @@ export function RoomWorkspace({
         </form>
       </section>
 
+      <section className="space-y-3" aria-label="Room activity">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-sm font-medium text-foreground">Activity</h2>
+          <Button type="button" size="sm" variant="outline" disabled={!room || !onMarkRead || room.Unread === 0}
+            onClick={() => room && onMarkRead?.(room.ID)}>Mark room read</Button>
+        </div>
+        <p className="text-sm text-foreground">{candidates.filter((item) => item.State === "pending").length} pending decisions in the loaded changes.</p>
+        <ul className="space-y-2 text-sm text-muted-foreground">
+          {activity.map((item) => <li key={item.id}>
+            <span>{item.kind.replaceAll("_", " ")} · {item.actorUserId} · {item.createdAt}</span>
+            {item.threadId && room ? <> · <a className="underline" href={`/rooms?room=${encodeURIComponent(room.ID)}#thread-${encodeURIComponent(item.threadId)}`}>View thread</a></> : null}
+            {item.versionId ? <span> · version {item.versionId}</span> : null}
+          </li>)}
+        </ul>
+        {activityCursor && room ? <Button type="button" variant="outline" onClick={() => onLoadMoreActivity?.(room.ID, activityCursor)}>Load older activity</Button> : null}
+      </section>
+
       <section className="space-y-3" aria-label="Members and sites">
         <h2 className="text-sm font-medium text-foreground">Members and sites</h2>
         <p className="text-sm text-muted-foreground">
-          Only a room owner can add or remove members and attach or detach sites. Detach does not
+          Room owners manage members. Owners and editors can attach sites; only owners can detach them. Detach does not
           delete the site or its candidates.
         </p>
         <ul className="text-sm text-foreground">
           {members.map((member) => (
-            <li key={member.userId}>{member.userId} · {member.role}</li>
+            <li key={member.userId} className="flex flex-wrap items-center gap-2 py-1">
+              <span>{member.userId}</span>
+              {member.role === "owner" ? <span>owner</span> : <>
+                <select
+                  aria-label={`Role for ${member.userId}`}
+                  value={member.role}
+                  disabled={role !== "owner" || !onUpdateMember}
+                  onChange={(event) => room && onUpdateMember?.(room.ID, member.userId, event.target.value as "editor" | "reviewer" | "viewer")}
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                >
+                  <option value="editor">editor</option>
+                  <option value="reviewer">reviewer</option>
+                  <option value="viewer">viewer</option>
+                </select>
+                <Button type="button" size="sm" variant="outline" disabled={role !== "owner" || !onRemoveMember}
+                  onClick={() => room && onRemoveMember?.(room.ID, member.userId)}>Remove member</Button>
+              </>}
+            </li>
           ))}
         </ul>
         <ul className="text-sm text-foreground">
@@ -254,7 +337,7 @@ export function RoomWorkspace({
         <Button
           type="button"
           variant="outline"
-          disabled={role !== "owner" || !room || siteId.trim().length === 0}
+          disabled={(role !== "owner" && role !== "editor") || !room || siteId.trim().length === 0 || attachedSites.some((item) => item.siteId === siteId)}
           onClick={() => room && onAttachSite(room.ID, siteId.trim())}
         >
           Attach site
@@ -275,6 +358,10 @@ export function RoomWorkspace({
           <li>Text highlight: not available on sandboxed HTML.</li>
           <li>Component id: not available on sandboxed HTML.</li>
         </ul>
+        {linkedThread ? <p className="text-sm text-foreground">
+          Original thread context: version {linkedThread.VersionID}, page {linkedThread.Page}, content hash {linkedThread.ContentHash}.
+          {originalUnavailable ? " This is an older version. Its immutable preview is unavailable here; the current live page is not shown in its place." : ""}
+        </p> : null}
         {preview ? (
           <CandidatePreviewFrame
             src={preview}
@@ -285,7 +372,7 @@ export function RoomWorkspace({
           />
         ) : (
           <p className="text-sm text-muted-foreground">
-            This site URL is not an allowed https content origin, so the frame stays unloaded.
+            {originalUnavailable ? "The original version remains pinned in the thread below." : "This site URL is not an allowed https content origin, so the frame stays unloaded."}
           </p>
         )}
         {imagePreview && preview ? (
@@ -330,9 +417,10 @@ export function RoomWorkspace({
               className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1"
               value={siteId}
               onChange={(event) => {
+                setLinkedThreadId("");
                 setSiteId(event.target.value);
                 const next = sites.find((item) => item.id === event.target.value);
-                if (next?.currentVersionId) setVersionId(next.currentVersionId);
+                setVersionId(next?.currentVersionId ?? "");
               }}
             >
               {sites.map((item) => (
@@ -396,14 +484,28 @@ export function RoomWorkspace({
           Comment text is untrusted and shown as text.
         </p>
         <ul className="space-y-3">
-          {threads.map((thread) => (
-            <li key={thread.ID} className="space-y-2 rounded-md border border-border p-3 text-sm">
+          {threads.filter((thread) => thread.RoomID === roomId).map((thread) => (
+            <li id={`thread-${thread.ID}`} key={thread.ID} className="space-y-2 rounded-md border border-border p-3 text-sm">
               <p className="font-medium text-foreground">
                 {thread.AnchorKind === "page" ? "Page comment" : thread.AnchorKind === "point" ? "Image pin" : thread.AnchorKind} on {thread.Page}
               </p>
               <p className="text-xs text-muted-foreground">
                 Version {thread.VersionID}, hash {thread.ContentHash}. State {thread.AnchorState}. Status {thread.Status}.
+                {" "}<a href={`/rooms?room=${encodeURIComponent(thread.RoomID)}#thread-${encodeURIComponent(thread.ID)}`} className="underline">Link to thread</a>
               </p>
+              <details className="space-y-2 text-sm">
+                <summary className="cursor-pointer text-muted-foreground">Anchor history</summary>
+                <p className="text-xs text-muted-foreground">Revisions record changes to the anchor. The original version, page and content hash above remain pinned.</p>
+                <ol className="space-y-2">
+                  {(thread.Revisions ?? []).map((revision) => <li key={revision.id} className="rounded-md border border-border p-2">
+                    <p>{revision.anchorKind} · {revision.anchorState} · page {revision.page}</p>
+                    <p className="text-xs text-muted-foreground">{revision.createdAt}</p>
+                    <p className="whitespace-pre-wrap">{untrustedText(revision.reason) || "No reason recorded."}</p>
+                  </li>)}
+                </ol>
+                {thread.NextRevisionCursor ? <Button type="button" size="sm" variant="outline"
+                  onClick={() => onLoadMoreRevisions?.(thread.RoomID, thread.ID, thread.NextRevisionCursor!)}>Load older anchor revisions</Button> : null}
+              </details>
               <ul className="space-y-2">
                 {thread.Replies.map((item) => (
                   <li key={item.ID}>
@@ -411,6 +513,8 @@ export function RoomWorkspace({
                   </li>
                 ))}
               </ul>
+              {thread.NextReplyCursor ? <Button type="button" size="sm" variant="outline"
+                onClick={() => onLoadMoreReplies?.(thread.RoomID, thread.ID, thread.NextReplyCursor!)}>Load older replies</Button> : null}
               <form
                 className="flex flex-wrap gap-2"
                 onSubmit={(event) => {
@@ -434,7 +538,7 @@ export function RoomWorkspace({
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={!commentOk || !room}
+                  disabled={!commentOk || !room || thread.Status === "resolved"}
                   onClick={() => room && onResolve(room.ID, thread.ID)}
                 >
                   Resolve
@@ -506,6 +610,7 @@ export function RoomWorkspace({
         >
           <p className="text-sm text-muted-foreground">
             Recording a candidate does not edit the site. Approval is a separate human decision.
+            {site && !site.canEditContent ? " You can review this site, but its content-edit permission is restricted. Room membership does not grant editing rights." : ""}
           </p>
           <Input name="candidate-summary" aria-label="Candidate summary" />
           <Input name="content-hash" aria-label="Candidate content hash" />
@@ -517,15 +622,17 @@ export function RoomWorkspace({
           Candidates are loaded from the room. The summary and the diff text are untrusted and
           shown as text.
         </p>
-        {candidates.map((candidate) => (
+        {candidates.filter((candidate) => candidate.RoomID === roomId).map((candidate) => (
           <CandidateReview
             key={candidate.ID}
             candidate={candidate}
-            live={candidate.SiteID === siteId ? live : { versionId: null, contentHash: null }}
+            live={{ versionId: sites.find((item) => item.id === candidate.SiteID)?.currentVersionId ?? null, contentHash: sites.find((item) => item.id === candidate.SiteID)?.currentContentHash ?? null }}
             diff={diffs[candidate.ID] ?? { status: "loading" }}
-            canDecide={decideOk}
+            canDecide={Boolean(role && canDecideChange(role, { canRead: sites.some((item) => item.id === candidate.SiteID), canEditContent: sites.find((item) => item.id === candidate.SiteID)?.canEditContent === true }))}
+            busy={busyCandidates.includes(candidate.ID)}
+            onApply={onApply ? () => onApply(candidate.RoomID, candidate) : undefined}
             onDecide={(decision) => {
-              if (room) onDecide(room.ID, candidate, decision);
+              if (room && room.ID === candidate.RoomID) onDecide(candidate.RoomID, candidate, decision);
             }}
           />
         ))}

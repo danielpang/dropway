@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // One proposed change. Approve and Reject stay visible. The request binding
-// is the candidate the API returned. Apply stays disabled. File text from the
+// is the candidate the API returned. Apply publishes only an approved change. File text from the
 // diff is untrusted and rendered as text.
 
 "use client";
@@ -28,24 +28,30 @@ export function CandidateReview({
   diff,
   canDecide,
   onDecide,
+  onApply,
+  busy = false,
 }: {
   candidate: ReviewCandidate;
   live: LiveBaseline | null;
   diff: CandidateDiffView;
   canDecide: boolean;
   onDecide: (decision: "approve" | "reject") => void;
+  onApply?: () => void;
+  busy?: boolean;
 }) {
   const binding = bindApproval(candidate);
   const liveCheck = compareLive(candidate, live);
   const verified = diff.status === "verified" && diffMatchesCandidate(diff.diff, candidate) ? diff.diff : null;
   const unverified = diff.status === "unverified" || (diff.status === "verified" && verified === null);
-  const stale = liveCheck.status === "stale";
+  const applied = Boolean(candidate.AppliedVersionID);
+  const stale = !applied && liveCheck.status === "stale";
   const roleBlocked = !canDecide || binding === null;
-  const approveDisabled = roleBlocked || stale || verified === null;
-  const rejectDisabled = roleBlocked;
-  const terminal = terminalCopy(candidate.State);
+  const approveDisabled = applied || roleBlocked || busy || candidate.State !== "pending" || stale || verified === null;
+  const rejectDisabled = applied || roleBlocked || busy || candidate.State !== "pending";
+  const applyDisabled = applied || roleBlocked || busy || !onApply || candidate.State !== "approved" || liveCheck.status !== "matches" || verified === null;
+  const terminal = applied ? `Applied as version ${candidate.AppliedVersionID}.` : terminalCopy(candidate.State);
   return (
-    <article className="space-y-3 rounded-md border border-border p-4" aria-label={`Proposed change ${candidate.ID}`}>
+    <article className="space-y-3 rounded-md border border-border p-4" aria-label={`Proposed change ${candidate.ID}`} aria-busy={busy}>
       <div className="space-y-1">
         <h3 className="text-sm font-medium text-foreground">Proposed change</h3>
         <p className="text-sm text-foreground">{untrustedText(candidate.Summary) || "No summary was returned."}</p>
@@ -61,7 +67,7 @@ export function CandidateReview({
       </p>
       {stale ? (
         <p className="text-sm font-medium text-foreground" role="status">{NEEDS_NEW_CANDIDATE}</p>
-      ) : liveCheck.status === "unknown" ? (
+      ) : !applied && liveCheck.status === "unknown" ? (
         <p className="text-sm text-muted-foreground" role="status">
           {liveCheck.reason} Sending a decision still uses this candidate&apos;s base version and hash.
         </p>
@@ -82,12 +88,12 @@ export function CandidateReview({
         <Button type="button" variant="outline" disabled={rejectDisabled} onClick={() => onDecide("reject")}>
           Reject
         </Button>
-        <Button type="button" variant="secondary" disabled>
+        <Button type="button" variant="secondary" disabled={applyDisabled} onClick={onApply}>
           Apply
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Apply stays disabled. Candidate application is not enabled.
+        Apply publishes this exact approved change. It requires a verified diff and a matching live base.
         {roleBlocked ? " Approve and Reject stay visible and do not send while this role or the binding is incomplete." : ""}
         {stale ? " Approve stays visible and does not send until a new candidate matches the live base." : ""}
         {unverified ? " Approve stays visible and does not send while this change cannot be verified." : ""}

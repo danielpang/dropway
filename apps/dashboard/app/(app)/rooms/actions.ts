@@ -4,11 +4,13 @@ import { isCollabReviewEnabled } from "@/lib/collab";
 import { ApiError, api } from "@/lib/api";
 import {
   bindApproval,
+  canEditRoomSite,
   parseCandidate,
   parseCandidateDiff,
   parseCandidatePage,
   parseRoom,
   parseRoomDetail,
+  parseRoomActivity,
   parseSiteCommentPage,
   parseThread,
   parseThreadDetail,
@@ -299,7 +301,7 @@ export async function decideAction(
 ) {
   if (!enabled()) return closed();
   const binding: ApprovalBinding | null = bindApproval(candidate);
-  if (!binding) return { ok: false as const, message: "The candidate identity is incomplete." };
+  if (!binding || candidate.RoomID !== roomId) return { ok: false as const, message: "The candidate identity is incomplete." };
   try {
     const result = await api.decideProjectRoomCandidate(roomId, candidate.ID, decision, binding);
     const parsed = parseCandidate(result.candidate);
@@ -316,6 +318,106 @@ export async function decideAction(
         };
       }
     }
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function updateMemberAction(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") {
+  if (!enabled()) return closed();
+  try {
+    await api.updateProjectRoomMember(roomId, userId, role);
+    return { ok: true as const };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function removeMemberAction(roomId: string, userId: string) {
+  if (!enabled()) return closed();
+  try {
+    await api.removeProjectRoomMember(roomId, userId);
+    return { ok: true as const };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadRoomSitesAction() {
+  if (!enabled()) return closed();
+  try {
+    const [sites, me] = await Promise.all([api.listSites(), api.me()]);
+    return { ok: true as const, sites: sites.flatMap((site) => site.id && site.slug ? [{
+      canEditContent: canEditRoomSite(site, me),
+      id: site.id, slug: site.slug, liveUrl: site.live_url ?? null,
+      currentVersionId: site.current_version_id ?? null,
+      currentContentHash: (site as { current_content_hash?: string }).current_content_hash ?? null,
+    }] : []) };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function applyCandidateAction(roomId: string, candidate: ReviewCandidate) {
+  if (!enabled()) return closed();
+  const binding = bindApproval(candidate);
+  if (!binding || candidate.RoomID !== roomId || candidate.State !== "approved") {
+    return { ok: false as const, message: "An approved candidate with a complete identity is required." };
+  }
+  try {
+    const body = await api.applyProjectRoomCandidate(roomId, candidate.ID, binding);
+    const result = body as { candidate?: unknown; applied?: unknown; changed?: unknown; version_id?: unknown; live_url?: unknown } | null;
+    const parsed = parseCandidate(result?.candidate);
+    if (!parsed || parsed.ID !== candidate.ID || parsed.RoomID !== roomId || parsed.ContentHash !== candidate.ContentHash || parsed.SiteID !== candidate.SiteID || parsed.BaseVersionID !== candidate.BaseVersionID || parsed.BaseContentHash !== candidate.BaseContentHash || result?.applied !== true || typeof result.changed !== "boolean" || typeof result.version_id !== "string") {
+      return { ok: false as const, message: "The apply response was not usable. Refresh the room before retrying." };
+    }
+    return { ok: true as const, candidate: parsed, changed: result.changed, versionId: result.version_id };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      return { ok: false as const, message: "Cannot apply this change. The candidate or live base changed, or its content could not be verified. Refresh and review the current candidate." };
+    }
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadRoomActivityAction(roomId: string, cursor?: string) {
+  if (!enabled()) return closed();
+  try {
+    const activity = parseRoomActivity(await api.listRoomActivity(roomId, cursor));
+    if (!activity) return { ok: false as const, message: "The activity response was not usable." };
+    return { ok: true as const, ...activity };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function markRoomReadAction(roomId: string) {
+  if (!enabled()) return closed();
+  try {
+    await api.markRoomRead(roomId);
+    return { ok: true as const };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadThreadLinkAction(roomId: string, threadId: string, cursor?: string) {
+  if (!enabled()) return closed();
+  try {
+    const thread = parseThreadDetail(await api.getReviewThread(threadId, cursor));
+    if (!thread || thread.RoomID !== roomId) return { ok: false as const, message: "This thread is not available in this room." };
+    return { ok: true as const, thread };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadThreadRevisionsAction(roomId: string, threadId: string, revisionsCursor: string) {
+  if (!enabled()) return closed();
+  try {
+    const thread = parseThreadDetail(await api.getReviewThread(threadId, undefined, revisionsCursor));
+    if (!thread || thread.ID !== threadId || thread.RoomID !== roomId) return { ok: false as const, message: "This anchor history is not available in this room." };
+    return { ok: true as const, thread };
+  } catch (error) {
     return { ok: false as const, message: messageOf(error) };
   }
 }

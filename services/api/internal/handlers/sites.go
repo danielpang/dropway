@@ -417,6 +417,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: this version matches a review candidate and has no approved decision for the current baseline", httpx.ErrConflict))
 	case errors.Is(err, store.ErrCandidateArtifact):
 		httpx.WriteError(w, fmt.Errorf("%w: candidate artifact does not match its pinned hashes", httpx.ErrConflict))
+	case errors.Is(err, store.ErrReviewPageTooLarge):
+		writeReviewTooLarge(w)
 	case errors.Is(err, projectroom.ErrBadCursor):
 		httpx.WriteError(w, fmt.Errorf("%w: invalid cursor", httpx.ErrBadRequest))
 	case errors.Is(err, projectroom.ErrInvalidAnchor):

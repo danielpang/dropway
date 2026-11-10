@@ -6,11 +6,13 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
+import { chromium } from "@playwright/test";
 import { describe, expect, it } from "vitest";
 
 import { armPreviewFrame, createFrameSession, guestBridgeSource, noteFrameLoad, validateBridgeEvent } from "@/lib/collab";
 
-const CHROME = "/opt/google/chrome/chrome";
+const CHROME = process.env.COLLAB_CHROME_PATH ||
+  ["/opt/google/chrome/chrome", chromium.executablePath()].find(existsSync) || "";
 const hasChrome = existsSync(CHROME);
 
 async function listen(

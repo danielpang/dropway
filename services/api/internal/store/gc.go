@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/danielpang/dropway/internal/storage"
@@ -103,12 +104,40 @@ func (s *Store) GCOrg(ctx context.Context, obj storage.Store, orgID string, pol 
 	//    make all skill content look orphaned and delete it.
 	var retained []db.ListVersionsForGCRow
 	var skillRetained []db.ListCurrentSkillVersionsForGCRow
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
+	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		rows, err := q.ListVersionsForGC(ctx, orgID)
 		if err != nil {
 			return err
 		}
-		retained = selectRetained(rows, pol.KeepLastN, time.Now())
+		// Review artifacts can outlive the normal version/preview retention.
+		// Pin both sides of an undecided/approved proposal (also needed for an
+		// idempotent application retry) and original-version thread permalinks.
+		pins, err := tx.Query(ctx, `
+            SELECT base_version_id::text FROM app.review_candidates
+             WHERE org_id=$1 AND state IN ('pending','approved')
+            UNION
+            SELECT v.id::text FROM app.site_versions v
+            JOIN app.review_candidates c ON c.org_id=v.org_id AND c.site_id=v.site_id AND c.content_hash=v.content_hash
+             WHERE c.org_id=$1 AND c.state IN ('pending','approved')
+            UNION
+            SELECT version_id::text FROM app.review_threads WHERE org_id=$1`, orgID)
+		if err != nil {
+			return err
+		}
+		pinned := map[string]bool{}
+		for pins.Next() {
+			var id string
+			if err := pins.Scan(&id); err != nil {
+				pins.Close()
+				return err
+			}
+			pinned[id] = true
+		}
+		pins.Close()
+		if err := pins.Err(); err != nil {
+			return err
+		}
+		retained = retainReviewVersions(selectRetained(rows, pol.KeepLastN, time.Now()), rows, pinned)
 		skillRetained, err = q.ListCurrentSkillVersionsForGC(ctx, orgID)
 		if isUndefinedTable(err) {
 			// The skills tables (migration 0008) aren't applied yet — deploy ran
@@ -339,4 +368,20 @@ func previewBlobsRetained(exp pgtype.Timestamptz, now time.Time) bool {
 		return false
 	}
 	return now.Before(exp.Time.Add(PreviewBlobRetention))
+}
+
+// retainReviewVersions adds reviewed artifacts without counting them against the
+// normal keep-last-N policy or duplicating versions already retained as live.
+func retainReviewVersions(retained, all []db.ListVersionsForGCRow, pinned map[string]bool) []db.ListVersionsForGCRow {
+	seen := make(map[string]bool, len(retained))
+	for _, v := range retained {
+		seen[v.VersionID] = true
+	}
+	for _, v := range all {
+		if pinned[v.VersionID] && !seen[v.VersionID] {
+			retained = append(retained, v)
+			seen[v.VersionID] = true
+		}
+	}
+	return retained
 }

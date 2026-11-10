@@ -85,3 +85,9 @@ func CanRun(role Role, site SiteRights) bool {
 
 // CanAccept matches CanRun. Accept is not publish and is not reviewer approval.
 func CanAccept(role Role, site SiteRights) bool { return CanRun(role, site) }
+
+// CanAttachSite allows room owners and editors to reference sites they can read.
+// Attaching never changes the underlying site's ownership or edit rights.
+func CanAttachSite(role Role, site SiteRights) bool {
+	return site.CanRead && (role == RoleOwner || role == RoleEditor)
+}

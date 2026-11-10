@@ -11,7 +11,11 @@ import { CandidateReview } from "@/components/project-room/candidate-review";
 import { RoomWorkspace } from "@/components/project-room/room-workspace";
 import {
   bindApproval,
+  appendThreadRevisions,
+  parseThreadDetail,
   canComment,
+  canEditRoomSite,
+  parseRoomActivity,
   canDecideChange,
   canSignOffVersion,
   compareLive,
@@ -24,6 +28,7 @@ import {
   parseSiteCommentPage,
   shippedPreciseHtmlSelection,
   terminalCopy,
+  threadPageUrl,
   type ReviewCandidate,
 } from "@/lib/project-room/contract";
 
@@ -205,7 +210,8 @@ describe("project room markup", () => {
     expect(html).toContain("Approve");
     expect(html).toContain("Reject");
     expect(html).toContain("Apply");
-    expect(html).toContain("not enabled");
+    expect(html).toContain("Apply publishes this exact approved change");
+    expect(buttonDisabled(html, "Apply")).toBe(true);
     expect(buttonDisabled(html, "Approve")).toBe(false);
     expect(buttonDisabled(html, "Reject")).toBe(false);
     expect(html).toContain("modified");
@@ -294,6 +300,8 @@ describe("project room markup", () => {
         onEnableRooms: () => undefined,
         threads: [{
           ID: "thread-1",
+          Revisions: [{ id: "rev-1", anchorKind: "page", page: "/historical.html", anchorState: "orphaned", reason: "<script>history</script>", createdAt: "2026-11-10T00:00:00Z" }],
+          NextRevisionCursor: "revision-cursor",
           RoomID: "room-1",
           SiteID: "site-1",
           VersionID: "ver-1",
@@ -366,6 +374,12 @@ describe("project room markup", () => {
     expect(room).toContain("did not include a body");
     expect(room).toContain("Load older threads");
     expect(room).toContain("Resolve");
+    expect(room).toContain("Anchor history");
+    expect(room).toContain("Load older anchor revisions");
+    expect(room).toContain("/historical.html");
+    expect(room).toContain("orphaned");
+    expect(room).toContain("&lt;script&gt;history&lt;/script&gt;");
+    expect(room).not.toContain("<script>history</script>");
     expect(room).toContain("Add member");
     expect(room).toContain("Text highlight: not available");
     expect(room).toContain("Component id: not available");
@@ -376,5 +390,81 @@ describe("project room markup", () => {
     expect(room).toContain("not an allowed https content origin");
     expect(room).toContain("Record version sign-off");
     expect(room).toContain("does not approve a change");
+  });
+});
+
+
+describe("application review controls", () => {
+  const diff = { candidateId: candidate.ID, siteId: candidate.SiteID, baseVersionId: candidate.BaseVersionID,
+    baseContentHash: candidate.BaseContentHash, contentHash: candidate.ContentHash, verified: true as const,
+    truncated: false, omittedFiles: 0, files: [] };
+  function markup(overrides: Partial<Parameters<typeof CandidateReview>[0]> = {}) {
+    return renderToStaticMarkup(createElement(CandidateReview, {
+      candidate: { ...candidate, State: "approved" }, live: { versionId: "ver-1", contentHash: "hash-base" },
+      diff: { status: "verified", diff }, canDecide: true, onDecide: () => undefined, onApply: () => undefined,
+      ...overrides,
+    }));
+  }
+  it("requires approval, a verified exact diff, matching baseline and content rights before applying", () => {
+    expect(buttonDisabled(markup(), "Apply")).toBe(false);
+    expect(buttonDisabled(markup(), "Reject")).toBe(true);
+    expect(buttonDisabled(markup(), "Approve")).toBe(true);
+    for (const change of [
+      { candidate }, { candidate: { ...candidate, State: "rejected" } },
+      { candidate: { ...candidate, State: "approved", AppliedVersionID: "next" } },
+      { live: null }, { live: { versionId: "ver-1", contentHash: null } },
+      { live: { versionId: "newer", contentHash: "other" } }, { canDecide: false }, { busy: true },
+      { diff: { status: "unverified" as const } },
+      { diff: { status: "verified" as const, diff: { ...diff, siteId: "other-site" } } },
+    ]) expect(buttonDisabled(markup(change), "Apply")).toBe(true);
+    expect(buttonDisabled(markup({ busy: true }), "Reject")).toBe(true);
+    const applied = markup({ candidate: { ...candidate, State: "approved", AppliedVersionID: "next" }, live: { versionId: "next", contentHash: "hash-next" } });
+    expect(applied).toContain("Applied as version next");
+    expect(applied).not.toContain("needs a new candidate");
+  });
+
+  it("keeps pinned page navigation on the approved content origin", () => {
+    expect(threadPageUrl("https://report.dropwaycontent.com/", "/docs/page.html")).toBe("https://report.dropwaycontent.com/docs/page.html");
+    for (const page of ["//evil.example/path", "https://evil.example/", "/\\evil.example/path"]) expect(threadPageUrl("https://report.dropwaycontent.com/", page)).toBeNull();
+  });
+
+  it("keeps independent site permissions and parses activity as text", () => {
+    expect(canEditRoomSite({ owner_id: "owner", allow_member_edits: false }, { user_id: "reviewer", role: "member" })).toBe(false);
+    expect(canEditRoomSite({ owner_id: "owner" }, { user_id: "owner", role: "member" })).toBe(true);
+    expect(canEditRoomSite({ allow_member_edits: true }, {})).toBe(false);
+    expect(parseRoomActivity({ items: [{ id: "activity", kind: "<script>bad</script>", actor_user_id: "user", created_at: "now", thread_id: "thread" }], unread: 3, next_cursor: "next" })).toMatchObject({ unread: 3, nextCursor: "next", items: [{ threadId: "thread", kind: "<script>bad</script>" }] });
+    expect(parseRoomActivity({ items: [{ id: "missing-kind" }] })).toBeNull();
+  });
+});
+
+
+describe("independent anchor history pagination", () => {
+  const body = {
+    id: "thread", room_id: "room", site_id: "site", version_id: "original-version", content_hash: "original-hash",
+    page: "/original.html", anchor_kind: "page", anchor_state: "anchored", status: "open",
+    replies: [{ id: "reply", author_id: "user", body: "Keep this reply", created_at: "now" }], next_cursor: "reply-cursor",
+    revisions: [{ id: "revision-1", anchor_kind: "page", page: "/revision.html", anchor_state: "orphaned", reason: "<b>Lost target</b>", created_at: "now" }],
+    next_revision_cursor: "history-cursor",
+  };
+  it("parses history without substituting revision coordinates for the original pin", () => {
+    const thread = parseThreadDetail(body)!;
+    expect(thread.Page).toBe("/original.html");
+    expect(thread.VersionID).toBe("original-version");
+    expect(thread.NextReplyCursor).toBe("reply-cursor");
+    expect(thread.NextRevisionCursor).toBe("history-cursor");
+    expect(thread.Revisions?.[0]).toMatchObject({ page: "/revision.html", anchorState: "orphaned", reason: "<b>Lost target</b>" });
+  });
+  it("merges history pages independently and refuses a changed pin", () => {
+    const thread = parseThreadDetail(body)!;
+    const page = parseThreadDetail({ ...body, replies: [], next_cursor: "different-reply-cursor", next_revision_cursor: "next-history",
+      revisions: [...body.revisions, { ...body.revisions[0], id: "revision-2" }] })!;
+    const merged = appendThreadRevisions(thread, page);
+    expect(merged.Revisions?.map((item) => item.id)).toEqual(["revision-1", "revision-2"]);
+    expect(merged.Replies).toEqual(thread.Replies);
+    expect(merged.NextReplyCursor).toBe("reply-cursor");
+    expect(merged.NextRevisionCursor).toBe("next-history");
+    expect(merged.Page).toBe("/original.html");
+    expect(appendThreadRevisions(thread, { ...page, VersionID: "different-version" })).toBe(thread);
+    expect(appendThreadRevisions(thread, { ...page, RoomID: "other-room" })).toBe(thread);
   });
 });

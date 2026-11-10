@@ -742,6 +742,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/project-rooms/{roomID}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page activity visible to a room member
+         * @description Human session or MCP OAuth. Detached site activity is excluded. Membership is rechecked on each page.
+         */
+        get: operations["listRoomActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark the caller's room activity as read
+         * @description Human room member only. Does not approve, resolve, or apply anything.
+         */
+        post: operations["markProjectRoomRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/project-rooms/{roomID}/threads": {
         parameters: {
             query?: never;
@@ -860,6 +900,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/project-rooms/{roomID}/candidates/{candidateID}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply exactly one approved candidate
+         * @description Human room owner or editor with site edit rights. Verifies the complete candidate manifest and blobs, locks and rechecks the live baseline, and publishes the approved artifact with an immutable application receipt. Retries do not publish twice or roll back later work. Approval alone does not publish.
+         */
+        post: operations["applyRoomCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/project-rooms/{roomID}/members": {
         parameters: {
             query?: never;
@@ -891,7 +951,7 @@ export interface paths {
         put?: never;
         /**
          * Reference a same-org site
-         * @description Human room owner only.
+         * @description Human room owner or editor with access to the same-org site. Does not change site ownership or access.
          */
         post: operations["addProjectRoomSite"];
         delete?: never;
@@ -929,7 +989,7 @@ export interface paths {
         };
         /**
          * Page one review thread and its replies
-         * @description Human session or MCP OAuth. Membership is rechecked. Reply bodies are untrusted.
+         * @description Human session or MCP OAuth. Membership is rechecked. Reply bodies and anchor reasons are untrusted. Reply and anchor-history pages have independent authenticated opaque cursors bound to caller, tenant and thread, a fixed creation watermark, and a 30-minute expiry. Key rotation requires a fresh traversal. Unsupported filters are rejected. Read rate limits return 429.
          */
         get: operations["getReviewThreadPage"];
         put?: never;
@@ -1613,6 +1673,23 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        RoomActivity: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            room_id: string;
+            /** Format: uuid */
+            actor_user_id: string;
+            kind: string;
+            /** Format: uuid */
+            thread_id?: string;
+            /** Format: uuid */
+            site_id?: string;
+            /** Format: uuid */
+            version_id?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         Me: {
             user_id?: string;
             org_id?: string;
@@ -3615,6 +3692,67 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listRoomActivity: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activity page and unread count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["RoomActivity"][];
+                        unread: number;
+                        next_cursor?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    markProjectRoomRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read timestamp */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        last_read_at: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listRoomThreads: {
         parameters: {
             query?: {
@@ -3808,6 +3946,54 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    applyRoomCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                candidateID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    candidate_id: string;
+                    content_hash: string;
+                    /** Format: uuid */
+                    base_version_id: string;
+                    base_content_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Application receipt; changed is false for a retry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        applied: boolean;
+                        changed: boolean;
+                        /** Format: uuid */
+                        version_id: string;
+                        live_url?: string;
+                        candidate: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     addProjectRoomMember: {
         parameters: {
             query?: never;
@@ -3876,6 +4062,8 @@ export interface operations {
         parameters: {
             query?: {
                 cursor?: string;
+                /** @description Independent anchor-history continuation token */
+                revisions_cursor?: string;
                 limit?: number;
             };
             header?: never;
@@ -3886,7 +4074,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Thread page */
+            /** @description Thread with original pin, replies, revisions, next_cursor and next_revision_cursor. Each collection is independently byte-bounded and paginated. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3896,6 +4084,20 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description One review item exceeds the supported response byte limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review read rate limit exceeded; retry after the Retry-After header */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listComments: {
