@@ -65,6 +65,7 @@ export function RoomWorkspace({
   parentOrigin,
   notice,
   orgEnabled,
+  executionConfigured = false,
   onEnableRooms,
   onCreateRoom,
   onSelectRoom,
@@ -108,6 +109,7 @@ export function RoomWorkspace({
   parentOrigin: string;
   notice: string | null;
   orgEnabled: boolean;
+  executionConfigured?: boolean;
   onEnableRooms: () => void;
   onCreateRoom: (name: string) => void;
   onSelectRoom: (roomId: string) => void;
@@ -714,7 +716,7 @@ export function RoomWorkspace({
         ) : null}
       </section>
 
-      {room && process.env.NEXT_PUBLIC_COLLAB_EXECUTION === "1" ? <HostedExecution
+      {room && executionConfigured ? <HostedExecution
         key={`${room.ID}:${siteId}:${versionId}`} roomId={room.ID} siteId={siteId} versionId={versionId} canRun={decideOk && versionId === site?.currentVersionId}
         threads={compatibleRunThreads.map((item) => ({ id: item.ID, page: item.Page }))}
         historicalThreadCount={historicalThreadCount}

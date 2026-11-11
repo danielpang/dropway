@@ -49,13 +49,14 @@ func (a *API) previewTTL() time.Duration {
 // JWKS) and Domains (the Cloudflare-for-SaaS custom-hostname provider). Both are
 // optional: routes that need them return 503 when unset.
 type API struct {
-	Hosted     *HostedRuntime
-	Quota      quota.Provider
-	Store      SiteStore
-	Objects    ObjectStore
-	Projection ProjectionWriter
-	EdgeSigner EdgeSigner
-	Domains    DomainProvider
+	CollaborationAllowed func(context.Context, string, string) bool
+	Hosted               *HostedRuntime
+	Quota                quota.Provider
+	Store                SiteStore
+	Objects              ObjectStore
+	Projection           ProjectionWriter
+	EdgeSigner           EdgeSigner
+	Domains              DomainProvider
 
 	// Analytics is the optional product-analytics emitter (internal/analytics; a
 	// PostHog client when POSTHOG_KEY is set, else nil/Noop). Handlers use it for

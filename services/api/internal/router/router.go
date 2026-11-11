@@ -82,10 +82,12 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// Attribute any downstream exception to the authenticated user (runs after
 		// Auth, before EnsureOrgProvisioned, so even provisioning errors carry the id).
 		r.Use(attributeErrors)
+		r.Use(api.CollaborationRollout)
 		r.Use(api.EnsureOrgProvisioned)
 		r.Use(handlers.EnforceAPIKeyGrant)
 
 		r.Get("/me", api.Me)
+		r.Get("/project-collaboration/capabilities", api.GetCollaborationCapabilities)
 		r.Get("/provider-credentials", api.ListProviderCredentials)
 		r.Post("/provider-credentials", api.SaveProviderCredential)
 		r.Put("/provider-credentials/{credentialID}", api.SaveProviderCredential)

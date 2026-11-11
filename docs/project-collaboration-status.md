@@ -46,7 +46,7 @@ The next branch, `feat/hosted-collaboration-loop`, adds:
 - Postgres jobs, leased attempts, bounded progress events and persisted clarification sessions; queue/claim/terminal submission idempotency, cumulative token/call/time budgets and current membership/site/credential rechecks.
 - A capability-bound Anthropic/OpenRouter gateway with conservative reservations and verified usage accounting, fixed provider origins and no fallback. Model output is buffered until usage settles.
 - A dedicated Node 24 Fly worker and pinned Sprites SDK adapter. It stages authorized immutable uploaded assets, exposes remote-only tools, exports verified files, destroys the Sprite and then submits a pending candidate. Clarification preserves modified files and transcript without a waiting VM.
-- Credential/model/budget setup and explicit run, progress, cancel and clarification controls in the dashboard. API, worker and dashboard enablement remain explicit.
+- Credential/model/budget setup and explicit run, progress, cancel and clarification controls in the dashboard. A single server-evaluated PostHog capability controls API and dashboard access; workers remain running for cleanup.
 - Authorized immutable historical file reads and a strict static HTML rendition with precise text/component/document/image point selections. Source scripts, CSS, URLs, forms and embeds are removed; this is a semantic review rendition, not pixel-exact interactive playback.
 - Local security coverage for capability scope, missing usage, stale baselines, revoked credentials, lease expiry, cleanup, hostile HTML and forbidden sandbox operations. An opt-in live Sprite verification script is provided for the project owner's development testing.
 
@@ -92,3 +92,9 @@ An authenticated full-browser hosted walkthrough and Firefox/Safari verification
 See [API rollout instructions](../deploy/API-ROLLOUT.md). This work reduces known rollout risks; live Sprite/provider acceptance and production capacity verification remain separate release checks.
 
 Rollout-fix validation: clean dashboard Docker build; all 8 full-stack browser tests with collaboration disabled (sign-in/signup, upload/live deploy, OAuth, API-key SDK deployment); full Go unit suite; real Postgres schema preflight/old-query/API-key workflow tests; candidate rollback/concurrency and approval races. The schema test verifies missing migrations and revoked resolver execution grants fail preflight, then migrations restore readiness. A transient Docker startup reset in one approval test passed on isolated retry.
+
+## Unified feature rollout
+
+[PostHog `project-collaboration`](https://us.posthog.com/project/479412/feature-flags/1059373) now replaces the four former environment toggles. The flag is inactive at 0% as of 2026-11-10. The API reuses `POSTHOG_KEY` / `POSTHOG_HOST`, evaluates the authenticated user with `org_id` and `environment`, and supplies dashboard capabilities. Organization opt-in and authorization remain independent requirements. Workers continue cleanup while the API gates claims. See the [development configuration](hosted-collaboration-development.md#feature-rollout) for the identity contract and disable behavior.
+
+Dashboard capability validation: 315 tests in 41 files, including four Chromium security probes, plus typecheck and lint passed. No paid model calls or Sprite provisioning were made.

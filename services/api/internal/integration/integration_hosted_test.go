@@ -52,8 +52,14 @@ func TestIntegration_HostedExecution(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 	st := store.New(pool, quota.Unlimited{})
+	var rollout atomic.Bool
+	rollout.Store(true)
 	org, owner := "11111111-1111-1111-1111-111111111111", "a0000000-0000-0000-0000-000000000001"
 	tn := store.Tenant{OrgID: org, UserID: owner}
+	gate := func(_ context.Context, userID, orgID string) bool {
+		return rollout.Load() && userID == owner && orgID == org
+	}
+	st.SetCollaborationGate(gate)
 	mustExec(t, `INSERT INTO app.org_meta(id,allow_external_sharing) VALUES($1,true)`, org)
 	seedAuthOrg(t, org, "orga")
 	seedAuthMemberTable(t)
@@ -83,7 +89,7 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	must(t, st.AddProjectRoomSite(ctx, tn, room.ID, site.ID, store.AuditRecord{}))
-	runtime, err := handlers.NewHostedRuntime(st, bytes.Repeat([]byte{7}, 32), strings.Repeat("worker-secret", 4), "http://localhost:8080", true)
+	runtime, err := handlers.NewHostedRuntime(st, bytes.Repeat([]byte{7}, 32), strings.Repeat("worker-secret", 4), "http://localhost:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +116,7 @@ func TestIntegration_HostedExecution(t *testing.T) {
 	api := handlers.NewFull(quota.Unlimited{}, st, obj, projection.NewLocal())
 	api.Rooms = st
 	api.Hosted = runtime
+	api.CollaborationAllowed = gate
 	r := router.New(hostedVerifier{org, owner}, api, nil)
 	request := func(method, path, token string, body any) (int, []byte) {
 		t.Helper()
@@ -122,6 +129,35 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.Bytes()
+	}
+	rollout.Store(false)
+	code, capability := request("GET", "/v1/project-collaboration/capabilities", "human", nil)
+	if code != 200 || !bytes.Contains(capability, []byte(`"enabled":false`)) || !bytes.Contains(capability, []byte(`"execution_configured":true`)) {
+		t.Fatalf("disabled capabilities %d %s", code, capability)
+	}
+	if code, _ := request("POST", "/v1/provider-credentials", "human", nil); code != 403 {
+		t.Fatalf("disabled credential route %d", code)
+	}
+	if code, _ := request("GET", "/v1/project-rooms", "human", nil); code != 403 {
+		t.Fatalf("disabled room route %d", code)
+	}
+	if code, _ := request("PATCH", "/v1/orgs/project-rooms", "human", map[string]bool{"enabled": true}); code != 403 {
+		t.Fatalf("disabled rollout enabled org %d", code)
+	}
+	if code, body := request("PATCH", "/v1/orgs/project-rooms", "human", map[string]bool{"enabled": false}); code != 200 {
+		t.Fatalf("disabled rollout blocks org consent withdrawal %d %s", code, body)
+	}
+	must(t, st.SetProjectRoomsEnabled(ctx, tn, true, store.AuditRecord{}))
+	api.Hosted = nil
+	code, capability = request("GET", "/v1/project-collaboration/capabilities", "human", nil)
+	if code != 200 || !bytes.Contains(capability, []byte(`"execution_configured":false`)) {
+		t.Fatalf("missing runtime capabilities %d %s", code, capability)
+	}
+	api.Hosted = runtime
+	rollout.Store(true)
+	code, capability = request("GET", "/v1/project-collaboration/capabilities", "human", nil)
+	if code != 200 || !bytes.Contains(capability, []byte(`"enabled":true`)) {
+		t.Fatalf("enabled capabilities %d %s", code, capability)
 	}
 	status, body := request("POST", "/v1/provider-credentials", "human", map[string]any{"provider": "anthropic", "label": "Personal", "api_key": "sk-ant-test-provider-secret"})
 	if status != 200 || bytes.Contains(body, []byte("sk-ant-test-provider-secret")) {
@@ -299,6 +335,30 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		t.Fatal("exhausted budget reached provider")
 	}
 	must(t, st.FailExecution(ctx, bounded.AttemptToken, "budget_test"))
+	// Runtime rollout withdrawal is rechecked for existing attempt capabilities,
+	// including gateway and candidate paths that bypass the user router.
+	_ = queue("run-disabled-attempt")
+	gated := claim()
+	rollout.Store(false)
+	if _, err := st.HeartbeatExecution(ctx, gated.AttemptToken); !errors.Is(err, hosted.ErrDenied) {
+		t.Fatalf("disabled heartbeat %v", err)
+	}
+	if _, err := st.CompleteExecutionCandidate(ctx, gated.AttemptToken, "disabled-output", "disabled", files, obj); !errors.Is(err, hosted.ErrDenied) {
+		t.Fatalf("disabled candidate %v", err)
+	}
+	beforeGate := upstream.Load()
+	status, _ = request("POST", "/internal/room-gateway/"+gated.AttemptID+"/v1/messages", gated.GatewayToken, map[string]any{"model": config.ModelID, "max_tokens": 100, "messages": []any{map[string]any{"role": "user", "content": "edit"}}})
+	if status != 403 || upstream.Load() != beforeGate {
+		t.Fatal("disabled gateway reached provider")
+	}
+	rollout.Store(true)
+	must(t, st.CancelExecutionJob(ctx, tn, room.ID, gated.Job.ID))
+	_ = queue("run-disabled-claim")
+	rollout.Store(false)
+	if claim, err := st.ClaimExecutionJob(ctx, "disabled-worker"); err != nil || claim != nil {
+		t.Fatalf("disabled claim %+v %v", claim, err)
+	}
+	rollout.Store(true)
 	_ = queue("run-revoked-member")
 	memberRun := claim()
 	deleteMember(t, org, owner)

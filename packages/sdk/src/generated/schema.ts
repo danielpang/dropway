@@ -1669,6 +1669,26 @@ export interface paths {
         patch: operations["patchChatSettings"];
         trace?: never;
     };
+    "/v1/project-collaboration/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read authoritative collaboration rollout and execution readiness
+         * @description Requires authenticated current organization membership. Evaluates the project-collaboration PostHog flag for the verified user ID with org_id and environment properties. Only boolean true enables rollout; missing configuration, evaluation errors, and variant strings fail closed. Organization opt-in and permissions remain independent requirements. This endpoint stays available when rollout is off and is never cached.
+         */
+        get: operations["getProjectCollaborationCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/provider-credentials": {
         parameters: {
             query?: never;
@@ -1678,13 +1698,13 @@ export interface paths {
         };
         /**
          * List personal credential metadata
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         get: operations["listProviderCredentials"];
         put?: never;
         /**
          * Encrypt a personal provider credential
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         post: operations["saveProviderCredential"];
         delete?: never;
@@ -1705,13 +1725,13 @@ export interface paths {
         get?: never;
         /**
          * Replace and invalidate a credential generation
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         put: operations["replaceProviderCredential"];
         post?: never;
         /**
          * Revoke a personal credential
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         delete: operations["revokeProviderCredential"];
         options?: never;
@@ -1732,7 +1752,7 @@ export interface paths {
         put?: never;
         /**
          * Validate a credential with its provider
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         post: operations["validateProviderCredential"];
         delete?: never;
@@ -1752,13 +1772,13 @@ export interface paths {
         };
         /**
          * List recent room execution jobs
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         get: operations["listHostedExecutions"];
         put?: never;
         /**
          * Queue a bounded revision of immutable site assets
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         post: operations["queueHostedExecution"];
         delete?: never;
@@ -1779,7 +1799,7 @@ export interface paths {
         };
         /**
          * Read execution progress and clarification
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         get: operations["getHostedExecution"];
         put?: never;
@@ -1804,7 +1824,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel an execution and revoke its capabilities
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         post: operations["cancelHostedExecution"];
         delete?: never;
@@ -1827,7 +1847,7 @@ export interface paths {
         put?: never;
         /**
          * Resume clarification in a fresh attempt
-         * @description Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
          */
         post: operations["resumeHostedExecution"];
         delete?: never;
@@ -5954,6 +5974,41 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    getProjectCollaborationCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current rollout decision and server execution configuration */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Server-authoritative PostHog rollout decision for this user and organization. */
+                        enabled: boolean;
+                        /** @description Valid server vault, worker authentication and public API URL configuration; independent of rollout and organization consent. */
+                        execution_configured: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Organization membership store is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listProviderCredentials: {
         parameters: {
             query?: never;
@@ -5976,7 +6031,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6015,7 +6070,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6056,7 +6111,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6084,7 +6139,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6116,7 +6171,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6148,7 +6203,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6195,7 +6250,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6235,7 +6290,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6264,7 +6319,7 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -6304,7 +6359,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-            /** @description Hosted execution is disabled or unavailable */
+            /** @description Hosted execution configuration is unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

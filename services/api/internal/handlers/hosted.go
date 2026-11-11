@@ -25,15 +25,12 @@ type HostedRuntime struct {
 	Vault         *hosted.Vault
 	WorkerToken   string
 	PublicAPIBase string
-	Enabled       bool
+	Configured    bool
 	HTTPClient    *http.Client
 }
 
-func NewHostedRuntime(st *store.Store, key []byte, workerToken, publicAPIBase string, enabled bool) (*HostedRuntime, error) {
-	r := &HostedRuntime{Store: st, Enabled: enabled}
-	if !enabled {
-		return r, nil
-	}
+func NewHostedRuntime(st *store.Store, key []byte, workerToken, publicAPIBase string) (*HostedRuntime, error) {
+	r := &HostedRuntime{Store: st}
 	u, err := url.Parse(publicAPIBase)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))) || len(workerToken) < 32 || st == nil {
 		return nil, hosted.ErrUnavailable
@@ -42,6 +39,7 @@ func NewHostedRuntime(st *store.Store, key []byte, workerToken, publicAPIBase st
 	if err != nil {
 		return nil, err
 	}
+	r.Configured = true
 	r.Vault = vault
 	r.WorkerToken = workerToken
 	r.PublicAPIBase = strings.TrimRight(publicAPIBase, "/")
@@ -49,7 +47,7 @@ func NewHostedRuntime(st *store.Store, key []byte, workerToken, publicAPIBase st
 	return r, nil
 }
 func (a *API) hostedReady(w http.ResponseWriter) bool {
-	if a.Hosted == nil || !a.Hosted.Enabled || a.Hosted.Vault == nil || a.Hosted.Store == nil {
+	if a.Hosted == nil || !a.Hosted.Configured || a.Hosted.Vault == nil || a.Hosted.Store == nil {
 		httpx.WriteJSON(w, http.StatusServiceUnavailable, httpx.ErrorBody{Error: "execution_unavailable", Message: "hosted execution is not configured"})
 		return false
 	}

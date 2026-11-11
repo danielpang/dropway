@@ -39,8 +39,8 @@ describe("supportedKinds", () => {
 describe("isCollabReviewEnabled", () => {
   it("stays off unless the flag is exactly 1", () => {
     expect(isCollabReviewEnabled({})).toBe(false);
-    expect(isCollabReviewEnabled({ NEXT_PUBLIC_COLLAB_REVIEW: "true" })).toBe(false);
-    expect(isCollabReviewEnabled({ NEXT_PUBLIC_COLLAB_REVIEW: "1" })).toBe(true);
+    expect(isCollabReviewEnabled({ enabled: false })).toBe(false);
+    expect(isCollabReviewEnabled({ enabled: true })).toBe(true);
   });
 });
 

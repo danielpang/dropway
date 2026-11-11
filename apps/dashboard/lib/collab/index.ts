@@ -75,7 +75,7 @@ export { commentControls, commentSubmission, feedbackPinA11y } from "@/lib/colla
 export type { CommentSubmission } from "@/lib/collab/comment";
 
 export { bridgePrerequisites, canOpenCandidatePreview, isCollabReviewEnabled, trustedDashboardOrigin } from "@/lib/collab/gate";
-export type { BridgePrerequisites, CollabReviewEnv, DashboardOriginEnv } from "@/lib/collab/gate";
+export type { BridgePrerequisites, CollabReviewCapability, DashboardOriginEnv } from "@/lib/collab/gate";
 
 export { armPreviewFrame, candidatePreviewSandbox, previewFrameDecision } from "@/lib/collab/preview-frame";
 export type { PreviewFrameDecision, PreviewFrameHandle } from "@/lib/collab/preview-frame";

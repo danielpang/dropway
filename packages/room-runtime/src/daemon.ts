@@ -15,7 +15,6 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 export async function runDaemon(env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<void> {
-  if (env.ROOM_WORKER_ENABLED !== "1") throw new Error("Set ROOM_WORKER_ENABLED=1 to start execution");
   const client = new HostedClient(required(env, "ROOM_API_PUBLIC_URL"), required(env, "ROOM_WORKER_TOKEN"));
   const config = {
     token: required(env, "SPRITES_API_TOKEN"),

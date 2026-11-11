@@ -26,6 +26,7 @@ import (
 
 	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/collaborationflag"
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgetoken"
 	"github.com/danielpang/dropway/internal/errtrack"
@@ -123,7 +124,7 @@ func main() {
 	slog.SetDefault(logger)
 	slog.Info("error tracking wired", "provider", label)
 
-	err := run(logger, emitter)
+	err := run(logger, emitter, phClient)
 	if err != nil {
 		// Log before Close so this final fatal error is captured + flushed.
 		slog.Error("server exited with error", "err", err)
@@ -138,7 +139,7 @@ func main() {
 	}
 }
 
-func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
+func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter, phClient posthog.Client) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -254,17 +255,19 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		siteStore = st
 	}
 	api := handlers.NewFull(qp, siteStore, obj, proj)
-	var credentialKey []byte
-	executionEnabled := os.Getenv("ROOM_EXECUTION_ENABLED") == "1"
-	if executionEnabled {
-		credentialKey, err = base64.StdEncoding.DecodeString(os.Getenv("ROOM_CREDENTIAL_MASTER_KEY"))
-		if err != nil || len(credentialKey) != 32 {
-			return fmt.Errorf("ROOM_CREDENTIAL_MASTER_KEY must encode exactly 32 bytes")
-		}
+	gate := collaborationflag.Evaluator{Client: phClient, Environment: phclient.ConfigFromEnv().Environment}
+	api.CollaborationAllowed = gate.Allowed
+	if st != nil {
+		st.SetCollaborationGate(gate.Allowed)
 	}
-	api.Hosted, err = handlers.NewHostedRuntime(st, credentialKey, os.Getenv("ROOM_WORKER_TOKEN"), os.Getenv("ROOM_API_PUBLIC_URL"), executionEnabled)
-	if err != nil {
-		return fmt.Errorf("hosted execution configuration is invalid: %w", err)
+	credentialKey, keyErr := base64.StdEncoding.DecodeString(os.Getenv("ROOM_CREDENTIAL_MASTER_KEY"))
+	var hostedErr error
+	if keyErr == nil {
+		api.Hosted, hostedErr = handlers.NewHostedRuntime(st, credentialKey, os.Getenv("ROOM_WORKER_TOKEN"), os.Getenv("ROOM_API_PUBLIC_URL"))
+	}
+	if keyErr != nil || hostedErr != nil {
+		api.Hosted = nil
+		slog.Info("hosted execution unavailable: configure credential master key, worker token and public API URL")
 	}
 	if st != nil {
 		api.Rooms = st

@@ -1,24 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseCredential, validHostedRun, type HostedRunInput } from "@/lib/project-room/hosted";
 
-const calls = vi.hoisted(() => ({ setup: vi.fn(), save: vi.fn(), run: vi.fn(), resume: vi.fn(), detail: vi.fn() }));
+const calls = vi.hoisted(() => ({ capability: vi.fn(), setup: vi.fn(), save: vi.fn(), run: vi.fn(), resume: vi.fn(), detail: vi.fn() }));
 vi.mock("@/lib/api", () => ({
   ApiError: class extends Error { constructor(public status: number, message: string, public body: unknown) { super(message); } },
-  api: { listProviderCredentials: calls.setup, saveProviderCredential: calls.save, runHostedJob: calls.run, resumeHostedJob: calls.resume, getHostedJob: calls.detail },
+  api: { projectCollaborationCapabilities: calls.capability, listProviderCredentials: calls.setup, saveProviderCredential: calls.save, runHostedJob: calls.run, resumeHostedJob: calls.resume, getHostedJob: calls.detail },
 }));
 import { ApiError } from "@/lib/api";
 import { getHostedJobAction, hostedSetupAction, resumeHostedJobAction, runHostedJobAction, saveCredentialAction } from "@/app/(app)/rooms/hosted-actions";
 
 const input: HostedRunInput = { roomId: "room", siteId: "site", versionId: "version", credentialRef: "credential", provider: "anthropic", modelId: "claude-sonnet-4-5", prompt: "Revise the caption", idempotencyKey: "request-1", threadId: "thread", budget: { max_tokens: 20000, max_calls: 10, max_seconds: 300, max_output_bytes: 2097152 } };
 const job = { id: "job", room_id: "room", site_id: "site", version_id: "version", content_hash: "a".repeat(64), state: "queued", config: { provider: "anthropic", model_id: "claude-sonnet-4-5", harness_id: "pi", harness_version: "1.5.0", prompt: input.prompt, budget: input.budget } };
-beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("NEXT_PUBLIC_COLLAB_REVIEW", "1"); vi.stubEnv("NEXT_PUBLIC_COLLAB_EXECUTION", "1"); });
+beforeEach(() => { vi.clearAllMocks(); calls.capability.mockResolvedValue({ enabled: true, execution_configured: true }); });
 
 describe("hosted room boundary", () => {
   it("collects no key when execution is disabled, and requires explicit backend readiness", async () => {
-    vi.stubEnv("NEXT_PUBLIC_COLLAB_EXECUTION", "0");
+    calls.capability.mockResolvedValue({ enabled: true, execution_configured: false });
     expect(await saveCredentialAction("anthropic", "personal", "secret-key-material")).toMatchObject({ ok: false });
     expect(calls.save).not.toHaveBeenCalled();
-    vi.stubEnv("NEXT_PUBLIC_COLLAB_EXECUTION", "1");
+    calls.capability.mockResolvedValue({ enabled: true, execution_configured: true });
     calls.setup.mockResolvedValue({ credentials: [], execution_enabled: false });
     expect(await hostedSetupAction()).toMatchObject({ ok: false });
   });

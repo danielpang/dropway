@@ -32,7 +32,7 @@ func TestIntegration_SchemaPreflightRollingUpgrade(t *testing.T) {
 	// if unrelated runtime settings are invalid. It must exit rather than serve.
 	command := exec.CommandContext(ctx, "go", "run", "./services/api/cmd/api", "--check-schema")
 	command.Dir = root
-	command.Env = append(os.Environ(), "DATABASE_URL="+appDSN, "ROOM_EXECUTION_ENABLED=1", "ROOM_CREDENTIAL_MASTER_KEY=not-a-key", "PORT=invalid")
+	command.Env = append(os.Environ(), "DATABASE_URL="+appDSN, "ROOM_CREDENTIAL_MASTER_KEY=not-a-key", "PORT=invalid")
 	output, err := command.CombinedOutput()
 	if err != nil || !strings.Contains(string(output), "Database schema is compatible") {
 		t.Fatalf("release check: %v %s", err, output)

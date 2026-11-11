@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // Parent-side review primitives. Rendered only when the caller asks and the
-// deploy flag NEXT_PUBLIC_COLLAB_REVIEW=1 is set. Nothing in this tree fetches
+// authenticated project collaboration capability is enabled. Nothing in this tree fetches
 // a room API or starts an agent. Selections and comments are handed to the
 // parent callbacks when those exist.
 
@@ -60,10 +60,7 @@ export function CollabReviewPrimitives({
   onReanchor?: CollabReviewPort["requestReanchor"];
   onSelection?: (selection: AdoptedSelection) => void;
 }) {
-  const gateOn = isCollabReviewEnabled({
-    NEXT_PUBLIC_COLLAB_REVIEW: process.env.NEXT_PUBLIC_COLLAB_REVIEW,
-  });
-  const active = enabled && gateOn;
+  const active = isCollabReviewEnabled({ enabled });
   const [ui, setUi] = React.useState(initialReviewState);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const frameRef = React.useRef<HTMLIFrameElement>(null);

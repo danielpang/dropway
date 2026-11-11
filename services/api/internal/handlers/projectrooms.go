@@ -151,6 +151,10 @@ func (a *API) SetProjectRoomSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, fmt.Errorf("%w: enabled is required", httpx.ErrBadRequest))
 		return
 	}
+	if *req.Enabled && (a.CollaborationAllowed == nil || !a.CollaborationAllowed(r.Context(), t.UserID, t.OrgID)) {
+		httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorBody{Error: "collaboration_disabled", Message: "project collaboration is not enabled"})
+		return
+	}
 	if err := a.Rooms.SetProjectRoomsEnabled(r.Context(), t, *req.Enabled, store.AuditRecord{Ctx: auditCtx(r)}); err != nil {
 		writeStoreError(w, err)
 		return

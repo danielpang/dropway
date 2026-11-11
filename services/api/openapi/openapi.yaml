@@ -2898,11 +2898,46 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/project-collaboration/capabilities:
+    get:
+      operationId: getProjectCollaborationCapabilities
+      summary: Read authoritative collaboration rollout and execution readiness
+      description: >
+        Requires authenticated current organization membership. Evaluates the
+        project-collaboration PostHog flag for the verified user ID with org_id
+        and environment properties. Only boolean true enables rollout; missing
+        configuration, evaluation errors, and variant strings fail closed.
+        Organization opt-in and permissions remain independent requirements.
+        This endpoint stays available when rollout is off and is never cached.
+      responses:
+        "200":
+          description: Current rollout decision and server execution configuration
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enabled, execution_configured]
+                properties:
+                  enabled:
+                    type: boolean
+                    description: Server-authoritative PostHog rollout decision for this user and organization.
+                  execution_configured:
+                    type: boolean
+                    description: Valid server vault, worker authentication and public API URL configuration; independent of rollout and organization consent.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Organization membership store is unavailable
+
   /v1/provider-credentials:
     "get":
       "operationId": "listProviderCredentials"
       "summary": "List personal credential metadata"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "200":
           "description": "Success"
@@ -2923,11 +2958,11 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
     "post":
       "operationId": "saveProviderCredential"
       "summary": "Encrypt a personal provider credential"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "200":
           "description": "Success"
@@ -2943,7 +2978,7 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
       "requestBody":
         "required": true
         "content":
@@ -2977,7 +3012,7 @@ paths:
     "put":
       "operationId": "replaceProviderCredential"
       "summary": "Replace and invalidate a credential generation"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "200":
           "description": "Success"
@@ -2993,7 +3028,7 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
       "requestBody":
         "required": true
         "content":
@@ -3018,14 +3053,14 @@ paths:
     "delete":
       "operationId": "revokeProviderCredential"
       "summary": "Revoke a personal credential"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "204":
           "description": "Success"
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
   /v1/provider-credentials/{credentialID}/validate:
     "parameters":
       -
@@ -3038,7 +3073,7 @@ paths:
     "post":
       "operationId": "validateProviderCredential"
       "summary": "Validate a credential with its provider"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "200":
           "description": "Success"
@@ -3054,7 +3089,7 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
   /v1/project-rooms/{roomID}/executions:
     "parameters":
       -
@@ -3067,7 +3102,7 @@ paths:
     "get":
       "operationId": "listHostedExecutions"
       "summary": "List recent room execution jobs"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "200":
           "description": "Success"
@@ -3085,11 +3120,11 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
     "post":
       "operationId": "queueHostedExecution"
       "summary": "Queue a bounded revision of immutable site assets"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "202":
           "description": "Success"
@@ -3105,7 +3140,7 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
       "requestBody":
         "required": true
         "content":
@@ -3162,7 +3197,7 @@ paths:
     "get":
       "operationId": "getHostedExecution"
       "summary": "Read execution progress and clarification"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "200":
           "description": "Success"
@@ -3199,7 +3234,7 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
   /v1/project-rooms/{roomID}/executions/{jobID}/cancel:
     "parameters":
       -
@@ -3219,14 +3254,14 @@ paths:
     "post":
       "operationId": "cancelHostedExecution"
       "summary": "Cancel an execution and revoke its capabilities"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "204":
           "description": "Success"
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
   /v1/project-rooms/{roomID}/sessions/{sessionID}/resume:
     "parameters":
       -
@@ -3246,7 +3281,7 @@ paths:
     "post":
       "operationId": "resumeHostedExecution"
       "summary": "Resume clarification in a fresh attempt"
-      "description": "Requires an authenticated human session. Hosted execution must be explicitly enabled. Credentials belong to the caller; no secret values are returned."
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
       "responses":
         "202":
           "description": "Success"
@@ -3262,7 +3297,7 @@ paths:
         "403":
           "$ref": "#/components/responses/Forbidden"
         "503":
-          "description": "Hosted execution is disabled or unavailable"
+          "description": "Hosted execution configuration is unavailable"
       "requestBody":
         "required": true
         "content":

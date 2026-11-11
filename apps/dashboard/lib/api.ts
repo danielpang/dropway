@@ -1501,6 +1501,10 @@ export const api = {
     });
   },
 
+  async projectCollaborationCapabilities(): Promise<{ enabled: boolean; execution_configured: boolean }> {
+    return apiFetch("/v1/project-collaboration/capabilities");
+  },
+
   /** Org opt-in for project rooms. Default false on the server. */
   async projectRoomSettings(): Promise<{ enabled: boolean }> {
     return apiFetch<{ enabled: boolean }>("/v1/orgs/project-rooms");

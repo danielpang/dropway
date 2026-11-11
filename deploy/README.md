@@ -228,3 +228,7 @@ docker compose -f deploy/docker-compose.yml down -v        # stop + wipe pgdata/
   re-derived on the next billing webhook) and are fully **rebuildable from Postgres**,
   so a restart never opens access or loses durable state. Production uses Cloudflare
   KV, which is durable.
+
+## Project collaboration
+
+[PostHog `project-collaboration`](https://us.posthog.com/project/479412/feature-flags/1059373) is the only collaboration feature flag; it is inactive at 0% as of 2026-11-10. Configure the API with the existing `POSTHOG_KEY` and `POSTHOG_HOST`. The API evaluates the authenticated user ID with `org_id` and `environment`, and the dashboard consumes its capability response. There are no separate review, execution, or worker environment switches. Organization opt-in remains required. Keep the worker running for cleanup while the API gates new claims. Follow [schema rollout](API-ROLLOUT.md) before deploying and [hosted setup](../docs/hosted-collaboration-development.md) before enabling a development cohort.

@@ -74,6 +74,9 @@ func scanExecution(row pgx.Row) (ExecutionJob, error) {
 // room role, site attachment/edit rights, credential generation, and baseline.
 // All callers hold the job lock before calling; org/site locks are acquired here.
 func (s *Store) authorizeExecution(ctx context.Context, tx pgx.Tx, q *db.Queries, j ExecutionJob) error {
+	if s.collaborationAllowed == nil || !s.collaborationAllowed(ctx, j.InitiatorUserID, j.OrgID) {
+		return hosted.ErrDenied
+	}
 	if _, err := lockOrgThenSite(ctx, q, j.OrgID, j.SiteID); err != nil {
 		return hosted.ErrDenied
 	}

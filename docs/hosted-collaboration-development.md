@@ -14,23 +14,28 @@ Normal keys created by Dropway have `sites:*` and no site restriction, so their 
 
 Ordinary site mutations share the organization configuration lock and lock only their target site exclusively. This preserves concurrent publishing to different sites while still serializing enrollment and configuration changes. Recovery polls only organizations with due candidate projections, so organizations with no collaboration history do not incur one query each every polling interval. These concurrency properties have local Postgres regression tests; production capacity still requires normal monitoring.
 
+## Feature rollout
+
+[PostHog `project-collaboration`](https://us.posthog.com/project/479412/feature-flags/1059373) is the single feature flag for review and hosted execution. It is inactive with a 0% rollout as of 2026-11-10. The API evaluates it using the existing `POSTHOG_KEY` and `POSTHOG_HOST`; no collaboration-specific environment toggle or dashboard rebuild is required. Evaluation uses the authenticated user ID as `distinct_id`, `org_id` and `environment` as person properties. Missing configuration or evaluation failure denies access.
+
+The dashboard reads `GET /v1/project-collaboration/capabilities` through its authenticated API client. The response contains `enabled` and `execution_configured`: the first is the PostHog decision; the second reports runtime configuration readiness, not another feature flag. Pages fail closed and server actions recheck capability. The API enforces authorization independently of the UI.
+
+Organization opt-in (`app.org_meta.project_rooms_enabled`) remains required, along with room/site permissions. Turning the PostHog flag off does not detach sites or bypass their existing human-review protections. The worker stays running for cleanup; the API gates new claims and sensitive operations using the initiating user's current decision. Keep the worker running while draining/reaping existing Sprite leases, even when rollout is disabled.
+
 ## Configuration
 
 Apply migrations through `0022_projection_polling.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
 
 | Process | Setting | Value / purpose |
 | --- | --- | --- |
-| API | `ROOM_EXECUTION_ENABLED` | `1` to enable; absent disables hosted endpoints |
 | API | `ROOM_CREDENTIAL_MASTER_KEY` | Base64 encoding of exactly 32 random bytes; Fly secret, API only |
 | API + worker | `ROOM_WORKER_TOKEN` | Same random secret, at least 32 characters |
 | API + worker | `ROOM_API_PUBLIC_URL` | Exact development API HTTPS origin; loopback HTTP accepted locally |
-| Worker | `ROOM_WORKER_ENABLED` | `1` to start |
 | Worker | `SPRITES_API_TOKEN` | Dedicated development organization token, worker only |
 | Worker | `SPRITES_ORGANIZATION` | Exact organization name checked against the Sprites API |
 | Worker | `SPRITES_NAME_PREFIX` | Dedicated fleet prefix, for example `dropway-dev-` |
-| Dashboard build | `NEXT_PUBLIC_COLLAB_EXECUTION` | `1` shows hosted controls after backend capability check |
 
-The existing room UI and organization collaboration flags must also be enabled. Open `/rooms` directly in the dashboard; the default navigation does not advertise this gated feature. Keep credentials in Fly secrets or an ignored local environment file. Generate each random secret independently (for example, `openssl rand -base64 32`). Never give the worker the credential master key, database credentials, or personal model keys. Do not change the master key without migrating stored ciphertext; losing it makes saved keys unreadable.
+Enable the PostHog flag for the intended development user/organization and opt that organization into rooms. Open `/rooms` directly in the dashboard; the default navigation does not advertise this gated feature. Keep credentials in Fly secrets or an ignored local environment file. Generate each random secret independently (for example, `openssl rand -base64 32`). Never give the worker the credential master key, database credentials, or personal model keys. Do not change the master key without migrating stored ciphertext; losing it makes saved keys unreadable.
 
 The worker has no inbound public service. Build from the repository root with `services/room-worker/Dockerfile`. `fly.room-worker.toml` deliberately has no production app name: deploy explicitly to your own development worker app with `fly deploy --config fly.room-worker.toml --app <development-worker-app>`, then keep one worker machine running. Set secrets before starting it. No deployment workflow automatically enables this service.
 
@@ -55,4 +60,4 @@ The API keeps encrypted keys separate from leased attempt and gateway capabiliti
 
 The worker has no local shell/file tool fallback. Sandbox networking is deny-all; this integration edits already-built assets and does not install dependencies. Source and output files are limited to 2 MiB each. Output is limited to 500 files and 10 MiB, additionally bounded by the job's configured output limit. Historical file reads are limited to 2 MiB per file. Existing review pins, outstanding candidates and active execution sources are retained by garbage collection.
 
-For rollback, stop the worker and disable execution/dashboard flags before considering migration rollback. Migration Down drops hosted state; preserve needed development audit data first. Existing review and candidate application remain independent.
+To pause rollout, disable `project-collaboration` in PostHog and keep workers running to clean up existing leases. For an application rollback, retain the expanded schema and redeploy a compatible image as described in the API rollout guide. Do not use migration Down to disable a feature: it drops hosted state and review records.

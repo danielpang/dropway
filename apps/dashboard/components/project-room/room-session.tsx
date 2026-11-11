@@ -40,12 +40,14 @@ import type { RoomActivity, CandidateDiffView, ProjectRoom, ReviewCandidate, Rev
 
 export function RoomSession({
   orgEnabled: initialOrgEnabled,
+  executionConfigured = false,
   rooms,
   sites,
   parentOrigin,
   loadError,
 }: {
   orgEnabled: boolean;
+  executionConfigured?: boolean;
   rooms: ProjectRoom[];
   sites: RoomSiteOption[];
   parentOrigin: string;
@@ -208,6 +210,7 @@ export function RoomSession({
       candidateCursor={candidateCursor}
       parentOrigin={parentOrigin}
       notice={notice}
+      executionConfigured={executionConfigured}
       orgEnabled={orgEnabled}
       onEnableRooms={() => {
         void enableRoomsAction(true).then((result) => {

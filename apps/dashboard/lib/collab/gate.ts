@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
-// The review primitives stay dark unless a deploy explicitly opts in.
+// The review primitives stay dark without an authenticated capability.
 // Bridge peers are https hosts under the existing platform content suffix
 // (the same suffix /authz already recognizes). Custom domains are not peers:
 // the dashboard has no authoritative allowlist for them here, and this module
@@ -8,13 +8,10 @@
 
 import { CONTENT_SUFFIX, isPlatformContentHost } from "@/lib/authz-host";
 
-export interface CollabReviewEnv {
-  NEXT_PUBLIC_COLLAB_REVIEW?: string;
-}
+export interface CollabReviewCapability { enabled?: boolean; }
 
-export function isCollabReviewEnabled(env?: CollabReviewEnv): boolean {
-  const source = env ?? process.env;
-  return source.NEXT_PUBLIC_COLLAB_REVIEW === "1";
+export function isCollabReviewEnabled(capability?: CollabReviewCapability): boolean {
+  return capability?.enabled === true;
 }
 
 export interface BridgePrerequisites {
@@ -27,14 +24,12 @@ export interface BridgePrerequisites {
   reasons: readonly string[];
 }
 
-export function bridgePrerequisites(env?: CollabReviewEnv): BridgePrerequisites {
-  const enabled = isCollabReviewEnabled(
-    env ?? { NEXT_PUBLIC_COLLAB_REVIEW: process.env.NEXT_PUBLIC_COLLAB_REVIEW },
-  );
+export function bridgePrerequisites(capability?: CollabReviewCapability): BridgePrerequisites {
+  const enabled = isCollabReviewEnabled(capability);
   const reasons = [
     enabled
-      ? "Collab review flag is on. Storage and room routes are still not part of this client."
-      : "Collab review is default off (NEXT_PUBLIC_COLLAB_REVIEW is not 1).",
+      ? "Project collaboration capability is enabled."
+      : "Project collaboration is default off without an authenticated capability.",
     "Custom domains are not trusted for the selection bridge.",
     "The serving worker does not inject the selection bridge.",
     "Opaque sandbox frames are not selection peers. A child navigation does not change iframe.src, and postMessage cannot name that origin without '*'.",
