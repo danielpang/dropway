@@ -17,6 +17,7 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY edge/serving-worker/package.json edge/serving-worker/package.json
 COPY contracts/package.json contracts/package.json
+COPY packages/sdk/package.json packages/sdk/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 # Not --frozen: the self-host quickstart should build even if pnpm-lock.yaml drifts
@@ -30,6 +31,8 @@ WORKDIR /repo
 COPY --from=deps /repo /repo
 COPY apps/dashboard/ apps/dashboard/
 COPY contracts/ contracts/
+COPY packages/sdk/ packages/sdk/
+# The dashboard build script compiles SDK schema exports before Next.js.
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 # Build-only placeholders (passed inline, NOT baked into the image): Better Auth
 # initializes at import, but `next build` never connects to a DB (auth pages are
