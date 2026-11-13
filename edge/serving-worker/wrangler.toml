@@ -8,7 +8,9 @@
 # placeholders — the infra agent fills them in (or supplies them via the
 # Cloudflare dashboard / `wrangler ... create`) per environment.
 
-name = "dropway-serving-worker"
+# Must match the LIVE Worker's name: a mismatched name makes `wrangler deploy`
+# create a second Worker instead of updating the one serving traffic.
+name = "dropway-production"
 main = "src/index.ts"
 compatibility_date = "2026-06-01"
 
@@ -67,8 +69,11 @@ ATTRIBUTION_BANNER = "true"
 # /`period` in sync with the vars above; `namespace_id` is an arbitrary per-Worker
 # integer you choose. When this binding is present the Worker prefers it over the
 # KV counter (src/index.ts).
-[[ratelimit]]
-binding = "RATE_LIMITER"
+# NOTE: the key is `[[ratelimits]]` with `name` — wrangler silently DROPS a
+# `[[ratelimit]]`/`binding` block (only a dry-run warning), which left production
+# on the KV-counter fallback.
+[[ratelimits]]
+name = "RATE_LIMITER"
 namespace_id = "1001"
 simple = { limit = 600, period = 60 }
 
