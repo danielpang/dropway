@@ -308,6 +308,8 @@ body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Hel
 header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 0.75rem; min-height: 3.4rem; padding: 0.6rem 1.25rem; background: rgba(250,250,250,0.85); backdrop-filter: saturate(1.8) blur(8px); border-bottom: 1px solid #e3e3e3; }
 header a.brand { display: inline-flex; align-items: center; gap: 0.45rem; text-decoration: none; color: inherit; font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
 header a.brand svg { width: 1.3rem; height: 1.3rem; display: block; }
+header a.brand svg .c { fill: #5647e1; }
+header a.brand svg .f { fill: #ffffff; }
 header .sep { color: #c4c4c4; }
 header .name { font-size: 0.85rem; font-weight: 500; color: #555; word-break: break-all; margin-right: auto; }
 header button { font: inherit; font-size: 0.82rem; font-weight: 500; cursor: pointer; padding: 0.35rem 0.7rem; border: 1px solid #d4d4d4; border-radius: 0.4rem; background: #fff; color: #1a1a1a; }
@@ -328,6 +330,8 @@ main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
 @media (prefers-color-scheme: dark) {
   body { background: #16181c; color: #e6e6e6; }
   header { background: rgba(22,24,28,0.85); border-bottom-color: #2a2d34; }
+  header a.brand svg .c { fill: #ffffff; }
+  header a.brand svg .f { fill: #5647e1; }
   header button { background: #1f2228; border-color: #34383f; color: #e6e6e6; }
   header button:hover { background: #2a2d34; }
   .markdown-body h1, .markdown-body h2 { border-bottom-color: #2a2d34; }
@@ -343,7 +347,7 @@ main { max-width: 820px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
 <body>
 <header>
 <a class="brand" href="https://dropway.dev" target="_blank" rel="noopener noreferrer">
-<svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="18" fill="#5647e1"></rect><g transform="translate(17 17) scale(0.66)"><path fill="#ffffff" fill-rule="evenodd" d="M50 7 L85 55 L62 92 L38 92 L15 55 Z M50 7 L34 51 L46 58 Z"></path></g></svg>
+<svg viewBox="0 0 100 100" aria-hidden="true"><rect class="c" x="32" y="4.5" width="60" height="69" rx="10.5" opacity=".3"></rect><rect class="c" x="20" y="16.5" width="60" height="69" rx="10.5" opacity=".6"></rect><path class="c" d="M18.5 28.5 H50 L68 46.5 V87 A10.5 10.5 0 0 1 57.5 97.5 H18.5 A10.5 10.5 0 0 1 8 87 V39 A10.5 10.5 0 0 1 18.5 28.5 Z"></path><path class="f" opacity=".5" d="M50 28.5 V40.5 A6 6 0 0 0 56 46.5 H68 Z"></path></svg>
 <span>Dropway</span>
 </a>
 <span class="sep">/</span>
