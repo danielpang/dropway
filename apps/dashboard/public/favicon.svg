@@ -1,6 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Dropway">
-  <rect width="100" height="100" rx="18" fill="hsl(246 72% 58%)"></rect>
-  <g transform="translate(17 17) scale(0.66)">
-    <path fill="#ffffff" fill-rule="evenodd" d="M50 7 L85 55 L62 92 L38 92 L15 55 Z M50 7 L34 51 L46 58 Z"></path>
-  </g>
+  <rect width="100" height="100" rx="18" fill="#5647e1"></rect>
+  <path fill="#ffffff" fill-rule="evenodd" d="M30 18 H44 A32 32 0 0 1 44 82 H30 A6 6 0 0 1 24 76 V24 A6 6 0 0 1 30 18 Z M48 30 C48 30 35 46 35 58 A13 13 0 0 0 61 58 C61 46 48 30 48 30 Z"></path>
 </svg>

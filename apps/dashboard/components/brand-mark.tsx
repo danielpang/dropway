@@ -3,7 +3,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * The Dropway Prism mark: the glyph knocked out in white on the brand-indigo
+ * The Dropway mark: a rounded "D" whose counter is a droplet, knocked out in white on the brand-indigo
  * tile. Brand colors are intentionally hard-coded (not theme tokens) so the logo
  * reads as the same mark in light and dark, matching the favicon. The app's own
  * UI stays monochrome; this is the one deliberate spot of brand color.
@@ -18,13 +18,11 @@ export function BrandMark({ className }: { className?: string }) {
       focusable="false"
     >
       <rect width="100" height="100" rx="18" fill="#5647e1" />
-      <g transform="translate(17 17) scale(0.66)">
-        <path
-          fillRule="evenodd"
-          fill="#ffffff"
-          d="M50 7 L85 55 L62 92 L38 92 L15 55 Z M50 7 L34 51 L46 58 Z"
-        />
-      </g>
+      <path
+        fillRule="evenodd"
+        fill="#ffffff"
+        d="M30 18 H44 A32 32 0 0 1 44 82 H30 A6 6 0 0 1 24 76 V24 A6 6 0 0 1 30 18 Z M48 30 C48 30 35 46 35 58 A13 13 0 0 0 61 58 C61 46 48 30 48 30 Z"
+      />
     </svg>
   );
 }
