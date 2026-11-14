@@ -13,6 +13,10 @@ import (
 // in an enabled project room. The check runs while the org and site rows are locked.
 var ErrControlledSite = errors.New("store: controlled site requires a human session")
 
+// ErrCandidatePublishDenied means a live publish would apply candidate bytes
+// without exactly one approved decision for the locked baseline.
+var ErrCandidatePublishDenied = errors.New("store: candidate publish denied")
+
 type humanSessionKey struct{}
 
 // WithHumanSession records whether this request was classified as an

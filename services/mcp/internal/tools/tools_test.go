@@ -5,6 +5,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -110,11 +111,19 @@ type fakeAPI struct {
 	getSiteChatResp      apiclient.SiteChat
 	getSiteChatErr       error
 	getSiteChatSiteID    string
+	jsonPath             string
+	jsonDoc              json.RawMessage
+	jsonErr              error
 }
 
 func (f *fakeAPI) ListSites(_ context.Context, token string) ([]apiclient.SiteSummary, error) {
 	f.readToken = token
 	return f.listSitesResp, f.listSitesErr
+}
+func (f *fakeAPI) GetJSON(_ context.Context, token, path string) (json.RawMessage, error) {
+	f.readToken = token
+	f.jsonPath = path
+	return f.jsonDoc, f.jsonErr
 }
 func (f *fakeAPI) ListSkills(_ context.Context, token, query, folder string, presetsOnly bool) ([]apiclient.SkillSummary, error) {
 	f.readToken, f.listSkillsQuery, f.listSkillsFolder, f.listSkillsPresets = token, query, folder, presetsOnly

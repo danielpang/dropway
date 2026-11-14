@@ -51,7 +51,7 @@ For a site that **is** referenced by a project room while `project_rooms_enabled
 
 Approval and publish lock `app.sites` before deciding, then lock the candidate. A second decision does not write a second audit. A hash or base version that belongs to a different candidate does not change either row.
 
-`DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. There is no route that removes a site from a room.
+`DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. A human room owner can detach a site with `DELETE /v1/project-rooms/{roomID}/sites/{siteID}`. That locks the site first and does not delete candidates. A version whose content hash equals a review candidate can be published only when exactly one approved candidate for that hash still matches the locked live baseline.
 
 Publish and rollback re-check that membership inside the same transaction that locks `app.org_meta` and then `app.sites`. Attaching a site, approving a candidate, and applying a candidate take those locks in that order. A non-human publish that is still waiting on the site lock sees a membership committed by the transaction that held the lock. Disabling `project_rooms_enabled` is a human admin action; it locks the same org row, so a key cannot observe the old flag and then publish after the flag has changed.
 
@@ -81,4 +81,28 @@ Provider keys, if added later, are write-only ciphertext, masked in metadata, re
 - `sites:*` and a null `site_id` keep the previous key behavior outside project rooms.
 - A non-null `site_id` may only call `/v1/sites/{that id}/...` plus `GET /v1/me`.
 - `sites:read` is read-only on site routes. `sites:write` is the mutation scope. Empty or other scopes do not grant the legacy full key.
-- Every project-room route rejects API keys.
+- Every project-room route rejects API keys. Comment and room reads are an MCP OAuth grant, not an API-key scope.
+
+## Room read contract
+
+Reads accept `human_session` or `mcp_oauth` and recheck org membership and room membership on every page. Writes accept only `human_session`.
+
+| Method | Path | Response notes |
+| --- | --- | --- |
+| GET | `/v1/sites/{id}/comment-pages?cursor&limit` | `{items, next_cursor, comment_content: untrusted_data}`. Items are `feed` or `room`, including resolved and orphaned anchors while the site is attached. |
+| GET | `/v1/project-rooms/threads/{threadID}?cursor&limit` | Thread pin, every anchor revision, and one reply page. |
+| GET | `/v1/project-rooms/{roomID}` | `{room, members, sites}` in snake_case. |
+| GET | `/v1/project-rooms/{roomID}/threads?cursor&limit` | Thread heads. Replies are on the thread route. |
+| GET | `/v1/project-rooms/{roomID}/candidates?cursor&limit` | Candidate identity and summary. No diff body. |
+| GET | `/v1/project-rooms/{roomID}/candidates/{candidateID}` | One candidate. Summary is untrusted. |
+| POST | `/v1/project-rooms/{roomID}/members` | Owner. `{user_id, role}` of `editor`, `reviewer`, or `viewer`. |
+| PATCH | `/v1/project-rooms/{roomID}/members/{userID}` | Owner. Cannot change the owner. |
+| DELETE | `/v1/project-rooms/{roomID}/members/{userID}` | Owner. Cannot remove the owner. The next read by that user is not-found. |
+| POST | `/v1/project-rooms/{roomID}/sites` | Owner. `{site_id}`. |
+| DELETE | `/v1/project-rooms/{roomID}/sites/{siteID}` | Owner. Detach only. |
+| POST | `/v1/project-rooms/{roomID}/threads/{threadID}/resolve` | Owner, editor, or reviewer who can read the site. |
+| POST | `/v1/project-rooms/{roomID}/threads/{threadID}/reanchor` | Same callers. `{kind, anchor, anchor_state, reason}` appends a revision and does not change the pin. |
+
+`GET /v1/project-rooms` and `POST /v1/project-rooms` still use the existing Go JSON names. Page order is `(created_at, id)` as text, merged site comments also order `feed` before `room` at the same timestamp. Default limit 50, maximum 100.
+
+MCP tools `list_site_comments`, `get_comment_thread`, `get_project_room`, `list_room_threads`, `list_room_candidates`, and `get_room_candidate` forward the verified OAuth token to those GET routes only.

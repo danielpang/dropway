@@ -66,6 +66,14 @@ func (f *fakeStore) OrgSlug(_ context.Context, t store.Tenant) (string, error) {
 	return "org", nil
 }
 
+func (f *fakeStore) PageSiteComments(context.Context, store.Tenant, string, string, int) (store.CommentPage, error) {
+	return store.CommentPage{Items: []store.CommentFeedItem{}}, nil
+}
+
+func (f *fakeStore) PageReviewReplies(context.Context, store.Tenant, string, string, int) (store.ReplyPage, error) {
+	return store.ReplyPage{}, nil
+}
+
 func (f *fakeStore) ProjectReviewControlled(_ context.Context, _ store.Tenant, siteID string) (bool, error) {
 	if f.controlled == nil {
 		return false, nil

@@ -1725,3 +1725,82 @@ WHERE a.org_id = sqlc.arg(org_id)
         (SELECT s.last_read_at FROM app.review_read_state s
           WHERE s.room_id = a.room_id AND s.org_id = a.org_id AND s.user_id = sqlc.arg(user_id)),
         '-infinity'::timestamptz);
+
+-- name: PageSiteFeedComments :many
+SELECT id, org_id, subject_type, subject_id, author_user_id, body, mentioned_user_ids, created_at
+FROM app.post_comments
+WHERE org_id = sqlc.arg(org_id)
+  AND subject_type = 'site'
+  AND subject_id = sqlc.arg(site_id)
+  AND (created_at, 'feed'::text, id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_kind)::text, sqlc.arg(cursor_id)::text)
+ORDER BY created_at ASC, id::text ASC
+LIMIT sqlc.arg(lim);
+
+-- name: PageSiteRoomThreads :many
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = sqlc.arg(user_id)
+JOIN app.project_room_sites rs
+  ON rs.room_id = t.room_id AND rs.site_id = t.site_id AND rs.org_id = t.org_id
+WHERE t.org_id = sqlc.arg(org_id)
+  AND t.site_id = sqlc.arg(site_id)
+  AND (t.created_at, 'room'::text, t.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_kind)::text, sqlc.arg(cursor_id)::text)
+ORDER BY t.created_at ASC, t.id::text ASC
+LIMIT sqlc.arg(lim);
+
+-- name: PageReviewReplies :many
+SELECT id, org_id, thread_id, author_user_id, body, created_at
+FROM app.review_replies
+WHERE org_id = sqlc.arg(org_id)
+  AND thread_id = sqlc.arg(thread_id)
+  AND (created_at, id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+ORDER BY created_at ASC, id::text ASC
+LIMIT sqlc.arg(lim);
+
+-- name: GetReadableReviewThread :one
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at, m.role
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = sqlc.arg(user_id)
+JOIN app.project_room_sites rs
+  ON rs.room_id = t.room_id AND rs.site_id = t.site_id AND rs.org_id = t.org_id
+WHERE t.id = sqlc.arg(id) AND t.org_id = sqlc.arg(org_id);
+
+-- name: PageRoomThreads :many
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = sqlc.arg(user_id)
+JOIN app.project_room_sites rs
+  ON rs.room_id = t.room_id AND rs.site_id = t.site_id AND rs.org_id = t.org_id
+WHERE t.org_id = sqlc.arg(org_id)
+  AND t.room_id = sqlc.arg(room_id)
+  AND (t.created_at, t.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+ORDER BY t.created_at ASC, t.id::text ASC
+LIMIT sqlc.arg(lim);
+
+-- name: PageRoomCandidates :many
+SELECT c.id, c.org_id, c.room_id, c.site_id, c.base_version_id, c.base_content_hash, c.content_hash,
+       c.diff_hash, c.summary, c.state, c.created_by, c.created_at, c.approved_by, c.approved_at,
+       c.rejected_by, c.rejected_at
+FROM app.review_candidates c
+JOIN app.project_room_members m
+  ON m.room_id = c.room_id AND m.org_id = c.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE c.org_id = sqlc.arg(org_id)
+  AND c.room_id = sqlc.arg(room_id)
+  AND (c.created_at, c.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+ORDER BY c.created_at ASC, c.id::text ASC
+LIMIT sqlc.arg(lim);
+
+-- name: ListCandidatesForArtifact :many
+SELECT id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+       summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at
+FROM app.review_candidates
+WHERE org_id = sqlc.arg(org_id) AND site_id = sqlc.arg(site_id) AND content_hash = sqlc.arg(content_hash);

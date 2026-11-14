@@ -365,6 +365,9 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 		if ver.SiteID != siteID || ver.OrgID != t.OrgID {
 			return ErrVersionMismatch
 		}
+		if err := authorizeLockedCandidatePublish(ctx, q, t.OrgID, site, ver); err != nil {
+			return err
+		}
 
 		// Defense in depth: assert this site OWNS the global host_routes row for
 		// its host before we project route:<host> to the edge. Under the per-tx RLS

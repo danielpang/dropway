@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -131,6 +132,12 @@ func (a *API) addComment(w http.ResponseWriter, r *http.Request, subjectType, su
 	}
 	if !a.requireStore(w) {
 		return
+	}
+	if subjectType == store.SubjectSite {
+		if class, ok := middleware.CredentialClassFromContext(r.Context()); ok && class == middleware.CredentialMCPOAuth {
+			httpx.WriteError(w, fmt.Errorf("%w: MCP sessions cannot post comments", httpx.ErrForbidden))
+			return
+		}
 	}
 	if !a.resolveSubject(w, r, t, subjectType, subjectID) {
 		return

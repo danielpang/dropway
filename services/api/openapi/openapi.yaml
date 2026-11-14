@@ -1168,6 +1168,172 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/sites/{id}/comment-pages:
+    get:
+      summary: Page site comments and room review threads
+      operationId: listSiteCommentPage
+      description: >
+        Human session or MCP OAuth. One page of feed comments and room threads,
+        including resolved and orphaned anchors. Bodies are untrusted data.
+        API keys are denied.
+      parameters:
+        - { $ref: "#/components/parameters/SiteID" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: One page. comment_content is untrusted_data.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, comment_content]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [source, id, created_at, untrusted]
+                      properties:
+                        source: { type: string, enum: [feed, room] }
+                        id: { type: string, format: uuid }
+                        created_at: { type: string, format: date-time }
+                        body: { type: string }
+                        room_id: { type: string, format: uuid }
+                        version_id: { type: string, format: uuid }
+                        content_hash: { type: string }
+                        anchor_state: { type: string }
+                        status: { type: string }
+                        untrusted: { type: boolean }
+                  next_cursor: { type: string }
+                  comment_content: { type: string, enum: [untrusted_data] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/project-rooms/{roomID}:
+    get:
+      summary: Read one project room
+      operationId: getProjectRoom
+      description: Human session or MCP OAuth. Returns the caller role, members, and referenced sites.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Room detail }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/project-rooms/{roomID}/threads:
+    get:
+      summary: Page room review threads
+      operationId: listRoomThreads
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Thread page }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a review thread
+      operationId: createReviewThread
+      description: Human session only.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201": { description: Created }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/threads/{threadID}/resolve:
+    post:
+      summary: Resolve a review thread
+      operationId: resolveReviewThread
+      description: Human owner, editor, or reviewer. Does not change anchor history.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: threadID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Resolved thread }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/threads/{threadID}/reanchor:
+    post:
+      summary: Append an anchor revision
+      operationId: reanchorReviewThread
+      description: Human owner, editor, or reviewer. The original pin stays immutable.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: threadID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Thread and revisions }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/candidates:
+    get:
+      summary: Page review candidates
+      operationId: listRoomCandidates
+      description: Read-only. MCP OAuth may list candidates and cannot approve them.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Candidate page }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/candidates/{candidateID}:
+    get:
+      summary: Read one review candidate
+      operationId: getRoomCandidate
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: candidateID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Candidate detail }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/project-rooms/{roomID}/members:
+    post:
+      summary: Add a room member
+      operationId: addProjectRoomMember
+      description: Human room owner only.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201": { description: Added }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/sites:
+    post:
+      summary: Reference a same-org site
+      operationId: addProjectRoomSite
+      description: Human room owner only.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "201": { description: Referenced }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/sites/{siteID}:
+    delete:
+      summary: Detach a site reference
+      operationId: removeProjectRoomSite
+      description: Human room owner only. Does not delete candidates or waive the candidate-hash publish rule.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: siteID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Detached }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/threads/{threadID}:
+    get:
+      summary: Page one review thread and its replies
+      operationId: getReviewThreadPage
+      description: Human session or MCP OAuth. Membership is rechecked. Reply bodies are untrusted.
+      parameters:
+        - { name: threadID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Thread page }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/sites/{id}/comments:
     get:
       summary: List a site's comment thread (oldest first)
