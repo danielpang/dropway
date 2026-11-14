@@ -1602,9 +1602,6 @@ export function RoomWorkspace({
         <div className="flex h-[calc(100dvh-3.5rem)] min-h-[32rem] flex-col bg-background">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="rounded border border-border bg-muted px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Project mode
-              </span>
               <div className="relative inline-grid max-w-48 text-sm font-semibold">
                 <span
                   aria-hidden="true"
