@@ -1,26 +1,47 @@
-# API schema rollout
+# Hosted deployment and schema rollout
 
-Apply the app migrations before releasing the new API image. Disabling project rooms or hosted execution does not remove the API's schema dependencies: API-key authentication, version retention and projection recovery also use the new schema.
+`Deploy hosted` owns normal Fly releases. A successful `ci` run for a push to main starts this sequence for that exact commit:
 
-The collaboration PRs form a stack. Promote the final tested revision containing the rollout fixes; do not deploy intermediate stack revisions. If an external service auto-deploys every main-branch merge, hold its production promotion while landing the stack. This repository does not control external deployment integrations.
+1. Migrate development: app, billing, then Better Auth identity.
+2. Build the cloud API, MCP and room-worker images once; deploy development API and MCP, then the worker when configured.
+3. After development rollout and HTTP health checks succeed, migrate production in the same order.
+4. Promote the same image artifact to production; deploy API, MCP, then the optional worker.
 
-1. Merge the migrations and wait for the `migrate` workflow's development stage to succeed. Approve its production environment stage and verify that it succeeds for the same revision. This workflow owns production DDL; the API runtime does not.
-2. Build the API image and run its read-only preflight with the target database's **runtime** connection:
+Every dependency must succeed before the next stage starts. A single concurrency group serializes complete rollouts and manual migration recovery. GitHub may replace a pending run with a newer pending run; migrations are cumulative. Delayed automatic CI completions for commits superseded on main are ignored. Manual deployments must run from main and default to development only; selecting production still passes through development first. Manual dispatch is an operator recovery path and does not wait for a separate CI run.
 
-   ```sh
-   docker run --rm --env DATABASE_URL dropway-api:release --check-schema
-   ```
+Images are checked against their recorded Docker image IDs, pushed to each app's Fly registry, then released by digest. Production does not rebuild. Artifacts expire after three days; start a new complete rollout if they have expired. The API retains its read-only `--check-schema` Fly release command before replacing serving Machines. HTTP readiness does not replace product acceptance testing.
 
-   Set `DATABASE_URL` in the invoking environment. Do not put credentials in the command line or substitute an owner connection to make a permission failure pass. The command needs only this database configuration, exits nonzero for missing schema or runtime permissions, and does not start HTTP, telemetry, background jobs or migrations.
-3. Deploy the API with the repository's `fly.toml`. Its `release_command = "--check-schema"` runs the same check in the new image before Fly updates serving Machines. Do not bypass the release command. If it fails, complete the migration or fix runtime grants, then retry the deployment; leave the serving release in place.
-4. Check the rollout's health checks and existing API-key/site workflows before enabling the single [PostHog `project-collaboration` flag](https://us.posthog.com/project/479412/feature-flags/1059373) for a development cohort and opting its organization into rooms. The flag is inactive at 0% as of 2026-11-10. Reuse `POSTHOG_KEY` / `POSTHOG_HOST`; do not add dashboard or worker enablement toggles. Live provider/Sprite acceptance remains required before production rollout.
+## Configuration and cutover
 
-The API also checks the schema on ordinary startup before accepting traffic, including when deployed outside Fly. Other platforms should run the image preflight as a deployment prerequisite, then use readiness checks to keep existing instances until replacements are healthy. A process startup check alone cannot preserve availability if an operator stops every old instance first.
+This PR does not provision apps, change runtime secrets, or disable external deployment integrations. Before enabling the new pipeline:
 
-The preflight checks required objects, result shapes and runtime access, rather than trusting a migration version number. The runtime role does not need access to Goose's owner-managed bookkeeping table. A successful check verifies schema readiness; it does not validate provider credentials or perform live model/Sprite calls.
+1. Provision distinct development API/MCP apps with development database, storage and application credentials. Do not point development apps at production data. Optionally provision a dedicated worker per environment.
+2. Set the following in each GitHub environment (`development` and `production`):
 
-For an application rollback, retain the expanded schema and redeploy the previous compatible API image. The previous API-key resolver explicitly selects its original seven columns, so adding `scopes` and `site_id` does not break it. Do not run destructive Goose down migrations while either release is serving; they remove review and execution records. Migration 0022 adds a bounded pending-projection lookup without replacing the old API's functions.
+   | Kind | Name | Value |
+   | --- | --- | --- |
+   | Variable | `FLY_API_APP` | That environment's API app |
+   | Variable | `FLY_MCP_APP` | That environment's MCP app |
+   | Variable | `FLY_WORKER_APP` | Optional worker app; omit to skip deployment |
+   | Secret | `FLY_API_TOKEN` | App-scoped API deployment token |
+   | Secret | `FLY_MCP_API_TOKEN` | App-scoped MCP deployment token |
+   | Secret | `FLY_WORKER_API_TOKEN` | Required when worker is configured |
 
-Fly's release command replaces Docker `CMD`, **not** `ENTRYPOINT`; this image already sets `ENTRYPOINT ["/usr/local/bin/api"]`, so the flag alone is intentional. Fly runs the check in a temporary Machine with the app environment and secrets, and aborts deployment on a nonzero exit. See the [official Fly deployment configuration](https://fly.io/docs/reference/configuration/#the-deploy-section).
+   Production apps currently are `dropway-production` and `dropway-mcp-prod`. No development API/MCP pair is currently configured. Runtime secrets remain in Fly; this workflow supplies only `ENVIRONMENT` and the image/config.
 
-Disabling the PostHog flag stops new collaboration access and API-authorized claims; it does not remove schema dependencies or lift enrolled-site protections. Keep workers running for lease cleanup. The dashboard uses the authenticated API capability for the same user and organization, so rollout changes require no dashboard rebuild. See [the evaluation identity and runtime configuration](../docs/hosted-collaboration-development.md#feature-rollout).
+3. Retain development's `DEV_DATABASE_OWNER_URL` / `DEV_BILLING_OWNER_URL` and production's `PROD_DATABASE_OWNER_URL` / `PROD_BILLING_OWNER_URL`. These are privileged migration connections, not runtime connections. App migrations run first so grants and identity search paths exist; billing uses its separate `goose_db_version_billing` ledger. Better Auth runs last.
+4. Configure production environment required reviewers if a human promotion gate is desired. Environment names alone do not provide approval protection; neither environment currently has required reviewers.
+5. Disable Fly's GitHub automatic deployments for each affected app before the first main merge handled by this workflow. Otherwise Fly can still race the migration jobs. Coordinate that switch with merging this PR and verify the first development run before requesting production.
+6. Vercel dashboard and Cloudflare deployments are **not** controlled by this Fly workflow. Their automatic deployment integrations must be handled separately to guarantee ordering for those services too. In particular, dashboard auto-deployment can still race schema changes until it is moved behind the migration dependency.
+
+Missing deployment credentials fail before the corresponding environment's migration. The old `migrate` workflow is manual-only recovery, so it cannot independently advance production while development services are still deploying. Do not merge this replacement before configuring its environment prerequisites and coordinating external auto-deploy cutover.
+
+## Failure recovery and compatibility
+
+Migrations must remain compatible with the currently serving release: migration-first deployment necessarily leaves old code running against the expanded schema during rollout. Apply additive changes first; remove old schema only in a later release after old code no longer uses it.
+
+A failed deployment does not roll back schema changes. Fix the failure and rerun the pipeline, or redeploy a known compatible image. Do not run destructive Goose down migrations while either release is serving. For migration-only recovery, manually run `migrate` on main for one explicit environment; it shares the rollout lock.
+
+The API release check uses the runtime database role and verifies schema objects, query shapes and permissions without running DDL. Do not bypass it or replace runtime credentials with owner credentials. Fly aborts the release if it fails. Existing serving Machines remain on their previous release.
+
+Collaboration's PostHog flag is independent of schema readiness. Disabling it does not remove schema requirements. Continue provider/Sprite acceptance testing before expanding feature access; see [hosted collaboration configuration](../docs/hosted-collaboration-development.md).

@@ -33,6 +33,22 @@ permissions:
   contents: read
 
 jobs:
+  deployment-pipeline:
+    name: Deployment pipeline checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Validate workflow definitions
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
+      - name: Check deployment scripts and failure handling
+        run: |
+          shellcheck scripts/deploy/*.sh
+          python3 -m unittest discover -s scripts/deploy/tests -v
   # ---------------------------------------------------------------------------
   # (0) Detect which areas a PR/push touched, so the heavy jobs below only run when
   #     relevant code changed (a docs-only PR shouldn't spin up Postgres/MinIO/the
@@ -623,7 +639,7 @@ jobs:
 
       - name: wait for the dashboard
         run: |
-          for i in $(seq 1 60); do
+          for _attempt in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/auth/ok || true)
             [ "$code" = "200" ] && { echo "dashboard ready"; exit 0; }
             sleep 3
