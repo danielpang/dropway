@@ -369,109 +369,123 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 			return err
 		}
 
-		// Defense in depth: assert this site OWNS the global host_routes row for
-		// its host before we project route:<host> to the edge. Under the per-tx RLS
-		// tenant context, GetHostRoute returns a row ONLY if the active org owns the
-		// host; a host owned by another org (or absent) is a no-rows miss → refuse.
-		// This stops a publish from ever overwriting another tenant's live route
-		// even if the CreateSite reservation were somehow bypassed.
-		orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
-		if err != nil {
-			return err
-		}
-		host := projection.HostForSite(orgSlug, site.Slug)
-		hr, err := q.GetHostRoute(ctx, db.GetHostRouteParams{Host: host, OrgID: t.OrgID})
-		if err != nil {
-			if isNoRows(err) {
-				return ErrHostTaken
-			}
-			return err
-		}
-		if hr.SiteID != siteID || hr.OrgID != t.OrgID {
-			return ErrHostTaken
-		}
+		res, err = s.publishLocked(ctx, tx, q, t, site, ver, true)
+		return err
+	})
+	return res, err
+}
 
-		vid := versionID
+// publishLocked projects the same database changes for ordinary publish and an
+// approved candidate. The caller holds the org/site locks and authorizes the
+// exact version before invoking it.
+func (s *Store) publishLocked(ctx context.Context, tx pgx.Tx, q *db.Queries, t Tenant, site db.AppSite, ver db.AppSiteVersion, mutate bool) (res PublishResult, err error) {
+	siteID, versionID := site.ID, ver.ID
+	// Defense in depth: assert this site OWNS the global host_routes row for
+	// its host before we project route:<host> to the edge. Under the per-tx RLS
+	// tenant context, GetHostRoute returns a row ONLY if the active org owns the
+	// host; a host owned by another org (or absent) is a no-rows miss → refuse.
+	// This stops a publish from ever overwriting another tenant's live route
+	// even if the CreateSite reservation were somehow bypassed.
+	orgSlug, err := orgSlugTx(ctx, tx, t.OrgID)
+	if err != nil {
+		return res, err
+	}
+	host := projection.HostForSite(orgSlug, site.Slug)
+	hr, err := q.GetHostRoute(ctx, db.GetHostRouteParams{Host: host, OrgID: t.OrgID})
+	if err != nil {
+		if isNoRows(err) {
+			return res, ErrHostTaken
+		}
+		return res, err
+	}
+	if hr.SiteID != siteID || hr.OrgID != t.OrgID {
+		return res, ErrHostTaken
+	}
+
+	vid := versionID
+	if mutate {
 		if err := q.SetCurrentVersion(ctx, db.SetCurrentVersionParams{
 			ID:               siteID,
 			CurrentVersionID: &vid,
 			OrgID:            t.OrgID,
 		}); err != nil {
-			return err
+			return res, err
 		}
 
-		res.Site = siteFromDB(site)
-		res.Site.CurrentVersionID = &vid
+	}
+	res.Site = siteFromDB(site)
+	res.Site.CurrentVersionID = &vid
 
-		// Public/unlisted links enforce expiry at the edge from the RouteValue;
-		// identity-gated modes enforce it at mint time (routeExpiry returns "" for
-		// them). A public site may have no policy row → treat as "no expiry".
-		var expiresAt string
-		if pol, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: siteID, OrgID: t.OrgID}); err == nil {
-			expiresAt = routeExpiry(site.AccessMode, accessPolicyFromDB(pol))
-		} else if !isNoRows(err) {
-			return err
-		}
+	// Public/unlisted links enforce expiry at the edge from the RouteValue;
+	// identity-gated modes enforce it at mint time (routeExpiry returns "" for
+	// them). A public site may have no policy row → treat as "no expiry".
+	var expiresAt string
+	if pol, err := q.GetSiteAccessPolicy(ctx, db.GetSiteAccessPolicyParams{SiteID: siteID, OrgID: t.OrgID}); err == nil {
+		expiresAt = routeExpiry(site.AccessMode, accessPolicyFromDB(pol))
+	} else if !isNoRows(err) {
+		return res, err
+	}
 
-		// The owning org's plan tier rides on the projection (v3) so the serving
-		// Worker can gate the free-tier "Deployed with Dropway" attribution banner
-		// without a Postgres read. GetPlanTier fail-softs to "free" when absent.
-		planTier, err := q.GetPlanTier(ctx, t.OrgID)
-		if err != nil {
-			return err
-		}
+	// The owning org's plan tier rides on the projection (v3) so the serving
+	// Worker can gate the free-tier "Deployed with Dropway" attribution banner
+	// without a Postgres read. GetPlanTier fail-softs to "free" when absent.
+	planTier, err := q.GetPlanTier(ctx, t.OrgID)
+	if err != nil {
+		return res, err
+	}
 
-		// The attached, panel-enabled chat log rides on every published route
-		// (v4 chat_id) so the Worker can inject the "How this was made" pill.
-		chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, siteID)
-		if err != nil {
-			return err
-		}
+	// The attached, panel-enabled chat log rides on every published route
+	// (v4 chat_id) so the Worker can inject the "How this was made" pill.
+	chatID, err := chatIDForSiteTx(ctx, q, t.OrgID, siteID)
+	if err != nil {
+		return res, err
+	}
 
-		newRoute := func() projection.RouteValue {
-			return routeValue(t.OrgID, siteID, versionID, site.AccessMode, expiresAt, planTier, chatID)
-		}
+	newRoute := func() projection.RouteValue {
+		return routeValue(t.OrgID, siteID, versionID, site.AccessMode, expiresAt, planTier, chatID)
+	}
 
-		// Keep the canonical Host/Route populated for back-compat (the single-route
-		// shape); the handler iterates Routes when present.
-		res.Host = host
-		res.Route = newRoute()
+	// Keep the canonical Host/Route populated for back-compat (the single-route
+	// shape); the handler iterates Routes when present.
+	res.Host = host
+	res.Route = newRoute()
 
-		// Rewrite EVERY host of the site (canonical + verified custom domains) to the
-		// new version — each custom host has its own route:<host> KV entry, and a host
-		// left pointing at the OLD version_id keeps serving the stale build after a
-		// publish/rollback (parity with SetSiteAccess / the reconcile path; FIX 1).
-		// Preview rows are excluded: each pins its own draft version and must not be
-		// repointed at the published one.
-		hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: siteID, OrgID: t.OrgID})
-		if err != nil {
-			return err
+	// Rewrite EVERY host of the site (canonical + verified custom domains) to the
+	// new version — each custom host has its own route:<host> KV entry, and a host
+	// left pointing at the OLD version_id keeps serving the stale build after a
+	// publish/rollback (parity with SetSiteAccess / the reconcile path; FIX 1).
+	// Preview rows are excluded: each pins its own draft version and must not be
+	// repointed at the published one.
+	hostRoutes, err := q.ListHostRoutesForSite(ctx, db.ListHostRoutesForSiteParams{SiteID: siteID, OrgID: t.OrgID})
+	if err != nil {
+		return res, err
+	}
+	for _, hr := range hostRoutes {
+		if hr.Kind == RouteKindPreview {
+			continue
 		}
-		for _, hr := range hostRoutes {
-			if hr.Kind == RouteKindPreview {
-				continue
-			}
-			res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: newRoute()})
-		}
+		res.Routes = append(res.Routes, RouteUpdate{Host: hr.Host, Route: newRoute()})
+	}
 
-		// Publishing wipes ALL of the site's previews (not just this version's):
-		// once a draft goes live, the whole draft-review surface is moot, so every
-		// pending preview host for the site is removed. Returns hosts for KV cleanup.
-		deleted, err := q.DeleteSitePreviewRoutesExcept(ctx, db.DeleteSitePreviewRoutesExceptParams{
-			SiteID: siteID, KeepVersionID: nil, OrgID: t.OrgID,
-		})
-		if err != nil {
-			return err
-		}
-		res.DeletedPreviewHosts = deleted
-		if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
-			ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{}, OrgID: t.OrgID,
-		}); err != nil {
-			return err
-		}
-		return nil
+	// Publishing wipes ALL of the site's previews (not just this version's):
+	// once a draft goes live, the whole draft-review surface is moot, so every
+	// pending preview host for the site is removed. Returns hosts for KV cleanup.
+	if !mutate {
+		return res, nil
+	}
+	deleted, err := q.DeleteSitePreviewRoutesExcept(ctx, db.DeleteSitePreviewRoutesExceptParams{
+		SiteID: siteID, KeepVersionID: nil, OrgID: t.OrgID,
 	})
-	return res, err
+	if err != nil {
+		return res, err
+	}
+	res.DeletedPreviewHosts = deleted
+	if err := q.SetVersionPreviewExpiry(ctx, db.SetVersionPreviewExpiryParams{
+		ID: versionID, PreviewExpiresAt: pgtype.Timestamptz{}, OrgID: t.OrgID,
+	}); err != nil {
+		return res, err
+	}
+	return res, nil
 }
 
 // ManifestKeyFor returns the canonical manifest object key for a version (the

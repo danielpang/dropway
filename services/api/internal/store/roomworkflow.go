@@ -5,7 +5,8 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/services/api/internal/projectroom"
@@ -15,7 +16,8 @@ import (
 // PageRoomThreads lists threads this member can still read, including resolved
 // and orphaned rows. A site removed from the room drops out on the next page.
 func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor string, limit int) (ThreadPage, error) {
-	at, id, err := singleCursor(cursor, "thread")
+	page, err := s.beginReviewPage(t, "room-threads", roomID, cursor, false)
+	at, id := page.At, page.ID
 	if err != nil {
 		return ThreadPage{}, err
 	}
@@ -31,8 +33,12 @@ func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor st
 		}
 		rows, err := q.PageRoomThreads(ctx, db.PageRoomThreadsParams{
 			UserID: t.UserID, OrgID: t.OrgID, RoomID: roomID,
-			CursorAt: at, CursorID: id, Lim: int32(limit),
+			CursorAt: at, CursorID: id, Lim: int32(limit + 1), Watermark: page.Watermark,
 		})
+		if err != nil {
+			return err
+		}
+		rows, more, err := boundedReviewRows(rows, limit)
 		if err != nil {
 			return err
 		}
@@ -40,9 +46,12 @@ func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor st
 		for i, row := range rows {
 			out.Threads[i] = threadFrom(row, mem.Role)
 		}
-		if len(rows) == limit {
+		if more {
 			last := rows[len(rows)-1]
-			out.NextCursor = projectroom.EncodePageCursor(last.CreatedAt, "thread", last.ID)
+			out.NextCursor, err = s.nextReviewPage(page, last.CreatedAt, "thread", last.ID)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -51,13 +60,14 @@ func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor st
 
 // PageRoomCandidates lists candidates for a room the caller still belongs to.
 func (s *Store) PageRoomCandidates(ctx context.Context, t Tenant, roomID, cursor string, limit int) (CandidatePage, error) {
-	at, id, err := singleCursor(cursor, "candidate")
+	page, err := s.beginReviewPage(t, "room-candidates", roomID, cursor, false)
+	at, id := page.At, page.ID
 	if err != nil {
 		return CandidatePage{}, err
 	}
 	limit = clampPage(limit)
 	var out CandidatePage
-	err = s.withTx(ctx, t, func(q *db.Queries) error {
+	err = s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		if err := s.requireRooms(ctx, q, t.OrgID); err != nil {
 			return err
 		}
@@ -66,18 +76,28 @@ func (s *Store) PageRoomCandidates(ctx context.Context, t Tenant, roomID, cursor
 		}
 		rows, err := q.PageRoomCandidates(ctx, db.PageRoomCandidatesParams{
 			UserID: t.UserID, OrgID: t.OrgID, RoomID: roomID,
-			CursorAt: at, CursorID: id, Lim: int32(limit),
+			CursorAt: at, CursorID: id, Lim: int32(limit + 1), Watermark: page.Watermark,
 		})
+		if err != nil {
+			return err
+		}
+		rows, more, err := boundedReviewRows(rows, limit)
 		if err != nil {
 			return err
 		}
 		out.Candidates = make([]Candidate, len(rows))
 		for i, row := range rows {
 			out.Candidates[i] = candidateFrom(row)
+			if err := loadCandidateReceipt(ctx, tx, t.OrgID, &out.Candidates[i]); err != nil {
+				return err
+			}
 		}
-		if len(rows) == limit {
+		if more {
 			last := rows[len(rows)-1]
-			out.NextCursor = projectroom.EncodePageCursor(last.CreatedAt, "candidate", last.ID)
+			out.NextCursor, err = s.nextReviewPage(page, last.CreatedAt, "candidate", last.ID)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -87,7 +107,7 @@ func (s *Store) PageRoomCandidates(ctx context.Context, t Tenant, roomID, cursor
 // GetRoomCandidate returns one candidate the caller can read.
 func (s *Store) GetRoomCandidate(ctx context.Context, t Tenant, roomID, candidateID string) (Candidate, error) {
 	var out Candidate
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
+	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		if err := s.requireRooms(ctx, q, t.OrgID); err != nil {
 			return err
 		}
@@ -101,7 +121,7 @@ func (s *Store) GetRoomCandidate(ctx context.Context, t Tenant, roomID, candidat
 			return err
 		}
 		out = candidateFromMember(row)
-		return nil
+		return loadCandidateReceipt(ctx, tx, t.OrgID, &out)
 	})
 	return out, err
 }
@@ -373,15 +393,4 @@ func threadWithRevisions(row db.AppReviewThread, role string, revs []db.AppRevie
 		}
 	}
 	return out
-}
-
-func singleCursor(cursor, want string) (time.Time, string, error) {
-	at, kind, id, err := projectroom.DecodePageCursor(cursor)
-	if err != nil {
-		return time.Time{}, "", err
-	}
-	if cursor != "" && kind != want {
-		return time.Time{}, "", projectroom.ErrBadCursor
-	}
-	return at, id, nil
 }

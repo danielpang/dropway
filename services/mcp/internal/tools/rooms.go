@@ -17,9 +17,10 @@ type listSiteCommentsIn struct {
 	Limit  int    `json:"limit,omitempty" jsonschema:"page size from 1 to 100"`
 }
 type threadReadIn struct {
-	ThreadID string `json:"thread_id" jsonschema:"room thread id from list_site_comments"`
-	Cursor   string `json:"cursor,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
+	RevisionsCursor string `json:"revisions_cursor,omitempty" jsonschema:"independent anchor-history cursor from next_revision_cursor"`
+	ThreadID        string `json:"thread_id" jsonschema:"room thread id from list_site_comments"`
+	Cursor          string `json:"cursor,omitempty"`
+	Limit           int    `json:"limit,omitempty"`
 }
 type roomReadIn struct {
 	RoomID string `json:"room_id"`
@@ -79,7 +80,11 @@ func (svc *Service) getCommentThreadHandler(ctx context.Context, _ *mcpsdk.CallT
 	if !ok {
 		return nil, roomReadOut{}, ErrNoToken
 	}
-	out, err := svc.readJSON(ctx, token, pagePath("/v1/project-rooms/threads/"+in.ThreadID, in.Cursor, in.Limit))
+	path := pagePath("/v1/project-rooms/threads/"+in.ThreadID, in.Cursor, in.Limit)
+	if in.RevisionsCursor != "" {
+		path += "&revisions_cursor=" + url.QueryEscape(in.RevisionsCursor)
+	}
+	out, err := svc.readJSON(ctx, token, path)
 	return nil, out, err
 }
 

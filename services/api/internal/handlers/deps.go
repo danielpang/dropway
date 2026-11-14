@@ -52,7 +52,7 @@ type SiteStore interface {
 	ListSiteVersions(ctx context.Context, t store.Tenant, siteID string) ([]store.SiteVersion, error)
 	Publish(ctx context.Context, t store.Tenant, siteID, versionID string) (store.PublishResult, error)
 	PageSiteComments(ctx context.Context, t store.Tenant, siteID, cursor string, limit int) (store.CommentPage, error)
-	PageReviewReplies(ctx context.Context, t store.Tenant, threadID, cursor string, limit int) (store.ReplyPage, error)
+	PageReviewReplies(ctx context.Context, t store.Tenant, threadID, cursor string, limit int, revisionCursor ...string) (store.ReplyPage, error)
 	CandidateVersions(ctx context.Context, t store.Tenant, roomID, candidateID string) (store.Candidate, store.SiteVersion, store.SiteVersion, error)
 	LiveContentHashes(ctx context.Context, t store.Tenant) (map[string]string, error)
 	// ProjectReviewControlled reports whether this site is referenced by a

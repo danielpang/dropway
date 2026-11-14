@@ -16,6 +16,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 
@@ -24,6 +25,7 @@ import (
 
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/services/api/internal/projectroom"
 	"github.com/danielpang/dropway/services/api/internal/store/db"
 )
 
@@ -36,8 +38,9 @@ type Tenant struct {
 
 // Store is the tx-per-call data layer.
 type Store struct {
-	pool  *pgxpool.Pool
-	quota quota.Provider
+	pool          *pgxpool.Pool
+	quota         quota.Provider
+	reviewCursors *projectroom.CursorCodec
 }
 
 // New wraps a pgx pool with the open-core quota policy. The pool MUST connect as
@@ -49,7 +52,17 @@ func New(pool *pgxpool.Pool, q quota.Provider) *Store {
 	if q == nil {
 		q = quota.Unlimited{}
 	}
-	return &Store{pool: pool, quota: q}
+	s := &Store{pool: pool, quota: q}
+	// Secure ephemeral cursors for local/test stores. The API replaces this key
+	// with its configured shared secret before accepting traffic.
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic("cannot initialize review cursor entropy")
+	}
+	if err := s.SetCursorKey(key); err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // Pool exposes the underlying pool for lifecycle management (Close) and the

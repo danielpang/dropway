@@ -43,7 +43,7 @@ func (a *API) ListSiteCommentPage(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	writeReviewJSON(w, map[string]any{
 		"items": commentItems(page.Items), "next_cursor": page.NextCursor, "comment_content": "untrusted_data",
 	})
 }
@@ -64,12 +64,12 @@ func (a *API) GetReviewThreadPage(w http.ResponseWriter, r *http.Request) {
 	if !a.requireOrgMember(w, r, t) {
 		return
 	}
-	page, err := a.Store.PageReviewReplies(r.Context(), t, chi.URLParam(r, "threadID"), r.URL.Query().Get("cursor"), queryLimit(r))
+	page, err := a.Store.PageReviewReplies(r.Context(), t, chi.URLParam(r, "threadID"), r.URL.Query().Get("cursor"), queryLimit(r), r.URL.Query().Get("revisions_cursor"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	writeReviewJSON(w, map[string]any{
 		"thread": replyPageResponse(page), "comment_content": "untrusted_data",
 	})
 }
@@ -84,7 +84,7 @@ func (a *API) GetProjectRoom(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, roomDetailResponse(detail))
+	writeReviewJSON(w, roomDetailResponse(detail))
 }
 
 func (a *API) ListRoomThreads(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +101,7 @@ func (a *API) ListRoomThreads(w http.ResponseWriter, r *http.Request) {
 	for i, th := range page.Threads {
 		threads[i] = threadHeadResponse(th)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"threads": threads, "next_cursor": page.NextCursor, "comment_content": "untrusted_data"})
+	writeReviewJSON(w, map[string]any{"threads": threads, "next_cursor": page.NextCursor, "comment_content": "untrusted_data"})
 }
 
 func (a *API) ListRoomCandidates(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +118,7 @@ func (a *API) ListRoomCandidates(w http.ResponseWriter, r *http.Request) {
 	for i, c := range page.Candidates {
 		items[i] = candidateResponse(c)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"candidates": items, "next_cursor": page.NextCursor, "comment_content": "untrusted_data"})
+	writeReviewJSON(w, map[string]any{"candidates": items, "next_cursor": page.NextCursor, "comment_content": "untrusted_data"})
 }
 
 func (a *API) GetRoomCandidate(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +131,7 @@ func (a *API) GetRoomCandidate(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"candidate": candidateResponse(c), "comment_content": "untrusted_data"})
+	writeReviewJSON(w, map[string]any{"candidate": candidateResponse(c), "comment_content": "untrusted_data"})
 }
 
 func (a *API) AddProjectRoomMember(w http.ResponseWriter, r *http.Request) {
@@ -328,7 +328,7 @@ func replyPageResponse(p store.ReplyPage) map[string]any {
 		"id": p.ThreadID, "room_id": p.RoomID, "site_id": p.SiteID, "version_id": p.VersionID,
 		"content_hash": p.ContentHash, "page": p.Page, "anchor_kind": p.AnchorKind, "anchor": p.Anchor,
 		"anchor_state": p.AnchorState, "status": p.Status, "revisions": revs, "replies": replies,
-		"next_cursor": p.NextCursor, "untrusted": true,
+		"next_cursor": p.NextCursor, "next_revision_cursor": p.NextRevisionCursor, "untrusted": true,
 	}
 }
 
@@ -378,6 +378,6 @@ func candidateResponse(c store.Candidate) map[string]any {
 		"base_version_id": c.BaseVersionID, "base_content_hash": c.BaseContentHash,
 		"content_hash": c.ContentHash, "diff_hash": c.DiffHash, "summary": c.Summary,
 		"state": c.State, "created_by": c.CreatedBy, "created_at": c.CreatedAt,
-		"approved_by": c.ApprovedBy, "rejected_by": c.RejectedBy, "untrusted": true,
+		"applied_version_id": c.AppliedVersionID, "approved_by": c.ApprovedBy, "rejected_by": c.RejectedBy, "untrusted": true,
 	}
 }

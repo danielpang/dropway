@@ -14,7 +14,7 @@ import (
 var ErrControlledSite = errors.New("store: controlled site requires a human session")
 
 // ErrCandidatePublishDenied means a live publish would apply candidate bytes
-// without exactly one approved decision for the locked baseline.
+// through the legacy route instead of the verified, receipted apply path.
 var ErrCandidatePublishDenied = errors.New("store: candidate publish denied")
 
 // ErrCandidateArtifact means the stored bytes do not match the candidate's pinned hashes.

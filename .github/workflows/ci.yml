@@ -539,6 +539,19 @@ jobs:
       - name: install workspace deps
         run: pnpm install --frozen-lockfile
 
+      # Exercise Vercel's direct package build without a prebuilt SDK or Next cache.
+      - name: build dashboard from clean package outputs
+        working-directory: apps/dashboard
+        env:
+          DATABASE_URL: postgres://build:build@localhost:5432/build?sslmode=disable
+          BETTER_AUTH_SECRET: build-time-placeholder-not-used-at-runtime
+          BETTER_AUTH_URL: http://localhost:3000
+          NEXT_PUBLIC_API_URL: http://localhost:8080
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          rm -rf ../../packages/sdk/dist .next
+          pnpm build
+
       - name: vitest
         run: pnpm --filter @dropway/dashboard test
 

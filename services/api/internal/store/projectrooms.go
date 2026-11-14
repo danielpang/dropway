@@ -119,19 +119,20 @@ type Activity struct {
 
 // Candidate is an immutable proposed change. Approve-change is not version sign-off.
 type Candidate struct {
-	ID              string
-	RoomID          string
-	SiteID          string
-	BaseVersionID   string
-	BaseContentHash string
-	ContentHash     string
-	DiffHash        string
-	Summary         string
-	State           string
-	CreatedBy       string
-	CreatedAt       time.Time
-	ApprovedBy      *string
-	RejectedBy      *string
+	ID               string
+	RoomID           string
+	SiteID           string
+	BaseVersionID    string
+	BaseContentHash  string
+	ContentHash      string
+	DiffHash         string
+	Summary          string
+	State            string
+	CreatedBy        string
+	CreatedAt        time.Time
+	ApprovedBy       *string
+	RejectedBy       *string
+	AppliedVersionID *string
 }
 
 type CandidateDecision struct {
@@ -299,7 +300,7 @@ func (s *Store) AddProjectRoomSite(ctx context.Context, t Tenant, roomID, siteID
 		if err != nil {
 			return err
 		}
-		if !projectroom.CanManageMembers(projectroom.Role(mem.Role)) {
+		if !projectroom.CanAttachSite(projectroom.Role(mem.Role), projectroom.SiteRights{CanRead: true}) {
 			return ErrRoomForbidden
 		}
 		site, err := q.GetSite(ctx, db.GetSiteParams{ID: siteID, OrgID: t.OrgID})
@@ -782,55 +783,6 @@ func (s *Store) RoomAccess(ctx context.Context, t Tenant, roomID, siteID string)
 		return nil
 	})
 	return role, rights, err
-}
-
-func (s *Store) ApplyCandidate(ctx context.Context, t Tenant, roomID string, req projectroom.ApprovalRequest) (Candidate, error) {
-	var out Candidate
-	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		if err := s.requireRooms(ctx, q, t.OrgID); err != nil {
-			return err
-		}
-		row, err := q.GetReviewCandidateForMember(ctx, db.GetReviewCandidateForMemberParams{
-			UserID: t.UserID, ID: req.CandidateID, OrgID: t.OrgID, RoomID: roomID,
-		})
-		if err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
-			}
-			return err
-		}
-		locked, err := lockOrgThenSite(ctx, q, t.OrgID, row.SiteID)
-		if err != nil {
-			return err
-		}
-		rights, _, err := s.siteRights(ctx, q, t, row.SiteID)
-		if err != nil {
-			return err
-		}
-		if !projectroom.CanAccept(projectroom.Role(row.Role), rights) {
-			return ErrRoomForbidden
-		}
-		c := projectroom.Candidate{
-			ID: row.ID, State: row.State, ContentHash: row.ContentHash,
-			BaseVersionID: row.BaseVersionID, BaseContentHash: row.BaseContentHash,
-		}
-		if err := projectroom.CanApply(c, req); err != nil {
-			return err
-		}
-		if locked.CurrentVersionID == nil || *locked.CurrentVersionID != row.BaseVersionID {
-			return projectroom.ErrCandidateConflict
-		}
-		ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: *locked.CurrentVersionID, OrgID: t.OrgID})
-		if err != nil {
-			return err
-		}
-		if ver.ContentHash != row.BaseContentHash {
-			return projectroom.ErrCandidateConflict
-		}
-		out = candidateFromMember(row)
-		return ErrApplicationDisabled
-	})
-	return out, err
 }
 
 func (s *Store) ProjectReviewControlled(ctx context.Context, t Tenant, siteID string) (bool, error) {

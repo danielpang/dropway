@@ -16,7 +16,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
@@ -69,7 +68,7 @@ func (a *API) GetCandidateDiff(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	writeReviewJSON(w, map[string]any{
 		"candidate_id":      cand.ID,
 		"site_id":           cand.SiteID,
 		"base_version_id":   base.ID,
@@ -227,4 +226,35 @@ func (a *API) readVerifiedText(ctx context.Context, orgID string, tgt manifest.T
 		text += "\n...[truncated]"
 	}
 	return text, cut, false, nil
+}
+
+// verifyCandidateArtifact streams and hashes the complete artifact without the
+// preview's file-count or text limits. The manifest digest pins every blob hash.
+func (a *API) verifyCandidateArtifact(ctx context.Context, orgID, siteID string, ver store.SiteVersion) error {
+	files, err := a.verifiedManifest(ctx, orgID, siteID, ver.ID, ver.ContentHash)
+	if err != nil {
+		return err
+	}
+	for _, target := range files {
+		if target.Size < 0 {
+			return fmt.Errorf("%w: negative blob length", store.ErrCandidateArtifact)
+		}
+		rc, err := a.Objects.GetBlob(ctx, orgID, target.SHA256)
+		if err != nil {
+			return fmt.Errorf("%w: blob unavailable", store.ErrCandidateArtifact)
+		}
+		hash := sha256.New()
+		// The size comes from the stored manifest. Read one extra byte so corrupt
+		// lengths fail closed; overflow is avoided by rejecting the maximal value.
+		if target.Size == int64(^uint64(0)>>1) {
+			rc.Close()
+			return store.ErrCandidateArtifact
+		}
+		size, readErr := io.Copy(hash, io.LimitReader(rc, target.Size+1))
+		closeErr := rc.Close()
+		if readErr != nil || closeErr != nil || size != target.Size || hex.EncodeToString(hash.Sum(nil)) != target.SHA256 {
+			return fmt.Errorf("%w: blob verification failed", store.ErrCandidateArtifact)
+		}
+	}
+	return nil
 }

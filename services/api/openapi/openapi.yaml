@@ -1223,6 +1223,53 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/project-rooms/{roomID}/activity:
+    get:
+      summary: Page activity visible to a room member
+      operationId: listRoomActivity
+      description: Human session or MCP OAuth. Detached site activity is excluded. Membership is rechecked on each page.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: Activity page and unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, unread]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/RoomActivity" }
+                  unread: { type: integer, minimum: 0 }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/project-rooms/{roomID}/read:
+    post:
+      summary: Mark the caller's room activity as read
+      operationId: markProjectRoomRead
+      description: Human room member only. Does not approve, resolve, or apply anything.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Read timestamp
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [last_read_at]
+                properties:
+                  last_read_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/project-rooms/{roomID}/threads:
     get:
       summary: Page room review threads
@@ -1340,6 +1387,49 @@ paths:
         "200": { description: Candidate detail }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/project-rooms/{roomID}/candidates/{candidateID}/apply:
+    post:
+      summary: Apply exactly one approved candidate
+      operationId: applyRoomCandidate
+      description: >
+        Human room owner or editor with site edit rights. Verifies the complete candidate
+        manifest and blobs, locks and rechecks the live baseline, and publishes the
+        approved artifact with an immutable application receipt. Retries do not publish
+        twice or roll back later work. Approval alone does not publish.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: candidateID, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidate_id, content_hash, base_version_id, base_content_hash]
+              properties:
+                candidate_id: { type: string, format: uuid }
+                content_hash: { type: string }
+                base_version_id: { type: string, format: uuid }
+                base_content_hash: { type: string }
+      responses:
+        "200":
+          description: Application receipt; changed is false for a retry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [applied, changed, version_id, candidate]
+                properties:
+                  applied: { type: boolean }
+                  changed: { type: boolean }
+                  version_id: { type: string, format: uuid }
+                  live_url: { type: string }
+                  candidate: { type: object, additionalProperties: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /v1/project-rooms/{roomID}/members:
     post:
       summary: Add a room member
@@ -1354,7 +1444,7 @@ paths:
     post:
       summary: Reference a same-org site
       operationId: addProjectRoomSite
-      description: Human room owner only.
+      description: Human room owner or editor with access to the same-org site. Does not change site ownership or access.
       parameters:
         - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -1375,16 +1465,24 @@ paths:
     get:
       summary: Page one review thread and its replies
       operationId: getReviewThreadPage
-      description: Human session or MCP OAuth. Membership is rechecked. Reply bodies are untrusted.
+      description: >
+        Human session or MCP OAuth. Membership is rechecked. Reply bodies and
+        anchor reasons are untrusted. Reply and anchor-history pages have independent
+        authenticated opaque cursors bound to caller, tenant and thread, a fixed
+        creation watermark, and a 30-minute expiry. Key rotation requires a fresh
+        traversal. Unsupported filters are rejected. Read rate limits return 429.
       parameters:
         - { name: threadID, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: cursor, in: query, schema: { type: string } }
+        - { name: revisions_cursor, in: query, schema: { type: string }, description: Independent anchor-history continuation token }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
       responses:
-        "200": { description: Thread page }
+        "200": { description: "Thread with original pin, replies, revisions, next_cursor and next_revision_cursor. Each collection is independently byte-bounded and paginated." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { description: One review item exceeds the supported response byte limit }
+        "429": { description: Review read rate limit exceeded; retry after the Retry-After header }
   /v1/sites/{id}/comments:
     get:
       summary: List a site's comment thread (oldest first)
@@ -2840,6 +2938,18 @@ components:
       description: app.chat_logs.id
 
   schemas:
+    RoomActivity:
+      type: object
+      required: [id, room_id, actor_user_id, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        room_id: { type: string, format: uuid }
+        actor_user_id: { type: string, format: uuid }
+        kind: { type: string }
+        thread_id: { type: string, format: uuid }
+        site_id: { type: string, format: uuid }
+        version_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
     Me:
       type: object
       properties:

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -26,13 +27,16 @@ type ProjectRoomStore interface {
 	SetProjectRoomsEnabled(ctx context.Context, t store.Tenant, enabled bool, rec store.AuditRecord) error
 	CreateProjectRoom(ctx context.Context, t store.Tenant, name string, rec store.AuditRecord) (store.Room, error)
 	ListProjectRooms(ctx context.Context, t store.Tenant) ([]store.Room, error)
+	PageRoomActivity(ctx context.Context, t store.Tenant, roomID, cursor string, limit int) (store.ActivityPage, error)
+	MarkProjectRoomRead(ctx context.Context, t store.Tenant, roomID string) (time.Time, error)
 	CreateReviewThread(ctx context.Context, t store.Tenant, roomID, siteID, versionID, page, kind string, anchor json.RawMessage) (store.ReviewThread, error)
 	AddReviewReply(ctx context.Context, t store.Tenant, roomID, threadID, body string) (store.ReviewReply, error)
 	SignoffVersion(ctx context.Context, t store.Tenant, roomID, siteID, versionID string) (store.VersionSignoff, error)
 	SubmitCandidate(ctx context.Context, t store.Tenant, roomID, siteID, baseVersionID, contentHash, diffHash, summary string) (store.Candidate, error)
 	ApproveCandidate(ctx context.Context, t store.Tenant, roomID string, req projectroom.ApprovalRequest, rec store.AuditRecord) (store.CandidateDecision, error)
 	RejectCandidate(ctx context.Context, t store.Tenant, roomID string, req projectroom.ApprovalRequest, rec store.AuditRecord) (store.CandidateDecision, error)
-	ApplyCandidate(ctx context.Context, t store.Tenant, roomID string, req projectroom.ApprovalRequest) (store.Candidate, error)
+	ApplyCandidate(ctx context.Context, t store.Tenant, roomID string, req projectroom.ApprovalRequest) (store.CandidateApplication, error)
+	FlushCandidateProjection(ctx context.Context, t store.Tenant, candidateID string, w ProjectionWriter) error
 	RoomAccess(ctx context.Context, t store.Tenant, roomID, siteID string) (string, projectroom.SiteRights, error)
 	GetProjectRoom(ctx context.Context, t store.Tenant, roomID string) (store.RoomDetail, error)
 	AddProjectRoomMember(ctx context.Context, t store.Tenant, roomID, userID, role string, rec store.AuditRecord) error
@@ -363,9 +367,16 @@ func (a *API) decideCandidateHTTP(w http.ResponseWriter, r *http.Request, approv
 	if !a.requireRooms(w) {
 		return
 	}
+	if !a.requireStore(w) || !a.requireOrgMember(w, r, t) {
+		return
+	}
 	var body candidateBody
 	if err := decodeJSON(r, &body); err != nil {
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+	if body.CandidateID != "" && body.CandidateID != chi.URLParam(r, "candidateID") {
+		httpx.WriteError(w, fmt.Errorf("%w: candidate id does not match request path", httpx.ErrBadRequest))
 		return
 	}
 	body.CandidateID = chi.URLParam(r, "candidateID")
@@ -407,7 +418,10 @@ func (a *API) ApplyCandidate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, fmt.Errorf("%w: applying a change requires a human session", httpx.ErrForbidden))
 		return
 	}
-	if !a.requireRooms(w) {
+	if !a.requireRooms(w) || !a.requireStore(w) || !a.requireObjects(w) || !a.requireProjection(w) {
+		return
+	}
+	if !a.requireOrgMember(w, r, t) {
 		return
 	}
 	var body candidateBody
@@ -415,12 +429,45 @@ func (a *API) ApplyCandidate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
 		return
 	}
+	roomID := chi.URLParam(r, "roomID")
+	if body.CandidateID != "" && body.CandidateID != chi.URLParam(r, "candidateID") {
+		httpx.WriteError(w, fmt.Errorf("%w: candidate id does not match request path", httpx.ErrBadRequest))
+		return
+	}
 	body.CandidateID = chi.URLParam(r, "candidateID")
-	_, err := a.Rooms.ApplyCandidate(r.Context(), t, chi.URLParam(r, "roomID"), candidateReq(body, true))
+	req := candidateReq(body, true)
+	cand, base, proposed, err := a.Store.CandidateVersions(r.Context(), t, roomID, body.CandidateID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
+	if err := projectroom.CanApply(projectroom.Candidate{ID: cand.ID, State: cand.State, ContentHash: cand.ContentHash, BaseVersionID: cand.BaseVersionID, BaseContentHash: cand.BaseContentHash}, req); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// Unlike the bounded diff preview, application verifies every blob, including
+	// binary, oversized, unchanged, and omitted files. No object text is returned.
+	for _, ver := range []store.SiteVersion{base, proposed} {
+		if err := a.verifyCandidateArtifact(r.Context(), t.OrgID, cand.SiteID, ver); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	req.VerifiedVersionID = proposed.ID
+	res, err := a.Rooms.ApplyCandidate(store.WithHumanSession(r.Context(), true), t, roomID, req)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := a.Rooms.FlushCandidateProjection(r.Context(), t, body.CandidateID, a.Projection); err != nil {
+		logger(r).Error("candidate projection queued for retry", "candidate_id", body.CandidateID, "err", err)
+		httpx.WriteError(w, err)
+		return
+	}
+	if res.Changed {
+		a.indexSiteVersionAsync(r, t, cand.SiteID, res.VersionID)
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"candidate": res.Candidate, "applied": true, "changed": res.Changed, "version_id": res.VersionID, "live_url": a.ContentURL(res.Publish.Host)})
 }
 
 func (a *API) ClaimExecution(w http.ResponseWriter, r *http.Request) {

@@ -3,10 +3,10 @@ import type { Metadata } from "next";
 import { RoomsClosed } from "@/components/project-room/rooms-closed";
 import { RoomSession } from "@/components/project-room/room-session";
 import { isCollabReviewEnabled } from "@/lib/collab";
-import { ApiError, api, type Site } from "@/lib/api";
+import { ApiError, api, type Site, type Me } from "@/lib/api";
 import { betterAuthUrl } from "@/lib/env";
 import type { components as SdkComponents } from "@dropway/sdk/schema";
-import { parseRoom } from "@/lib/project-room/contract";
+import { canEditRoomSite, parseRoom } from "@/lib/project-room/contract";
 
 export const metadata: Metadata = { title: "Project rooms" };
 export const dynamic = "force-dynamic";
@@ -18,10 +18,11 @@ export default async function RoomsPage() {
   if (!on) return <RoomsClosed />;
 
   try {
-    const [settings, rooms, sites] = await Promise.all([
-      api.projectRoomSettings(),
-      api.listProjectRooms(),
+    const settings = await api.projectRoomSettings();
+    const [rooms, sites, me] = await Promise.all([
+      settings.enabled ? api.listProjectRooms() : Promise.resolve([]),
       api.listSites(),
+      api.me(),
     ]);
     return (
       <RoomSession
@@ -30,7 +31,7 @@ export default async function RoomsPage() {
           const parsed = parseRoom(room);
           return parsed ? [parsed] : [];
         })}
-        sites={sites.flatMap(siteOption)}
+        sites={sites.flatMap((site) => siteOption(site, me))}
         parentOrigin={betterAuthUrl()}
       />
     );
@@ -48,10 +49,11 @@ export default async function RoomsPage() {
   }
 }
 
-function siteOption(site: Site) {
+function siteOption(site: Site, me: Me) {
   if (!site.id || !site.slug) return [];
   return [{
     id: site.id,
+    canEditContent: canEditRoomSite(site, me),
     slug: site.slug,
     liveUrl: site.live_url ?? null,
     currentVersionId: site.current_version_id ?? null,

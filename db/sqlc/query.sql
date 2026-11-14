@@ -1631,7 +1631,13 @@ JOIN app.project_room_members m
   ON m.room_id = a.room_id AND m.org_id = a.org_id AND m.user_id = sqlc.arg(user_id)
 WHERE a.org_id = sqlc.arg(org_id)
   AND a.room_id = sqlc.arg(room_id)
+  AND (a.site_id IS NULL OR EXISTS (
+    SELECT 1 FROM app.project_room_sites rs
+    JOIN app.sites site ON site.id = rs.site_id AND site.org_id = rs.org_id
+    WHERE rs.org_id = a.org_id AND rs.room_id = a.room_id AND rs.site_id = a.site_id
+  ))
   AND (a.created_at, a.id) < (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::uuid)
+  AND a.created_at <= sqlc.arg(watermark)::timestamptz
 ORDER BY a.created_at DESC, a.id DESC
 LIMIT sqlc.arg(lim);
 
@@ -1703,7 +1709,7 @@ FROM app.review_candidates c
 JOIN app.project_room_members m
   ON m.room_id = c.room_id AND m.org_id = c.org_id AND m.user_id = sqlc.arg(user_id)
 WHERE c.id = sqlc.arg(id) AND c.org_id = sqlc.arg(org_id) AND c.room_id = sqlc.arg(room_id)
-FOR UPDATE OF c;
+FOR UPDATE OF c, m;
 
 -- name: SiteInEnabledProjectRoom :one
 SELECT EXISTS (
@@ -1742,6 +1748,11 @@ SELECT count(*)::bigint AS count
 FROM app.review_activity a
 WHERE a.org_id = sqlc.arg(org_id)
   AND a.room_id = sqlc.arg(room_id)
+  AND (a.site_id IS NULL OR EXISTS (
+    SELECT 1 FROM app.project_room_sites rs
+    JOIN app.sites site ON site.id = rs.site_id AND site.org_id = rs.org_id
+    WHERE rs.org_id = a.org_id AND rs.room_id = a.room_id AND rs.site_id = a.site_id
+  ))
   AND a.actor_user_id <> sqlc.arg(user_id)
   AND a.created_at > COALESCE(
         (SELECT s.last_read_at FROM app.review_read_state s
@@ -1755,6 +1766,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND subject_type = 'site'
   AND subject_id = sqlc.arg(site_id)
   AND (created_at, 'feed'::text, id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_kind)::text, sqlc.arg(cursor_id)::text)
+  AND created_at <= sqlc.arg(watermark)::timestamptz
 ORDER BY created_at ASC, id::text ASC
 LIMIT sqlc.arg(lim);
 
@@ -1770,6 +1782,7 @@ JOIN app.project_room_sites rs
 WHERE t.org_id = sqlc.arg(org_id)
   AND t.site_id = sqlc.arg(site_id)
   AND (t.created_at, 'room'::text, t.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_kind)::text, sqlc.arg(cursor_id)::text)
+  AND t.created_at <= sqlc.arg(watermark)::timestamptz
 ORDER BY t.created_at ASC, t.id::text ASC
 LIMIT sqlc.arg(lim);
 
@@ -1779,6 +1792,7 @@ FROM app.review_replies
 WHERE org_id = sqlc.arg(org_id)
   AND thread_id = sqlc.arg(thread_id)
   AND (created_at, id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+  AND created_at <= sqlc.arg(watermark)::timestamptz
 ORDER BY created_at ASC, id::text ASC
 LIMIT sqlc.arg(lim);
 
@@ -1805,6 +1819,7 @@ JOIN app.project_room_sites rs
 WHERE t.org_id = sqlc.arg(org_id)
   AND t.room_id = sqlc.arg(room_id)
   AND (t.created_at, t.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+  AND t.created_at <= sqlc.arg(watermark)::timestamptz
 ORDER BY t.created_at ASC, t.id::text ASC
 LIMIT sqlc.arg(lim);
 
@@ -1818,6 +1833,7 @@ JOIN app.project_room_members m
 WHERE c.org_id = sqlc.arg(org_id)
   AND c.room_id = sqlc.arg(room_id)
   AND (c.created_at, c.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+  AND c.created_at <= sqlc.arg(watermark)::timestamptz
 ORDER BY c.created_at ASC, c.id::text ASC
 LIMIT sqlc.arg(lim);
 
@@ -1826,3 +1842,12 @@ SELECT id, org_id, room_id, site_id, base_version_id, base_content_hash, content
        summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at
 FROM app.review_candidates
 WHERE org_id = sqlc.arg(org_id) AND site_id = sqlc.arg(site_id) AND content_hash = sqlc.arg(content_hash);
+
+-- name: PageReviewAnchorRevisions :many
+SELECT id, org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id, created_at
+FROM app.review_anchor_revisions
+WHERE org_id = sqlc.arg(org_id) AND thread_id = sqlc.arg(thread_id)
+  AND (created_at, id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
+  AND created_at <= sqlc.arg(watermark)::timestamptz
+ORDER BY created_at ASC, id::text ASC
+LIMIT sqlc.arg(lim);

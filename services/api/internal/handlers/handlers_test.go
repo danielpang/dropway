@@ -70,7 +70,7 @@ func (f *fakeStore) PageSiteComments(context.Context, store.Tenant, string, stri
 	return store.CommentPage{Items: []store.CommentFeedItem{}}, nil
 }
 
-func (f *fakeStore) PageReviewReplies(context.Context, store.Tenant, string, string, int) (store.ReplyPage, error) {
+func (f *fakeStore) PageReviewReplies(context.Context, store.Tenant, string, string, int, ...string) (store.ReplyPage, error) {
 	return store.ReplyPage{}, nil
 }
 
