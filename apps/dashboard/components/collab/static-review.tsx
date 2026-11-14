@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import { TextSelect, Image, BoxSelect, MapPin, File, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -391,22 +392,8 @@ export function StaticReview({
             ? (["point", "image", "page"] as const)
             : (["text", "image", "component", "point", "page"] as const)
           ).map((value) => (
-            <Button
-              key={value}
-              type="button"
-              size="sm"
-              variant={mode === value ? "secondary" : "ghost"}
-              disabled={blocked}
-              aria-label={
-                {
-                  text: "Text",
-                  image: "Image",
-                  component: "Element",
-                  point: "Point",
-                  page: "Page",
-                }[value]
-              }
-              title={
+            <Tooltip
+              label={
                 {
                   text: "Comment on text",
                   image: "Comment on an image",
@@ -415,25 +402,44 @@ export function StaticReview({
                   page: "Comment on the page",
                 }[value]
               }
-              className="h-8 w-8 p-0"
-              aria-pressed={mode === value}
-              onClick={() => {
-                setMode(value);
-                setSelected("");
-                onSelect(null);
-              }}
+              align="start"
+              key={value}
             >
-              {React.createElement(
-                {
-                  text: TextSelect,
-                  image: Image,
-                  component: BoxSelect,
-                  point: MapPin,
-                  page: File,
-                }[value],
-                { className: "h-4 w-4", "aria-hidden": true },
-              )}
-            </Button>
+              <Button
+                key={value}
+                type="button"
+                size="sm"
+                variant={mode === value ? "secondary" : "ghost"}
+                disabled={blocked}
+                aria-label={
+                  {
+                    text: "Text",
+                    image: "Image",
+                    component: "Element",
+                    point: "Point",
+                    page: "Page",
+                  }[value]
+                }
+                className="h-8 w-8 p-0"
+                aria-pressed={mode === value}
+                onClick={() => {
+                  setMode(value);
+                  setSelected("");
+                  onSelect(null);
+                }}
+              >
+                {React.createElement(
+                  {
+                    text: TextSelect,
+                    image: Image,
+                    component: BoxSelect,
+                    point: MapPin,
+                    page: File,
+                  }[value],
+                  { className: "h-4 w-4", "aria-hidden": true },
+                )}
+              </Button>
+            </Tooltip>
           ))}
           <span
             role="status"
@@ -486,20 +492,21 @@ export function StaticReview({
               <span className="text-xs font-medium">
                 {popover.id === "pending-selection" ? "New comment" : "Comment"}
               </span>
-              <button
-                ref={closeButton}
-                type="button"
-                aria-label="Close inline comment"
-                title="Close comment"
-                onClick={() => {
-                  if (popover.id === "pending-selection")
-                    clearFrameSelection.current?.();
-                  else closePopover();
-                }}
-                className="rounded p-1 hover:bg-muted"
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
+              <Tooltip label="Close comment" align="end">
+                <button
+                  ref={closeButton}
+                  type="button"
+                  aria-label="Close inline comment"
+                  onClick={() => {
+                    if (popover.id === "pending-selection")
+                      clearFrameSelection.current?.();
+                    else closePopover();
+                  }}
+                  className="rounded p-1 hover:bg-muted"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </Tooltip>
             </div>
             <div
               ref={popoverContent}

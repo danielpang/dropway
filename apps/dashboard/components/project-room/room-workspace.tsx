@@ -6,6 +6,7 @@
 "use client";
 
 import * as React from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   ChevronDown,
   Send,
@@ -769,22 +770,28 @@ export function RoomWorkspace({
             onChange={setCommentExecution}
           />
         ) : null}
-        <Button
-          type="submit"
-          size="icon"
-          aria-label={commentBusy ? "Posting comment" : "Send comment"}
-          title="Send comment"
-          className="ml-auto flex"
-          disabled={
-            commentBusy ||
-            !commentOk ||
-            !versionId ||
-            body.trim().length === 0 ||
-            (hasDropwayMention(body) && !commentExecution)
-          }
+        <Tooltip
+          label="Send comment"
+          align="end"
+          side="top"
+          className="ml-auto flex w-fit self-end"
         >
-          <Send className="h-4 w-4" aria-hidden="true" />
-        </Button>
+          <Button
+            type="submit"
+            size="icon"
+            aria-label={commentBusy ? "Posting comment" : "Send comment"}
+            className="ml-auto flex"
+            disabled={
+              commentBusy ||
+              !commentOk ||
+              !versionId ||
+              body.trim().length === 0 ||
+              (hasDropwayMention(body) && !commentExecution)
+            }
+          >
+            <Send className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </Tooltip>
         {commentOk ? null : (
           <p className="text-xs text-muted-foreground">
             This room role cannot comment.
@@ -861,29 +868,31 @@ export function RoomWorkspace({
               : thread.AnchorKind}{" "}
           on {thread.Page}
         </button>{" "}
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          disabled={!commentOk || !room || thread.Status === "resolved"}
-          className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-500"
-          aria-label="Resolve comment"
-          title="Resolve comment"
-          onClick={() => room && onResolve(room.ID, thread.ID)}
-        >
-          <Check className="h-4 w-4" aria-hidden="true" />
-        </Button>
+        <Tooltip label="Resolve comment" align="end">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            disabled={!commentOk || !room || thread.Status === "resolved"}
+            className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-500"
+            aria-label="Resolve comment"
+            onClick={() => room && onResolve(room.ID, thread.ID)}
+          >
+            <Check className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </Tooltip>
       </div>
       <p className="text-xs text-muted-foreground">
         Version {thread.VersionID.slice(0, 8)} · {thread.Status}{" "}
-        <a
-          href={`/rooms?room=${encodeURIComponent(thread.RoomID)}#thread-${encodeURIComponent(thread.ID)}`}
-          className="inline-flex align-middle"
-          aria-label="Link to thread"
-          title="Link to thread"
-        >
-          <Link className="h-3 w-3" aria-hidden="true" />
-        </a>
+        <Tooltip label="Link to thread" align="end">
+          <a
+            href={`/rooms?room=${encodeURIComponent(thread.RoomID)}#thread-${encodeURIComponent(thread.ID)}`}
+            className="inline-flex align-middle"
+            aria-label="Link to thread"
+          >
+            <Link className="h-3 w-3" aria-hidden="true" />
+          </a>
+        </Tooltip>
       </p>
       {thread.Replies.slice(0, 1).map((item) => (
         <ReplyText key={item.ID} body={untrustedText(item.Body)} compact />
@@ -959,21 +968,27 @@ export function RoomWorkspace({
               />
             </div>
           ) : null}
-          <Button
-            type="submit"
-            size="icon"
-            aria-label="Send reply"
-            title="Send reply"
-            className="self-end"
-            disabled={
-              !commentOk ||
-              (replyByThread[thread.ID] ?? "").trim().length === 0 ||
-              (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
-                !replyExecutions[thread.ID])
-            }
+          <Tooltip
+            label="Send reply"
+            align="end"
+            side="top"
+            className="ml-auto flex w-fit self-end"
           >
-            <Send className="h-4 w-4" aria-hidden="true" />
-          </Button>
+            <Button
+              type="submit"
+              size="icon"
+              aria-label="Send reply"
+              className="self-end"
+              disabled={
+                !commentOk ||
+                (replyByThread[thread.ID] ?? "").trim().length === 0 ||
+                (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
+                  !replyExecutions[thread.ID])
+              }
+            >
+              <Send className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </Tooltip>
         </form>
         <details className="group/history border-t border-border/60 pt-2 text-xs">
           <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1 py-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -1488,15 +1503,16 @@ export function RoomWorkspace({
                   </option>
                 ))}
               </select>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowCreate(true)}
-                aria-label="New project"
-                title="New project"
-              >
-                <Plus className="h-4 w-4" aria-hidden="true" />
-              </Button>
+              <Tooltip label="Create a new project" align="end">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowCreate(true)}
+                  aria-label="New project"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </Tooltip>
             </div>
             <nav
               className="flex items-center gap-1"
@@ -1504,44 +1520,49 @@ export function RoomWorkspace({
             >
               {(["review", "changes", "activity", "settings"] as const).map(
                 (value) => (
-                  <button
+                  <Tooltip
+                    label={
+                      {
+                        review: "View canvas",
+                        changes: "Review proposed changes",
+                        activity: "View project activity",
+                        settings: "Project settings and sharing",
+                      }[value]
+                    }
+                    align="end"
                     key={value}
-                    type="button"
-                    aria-label={
-                      {
-                        review: "Canvas",
-                        changes: `Changes${pendingCount ? ` (${pendingCount})` : ""}`,
-                        activity: "Activity",
-                        settings: "Settings & sharing",
-                      }[value]
-                    }
-                    title={
-                      {
-                        review: "Canvas",
-                        changes: "Changes",
-                        activity: "Activity",
-                        settings: "Settings & sharing",
-                      }[value]
-                    }
-                    aria-current={panel === value ? "page" : undefined}
-                    onClick={() => setPanel(value)}
-                    className={`inline-flex h-9 min-w-9 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors ${panel === value ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {React.createElement(
-                      {
-                        review: PanelsTopLeft,
-                        changes: GitPullRequest,
-                        activity: History,
-                        settings: Settings,
-                      }[value],
-                      { className: "h-4 w-4", "aria-hidden": true },
-                    )}
-                    {value === "changes" && pendingCount > 0 ? (
-                      <span className="text-[10px] font-semibold">
-                        {pendingCount}
-                      </span>
-                    ) : null}
-                  </button>
+                    <button
+                      key={value}
+                      type="button"
+                      aria-label={
+                        {
+                          review: "Canvas",
+                          changes: `Changes${pendingCount ? ` (${pendingCount})` : ""}`,
+                          activity: "Activity",
+                          settings: "Settings & sharing",
+                        }[value]
+                      }
+                      aria-current={panel === value ? "page" : undefined}
+                      onClick={() => setPanel(value)}
+                      className={`inline-flex h-9 min-w-9 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors ${panel === value ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {React.createElement(
+                        {
+                          review: PanelsTopLeft,
+                          changes: GitPullRequest,
+                          activity: History,
+                          settings: Settings,
+                        }[value],
+                        { className: "h-4 w-4", "aria-hidden": true },
+                      )}
+                      {value === "changes" && pendingCount > 0 ? (
+                        <span className="text-[10px] font-semibold">
+                          {pendingCount}
+                        </span>
+                      ) : null}
+                    </button>
+                  </Tooltip>
                 ),
               )}
             </nav>
@@ -1616,39 +1637,52 @@ export function RoomWorkspace({
                   </div>
                   <div className="flex items-center gap-2">
                     {site.liveUrl ? (
-                      <a
-                        href={site.liveUrl}
-                        aria-label={
+                      <Tooltip
+                        label={
                           site.kind === "image"
                             ? "Open original"
                             : "Open live site"
                         }
-                        title={
-                          site.kind === "image"
-                            ? "Open original"
-                            : "Open live site"
-                        }
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-2 text-xs text-muted-foreground underline underline-offset-4"
+                        align="end"
                       >
-                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                      </a>
+                        <a
+                          href={site.liveUrl}
+                          aria-label={
+                            site.kind === "image"
+                              ? "Open original"
+                              : "Open live site"
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 text-xs text-muted-foreground underline underline-offset-4"
+                        >
+                          <ExternalLink
+                            className="h-4 w-4"
+                            aria-hidden="true"
+                          />
+                        </a>
+                      </Tooltip>
                     ) : null}
-                    <Button
-                      size="sm"
-                      variant={commentsVisible ? "secondary" : "outline"}
-                      aria-pressed={commentsVisible}
-                      aria-label={
+                    <Tooltip
+                      label={
                         commentsVisible ? "Hide comments" : "Show comments"
                       }
-                      title={
-                        commentsVisible ? "Hide comments" : "Show comments"
-                      }
-                      onClick={() => setCommentsVisible((visible) => !visible)}
+                      align="end"
                     >
-                      <MessageSquare className="h-4 w-4" aria-hidden="true" />
-                    </Button>
+                      <Button
+                        size="sm"
+                        variant={commentsVisible ? "secondary" : "outline"}
+                        aria-pressed={commentsVisible}
+                        aria-label={
+                          commentsVisible ? "Hide comments" : "Show comments"
+                        }
+                        onClick={() =>
+                          setCommentsVisible((visible) => !visible)
+                        }
+                      >
+                        <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </Tooltip>
                   </div>
                 </div>
                 <div
@@ -1750,14 +1784,16 @@ export function RoomWorkspace({
                     >
                       <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
                         <h2 className="text-sm font-semibold">Discussion</h2>
-                        <button
-                          type="button"
-                          onClick={() => setCommentsVisible(false)}
-                          aria-label="Close comments"
-                          className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
-                        >
-                          <X className="h-4 w-4" aria-hidden="true" />
-                        </button>
+                        <Tooltip label="Close comments" align="end">
+                          <button
+                            type="button"
+                            onClick={() => setCommentsVisible(false)}
+                            aria-label="Close comments"
+                            className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
+                          >
+                            <X className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </Tooltip>
                       </div>
                       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                         {commentsPanel}
