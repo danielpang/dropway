@@ -38,7 +38,7 @@ try {
   const probe = `python3 -I -S - <<'PY'
 import hashlib,json,os,socket
 results={}
-for domain in ['example.com','api.anthropic.com','openrouter.ai','registry.npmjs.org']:
+for domain in ['example.com','api.anthropic.com','api.openai.com','openrouter.ai','registry.npmjs.org']:
     try: socket.getaddrinfo(domain,443); results['dns:'+domain]=False
     except socket.gaierror: results['dns:'+domain]=True
 for address,port in [('1.1.1.1',443),('10.0.0.1',80),('169.254.169.254',80)]:

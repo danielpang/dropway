@@ -35,10 +35,11 @@ func (s *Store) ReserveGatewayCall(ctx context.Context, token string, inputBytes
 		}
 		reserved := input + maxOutput
 		var ciphertext []byte
-		if err := tx.QueryRow(ctx, `SELECT ciphertext FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND owner_user_id=$3 AND generation=$4 AND revoked_at IS NULL AND validated_at IS NOT NULL`, j.OrgID, j.CredentialRef, j.InitiatorUserID, j.CredentialGeneration).Scan(&ciphertext); err != nil {
+		var credentialOwner string
+		if err := tx.QueryRow(ctx, `SELECT ciphertext,owner_user_id::text FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND (owner_user_id=$3 OR scope='team') AND generation=$4 AND revoked_at IS NULL AND validated_at IS NOT NULL`, j.OrgID, j.CredentialRef, j.InitiatorUserID, j.CredentialGeneration).Scan(&ciphertext, &credentialOwner); err != nil {
 			return hosted.ErrDenied
 		}
-		secret, err := vault.Open(ciphertext, hosted.CredentialAAD(j.OrgID, j.InitiatorUserID, j.CredentialRef, j.Config.Provider))
+		secret, err := vault.Open(ciphertext, hosted.CredentialAAD(j.OrgID, credentialOwner, j.CredentialRef, j.Config.Provider))
 		if err != nil {
 			return err
 		}

@@ -1554,12 +1554,12 @@ export const api = {
     return body.thread;
   },
 
-  async addReviewReply(roomId: string, threadId: string, bodyText: string): Promise<ReviewReply> {
-    const body = await apiFetch<{ reply: ReviewReply }>(
+  async addReviewReply(roomId: string, threadId: string, bodyText: string, execution?: import("@/lib/project-room/hosted").MentionExecution): Promise<{ reply: ReviewReply; job?: unknown }> {
+    const body = await apiFetch<{ reply: ReviewReply; job?: unknown }>(
       `/v1/project-rooms/${encodeURIComponent(roomId)}/threads/${encodeURIComponent(threadId)}/replies`,
-      { method: "POST", body: JSON.stringify({ body: bodyText }) },
+      { method: "POST", body: JSON.stringify({ body: bodyText, ...(execution ? { execution } : {}) }) },
     );
-    return body.reply;
+    return body;
   },
 
   async signoffProjectRoomVersion(roomId: string, siteId: string, versionId: string): Promise<VersionSignoff> {
@@ -1610,7 +1610,7 @@ export const api = {
   },
 
   async listProviderCredentials(): Promise<unknown> { return apiFetch("/v1/provider-credentials"); },
-  async saveProviderCredential(input: { provider: string; label: string; api_key: string }, id?: string): Promise<unknown> {
+  async saveProviderCredential(input: { provider: string; label: string; api_key: string; scope?: "personal" | "team" }, id?: string): Promise<unknown> {
     return apiFetch(id ? `/v1/provider-credentials/${encodeURIComponent(id)}` : "/v1/provider-credentials", { method: id ? "PUT" : "POST", body: JSON.stringify(input) });
   },
   async validateProviderCredential(id: string): Promise<unknown> { return apiFetch(`/v1/provider-credentials/${encodeURIComponent(id)}/validate`, { method: "POST", body: "{}" }); },

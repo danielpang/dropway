@@ -154,13 +154,13 @@ function openAIEvents(step: GatewayStep): string {
       id: "chatcmpl_test",
       object: "chat.completion.chunk",
       model: "anthropic/claude-sonnet-4-5",
-      choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }],
+      choices: [{ index: 0, delta: step.kind === "tool" ? { role: "assistant", tool_calls: [{ index: 0, id: "call_test", type: "function", function: { name: step.name, arguments: JSON.stringify(step.input) } }] } : { role: "assistant", content: text }, finish_reason: null }],
     },
     {
       id: "chatcmpl_test",
       object: "chat.completion.chunk",
       model: "anthropic/claude-sonnet-4-5",
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      choices: [{ index: 0, delta: {}, finish_reason: step.kind === "tool" ? "tool_calls" : "stop" }],
     },
     ...(usage === "absent" ? [] : [{ choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output, total_tokens: usage.input + usage.output } }]),
   ];

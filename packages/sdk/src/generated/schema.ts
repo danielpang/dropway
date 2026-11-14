@@ -803,6 +803,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/project-rooms/{roomID}/threads/{threadID}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post a comment, optionally requesting a bounded AI revision
+         * @description Human sessions only. Ordinary comments never queue AI. A standalone @dropway mention requires explicit execution settings and commits its reply and job atomically. The caller must be able to run revisions on the pinned current site version. Retrying the same idempotency key and payload returns the same reply/job. AI output never publishes automatically.
+         */
+        post: operations["addReviewReply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/project-rooms/{roomID}/threads/{threadID}/resolve": {
         parameters: {
             query?: never;
@@ -1697,14 +1717,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List personal credential metadata
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * List reusable personal and team credential metadata
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         get: operations["listProviderCredentials"];
         put?: never;
         /**
-         * Encrypt a personal provider credential
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * Encrypt a reusable provider credential
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         post: operations["saveProviderCredential"];
         delete?: never;
@@ -1725,13 +1745,13 @@ export interface paths {
         get?: never;
         /**
          * Replace and invalidate a credential generation
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         put: operations["replaceProviderCredential"];
         post?: never;
         /**
          * Revoke a personal credential
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         delete: operations["revokeProviderCredential"];
         options?: never;
@@ -1752,7 +1772,7 @@ export interface paths {
         put?: never;
         /**
          * Validate a credential with its provider
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         post: operations["validateProviderCredential"];
         delete?: never;
@@ -1772,13 +1792,13 @@ export interface paths {
         };
         /**
          * List recent room execution jobs
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         get: operations["listHostedExecutions"];
         put?: never;
         /**
          * Queue a bounded revision of immutable site assets
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         post: operations["queueHostedExecution"];
         delete?: never;
@@ -1799,7 +1819,7 @@ export interface paths {
         };
         /**
          * Read execution progress and clarification
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         get: operations["getHostedExecution"];
         put?: never;
@@ -1824,7 +1844,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel an execution and revoke its capabilities
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         post: operations["cancelHostedExecution"];
         delete?: never;
@@ -1847,7 +1867,7 @@ export interface paths {
         put?: never;
         /**
          * Resume clarification in a fresh attempt
-         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned.
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
          */
         post: operations["resumeHostedExecution"];
         delete?: never;
@@ -1889,13 +1909,18 @@ export interface components {
         ProviderCredential: {
             id: string;
             /** @enum {string} */
-            provider: "anthropic" | "openrouter";
+            provider: "anthropic" | "openrouter" | "openai";
             label: string;
             last_four: string;
             generation: number;
             validated_at: string | null;
             revoked_at: string | null;
             created_at: string;
+            /** @enum {string} */
+            scope: "personal" | "team";
+            can_manage: boolean;
+            /** Format: uuid */
+            owner_user_id: string;
         };
         ExecutionBudget: {
             max_tokens: number;
@@ -4060,6 +4085,51 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    addReviewReply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    body: string;
+                    execution?: {
+                        /** Format: uuid */
+                        credential_ref: string;
+                        /** @enum {string} */
+                        provider: "anthropic" | "openrouter" | "openai";
+                        model_id: string;
+                        idempotency_key: string;
+                        budget: components["schemas"]["ExecutionBudget"];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Reply and optional queued job */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description Changed request or stale baseline */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     resolveReviewThread: {
         parameters: {
             query?: never;
@@ -6051,8 +6121,14 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    provider: "anthropic" | "openrouter";
+                    provider: "anthropic" | "openrouter" | "openai";
                     label: string;
+                    /**
+                     * @description Team creation and management require an organization admin or owner. Scope cannot be changed in place.
+                     * @default personal
+                     * @enum {string}
+                     */
+                    scope?: "personal" | "team";
                     api_key: string;
                 };
             };
@@ -6092,8 +6168,14 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    provider: "anthropic" | "openrouter";
+                    provider: "anthropic" | "openrouter" | "openai";
                     label: string;
+                    /**
+                     * @description Team creation and management require an organization admin or owner. Scope cannot be changed in place.
+                     * @default personal
+                     * @enum {string}
+                     */
+                    scope?: "personal" | "team";
                     api_key: string;
                 };
             };
@@ -6228,7 +6310,7 @@ export interface operations {
                     version_id: string;
                     credential_ref: string;
                     /** @enum {string} */
-                    provider: "anthropic" | "openrouter";
+                    provider: "anthropic" | "openrouter" | "openai";
                     model_id: string;
                     prompt: string;
                     idempotency_key: string;

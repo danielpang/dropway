@@ -55,11 +55,13 @@ export class MemoryClarificationStore implements ClarificationStore {
 
 export function withSentinels(): () => void {
   const previous = {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     FLY_API_TOKEN: process.env.FLY_API_TOKEN,
   };
+  process.env.OPENAI_API_KEY = "sk-proj-openai-sentinel";
   process.env.ANTHROPIC_API_KEY = "sk-ant-sentinel";
   process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9";
   process.env.OPENROUTER_API_KEY = "sk-or-sentinel";
@@ -72,4 +74,4 @@ export function withSentinels(): () => void {
   };
 }
 
-export const SENTINELS = ["sk-ant-sentinel", "sk-or-sentinel", "fly-sentinel-token", "LOCAL_SECRET_SENTINEL", "AGENT_SENTINEL_do_not_leak", "SYSTEM_SENTINEL_do_not_leak"];
+export const SENTINELS = ["sk-proj-openai-sentinel", "sk-ant-sentinel", "sk-or-sentinel", "fly-sentinel-token", "LOCAL_SECRET_SENTINEL", "AGENT_SENTINEL_do_not_leak", "SYSTEM_SENTINEL_do_not_leak"];

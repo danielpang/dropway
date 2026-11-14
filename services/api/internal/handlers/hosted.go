@@ -116,13 +116,14 @@ func (a *API) SaveProviderCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Provider string `json:"provider"`
+		Scope    string `json:"scope"`
 		Label    string `json:"label"`
 		APIKey   string `json:"api_key"`
 	}
 	if !decodeHosted(w, r, &body, 8192) {
 		return
 	}
-	credential, err := a.Hosted.Store.SaveProviderCredential(store.WithHumanSession(r.Context(), true), t, chi.URLParam(r, "credentialID"), body.Provider, body.Label, body.APIKey, a.Hosted.Vault)
+	credential, err := a.Hosted.Store.SaveProviderCredential(store.WithHumanSession(r.Context(), true), t, chi.URLParam(r, "credentialID"), body.Provider, body.Label, body.APIKey, a.Hosted.Vault, body.Scope)
 	body.APIKey = ""
 	if err != nil {
 		writeHostedError(w, err)
@@ -153,6 +154,9 @@ func (a *API) ValidateProviderCredential(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	endpoint := "https://api.anthropic.com/v1/models"
+	if provider == "openai" {
+		endpoint = "https://api.openai.com/v1/models"
+	}
 	if provider == "openrouter" {
 		endpoint = "https://openrouter.ai/api/v1/key"
 	}

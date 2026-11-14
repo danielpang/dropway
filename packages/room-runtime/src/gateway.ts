@@ -110,14 +110,14 @@ export function pinnedModel(
     contextWindow: 200_000,
     maxTokens: 8192,
   };
-  if (pin.provider === "openrouter") {
+  if (pin.provider === "openrouter" || pin.provider === "openai") {
     const base = gatewayBaseUrl.replace(/\/$/, "");
     return {
       ...shared,
       api: "openai-completions",
-      provider: "openrouter",
+      provider: pin.provider,
       baseUrl: `${base}/v1`,
-      compat: { supportsStore: false },
+      compat: { supportsStore: false, maxTokensField: "max_tokens", supportsUsageInStreaming: true },
     };
   }
   return {
@@ -135,6 +135,9 @@ export async function createGatewayRuntime(pin: RunPin, capability: GatewayCapab
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
+  // Pi's built-in OpenAI provider dispatches Responses even when a Model's
+  // api field is overridden. Pin the provider adapter as well as the model.
+  if (pin.provider === "openai") runtime.registerProvider("openai", { api: "openai-completions" });
   await runtime.setRuntimeApiKey(pin.provider, capability.token);
   return runtime;
 }

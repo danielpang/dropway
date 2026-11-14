@@ -37,6 +37,8 @@ export interface NetworkPolicy {
 
 const BLOCKED_ALLOW = new Set([
   "*",
+  "api.openai.com",
+  "*.openai.com",
   "api.anthropic.com",
   "*.anthropic.com",
   "openrouter.ai",

@@ -18,6 +18,7 @@ import {
   validateCapability,
   validatePin,
 } from "../src/index.js";
+import { assertGatewayUrl } from "../src/pin.js";
 import { FakePlane } from "./fake-plane.js";
 import { capability, pin } from "./support.js";
 
@@ -36,6 +37,13 @@ describe("egress policy", () => {
         ],
       }),
     ).toThrow(/api\.anthropic\.com/);
+  });
+
+  it("rejects OpenAI network routes and provider-secret input fields", () => {
+    expect(() => assertEgressPolicy({ rules: [...ATTEMPT_EGRESS_POLICY.rules, { domain: "api.openai.com", action: "allow" }] })).toThrow();
+    expect(() => assertGatewayUrl("https://api.openai.com/v1")).toThrow();
+    expect(() => assertGatewayUrl("https://other.openai.com/v1")).toThrow();
+    expect(() => assertNoSecretFields({ openai_api_key: "sk-proj-secret" })).toThrow();
   });
 
   it("accepts only the pinned deny-all allowlist", () => {
