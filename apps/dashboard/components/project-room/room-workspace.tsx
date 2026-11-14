@@ -8,6 +8,12 @@
 import * as React from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
+  Users,
+  UserRound,
+  Unlink,
+  Trash2,
+  CheckCheck,
+  ArrowUpRight,
   ChevronDown,
   Send,
   MessageSquare,
@@ -479,9 +485,14 @@ export function RoomWorkspace({
     <>
       {room ? (
         role === "owner" || role === "editor" ? (
-          <details className="text-sm">
-            <summary className="cursor-pointer font-medium">
-              + Add a site or image
+          <details className="group/add text-sm">
+            <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              Add a site or image
+              <ChevronDown
+                className="ml-auto h-3.5 w-3.5 transition-transform group-open/add:rotate-180"
+                aria-hidden="true"
+              />
             </summary>
             <div className="mt-3 space-y-3">
               <select
@@ -530,79 +541,140 @@ export function RoomWorkspace({
     </>
   );
   const activityPanel = (
-    <>
-      <section className="space-y-3" aria-label="Room activity">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-sm font-medium text-foreground">Activity</h2>
+    <section className="space-y-6" aria-label="Room activity">
+      <header className="flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">
+            Project activity
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Comments, reviews, and updates in one place.
+          </p>
+        </div>
+        <Tooltip label="Mark all activity as read" align="end">
           <Button
             type="button"
-            size="sm"
+            size="icon"
             variant="outline"
+            aria-label="Mark room read"
             disabled={!room || !onMarkRead || room.Unread === 0}
             onClick={() => room && onMarkRead?.(room.ID)}
           >
-            Mark room read
+            <CheckCheck className="h-4 w-4" aria-hidden="true" />
           </Button>
+        </Tooltip>
+      </header>
+      {activity.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-6 py-16 text-center">
+          <History
+            className="h-6 w-6 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <p className="text-sm font-medium">No activity yet</p>
+          <p className="text-xs text-muted-foreground">
+            Your first comment or review will appear here.
+          </p>
         </div>
-        <p className="text-sm text-foreground">
-          {candidates.filter((item) => item.State === "pending").length} pending
-          decisions in the loaded changes.
-        </p>
-        <ul className="space-y-2 text-sm text-muted-foreground">
-          {activity.map((item) => (
-            <li key={item.id}>
-              <span>
-                {item.kind.replaceAll("_", " ")} · {item.actorUserId} ·{" "}
-                {item.createdAt}
-              </span>
-              {item.threadId && room ? (
-                <>
-                  {" "}
-                  ·{" "}
-                  <a
-                    className="underline"
-                    href={`/rooms?room=${encodeURIComponent(room.ID)}#thread-${encodeURIComponent(item.threadId)}`}
-                  >
-                    View thread
-                  </a>
-                </>
+      ) : null}
+      <ol className="divide-y divide-border/60 rounded-xl border border-border bg-background px-4">
+        {activity.map((item) => (
+          <li key={item.id} className="flex items-start gap-3 py-4">
+            <span className="mt-0.5 rounded-full bg-muted p-2 text-muted-foreground">
+              {item.threadId ? (
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <GitPullRequest className="h-4 w-4" aria-hidden="true" />
+              )}
+            </span>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium capitalize">
+                {item.kind.replaceAll("_", " ")}
+              </p>
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span title={item.actorUserId}>
+                  {item.actorUserId.length > 20
+                    ? `Member ${item.actorUserId.slice(0, 8)}`
+                    : item.actorUserId}
+                </span>
+                <span>·</span>
+                <time
+                  dateTime={
+                    Number.isNaN(Date.parse(item.createdAt))
+                      ? undefined
+                      : item.createdAt
+                  }
+                >
+                  {formatActivityTime(item.createdAt)}
+                </time>
+              </p>
+              {item.siteId ? (
+                <p className="text-xs text-muted-foreground">
+                  {sites.find((site) => site.id === item.siteId)?.label ??
+                    sites.find((site) => site.id === item.siteId)?.slug ??
+                    "Project asset"}
+                  {item.versionId
+                    ? ` · Version ${item.versionId.slice(0, 8)}`
+                    : ""}
+                </p>
               ) : null}
-              {item.versionId ? <span> · version {item.versionId}</span> : null}
-            </li>
-          ))}
-        </ul>
-        {activityCursor && room ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onLoadMoreActivity?.(room.ID, activityCursor)}
-          >
-            Load older activity
-          </Button>
-        ) : null}
-      </section>
-    </>
+            </div>
+            {item.threadId && room ? (
+              <Tooltip label="Open comment thread" align="end">
+                <a
+                  className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label="Open comment thread"
+                  href={`/rooms?room=${encodeURIComponent(room.ID)}#thread-${encodeURIComponent(item.threadId)}`}
+                >
+                  <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+                </a>
+              </Tooltip>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+      {activityCursor && room ? (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onLoadMoreActivity?.(room.ID, activityCursor)}
+        >
+          Load older activity
+        </Button>
+      ) : null}
+    </section>
   );
   const settingsPanel = (
     <>
-      <section className="space-y-3" aria-label="Project settings">
-        <h2 className="text-sm font-medium text-foreground">
-          Project settings
-        </h2>
+      <section className="space-y-6" aria-label="Project settings">
+        <div className="flex items-center gap-3 py-3">
+          <Users className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <h2 className="text-sm font-semibold">Project members</h2>
+          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+            {members.length}
+          </span>
+        </div>
         <p className="text-sm text-muted-foreground">
-          Room owners manage members. Owners and editors can attach sites; only
-          owners can detach them. Detach does not delete the site or its
-          candidates.
+          Manage access for members of your organization.
         </p>
-        <ul className="text-sm text-foreground">
+        <ul className="divide-y divide-border/60 text-sm text-foreground">
           {members.map((member) => (
             <li
               key={member.userId}
-              className="flex flex-wrap items-center gap-2 py-1"
+              className="flex flex-wrap items-center gap-3 py-3"
             >
-              <span>{member.userId}</span>
+              <span className="rounded-full bg-muted p-2 text-muted-foreground">
+                <UserRound className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate text-xs"
+                title={member.userId}
+              >
+                {member.userId}
+              </span>
               {member.role === "owner" ? (
-                <span>owner</span>
+                <span className="rounded-md bg-muted px-2 py-1 text-xs">
+                  Owner
+                </span>
               ) : (
                 <>
                   <select
@@ -623,25 +695,34 @@ export function RoomWorkspace({
                     <option value="reviewer">reviewer</option>
                     <option value="viewer">viewer</option>
                   </select>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={role !== "owner" || !onRemoveMember}
-                    onClick={() =>
-                      room && onRemoveMember?.(room.ID, member.userId)
-                    }
-                  >
-                    Remove member
-                  </Button>
+                  <Tooltip label="Remove project member" align="end">
+                    <Button
+                      aria-label="Remove project member"
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={role !== "owner" || !onRemoveMember}
+                      onClick={() =>
+                        room && onRemoveMember?.(room.ID, member.userId)
+                      }
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </Tooltip>
                 </>
               )}
             </li>
           ))}
         </ul>
-        <ul className="text-sm text-foreground">
+        <div className="border-t border-border pt-6">
+          <h3 className="text-sm font-semibold">Sites & images</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Removing an item from this project does not delete it.
+          </p>
+        </div>
+        <ul className="divide-y divide-border/60 text-sm text-foreground">
           {attachedSites.map((item) => (
-            <li key={item.siteId} className="flex items-center gap-2">
+            <li key={item.siteId} className="flex items-center gap-3 py-3">
               <a
                 className="min-w-0 flex-1 truncate underline underline-offset-4"
                 href={`/sites/${item.siteId}`}
@@ -650,21 +731,29 @@ export function RoomWorkspace({
                   sites.find((site) => site.id === item.siteId)?.slug ??
                   item.siteId}
               </a>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={role !== "owner" || !room}
-                onClick={() => room && onDetachSite(room.ID, item.siteId)}
-              >
-                Detach site
-              </Button>
+              <Tooltip label="Remove from project" align="end">
+                <Button
+                  aria-label="Detach site"
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={role !== "owner" || !room}
+                  onClick={() => room && onDetachSite(room.ID, item.siteId)}
+                >
+                  <Unlink className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </Tooltip>
             </li>
           ))}
         </ul>
-        <details className="rounded-lg border border-border p-3">
-          <summary className="cursor-pointer text-sm font-medium">
-            Add an organization member by ID
+        <details className="group/member border-t border-border pt-4">
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" /> Add organization
+            member{" "}
+            <ChevronDown
+              className="ml-auto h-3.5 w-3.5 transition-transform group-open/member:rotate-180"
+              aria-hidden="true"
+            />
           </summary>
           <form
             className="mt-3 flex flex-wrap gap-2"
@@ -709,7 +798,7 @@ export function RoomWorkspace({
   const commentComposer = (
     <>
       <form
-        className="space-y-2"
+        className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"
         onSubmit={async (event) => {
           event.preventDefault();
           if (
@@ -763,25 +852,27 @@ export function RoomWorkspace({
           value={body}
           disabled={commentBusy}
           onChange={(event) => setBody(event.target.value)}
-          className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
         />
         {hasDropwayMention(body) ? (
-          <MentionExecutionControls
-            key={`${room?.ID}:${siteId}:${versionId}:${page}`}
-            body={body}
-            allowed={
-              !!executionConfigured &&
-              decideOk &&
-              versionId === site?.currentVersionId
-            }
-            onChange={setCommentExecution}
-          />
+          <div className="order-last col-span-2">
+            <MentionExecutionControls
+              key={`${room?.ID}:${siteId}:${versionId}:${page}`}
+              body={body}
+              allowed={
+                !!executionConfigured &&
+                decideOk &&
+                versionId === site?.currentVersionId
+              }
+              onChange={setCommentExecution}
+            />
+          </div>
         ) : null}
         <Tooltip
           label="Send comment"
           align="end"
           side="top"
-          className="ml-auto flex w-fit self-end"
+          className="flex w-fit self-end"
         >
           <Button
             type="submit"
@@ -800,7 +891,7 @@ export function RoomWorkspace({
           </Button>
         </Tooltip>
         {commentOk ? null : (
-          <p className="text-xs text-muted-foreground">
+          <p className="col-span-2 text-xs text-muted-foreground">
             This room role cannot comment.
           </p>
         )}
@@ -926,7 +1017,7 @@ export function RoomWorkspace({
           </Button>
         ) : null}
         <form
-          className="flex flex-col gap-2"
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             const text = (replyByThread[thread.ID] ?? "").trim();
@@ -940,10 +1031,16 @@ export function RoomWorkspace({
             );
           }}
         >
-          <Input
+          <textarea
+            rows={1}
+            onInput={(event) => {
+              const input = event.currentTarget;
+              input.style.height = "auto";
+              input.style.height = `${Math.min(160, input.scrollHeight)}px`;
+            }}
             aria-label={`Reply to ${thread.ID}`}
             placeholder="Write a reply…"
-            className="min-w-0"
+            className="min-h-10 min-w-0 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={replyByThread[thread.ID] ?? ""}
             onChange={(event) =>
               setReplyByThread((prev) => ({
@@ -953,7 +1050,7 @@ export function RoomWorkspace({
             }
           />
           {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
-            <div>
+            <div className="order-last col-span-2">
               <MentionExecutionControls
                 body={replyByThread[thread.ID] ?? ""}
                 allowed={
@@ -1118,44 +1215,14 @@ export function RoomWorkspace({
   const changesPanel = (
     <>
       <section className="space-y-3" aria-label="Proposed changes">
-        <details className="rounded-lg border border-border p-3">
-          <summary className="cursor-pointer text-sm text-muted-foreground">
-            Advanced: register an existing candidate
-          </summary>
-          <form
-            className="space-y-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!room || !decideOk) return;
-              const data = new FormData(event.currentTarget);
-              onSubmitCandidate({
-                roomId: room.ID,
-                siteId: siteId.trim(),
-                baseVersionId: versionId.trim(),
-                contentHash: String(data.get("content-hash") ?? ""),
-                diffHash: String(data.get("diff-hash") ?? ""),
-                summary: String(data.get("candidate-summary") ?? ""),
-              });
-            }}
-          >
-            <p className="text-sm text-muted-foreground">
-              Recording a candidate does not edit the site. Approval is a
-              separate human decision.
-              {site && !site.canEditContent
-                ? " You can review this site, but its content-edit permission is restricted. Room membership does not grant editing rights."
-                : ""}
-            </p>
-            <Input name="candidate-summary" aria-label="Candidate summary" />
-            <Input name="content-hash" aria-label="Candidate content hash" />
-            <Input name="diff-hash" aria-label="Candidate diff hash" />
-            <Button type="submit" disabled={!decideOk || !room}>
-              Record candidate
-            </Button>
-          </form>
-        </details>
-        <h2 className="text-sm font-medium text-foreground">
-          Proposed changes
-        </h2>
+        <header className="flex items-center gap-3">
+          <h2 className="text-xl font-semibold tracking-tight">
+            Proposed changes
+          </h2>
+          <span className="rounded-md bg-muted px-2 py-1 text-xs tabular-nums text-muted-foreground">
+            {pendingCount} pending
+          </span>
+        </header>
         <p className="text-sm text-muted-foreground">
           Review the summary and file changes, then accept or reject. Accepted
           changes still require Apply to publish.
@@ -1209,6 +1276,57 @@ export function RoomWorkspace({
             Load older candidates
           </Button>
         ) : null}
+        <details className="group/advanced border-t border-border pt-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md py-2 text-xs text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            Advanced: register an existing candidate
+            <ChevronDown
+              className="h-3.5 w-3.5 transition-transform group-open/advanced:rotate-180"
+              aria-hidden="true"
+            />
+          </summary>
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!room || !decideOk) return;
+              const data = new FormData(event.currentTarget);
+              onSubmitCandidate({
+                roomId: room.ID,
+                siteId: siteId.trim(),
+                baseVersionId: versionId.trim(),
+                contentHash: String(data.get("content-hash") ?? ""),
+                diffHash: String(data.get("diff-hash") ?? ""),
+                summary: String(data.get("candidate-summary") ?? ""),
+              });
+            }}
+          >
+            <p className="text-sm text-muted-foreground">
+              Recording a candidate does not edit the site. Approval is a
+              separate human decision.
+              {site && !site.canEditContent
+                ? " You can review this site, but its content-edit permission is restricted. Room membership does not grant editing rights."
+                : ""}
+            </p>
+            <Input
+              name="candidate-summary"
+              aria-label="Candidate summary"
+              placeholder="Summarize the proposed change"
+            />
+            <Input
+              name="content-hash"
+              aria-label="Candidate content hash"
+              placeholder="Content hash"
+            />
+            <Input
+              name="diff-hash"
+              aria-label="Candidate diff hash"
+              placeholder="Diff hash"
+            />
+            <Button type="submit" disabled={!decideOk || !room}>
+              Record candidate
+            </Button>
+          </form>
+        </details>
       </section>
     </>
   );
@@ -1229,8 +1347,16 @@ export function RoomWorkspace({
           onCandidateReady={() => onRefreshRoom?.(room.ID)}
         />
       ) : (
-        <section className="space-y-2" aria-label="Execution">
-          <h2 className="text-sm font-medium text-foreground">Execution</h2>
+        <section className="space-y-3" aria-label="Execution">
+          <div className="flex items-center gap-2">
+            <GitPullRequest
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <h2 className="text-sm font-semibold text-foreground">
+              AI revisions
+            </h2>
+          </div>
           <p className="text-sm text-muted-foreground">
             AI revisions are not configured for this workspace yet. You can
             still review sites and leave comments.
@@ -1863,33 +1989,49 @@ export function RoomWorkspace({
           ) : null}
           {detailsRoomId === roomId && panel === "changes" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-5xl space-y-6 p-6">
-                {changesPanel}
-                {site ? executionPanel : null}
+              <div className="mx-auto grid w-full max-w-7xl items-start gap-8 p-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
+                <div className="min-w-0">{changesPanel}</div>
+                {site ? (
+                  <aside className="min-w-0 rounded-xl border border-border bg-muted/10 p-5">
+                    {executionPanel}
+                  </aside>
+                ) : null}
               </div>
             </div>
           ) : null}
           {detailsRoomId === roomId && panel === "activity" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-5xl p-6">
-                {activity.length === 0 ? (
-                  <p className="mb-5 text-sm text-muted-foreground">
-                    No activity yet. Comments, reviews and changes will appear
-                    here.
-                  </p>
-                ) : null}
+              <div className="mx-auto max-w-4xl p-6 lg:p-8">
                 {activityPanel}
               </div>
             </div>
           ) : null}
           {detailsRoomId === roomId && panel === "settings" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-4xl space-y-6 p-6">
-                {addSitePanel}
-                {role === "owner" ? (
-                  <ProjectSharing key={room.ID} roomId={room.ID} />
-                ) : null}
-                {settingsPanel}
+              <div className="mx-auto max-w-6xl space-y-7 p-6 lg:p-8">
+                <header>
+                  <h2 className="text-xl font-semibold tracking-tight">
+                    Settings & sharing
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Manage people and the sites or images in this project.
+                  </p>
+                </header>
+                <div className="grid items-start gap-6 lg:grid-cols-2">
+                  <div className="space-y-6 rounded-xl border border-border bg-background p-5">
+                    {settingsPanel}
+                    <div className="border-t border-border pt-5">
+                      {addSitePanel}
+                    </div>
+                  </div>
+                  {role === "owner" ? (
+                    <ProjectSharing key={room.ID} roomId={room.ID} />
+                  ) : (
+                    <div className="rounded-xl border border-border bg-muted/10 p-5 text-sm text-muted-foreground">
+                      Only project owners can invite guests or manage access.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}
@@ -1928,4 +2070,17 @@ function ReplyText({
       ) : null}
     </div>
   );
+}
+
+function formatActivityTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  }).format(date);
 }

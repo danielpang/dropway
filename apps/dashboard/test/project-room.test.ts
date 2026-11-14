@@ -175,7 +175,7 @@ describe("project room contract", () => {
 });
 
 function buttonDisabled(html: string, label: string): boolean {
-  const match = html.match(new RegExp(`<button([^>]*)>${label}</button>`));
+  const match = [...html.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)].find((item) => (item[2] ?? "").replace(/<[^>]+>/g, "").trim() === label);
   return /(?:^|\s)disabled(?:=""|=|\s|$)/.test(match?.[1] ?? "disabled");
 }
 

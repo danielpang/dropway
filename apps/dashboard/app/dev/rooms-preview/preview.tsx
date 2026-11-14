@@ -253,8 +253,29 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
       threads={threads}
       candidates={candidates}
       attachedSites={attached}
-      members={[]}
+      members={[
+        { userId: "Project owner", role: "owner" },
+        { userId: "Design teammate", role: "editor" },
+      ]}
       activity={[
+        {
+          id: "activity-review",
+          threadId: null,
+          kind: "candidate_created",
+          actorUserId: "Dropway",
+          createdAt: "2026-11-14T18:15:00Z",
+          siteId: "site-launch",
+          versionId: "version-3",
+        },
+        {
+          id: "activity-resolved",
+          threadId: "thread-copy",
+          kind: "comment_resolved",
+          actorUserId: "Project owner",
+          createdAt: "2026-11-14T18:05:00Z",
+          siteId: "site-launch",
+          versionId: "version-3",
+        },
         {
           id: "activity-1",
           kind: "thread_created",

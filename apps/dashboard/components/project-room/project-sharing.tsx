@@ -1,6 +1,8 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
+import { Mail, Send, RotateCw, UserMinus } from "lucide-react";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -52,16 +54,19 @@ export function ProjectSharing({ roomId }: { roomId: string }) {
     if (result.ok && result.delivered) setEmail("");
   }
   return (
-    <details className="space-y-3 rounded border border-border p-4">
-      <summary className="cursor-pointer font-medium">
-        Share project by email
-      </summary>
+    <section
+      aria-label="Share project by email"
+      className="space-y-5 rounded-xl border border-border bg-background p-5"
+    >
+      <header className="flex items-center gap-2">
+        <Mail className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-sm font-semibold">Invite guests</h3>
+      </header>
       <p className="text-sm text-muted-foreground">
-        Guests receive access only to this project. Reviewers can leave
-        feedback; viewers can read. Guests cannot manage the organization, run
-        AI tasks, accept changes, or publish. Invitations expire after 7 days.
+        Share this project without adding guests to your organization.
+        Invitations expire after 7 days.
       </p>
-      <p className="text-sm text-muted-foreground">
+      <p className="text-xs leading-5 text-muted-foreground">
         External sharing must be enabled by an organization administrator in{" "}
         <Link className="underline" href="/settings">
           Settings
@@ -69,7 +74,7 @@ export function ProjectSharing({ roomId }: { roomId: string }) {
         .
       </p>
       <form
-        className="flex flex-wrap gap-2"
+        className="grid grid-cols-[minmax(0,1fr)_auto] gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           void mutate(() => invite(email, role));
@@ -80,74 +85,115 @@ export function ProjectSharing({ roomId }: { roomId: string }) {
           required
           maxLength={254}
           aria-label="Guest email"
+          placeholder="name@example.com"
+          className="col-span-2"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
         <select
           aria-label="Guest access"
-          className="rounded border bg-background p-2"
+          className="min-w-0 rounded-md border border-border bg-background px-3 py-2 text-xs"
           value={role}
           onChange={(event) => setRole(event.target.value as GuestRole)}
         >
           <option value="reviewer">Reviewer · can comment</option>
           <option value="viewer">Viewer · read only</option>
         </select>
-        <Button disabled={busy || !email.trim()}>Send invitation</Button>
+        <Tooltip label="Send invitation" align="end">
+          <Button
+            size="icon"
+            aria-label="Send invitation"
+            disabled={busy || !email.trim()}
+          >
+            <Send className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </Tooltip>
       </form>
-      <p role="status" className="text-sm">
-        {notice}
+      {notice ? (
+        <p
+          role="status"
+          className="rounded-md bg-muted/50 p-3 text-xs leading-5"
+        >
+          {notice}
+        </p>
+      ) : null}
+      <p className="text-xs leading-5 text-muted-foreground">
+        Guests can view or comment. They cannot run AI tasks, accept changes, or
+        publish.
       </p>
-      <ul className="space-y-2">
+      <div className="flex items-center justify-between border-t border-border pt-4">
+        <h4 className="text-xs font-medium">Guest access</h4>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {shares.filter((share) => !share.revoked_at).length}
+        </span>
+      </div>
+      {shares.length === 0 ? (
+        <p className="py-4 text-center text-xs text-muted-foreground">
+          No guests invited yet.
+        </p>
+      ) : null}
+      <ul className="divide-y divide-border/60">
         {shares.map((share) => (
           <li
             key={share.id}
-            className="flex flex-wrap items-center gap-2 text-sm"
+            className="flex flex-wrap items-center gap-2 py-3 text-sm"
           >
-            <span>
-              {share.email} · {share.role} ·{" "}
-              {share.revoked_at
-                ? "Revoked"
-                : share.accepted_at
-                  ? "Accepted"
-                  : Date.parse(share.expires_at) < Date.now()
-                    ? "Expired"
-                    : "Pending"}
-            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm" title={share.email}>
+                {share.email}
+              </p>
+              <p className="mt-1 text-xs capitalize text-muted-foreground">
+                {share.role} ·{" "}
+                {share.revoked_at
+                  ? "Revoked"
+                  : share.accepted_at
+                    ? "Accepted"
+                    : Date.parse(share.expires_at) < Date.now()
+                      ? "Expired"
+                      : "Pending"}
+              </p>
+            </div>
             {!share.accepted_at && !share.revoked_at ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void mutate(() => invite(share.email, share.role))
-                }
-              >
-                Resend
-              </Button>
+              <Tooltip label="Resend invitation" align="end">
+                <Button
+                  aria-label="Resend invitation"
+                  size="icon"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(() => invite(share.email, share.role))
+                  }
+                >
+                  <RotateCw className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </Tooltip>
             ) : null}
             {!share.revoked_at ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() =>
-                  void mutate(async () => {
-                    const result = await revokeProjectGuestAction(
-                      roomId,
-                      share.id,
-                    );
-                    setNotice(
-                      result.ok ? "Project access revoked." : result.message,
-                    );
-                  })
-                }
-              >
-                Revoke
-              </Button>
+              <Tooltip label="Revoke guest access" align="end">
+                <Button
+                  aria-label="Revoke guest access"
+                  size="icon"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(async () => {
+                      const result = await revokeProjectGuestAction(
+                        roomId,
+                        share.id,
+                      );
+                      setNotice(
+                        result.ok ? "Project access revoked." : result.message,
+                      );
+                    })
+                  }
+                >
+                  <UserMinus className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </Tooltip>
             ) : null}
           </li>
         ))}
       </ul>
-    </details>
+    </section>
   );
 }
