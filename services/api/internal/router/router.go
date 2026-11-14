@@ -71,6 +71,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// Auth, before EnsureOrgProvisioned, so even provisioning errors carry the id).
 		r.Use(attributeErrors)
 		r.Use(api.EnsureOrgProvisioned)
+		r.Use(handlers.EnforceAPIKeyGrant)
 
 		r.Get("/me", api.Me)
 		r.Get("/members", api.ListMembers)
@@ -279,6 +280,24 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// Org API-keys kill switch (admin/owner only, re-checked in the handler;
 		// mirrors /orgs/mcp). The read is on GET /orgs/policy.
 		r.Patch("/orgs/api-keys", api.SetApiKeysEnabled)
+
+		// Project rooms are opt-in (project_rooms_enabled defaults false) and
+		// session-only. Approve-change is separate from version sign-off.
+		r.Get("/orgs/project-rooms", api.GetProjectRoomSettings)
+		r.Patch("/orgs/project-rooms", api.SetProjectRoomSettings)
+		r.Route("/project-rooms", func(r chi.Router) {
+			r.Get("/", api.ListProjectRooms)
+			r.Post("/", api.CreateProjectRoom)
+			r.Post("/{roomID}/threads", api.CreateReviewThread)
+			r.Post("/{roomID}/threads/{threadID}/replies", api.AddReviewReply)
+			r.Post("/{roomID}/version-signoffs", api.SignoffVersion)
+			r.Post("/{roomID}/candidates", api.SubmitCandidate)
+			r.Post("/{roomID}/candidates/{candidateID}/approve", api.ApproveCandidate)
+			r.Post("/{roomID}/candidates/{candidateID}/reject", api.RejectCandidate)
+			r.Post("/{roomID}/candidates/{candidateID}/apply", api.ApplyCandidate)
+			r.Post("/{roomID}/executions", api.ClaimExecution)
+			r.Post("/{roomID}/sessions/clarify", api.ClarifySession)
+		})
 
 		// Poll a custom domain's verification status (drives the state machine).
 		r.Get("/domains/{domainID}/status", api.GetDomainStatus)

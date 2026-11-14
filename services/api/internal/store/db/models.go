@@ -162,6 +162,7 @@ type AppOrgMetum struct {
 	ChatLogsEnabled      bool
 	ApiKeysEnabled       bool
 	MemoryEnabled        bool
+	ProjectRoomsEnabled  bool
 }
 
 type AppOrgUsage struct {
@@ -191,6 +192,120 @@ type AppPostVote struct {
 	Value       int16
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type AppProjectRoom struct {
+	ID          string
+	OrgID       string
+	Name        string
+	OwnerUserID string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type AppProjectRoomMember struct {
+	OrgID     string
+	RoomID    string
+	UserID    string
+	Role      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type AppProjectRoomSite struct {
+	OrgID     string
+	RoomID    string
+	SiteID    string
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+type AppReviewActivity struct {
+	ID          string
+	OrgID       string
+	RoomID      string
+	ActorUserID string
+	Kind        string
+	ThreadID    *string
+	SiteID      *string
+	VersionID   *string
+	CreatedAt   time.Time
+}
+
+type AppReviewAnchorRevision struct {
+	ID          string
+	OrgID       string
+	ThreadID    string
+	AnchorKind  string
+	Anchor      []byte
+	Page        string
+	AnchorState string
+	Reason      string
+	ActorUserID string
+	CreatedAt   time.Time
+}
+
+type AppReviewCandidate struct {
+	ID              string
+	OrgID           string
+	RoomID          string
+	SiteID          string
+	BaseVersionID   string
+	BaseContentHash string
+	ContentHash     string
+	DiffHash        string
+	Summary         string
+	State           string
+	CreatedBy       string
+	CreatedAt       time.Time
+	ApprovedBy      *string
+	ApprovedAt      pgtype.Timestamptz
+	RejectedBy      *string
+	RejectedAt      pgtype.Timestamptz
+}
+
+type AppReviewReadState struct {
+	OrgID      string
+	RoomID     string
+	UserID     string
+	LastReadAt time.Time
+}
+
+type AppReviewReply struct {
+	ID           string
+	OrgID        string
+	ThreadID     string
+	AuthorUserID string
+	Body         string
+	CreatedAt    time.Time
+}
+
+type AppReviewThread struct {
+	ID          string
+	OrgID       string
+	RoomID      string
+	SiteID      string
+	VersionID   string
+	ContentHash string
+	Page        string
+	AnchorKind  string
+	Anchor      []byte
+	AnchorState string
+	Status      string
+	CreatedBy   string
+	CreatedAt   time.Time
+	ResolvedBy  *string
+	ResolvedAt  pgtype.Timestamptz
+}
+
+type AppReviewVersionApproval struct {
+	OrgID       string
+	RoomID      string
+	SiteID      string
+	VersionID   string
+	ContentHash string
+	UserID      string
+	CreatedAt   time.Time
 }
 
 type AppSite struct {

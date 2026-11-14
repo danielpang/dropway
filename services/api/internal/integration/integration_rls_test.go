@@ -454,6 +454,176 @@ func rlsTables() []rlsTable {
 					[]any{other, skillID(other)}
 			},
 		},
+		roomTable(siteID, verID),
+		memberTable(siteID),
+		roomSiteTable(siteID),
+		threadTable(siteID, verID),
+		revisionTable(),
+		replyTable(),
+		signoffTable(siteID, verID),
+		readTable(),
+		activityTable(siteID, verID),
+		candidateTable(siteID, verID),
+	}
+}
+
+func roomID(org string) string {
+	if org == rlsOrgA {
+		return "55555555-0000-0000-0000-0000000000a1"
+	}
+	return "55555555-0000-0000-0000-0000000000b1"
+}
+
+func threadID(org string) string {
+	if org == rlsOrgA {
+		return "66666666-0000-0000-0000-0000000000a1"
+	}
+	return "66666666-0000-0000-0000-0000000000b1"
+}
+
+func roomTable(siteID, _ func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.project_rooms", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.project_rooms (id, org_id, name, owner_user_id) VALUES ($1, $2, 'room', $3)`,
+				[]any{roomID(org), org, ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.project_rooms (org_id, name, owner_user_id) VALUES ($1, 'sneaky', $2)`,
+				[]any{other, ownerUser(other)}
+		},
+	}
+}
+
+func memberTable(_ func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.project_room_members", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.project_room_members (org_id, room_id, user_id, role) VALUES ($1, $2, $3, 'owner')`,
+				[]any{org, roomID(org), ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.project_room_members (org_id, room_id, user_id, role) VALUES ($1, $2, 'ffffffff-ffff-ffff-ffff-ffffffffffff', 'viewer')`,
+				[]any{other, roomID(other)}
+		},
+	}
+}
+
+func roomSiteTable(siteID func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.project_room_sites", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.project_room_sites (org_id, room_id, site_id, created_by) VALUES ($1, $2, $3, $4)`,
+				[]any{org, roomID(org), siteID(org), ownerUser(org)}
+		},
+		forgeInsert: nil,
+	}
+}
+
+func threadTable(siteID, verID func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.review_threads", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_threads (id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor, created_by)
+				VALUES ($1, $2, $3, $4, $5, $6, '/index.html', 'page', '{}', $7)`,
+				[]any{threadID(org), org, roomID(org), siteID(org), verID(org), "hash-" + org[:4], ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_threads (org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor, created_by)
+				VALUES ($1, $2, $3, $4, $5, '/x', 'page', '{}', $6)`,
+				[]any{other, roomID(other), siteID(other), verID(other), "hash-" + other[:4], ownerUser(other)}
+		},
+	}
+}
+
+func revisionTable() rlsTable {
+	return rlsTable{
+		name: "app.review_anchor_revisions", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_anchor_revisions (org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id)
+				VALUES ($1, $2, 'page', '{}', '/index.html', 'anchored', 'created', $3)`,
+				[]any{org, threadID(org), ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_anchor_revisions (org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id)
+				VALUES ($1, $2, 'page', '{}', '/index.html', 'anchored', 'created', $3)`,
+				[]any{other, threadID(other), ownerUser(other)}
+		},
+	}
+}
+
+func replyTable() rlsTable {
+	return rlsTable{
+		name: "app.review_replies", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_replies (org_id, thread_id, author_user_id, body) VALUES ($1, $2, $3, 'note')`,
+				[]any{org, threadID(org), ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_replies (org_id, thread_id, author_user_id, body) VALUES ($1, $2, $3, 'sneaky')`,
+				[]any{other, threadID(other), ownerUser(other)}
+		},
+	}
+}
+
+func signoffTable(siteID, verID func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.review_version_approvals", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_version_approvals (org_id, room_id, site_id, version_id, content_hash, user_id)
+				VALUES ($1, $2, $3, $4, $5, $6)`,
+				[]any{org, roomID(org), siteID(org), verID(org), "hash-" + org[:4], ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_version_approvals (org_id, room_id, site_id, version_id, content_hash, user_id)
+				VALUES ($1, $2, $3, $4, $5, 'ffffffff-ffff-ffff-ffff-ffffffffffff')`,
+				[]any{other, roomID(other), siteID(other), verID(other), "hash-" + other[:4]}
+		},
+	}
+}
+
+func readTable() rlsTable {
+	return rlsTable{
+		name: "app.review_read_state", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_read_state (org_id, room_id, user_id, last_read_at) VALUES ($1, $2, $3, now())`,
+				[]any{org, roomID(org), ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_read_state (org_id, room_id, user_id, last_read_at) VALUES ($1, $2, 'ffffffff-ffff-ffff-ffff-ffffffffffff', now())`,
+				[]any{other, roomID(other)}
+		},
+	}
+}
+
+func activityTable(siteID, verID func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.review_activity", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_activity (org_id, room_id, actor_user_id, kind, site_id, version_id)
+				VALUES ($1, $2, $3, 'room_created', $4, $5)`,
+				[]any{org, roomID(org), ownerUser(org), siteID(org), verID(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_activity (org_id, room_id, actor_user_id, kind) VALUES ($1, $2, $3, 'room_created')`,
+				[]any{other, roomID(other), ownerUser(other)}
+		},
+	}
+}
+
+func candidateTable(siteID, verID func(string) string) rlsTable {
+	return rlsTable{
+		name: "app.review_candidates", orgCol: "org_id",
+		seed: func(org string) (string, []any) {
+			return `INSERT INTO app.review_candidates (org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash, summary, created_by)
+				VALUES ($1, $2, $3, $4, $5, $5, $5, 'change the headline', $6)`,
+				[]any{org, roomID(org), siteID(org), verID(org), "hash-" + org[:4], ownerUser(org)}
+		},
+		forgeInsert: func(other string) (string, []any) {
+			return `INSERT INTO app.review_candidates (org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash, summary, created_by)
+				VALUES ($1, $2, $3, $4, $5, $5, $5, 'sneaky', $6)`,
+				[]any{other, roomID(other), siteID(other), verID(other), "hash-" + other[:4], ownerUser(other)}
+		},
 	}
 }
 

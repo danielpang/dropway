@@ -230,6 +230,9 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		siteStore = st
 	}
 	api := handlers.NewFull(qp, siteStore, obj, proj)
+	if st != nil {
+		api.Rooms = st
+	}
 	api.EdgeSigner = edgeSigner
 	api.Domains = domains
 	api.Analytics = analyticsEmitter

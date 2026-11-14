@@ -137,6 +137,35 @@ func (q *Queries) CountOrgMemories(ctx context.Context, orgID string) (int64, er
 	return count, err
 }
 
+const countProjectRoomMembers = `-- name: CountProjectRoomMembers :one
+SELECT count(*)::bigint AS count
+FROM app.project_room_members
+WHERE org_id = $1 AND room_id = $2
+`
+
+type CountProjectRoomMembersParams struct {
+	OrgID  string
+	RoomID string
+}
+
+func (q *Queries) CountProjectRoomMembers(ctx context.Context, arg CountProjectRoomMembersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectRoomMembers, arg.OrgID, arg.RoomID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProjectRoomsForOrg = `-- name: CountProjectRoomsForOrg :one
+SELECT count(*)::bigint AS count FROM app.project_rooms WHERE org_id = $1
+`
+
+func (q *Queries) CountProjectRoomsForOrg(ctx context.Context, orgID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectRoomsForOrg, orgID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countSitesForOrg = `-- name: CountSitesForOrg :one
 SELECT count(*)::bigint AS n
 FROM app.sites
@@ -165,6 +194,31 @@ func (q *Queries) CountSkillsForOrg(ctx context.Context, orgID string) (int64, e
 	var n int64
 	err := row.Scan(&n)
 	return n, err
+}
+
+const countUnreadReviewActivity = `-- name: CountUnreadReviewActivity :one
+SELECT count(*)::bigint AS count
+FROM app.review_activity a
+WHERE a.org_id = $1
+  AND a.room_id = $2
+  AND a.actor_user_id <> $3
+  AND a.created_at > COALESCE(
+        (SELECT s.last_read_at FROM app.review_read_state s
+          WHERE s.room_id = a.room_id AND s.org_id = a.org_id AND s.user_id = $3),
+        '-infinity'::timestamptz)
+`
+
+type CountUnreadReviewActivityParams struct {
+	OrgID  string
+	RoomID string
+	UserID string
+}
+
+func (q *Queries) CountUnreadReviewActivity(ctx context.Context, arg CountUnreadReviewActivityParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnreadReviewActivity, arg.OrgID, arg.RoomID, arg.UserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createAPIKey = `-- name: CreateAPIKey :one
@@ -563,6 +617,70 @@ func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersion
 	return i, err
 }
 
+const decideReviewCandidate = `-- name: DecideReviewCandidate :one
+UPDATE app.review_candidates
+SET state = $1,
+    approved_by = $2,
+    approved_at = CASE WHEN $1 = 'approved' THEN now() ELSE approved_at END,
+    rejected_by = $3,
+    rejected_at = CASE WHEN $1 = 'rejected' THEN now() ELSE rejected_at END
+WHERE id = $4
+  AND org_id = $5
+  AND room_id = $6
+  AND state = 'pending'
+  AND content_hash = $7
+  AND base_version_id = $8
+  AND base_content_hash = $9
+RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+          summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at
+`
+
+type DecideReviewCandidateParams struct {
+	State           string
+	ApprovedBy      *string
+	RejectedBy      *string
+	ID              string
+	OrgID           string
+	RoomID          string
+	ContentHash     string
+	BaseVersionID   string
+	BaseContentHash string
+}
+
+func (q *Queries) DecideReviewCandidate(ctx context.Context, arg DecideReviewCandidateParams) (AppReviewCandidate, error) {
+	row := q.db.QueryRow(ctx, decideReviewCandidate,
+		arg.State,
+		arg.ApprovedBy,
+		arg.RejectedBy,
+		arg.ID,
+		arg.OrgID,
+		arg.RoomID,
+		arg.ContentHash,
+		arg.BaseVersionID,
+		arg.BaseContentHash,
+	)
+	var i AppReviewCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.BaseVersionID,
+		&i.BaseContentHash,
+		&i.ContentHash,
+		&i.DiffHash,
+		&i.Summary,
+		&i.State,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RejectedBy,
+		&i.RejectedAt,
+	)
+	return i, err
+}
+
 const deleteAllowlistEntry = `-- name: DeleteAllowlistEntry :exec
 DELETE FROM app.allowlist_entries
 WHERE site_id = $1 AND email = $2 AND org_id = $3
@@ -873,6 +991,88 @@ func (q *Queries) DeletePreviewRoutesForVersion(ctx context.Context, arg DeleteP
 		return nil, err
 	}
 	return items, nil
+}
+
+const deleteProjectRoom = `-- name: DeleteProjectRoom :execrows
+DELETE FROM app.project_rooms
+WHERE id = $1 AND org_id = $2
+`
+
+type DeleteProjectRoomParams struct {
+	ID    string
+	OrgID string
+}
+
+func (q *Queries) DeleteProjectRoom(ctx context.Context, arg DeleteProjectRoomParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectRoom, arg.ID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProjectRoomMember = `-- name: DeleteProjectRoomMember :execrows
+DELETE FROM app.project_room_members
+WHERE org_id = $1 AND room_id = $2 AND user_id = $3
+`
+
+type DeleteProjectRoomMemberParams struct {
+	OrgID  string
+	RoomID string
+	UserID string
+}
+
+func (q *Queries) DeleteProjectRoomMember(ctx context.Context, arg DeleteProjectRoomMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectRoomMember, arg.OrgID, arg.RoomID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProjectRoomSite = `-- name: DeleteProjectRoomSite :execrows
+DELETE FROM app.project_room_sites
+WHERE org_id = $1 AND room_id = $2 AND site_id = $3
+`
+
+type DeleteProjectRoomSiteParams struct {
+	OrgID  string
+	RoomID string
+	SiteID string
+}
+
+func (q *Queries) DeleteProjectRoomSite(ctx context.Context, arg DeleteProjectRoomSiteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectRoomSite, arg.OrgID, arg.RoomID, arg.SiteID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteReviewApproval = `-- name: DeleteReviewApproval :execrows
+DELETE FROM app.review_version_approvals
+WHERE org_id = $1 AND room_id = $2
+  AND version_id = $3 AND user_id = $4
+`
+
+type DeleteReviewApprovalParams struct {
+	OrgID     string
+	RoomID    string
+	VersionID string
+	UserID    string
+}
+
+func (q *Queries) DeleteReviewApproval(ctx context.Context, arg DeleteReviewApprovalParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteReviewApproval,
+		arg.OrgID,
+		arg.RoomID,
+		arg.VersionID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteSite = `-- name: DeleteSite :one
@@ -1508,6 +1708,276 @@ func (q *Queries) GetPostVoteScore(ctx context.Context, arg GetPostVoteScorePara
 	return score, err
 }
 
+const getProjectRoomMember = `-- name: GetProjectRoomMember :one
+SELECT org_id, room_id, user_id, role, created_at, updated_at
+FROM app.project_room_members
+WHERE org_id = $1 AND room_id = $2 AND user_id = $3
+`
+
+type GetProjectRoomMemberParams struct {
+	OrgID  string
+	RoomID string
+	UserID string
+}
+
+func (q *Queries) GetProjectRoomMember(ctx context.Context, arg GetProjectRoomMemberParams) (AppProjectRoomMember, error) {
+	row := q.db.QueryRow(ctx, getProjectRoomMember, arg.OrgID, arg.RoomID, arg.UserID)
+	var i AppProjectRoomMember
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getProjectRoomSite = `-- name: GetProjectRoomSite :one
+SELECT org_id, room_id, site_id, created_by, created_at
+FROM app.project_room_sites
+WHERE org_id = $1 AND room_id = $2 AND site_id = $3
+`
+
+type GetProjectRoomSiteParams struct {
+	OrgID  string
+	RoomID string
+	SiteID string
+}
+
+func (q *Queries) GetProjectRoomSite(ctx context.Context, arg GetProjectRoomSiteParams) (AppProjectRoomSite, error) {
+	row := q.db.QueryRow(ctx, getProjectRoomSite, arg.OrgID, arg.RoomID, arg.SiteID)
+	var i AppProjectRoomSite
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getProjectRoomsEnabled = `-- name: GetProjectRoomsEnabled :one
+
+SELECT project_rooms_enabled FROM app.org_meta WHERE id = $1
+`
+
+// ===========================================================================
+// project rooms (migration 0019)
+// Membership is filtered in every query. RLS remains the org backstop.
+// ===========================================================================
+func (q *Queries) GetProjectRoomsEnabled(ctx context.Context, orgID string) (bool, error) {
+	row := q.db.QueryRow(ctx, getProjectRoomsEnabled, orgID)
+	var project_rooms_enabled bool
+	err := row.Scan(&project_rooms_enabled)
+	return project_rooms_enabled, err
+}
+
+const getReviewApproval = `-- name: GetReviewApproval :one
+SELECT org_id, room_id, site_id, version_id, content_hash, user_id, created_at
+FROM app.review_version_approvals
+WHERE org_id = $1 AND room_id = $2
+  AND version_id = $3 AND user_id = $4
+`
+
+type GetReviewApprovalParams struct {
+	OrgID     string
+	RoomID    string
+	VersionID string
+	UserID    string
+}
+
+func (q *Queries) GetReviewApproval(ctx context.Context, arg GetReviewApprovalParams) (AppReviewVersionApproval, error) {
+	row := q.db.QueryRow(ctx, getReviewApproval,
+		arg.OrgID,
+		arg.RoomID,
+		arg.VersionID,
+		arg.UserID,
+	)
+	var i AppReviewVersionApproval
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.ContentHash,
+		&i.UserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getReviewCandidate = `-- name: GetReviewCandidate :one
+SELECT id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+       summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at
+FROM app.review_candidates
+WHERE id = $1 AND org_id = $2 AND room_id = $3
+`
+
+type GetReviewCandidateParams struct {
+	ID     string
+	OrgID  string
+	RoomID string
+}
+
+func (q *Queries) GetReviewCandidate(ctx context.Context, arg GetReviewCandidateParams) (AppReviewCandidate, error) {
+	row := q.db.QueryRow(ctx, getReviewCandidate, arg.ID, arg.OrgID, arg.RoomID)
+	var i AppReviewCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.BaseVersionID,
+		&i.BaseContentHash,
+		&i.ContentHash,
+		&i.DiffHash,
+		&i.Summary,
+		&i.State,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RejectedBy,
+		&i.RejectedAt,
+	)
+	return i, err
+}
+
+const getReviewCandidateForMember = `-- name: GetReviewCandidateForMember :one
+SELECT c.id, c.org_id, c.room_id, c.site_id, c.base_version_id, c.base_content_hash, c.content_hash,
+       c.diff_hash, c.summary, c.state, c.created_by, c.created_at, c.approved_by, c.approved_at,
+       c.rejected_by, c.rejected_at, m.role
+FROM app.review_candidates c
+JOIN app.project_room_members m
+  ON m.room_id = c.room_id AND m.org_id = c.org_id AND m.user_id = $1
+WHERE c.id = $2 AND c.org_id = $3 AND c.room_id = $4
+`
+
+type GetReviewCandidateForMemberParams struct {
+	UserID string
+	ID     string
+	OrgID  string
+	RoomID string
+}
+
+type GetReviewCandidateForMemberRow struct {
+	ID              string
+	OrgID           string
+	RoomID          string
+	SiteID          string
+	BaseVersionID   string
+	BaseContentHash string
+	ContentHash     string
+	DiffHash        string
+	Summary         string
+	State           string
+	CreatedBy       string
+	CreatedAt       time.Time
+	ApprovedBy      *string
+	ApprovedAt      pgtype.Timestamptz
+	RejectedBy      *string
+	RejectedAt      pgtype.Timestamptz
+	Role            string
+}
+
+func (q *Queries) GetReviewCandidateForMember(ctx context.Context, arg GetReviewCandidateForMemberParams) (GetReviewCandidateForMemberRow, error) {
+	row := q.db.QueryRow(ctx, getReviewCandidateForMember,
+		arg.UserID,
+		arg.ID,
+		arg.OrgID,
+		arg.RoomID,
+	)
+	var i GetReviewCandidateForMemberRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.BaseVersionID,
+		&i.BaseContentHash,
+		&i.ContentHash,
+		&i.DiffHash,
+		&i.Summary,
+		&i.State,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RejectedBy,
+		&i.RejectedAt,
+		&i.Role,
+	)
+	return i, err
+}
+
+const getReviewThreadForMember = `-- name: GetReviewThreadForMember :one
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at, m.role
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = $1
+WHERE t.id = $2 AND t.org_id = $3 AND t.room_id = $4
+`
+
+type GetReviewThreadForMemberParams struct {
+	UserID string
+	ID     string
+	OrgID  string
+	RoomID string
+}
+
+type GetReviewThreadForMemberRow struct {
+	ID          string
+	OrgID       string
+	RoomID      string
+	SiteID      string
+	VersionID   string
+	ContentHash string
+	Page        string
+	AnchorKind  string
+	Anchor      []byte
+	AnchorState string
+	Status      string
+	CreatedBy   string
+	CreatedAt   time.Time
+	ResolvedBy  *string
+	ResolvedAt  pgtype.Timestamptz
+	Role        string
+}
+
+func (q *Queries) GetReviewThreadForMember(ctx context.Context, arg GetReviewThreadForMemberParams) (GetReviewThreadForMemberRow, error) {
+	row := q.db.QueryRow(ctx, getReviewThreadForMember,
+		arg.UserID,
+		arg.ID,
+		arg.OrgID,
+		arg.RoomID,
+	)
+	var i GetReviewThreadForMemberRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.ContentHash,
+		&i.Page,
+		&i.AnchorKind,
+		&i.Anchor,
+		&i.AnchorState,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+		&i.Role,
+	)
+	return i, err
+}
+
 const getSite = `-- name: GetSite :one
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
@@ -2051,6 +2521,377 @@ func (q *Queries) InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (i
 	var size_bytes int64
 	err := row.Scan(&size_bytes)
 	return size_bytes, err
+}
+
+const insertProjectRoom = `-- name: InsertProjectRoom :one
+INSERT INTO app.project_rooms (org_id, name, owner_user_id)
+VALUES ($1, $2, $3)
+RETURNING id, org_id, name, owner_user_id, created_at, updated_at
+`
+
+type InsertProjectRoomParams struct {
+	OrgID       string
+	Name        string
+	OwnerUserID string
+}
+
+func (q *Queries) InsertProjectRoom(ctx context.Context, arg InsertProjectRoomParams) (AppProjectRoom, error) {
+	row := q.db.QueryRow(ctx, insertProjectRoom, arg.OrgID, arg.Name, arg.OwnerUserID)
+	var i AppProjectRoom
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.OwnerUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertProjectRoomMember = `-- name: InsertProjectRoomMember :one
+INSERT INTO app.project_room_members (org_id, room_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+RETURNING org_id, room_id, user_id, role, created_at, updated_at
+`
+
+type InsertProjectRoomMemberParams struct {
+	OrgID  string
+	RoomID string
+	UserID string
+	Role   string
+}
+
+func (q *Queries) InsertProjectRoomMember(ctx context.Context, arg InsertProjectRoomMemberParams) (AppProjectRoomMember, error) {
+	row := q.db.QueryRow(ctx, insertProjectRoomMember,
+		arg.OrgID,
+		arg.RoomID,
+		arg.UserID,
+		arg.Role,
+	)
+	var i AppProjectRoomMember
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertProjectRoomSite = `-- name: InsertProjectRoomSite :one
+INSERT INTO app.project_room_sites (org_id, room_id, site_id, created_by)
+VALUES ($1, $2, $3, $4)
+RETURNING org_id, room_id, site_id, created_by, created_at
+`
+
+type InsertProjectRoomSiteParams struct {
+	OrgID     string
+	RoomID    string
+	SiteID    string
+	CreatedBy string
+}
+
+func (q *Queries) InsertProjectRoomSite(ctx context.Context, arg InsertProjectRoomSiteParams) (AppProjectRoomSite, error) {
+	row := q.db.QueryRow(ctx, insertProjectRoomSite,
+		arg.OrgID,
+		arg.RoomID,
+		arg.SiteID,
+		arg.CreatedBy,
+	)
+	var i AppProjectRoomSite
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertReviewActivity = `-- name: InsertReviewActivity :one
+INSERT INTO app.review_activity (
+    org_id, room_id, actor_user_id, kind, thread_id, site_id, version_id
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7
+)
+RETURNING id, org_id, room_id, actor_user_id, kind, thread_id, site_id, version_id, created_at
+`
+
+type InsertReviewActivityParams struct {
+	OrgID       string
+	RoomID      string
+	ActorUserID string
+	Kind        string
+	ThreadID    *string
+	SiteID      *string
+	VersionID   *string
+}
+
+func (q *Queries) InsertReviewActivity(ctx context.Context, arg InsertReviewActivityParams) (AppReviewActivity, error) {
+	row := q.db.QueryRow(ctx, insertReviewActivity,
+		arg.OrgID,
+		arg.RoomID,
+		arg.ActorUserID,
+		arg.Kind,
+		arg.ThreadID,
+		arg.SiteID,
+		arg.VersionID,
+	)
+	var i AppReviewActivity
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.ActorUserID,
+		&i.Kind,
+		&i.ThreadID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertReviewAnchorRevision = `-- name: InsertReviewAnchorRevision :one
+INSERT INTO app.review_anchor_revisions (
+    org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8
+)
+RETURNING id, org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id, created_at
+`
+
+type InsertReviewAnchorRevisionParams struct {
+	OrgID       string
+	ThreadID    string
+	AnchorKind  string
+	Anchor      []byte
+	Page        string
+	AnchorState string
+	Reason      string
+	ActorUserID string
+}
+
+func (q *Queries) InsertReviewAnchorRevision(ctx context.Context, arg InsertReviewAnchorRevisionParams) (AppReviewAnchorRevision, error) {
+	row := q.db.QueryRow(ctx, insertReviewAnchorRevision,
+		arg.OrgID,
+		arg.ThreadID,
+		arg.AnchorKind,
+		arg.Anchor,
+		arg.Page,
+		arg.AnchorState,
+		arg.Reason,
+		arg.ActorUserID,
+	)
+	var i AppReviewAnchorRevision
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.AnchorKind,
+		&i.Anchor,
+		&i.Page,
+		&i.AnchorState,
+		&i.Reason,
+		&i.ActorUserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertReviewApproval = `-- name: InsertReviewApproval :one
+INSERT INTO app.review_version_approvals (
+    org_id, room_id, site_id, version_id, content_hash, user_id
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6
+)
+ON CONFLICT (room_id, version_id, user_id) DO NOTHING
+RETURNING org_id, room_id, site_id, version_id, content_hash, user_id, created_at
+`
+
+type InsertReviewApprovalParams struct {
+	OrgID       string
+	RoomID      string
+	SiteID      string
+	VersionID   string
+	ContentHash string
+	UserID      string
+}
+
+func (q *Queries) InsertReviewApproval(ctx context.Context, arg InsertReviewApprovalParams) (AppReviewVersionApproval, error) {
+	row := q.db.QueryRow(ctx, insertReviewApproval,
+		arg.OrgID,
+		arg.RoomID,
+		arg.SiteID,
+		arg.VersionID,
+		arg.ContentHash,
+		arg.UserID,
+	)
+	var i AppReviewVersionApproval
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.ContentHash,
+		&i.UserID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertReviewCandidate = `-- name: InsertReviewCandidate :one
+INSERT INTO app.review_candidates (
+    org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash, summary, created_by
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8,
+    $9
+)
+RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+          summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at
+`
+
+type InsertReviewCandidateParams struct {
+	OrgID           string
+	RoomID          string
+	SiteID          string
+	BaseVersionID   string
+	BaseContentHash string
+	ContentHash     string
+	DiffHash        string
+	Summary         string
+	CreatedBy       string
+}
+
+func (q *Queries) InsertReviewCandidate(ctx context.Context, arg InsertReviewCandidateParams) (AppReviewCandidate, error) {
+	row := q.db.QueryRow(ctx, insertReviewCandidate,
+		arg.OrgID,
+		arg.RoomID,
+		arg.SiteID,
+		arg.BaseVersionID,
+		arg.BaseContentHash,
+		arg.ContentHash,
+		arg.DiffHash,
+		arg.Summary,
+		arg.CreatedBy,
+	)
+	var i AppReviewCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.BaseVersionID,
+		&i.BaseContentHash,
+		&i.ContentHash,
+		&i.DiffHash,
+		&i.Summary,
+		&i.State,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RejectedBy,
+		&i.RejectedAt,
+	)
+	return i, err
+}
+
+const insertReviewReply = `-- name: InsertReviewReply :one
+INSERT INTO app.review_replies (org_id, thread_id, author_user_id, body)
+VALUES ($1, $2, $3, $4)
+RETURNING id, org_id, thread_id, author_user_id, body, created_at
+`
+
+type InsertReviewReplyParams struct {
+	OrgID        string
+	ThreadID     string
+	AuthorUserID string
+	Body         string
+}
+
+func (q *Queries) InsertReviewReply(ctx context.Context, arg InsertReviewReplyParams) (AppReviewReply, error) {
+	row := q.db.QueryRow(ctx, insertReviewReply,
+		arg.OrgID,
+		arg.ThreadID,
+		arg.AuthorUserID,
+		arg.Body,
+	)
+	var i AppReviewReply
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.AuthorUserID,
+		&i.Body,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertReviewThread = `-- name: InsertReviewThread :one
+INSERT INTO app.review_threads (
+    org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor, created_by
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8,
+    $9
+)
+RETURNING id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor,
+          anchor_state, status, created_by, created_at, resolved_by, resolved_at
+`
+
+type InsertReviewThreadParams struct {
+	OrgID       string
+	RoomID      string
+	SiteID      string
+	VersionID   string
+	ContentHash string
+	Page        string
+	AnchorKind  string
+	Anchor      []byte
+	CreatedBy   string
+}
+
+func (q *Queries) InsertReviewThread(ctx context.Context, arg InsertReviewThreadParams) (AppReviewThread, error) {
+	row := q.db.QueryRow(ctx, insertReviewThread,
+		arg.OrgID,
+		arg.RoomID,
+		arg.SiteID,
+		arg.VersionID,
+		arg.ContentHash,
+		arg.Page,
+		arg.AnchorKind,
+		arg.Anchor,
+		arg.CreatedBy,
+	)
+	var i AppReviewThread
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.ContentHash,
+		&i.Page,
+		&i.AnchorKind,
+		&i.Anchor,
+		&i.AnchorState,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+	)
+	return i, err
 }
 
 const listAPIKeys = `-- name: ListAPIKeys :many
@@ -2992,6 +3833,135 @@ func (q *Queries) ListPreviewRoutesForVersion(ctx context.Context, arg ListPrevi
 	return items, nil
 }
 
+const listProjectRoomMembers = `-- name: ListProjectRoomMembers :many
+SELECT org_id, room_id, user_id, role, created_at, updated_at
+FROM app.project_room_members
+WHERE org_id = $1 AND room_id = $2
+ORDER BY created_at
+`
+
+type ListProjectRoomMembersParams struct {
+	OrgID  string
+	RoomID string
+}
+
+func (q *Queries) ListProjectRoomMembers(ctx context.Context, arg ListProjectRoomMembersParams) ([]AppProjectRoomMember, error) {
+	rows, err := q.db.Query(ctx, listProjectRoomMembers, arg.OrgID, arg.RoomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppProjectRoomMember{}
+	for rows.Next() {
+		var i AppProjectRoomMember
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.RoomID,
+			&i.UserID,
+			&i.Role,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectRoomSites = `-- name: ListProjectRoomSites :many
+SELECT org_id, room_id, site_id, created_by, created_at
+FROM app.project_room_sites
+WHERE org_id = $1 AND room_id = $2
+ORDER BY created_at
+`
+
+type ListProjectRoomSitesParams struct {
+	OrgID  string
+	RoomID string
+}
+
+func (q *Queries) ListProjectRoomSites(ctx context.Context, arg ListProjectRoomSitesParams) ([]AppProjectRoomSite, error) {
+	rows, err := q.db.Query(ctx, listProjectRoomSites, arg.OrgID, arg.RoomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppProjectRoomSite{}
+	for rows.Next() {
+		var i AppProjectRoomSite
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.RoomID,
+			&i.SiteID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectRoomsForMember = `-- name: ListProjectRoomsForMember :many
+SELECT r.id, r.org_id, r.name, r.owner_user_id, r.created_at, r.updated_at, m.role
+FROM app.project_rooms r
+JOIN app.project_room_members m
+  ON m.room_id = r.id AND m.org_id = r.org_id AND m.user_id = $1
+WHERE r.org_id = $2
+ORDER BY r.created_at DESC
+`
+
+type ListProjectRoomsForMemberParams struct {
+	UserID string
+	OrgID  string
+}
+
+type ListProjectRoomsForMemberRow struct {
+	ID          string
+	OrgID       string
+	Name        string
+	OwnerUserID string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Role        string
+}
+
+func (q *Queries) ListProjectRoomsForMember(ctx context.Context, arg ListProjectRoomsForMemberParams) ([]ListProjectRoomsForMemberRow, error) {
+	rows, err := q.db.Query(ctx, listProjectRoomsForMember, arg.UserID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectRoomsForMemberRow{}
+	for rows.Next() {
+		var i ListProjectRoomsForMemberRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.OwnerUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
 SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
 FROM app.sites
@@ -3075,6 +4045,258 @@ func (q *Queries) ListPublishedSitesForRebuild(ctx context.Context, orgID string
 			&i.Slug,
 			&i.AccessMode,
 			&i.VersionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewActivity = `-- name: ListReviewActivity :many
+SELECT a.id, a.org_id, a.room_id, a.actor_user_id, a.kind, a.thread_id, a.site_id, a.version_id, a.created_at
+FROM app.review_activity a
+JOIN app.project_room_members m
+  ON m.room_id = a.room_id AND m.org_id = a.org_id AND m.user_id = $1
+WHERE a.org_id = $2
+  AND a.room_id = $3
+  AND (a.created_at, a.id) < ($4::timestamptz, $5::uuid)
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $6
+`
+
+type ListReviewActivityParams struct {
+	UserID   string
+	OrgID    string
+	RoomID   string
+	CursorAt time.Time
+	CursorID string
+	Lim      int32
+}
+
+func (q *Queries) ListReviewActivity(ctx context.Context, arg ListReviewActivityParams) ([]AppReviewActivity, error) {
+	rows, err := q.db.Query(ctx, listReviewActivity,
+		arg.UserID,
+		arg.OrgID,
+		arg.RoomID,
+		arg.CursorAt,
+		arg.CursorID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppReviewActivity{}
+	for rows.Next() {
+		var i AppReviewActivity
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.RoomID,
+			&i.ActorUserID,
+			&i.Kind,
+			&i.ThreadID,
+			&i.SiteID,
+			&i.VersionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewAnchorRevisions = `-- name: ListReviewAnchorRevisions :many
+SELECT id, org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id, created_at
+FROM app.review_anchor_revisions
+WHERE org_id = $1 AND thread_id = $2
+ORDER BY created_at ASC
+`
+
+type ListReviewAnchorRevisionsParams struct {
+	OrgID    string
+	ThreadID string
+}
+
+func (q *Queries) ListReviewAnchorRevisions(ctx context.Context, arg ListReviewAnchorRevisionsParams) ([]AppReviewAnchorRevision, error) {
+	rows, err := q.db.Query(ctx, listReviewAnchorRevisions, arg.OrgID, arg.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppReviewAnchorRevision{}
+	for rows.Next() {
+		var i AppReviewAnchorRevision
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.AnchorKind,
+			&i.Anchor,
+			&i.Page,
+			&i.AnchorState,
+			&i.Reason,
+			&i.ActorUserID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewApprovals = `-- name: ListReviewApprovals :many
+SELECT org_id, room_id, site_id, version_id, content_hash, user_id, created_at
+FROM app.review_version_approvals
+WHERE org_id = $1 AND room_id = $2
+  AND ($3::uuid IS NULL OR version_id = $3::uuid)
+ORDER BY created_at
+`
+
+type ListReviewApprovalsParams struct {
+	OrgID     string
+	RoomID    string
+	VersionID *string
+}
+
+func (q *Queries) ListReviewApprovals(ctx context.Context, arg ListReviewApprovalsParams) ([]AppReviewVersionApproval, error) {
+	rows, err := q.db.Query(ctx, listReviewApprovals, arg.OrgID, arg.RoomID, arg.VersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppReviewVersionApproval{}
+	for rows.Next() {
+		var i AppReviewVersionApproval
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.RoomID,
+			&i.SiteID,
+			&i.VersionID,
+			&i.ContentHash,
+			&i.UserID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewReplies = `-- name: ListReviewReplies :many
+SELECT id, org_id, thread_id, author_user_id, body, created_at
+FROM app.review_replies
+WHERE org_id = $1 AND thread_id = $2
+ORDER BY created_at ASC
+`
+
+type ListReviewRepliesParams struct {
+	OrgID    string
+	ThreadID string
+}
+
+func (q *Queries) ListReviewReplies(ctx context.Context, arg ListReviewRepliesParams) ([]AppReviewReply, error) {
+	rows, err := q.db.Query(ctx, listReviewReplies, arg.OrgID, arg.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppReviewReply{}
+	for rows.Next() {
+		var i AppReviewReply
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.AuthorUserID,
+			&i.Body,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewThreadsForMember = `-- name: ListReviewThreadsForMember :many
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = $1
+WHERE t.org_id = $2
+  AND t.room_id = $3
+  AND ($4::uuid IS NULL OR t.site_id = $4::uuid)
+  AND ($5::uuid IS NULL OR t.version_id = $5::uuid)
+  AND ($6::text IS NULL OR t.status = $6::text)
+ORDER BY t.created_at ASC
+LIMIT $7
+`
+
+type ListReviewThreadsForMemberParams struct {
+	UserID    string
+	OrgID     string
+	RoomID    string
+	SiteID    *string
+	VersionID *string
+	Status    pgtype.Text
+	Lim       int32
+}
+
+func (q *Queries) ListReviewThreadsForMember(ctx context.Context, arg ListReviewThreadsForMemberParams) ([]AppReviewThread, error) {
+	rows, err := q.db.Query(ctx, listReviewThreadsForMember,
+		arg.UserID,
+		arg.OrgID,
+		arg.RoomID,
+		arg.SiteID,
+		arg.VersionID,
+		arg.Status,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppReviewThread{}
+	for rows.Next() {
+		var i AppReviewThread
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.RoomID,
+			&i.SiteID,
+			&i.VersionID,
+			&i.ContentHash,
+			&i.Page,
+			&i.AnchorKind,
+			&i.Anchor,
+			&i.AnchorState,
+			&i.Status,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.ResolvedBy,
+			&i.ResolvedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -4284,6 +5506,25 @@ func (q *Queries) SetOrgSkillsSeeded(ctx context.Context, arg SetOrgSkillsSeeded
 	return err
 }
 
+const setProjectRoomsEnabled = `-- name: SetProjectRoomsEnabled :one
+UPDATE app.org_meta
+SET project_rooms_enabled = $1
+WHERE id = $2
+RETURNING project_rooms_enabled
+`
+
+type SetProjectRoomsEnabledParams struct {
+	Enabled bool
+	OrgID   string
+}
+
+func (q *Queries) SetProjectRoomsEnabled(ctx context.Context, arg SetProjectRoomsEnabledParams) (bool, error) {
+	row := q.db.QueryRow(ctx, setProjectRoomsEnabled, arg.Enabled, arg.OrgID)
+	var project_rooms_enabled bool
+	err := row.Scan(&project_rooms_enabled)
+	return project_rooms_enabled, err
+}
+
 const setSiteAccessMode = `-- name: SetSiteAccessMode :exec
 
 UPDATE app.sites
@@ -4653,6 +5894,35 @@ func (q *Queries) TouchOrgMemoriesUsed(ctx context.Context, arg TouchOrgMemories
 	return err
 }
 
+const transferProjectRoomOwner = `-- name: TransferProjectRoomOwner :execrows
+UPDATE app.project_room_members
+SET role = CASE WHEN user_id = $1 THEN 'owner' ELSE 'editor' END,
+    updated_at = now()
+WHERE org_id = $2
+  AND room_id = $3
+  AND user_id IN ($4, $1)
+`
+
+type TransferProjectRoomOwnerParams struct {
+	NewOwner string
+	OrgID    string
+	RoomID   string
+	OldOwner string
+}
+
+func (q *Queries) TransferProjectRoomOwner(ctx context.Context, arg TransferProjectRoomOwnerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, transferProjectRoomOwner,
+		arg.NewOwner,
+		arg.OrgID,
+		arg.RoomID,
+		arg.OldOwner,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateDomainStatus = `-- name: UpdateDomainStatus :one
 UPDATE app.domains
 SET verify_status = $2,
@@ -4756,6 +6026,179 @@ func (q *Queries) UpdateOrgMemoryContent(ctx context.Context, arg UpdateOrgMemor
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const updateProjectRoomMemberRole = `-- name: UpdateProjectRoomMemberRole :one
+UPDATE app.project_room_members
+SET role = $1, updated_at = now()
+WHERE org_id = $2 AND room_id = $3 AND user_id = $4
+RETURNING org_id, room_id, user_id, role, created_at, updated_at
+`
+
+type UpdateProjectRoomMemberRoleParams struct {
+	Role   string
+	OrgID  string
+	RoomID string
+	UserID string
+}
+
+func (q *Queries) UpdateProjectRoomMemberRole(ctx context.Context, arg UpdateProjectRoomMemberRoleParams) (AppProjectRoomMember, error) {
+	row := q.db.QueryRow(ctx, updateProjectRoomMemberRole,
+		arg.Role,
+		arg.OrgID,
+		arg.RoomID,
+		arg.UserID,
+	)
+	var i AppProjectRoomMember
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateProjectRoomName = `-- name: UpdateProjectRoomName :one
+UPDATE app.project_rooms
+SET name = $1, updated_at = now()
+WHERE id = $2 AND org_id = $3
+RETURNING id, org_id, name, owner_user_id, created_at, updated_at
+`
+
+type UpdateProjectRoomNameParams struct {
+	Name  string
+	ID    string
+	OrgID string
+}
+
+func (q *Queries) UpdateProjectRoomName(ctx context.Context, arg UpdateProjectRoomNameParams) (AppProjectRoom, error) {
+	row := q.db.QueryRow(ctx, updateProjectRoomName, arg.Name, arg.ID, arg.OrgID)
+	var i AppProjectRoom
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.OwnerUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateProjectRoomOwner = `-- name: UpdateProjectRoomOwner :exec
+UPDATE app.project_rooms
+SET owner_user_id = $1, updated_at = now()
+WHERE id = $2 AND org_id = $3
+`
+
+type UpdateProjectRoomOwnerParams struct {
+	OwnerUserID string
+	ID          string
+	OrgID       string
+}
+
+func (q *Queries) UpdateProjectRoomOwner(ctx context.Context, arg UpdateProjectRoomOwnerParams) error {
+	_, err := q.db.Exec(ctx, updateProjectRoomOwner, arg.OwnerUserID, arg.ID, arg.OrgID)
+	return err
+}
+
+const updateReviewThreadAnchor = `-- name: UpdateReviewThreadAnchor :one
+UPDATE app.review_threads
+SET anchor_kind = $1,
+    anchor = $2,
+    anchor_state = $3
+WHERE id = $4 AND org_id = $5 AND room_id = $6
+RETURNING id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor,
+          anchor_state, status, created_by, created_at, resolved_by, resolved_at
+`
+
+type UpdateReviewThreadAnchorParams struct {
+	AnchorKind  string
+	Anchor      []byte
+	AnchorState string
+	ID          string
+	OrgID       string
+	RoomID      string
+}
+
+func (q *Queries) UpdateReviewThreadAnchor(ctx context.Context, arg UpdateReviewThreadAnchorParams) (AppReviewThread, error) {
+	row := q.db.QueryRow(ctx, updateReviewThreadAnchor,
+		arg.AnchorKind,
+		arg.Anchor,
+		arg.AnchorState,
+		arg.ID,
+		arg.OrgID,
+		arg.RoomID,
+	)
+	var i AppReviewThread
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.ContentHash,
+		&i.Page,
+		&i.AnchorKind,
+		&i.Anchor,
+		&i.AnchorState,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const updateReviewThreadStatus = `-- name: UpdateReviewThreadStatus :one
+UPDATE app.review_threads
+SET status = $1,
+    resolved_by = $2,
+    resolved_at = CASE WHEN $1 = 'resolved' THEN now() ELSE NULL END
+WHERE id = $3 AND org_id = $4 AND room_id = $5
+RETURNING id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor,
+          anchor_state, status, created_by, created_at, resolved_by, resolved_at
+`
+
+type UpdateReviewThreadStatusParams struct {
+	Status     string
+	ResolvedBy *string
+	ID         string
+	OrgID      string
+	RoomID     string
+}
+
+func (q *Queries) UpdateReviewThreadStatus(ctx context.Context, arg UpdateReviewThreadStatusParams) (AppReviewThread, error) {
+	row := q.db.QueryRow(ctx, updateReviewThreadStatus,
+		arg.Status,
+		arg.ResolvedBy,
+		arg.ID,
+		arg.OrgID,
+		arg.RoomID,
+	)
+	var i AppReviewThread
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.VersionID,
+		&i.ContentHash,
+		&i.Page,
+		&i.AnchorKind,
+		&i.Anchor,
+		&i.AnchorState,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ResolvedBy,
+		&i.ResolvedAt,
 	)
 	return i, err
 }
@@ -5007,6 +6450,31 @@ func (q *Queries) UpsertPreviewRoute(ctx context.Context, arg UpsertPreviewRoute
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const upsertReviewRead = `-- name: UpsertReviewRead :one
+INSERT INTO app.review_read_state (org_id, room_id, user_id, last_read_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (room_id, user_id) DO UPDATE SET last_read_at = now()
+RETURNING org_id, room_id, user_id, last_read_at
+`
+
+type UpsertReviewReadParams struct {
+	OrgID  string
+	RoomID string
+	UserID string
+}
+
+func (q *Queries) UpsertReviewRead(ctx context.Context, arg UpsertReviewReadParams) (AppReviewReadState, error) {
+	row := q.db.QueryRow(ctx, upsertReviewRead, arg.OrgID, arg.RoomID, arg.UserID)
+	var i AppReviewReadState
+	err := row.Scan(
+		&i.OrgID,
+		&i.RoomID,
+		&i.UserID,
+		&i.LastReadAt,
+	)
+	return i, err
 }
 
 const upsertSiteAccessPolicy = `-- name: UpsertSiteAccessPolicy :one

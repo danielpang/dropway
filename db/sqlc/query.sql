@@ -1397,3 +1397,294 @@ FROM app.org_memories
 WHERE org_id = $1 AND embedding IS NOT NULL AND embedding_model = $3
 ORDER BY embedding <=> $2::vector
 LIMIT 1;
+
+-- ===========================================================================
+-- project rooms (migration 0019)
+-- Membership is filtered in every query. RLS remains the org backstop.
+-- ===========================================================================
+
+-- name: GetProjectRoomsEnabled :one
+SELECT project_rooms_enabled FROM app.org_meta WHERE id = sqlc.arg(org_id);
+
+-- name: SetProjectRoomsEnabled :one
+UPDATE app.org_meta
+SET project_rooms_enabled = sqlc.arg(enabled)
+WHERE id = sqlc.arg(org_id)
+RETURNING project_rooms_enabled;
+
+-- name: CountProjectRoomsForOrg :one
+SELECT count(*)::bigint AS count FROM app.project_rooms WHERE org_id = sqlc.arg(org_id);
+
+-- name: InsertProjectRoom :one
+INSERT INTO app.project_rooms (org_id, name, owner_user_id)
+VALUES (sqlc.arg(org_id), sqlc.arg(name), sqlc.arg(owner_user_id))
+RETURNING id, org_id, name, owner_user_id, created_at, updated_at;
+
+-- name: InsertProjectRoomMember :one
+INSERT INTO app.project_room_members (org_id, room_id, user_id, role)
+VALUES (sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(user_id), sqlc.arg(role))
+RETURNING org_id, room_id, user_id, role, created_at, updated_at;
+
+-- name: GetProjectRoomMember :one
+SELECT org_id, room_id, user_id, role, created_at, updated_at
+FROM app.project_room_members
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id) AND user_id = sqlc.arg(user_id);
+
+-- name: ListProjectRoomsForMember :many
+SELECT r.id, r.org_id, r.name, r.owner_user_id, r.created_at, r.updated_at, m.role
+FROM app.project_rooms r
+JOIN app.project_room_members m
+  ON m.room_id = r.id AND m.org_id = r.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE r.org_id = sqlc.arg(org_id)
+ORDER BY r.created_at DESC;
+
+-- name: ListProjectRoomMembers :many
+SELECT org_id, room_id, user_id, role, created_at, updated_at
+FROM app.project_room_members
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+ORDER BY created_at;
+
+-- name: CountProjectRoomMembers :one
+SELECT count(*)::bigint AS count
+FROM app.project_room_members
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id);
+
+-- name: UpdateProjectRoomName :one
+UPDATE app.project_rooms
+SET name = sqlc.arg(name), updated_at = now()
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id)
+RETURNING id, org_id, name, owner_user_id, created_at, updated_at;
+
+-- name: UpdateProjectRoomOwner :exec
+UPDATE app.project_rooms
+SET owner_user_id = sqlc.arg(owner_user_id), updated_at = now()
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id);
+
+-- name: DeleteProjectRoom :execrows
+DELETE FROM app.project_rooms
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id);
+
+-- name: UpdateProjectRoomMemberRole :one
+UPDATE app.project_room_members
+SET role = sqlc.arg(role), updated_at = now()
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id) AND user_id = sqlc.arg(user_id)
+RETURNING org_id, room_id, user_id, role, created_at, updated_at;
+
+-- name: DeleteProjectRoomMember :execrows
+DELETE FROM app.project_room_members
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id) AND user_id = sqlc.arg(user_id);
+
+-- name: TransferProjectRoomOwner :execrows
+UPDATE app.project_room_members
+SET role = CASE WHEN user_id = sqlc.arg(new_owner) THEN 'owner' ELSE 'editor' END,
+    updated_at = now()
+WHERE org_id = sqlc.arg(org_id)
+  AND room_id = sqlc.arg(room_id)
+  AND user_id IN (sqlc.arg(old_owner), sqlc.arg(new_owner));
+
+-- name: InsertProjectRoomSite :one
+INSERT INTO app.project_room_sites (org_id, room_id, site_id, created_by)
+VALUES (sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(site_id), sqlc.arg(created_by))
+RETURNING org_id, room_id, site_id, created_by, created_at;
+
+-- name: DeleteProjectRoomSite :execrows
+DELETE FROM app.project_room_sites
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id) AND site_id = sqlc.arg(site_id);
+
+-- name: ListProjectRoomSites :many
+SELECT org_id, room_id, site_id, created_by, created_at
+FROM app.project_room_sites
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+ORDER BY created_at;
+
+-- name: GetProjectRoomSite :one
+SELECT org_id, room_id, site_id, created_by, created_at
+FROM app.project_room_sites
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id) AND site_id = sqlc.arg(site_id);
+
+-- name: InsertReviewThread :one
+INSERT INTO app.review_threads (
+    org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor, created_by
+) VALUES (
+    sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(site_id), sqlc.arg(version_id),
+    sqlc.arg(content_hash), sqlc.arg(page), sqlc.arg(anchor_kind), sqlc.arg(anchor),
+    sqlc.arg(created_by)
+)
+RETURNING id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor,
+          anchor_state, status, created_by, created_at, resolved_by, resolved_at;
+
+-- name: GetReviewThreadForMember :one
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at, m.role
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE t.id = sqlc.arg(id) AND t.org_id = sqlc.arg(org_id) AND t.room_id = sqlc.arg(room_id);
+
+-- name: ListReviewThreadsForMember :many
+SELECT t.id, t.org_id, t.room_id, t.site_id, t.version_id, t.content_hash, t.page,
+       t.anchor_kind, t.anchor, t.anchor_state, t.status, t.created_by, t.created_at,
+       t.resolved_by, t.resolved_at
+FROM app.review_threads t
+JOIN app.project_room_members m
+  ON m.room_id = t.room_id AND m.org_id = t.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE t.org_id = sqlc.arg(org_id)
+  AND t.room_id = sqlc.arg(room_id)
+  AND (sqlc.narg(site_id)::uuid IS NULL OR t.site_id = sqlc.narg(site_id)::uuid)
+  AND (sqlc.narg(version_id)::uuid IS NULL OR t.version_id = sqlc.narg(version_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR t.status = sqlc.narg(status)::text)
+ORDER BY t.created_at ASC
+LIMIT sqlc.arg(lim);
+
+-- name: UpdateReviewThreadAnchor :one
+UPDATE app.review_threads
+SET anchor_kind = sqlc.arg(anchor_kind),
+    anchor = sqlc.arg(anchor),
+    anchor_state = sqlc.arg(anchor_state)
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+RETURNING id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor,
+          anchor_state, status, created_by, created_at, resolved_by, resolved_at;
+
+-- name: UpdateReviewThreadStatus :one
+UPDATE app.review_threads
+SET status = sqlc.arg(status),
+    resolved_by = sqlc.narg(resolved_by),
+    resolved_at = CASE WHEN sqlc.arg(status) = 'resolved' THEN now() ELSE NULL END
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+RETURNING id, org_id, room_id, site_id, version_id, content_hash, page, anchor_kind, anchor,
+          anchor_state, status, created_by, created_at, resolved_by, resolved_at;
+
+-- name: InsertReviewAnchorRevision :one
+INSERT INTO app.review_anchor_revisions (
+    org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id
+) VALUES (
+    sqlc.arg(org_id), sqlc.arg(thread_id), sqlc.arg(anchor_kind), sqlc.arg(anchor),
+    sqlc.arg(page), sqlc.arg(anchor_state), sqlc.arg(reason), sqlc.arg(actor_user_id)
+)
+RETURNING id, org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id, created_at;
+
+-- name: ListReviewAnchorRevisions :many
+SELECT id, org_id, thread_id, anchor_kind, anchor, page, anchor_state, reason, actor_user_id, created_at
+FROM app.review_anchor_revisions
+WHERE org_id = sqlc.arg(org_id) AND thread_id = sqlc.arg(thread_id)
+ORDER BY created_at ASC;
+
+-- name: InsertReviewReply :one
+INSERT INTO app.review_replies (org_id, thread_id, author_user_id, body)
+VALUES (sqlc.arg(org_id), sqlc.arg(thread_id), sqlc.arg(author_user_id), sqlc.arg(body))
+RETURNING id, org_id, thread_id, author_user_id, body, created_at;
+
+-- name: ListReviewReplies :many
+SELECT id, org_id, thread_id, author_user_id, body, created_at
+FROM app.review_replies
+WHERE org_id = sqlc.arg(org_id) AND thread_id = sqlc.arg(thread_id)
+ORDER BY created_at ASC;
+
+-- name: InsertReviewApproval :one
+INSERT INTO app.review_version_approvals (
+    org_id, room_id, site_id, version_id, content_hash, user_id
+) VALUES (
+    sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(site_id), sqlc.arg(version_id),
+    sqlc.arg(content_hash), sqlc.arg(user_id)
+)
+ON CONFLICT (room_id, version_id, user_id) DO NOTHING
+RETURNING org_id, room_id, site_id, version_id, content_hash, user_id, created_at;
+
+-- name: GetReviewApproval :one
+SELECT org_id, room_id, site_id, version_id, content_hash, user_id, created_at
+FROM app.review_version_approvals
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+  AND version_id = sqlc.arg(version_id) AND user_id = sqlc.arg(user_id);
+
+-- name: DeleteReviewApproval :execrows
+DELETE FROM app.review_version_approvals
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+  AND version_id = sqlc.arg(version_id) AND user_id = sqlc.arg(user_id);
+
+-- name: ListReviewApprovals :many
+SELECT org_id, room_id, site_id, version_id, content_hash, user_id, created_at
+FROM app.review_version_approvals
+WHERE org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id)
+  AND (sqlc.narg(version_id)::uuid IS NULL OR version_id = sqlc.narg(version_id)::uuid)
+ORDER BY created_at;
+
+-- name: UpsertReviewRead :one
+INSERT INTO app.review_read_state (org_id, room_id, user_id, last_read_at)
+VALUES (sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(user_id), now())
+ON CONFLICT (room_id, user_id) DO UPDATE SET last_read_at = now()
+RETURNING org_id, room_id, user_id, last_read_at;
+
+-- name: InsertReviewActivity :one
+INSERT INTO app.review_activity (
+    org_id, room_id, actor_user_id, kind, thread_id, site_id, version_id
+) VALUES (
+    sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(actor_user_id), sqlc.arg(kind),
+    sqlc.narg(thread_id), sqlc.narg(site_id), sqlc.narg(version_id)
+)
+RETURNING id, org_id, room_id, actor_user_id, kind, thread_id, site_id, version_id, created_at;
+
+-- name: ListReviewActivity :many
+SELECT a.id, a.org_id, a.room_id, a.actor_user_id, a.kind, a.thread_id, a.site_id, a.version_id, a.created_at
+FROM app.review_activity a
+JOIN app.project_room_members m
+  ON m.room_id = a.room_id AND m.org_id = a.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE a.org_id = sqlc.arg(org_id)
+  AND a.room_id = sqlc.arg(room_id)
+  AND (a.created_at, a.id) < (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::uuid)
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT sqlc.arg(lim);
+
+-- name: InsertReviewCandidate :one
+INSERT INTO app.review_candidates (
+    org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash, summary, created_by
+) VALUES (
+    sqlc.arg(org_id), sqlc.arg(room_id), sqlc.arg(site_id), sqlc.arg(base_version_id),
+    sqlc.arg(base_content_hash), sqlc.arg(content_hash), sqlc.arg(diff_hash), sqlc.arg(summary),
+    sqlc.arg(created_by)
+)
+RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+          summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at;
+
+-- name: GetReviewCandidate :one
+SELECT id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+       summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at
+FROM app.review_candidates
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id) AND room_id = sqlc.arg(room_id);
+
+-- name: GetReviewCandidateForMember :one
+SELECT c.id, c.org_id, c.room_id, c.site_id, c.base_version_id, c.base_content_hash, c.content_hash,
+       c.diff_hash, c.summary, c.state, c.created_by, c.created_at, c.approved_by, c.approved_at,
+       c.rejected_by, c.rejected_at, m.role
+FROM app.review_candidates c
+JOIN app.project_room_members m
+  ON m.room_id = c.room_id AND m.org_id = c.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE c.id = sqlc.arg(id) AND c.org_id = sqlc.arg(org_id) AND c.room_id = sqlc.arg(room_id);
+
+-- name: DecideReviewCandidate :one
+UPDATE app.review_candidates
+SET state = sqlc.arg(state),
+    approved_by = sqlc.narg(approved_by),
+    approved_at = CASE WHEN sqlc.arg(state) = 'approved' THEN now() ELSE approved_at END,
+    rejected_by = sqlc.narg(rejected_by),
+    rejected_at = CASE WHEN sqlc.arg(state) = 'rejected' THEN now() ELSE rejected_at END
+WHERE id = sqlc.arg(id)
+  AND org_id = sqlc.arg(org_id)
+  AND room_id = sqlc.arg(room_id)
+  AND state = 'pending'
+  AND content_hash = sqlc.arg(content_hash)
+  AND base_version_id = sqlc.arg(base_version_id)
+  AND base_content_hash = sqlc.arg(base_content_hash)
+RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
+          summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at;
+
+-- name: CountUnreadReviewActivity :one
+SELECT count(*)::bigint AS count
+FROM app.review_activity a
+WHERE a.org_id = sqlc.arg(org_id)
+  AND a.room_id = sqlc.arg(room_id)
+  AND a.actor_user_id <> sqlc.arg(user_id)
+  AND a.created_at > COALESCE(
+        (SELECT s.last_read_at FROM app.review_read_state s
+          WHERE s.room_id = a.room_id AND s.org_id = a.org_id AND s.user_id = sqlc.arg(user_id)),
+        '-infinity'::timestamptz);

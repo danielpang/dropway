@@ -24,12 +24,15 @@ type Querier interface {
 	CountChatMessages(ctx context.Context, arg CountChatMessagesParams) (int64, error)
 	CountFolderItems(ctx context.Context, arg CountFolderItemsParams) (int64, error)
 	CountOrgMemories(ctx context.Context, orgID string) (int64, error)
+	CountProjectRoomMembers(ctx context.Context, arg CountProjectRoomMembersParams) (int64, error)
+	CountProjectRoomsForOrg(ctx context.Context, orgID string) (int64, error)
 	// The number of sites in the active org (the per-ORG cap input, POOLED across all
 	// members — seats are free, so the lever is org site count). Read under the
 	// advisory lock above; RLS already scopes it to the active org and we filter by
 	// org_id to be explicit.
 	CountSitesForOrg(ctx context.Context, orgID string) (int64, error)
 	CountSkillsForOrg(ctx context.Context, orgID string) (int64, error)
+	CountUnreadReviewActivity(ctx context.Context, arg CountUnreadReviewActivityParams) (int64, error)
 	// ===========================================================================
 	// API keys (migration 0016): org-scoped credentials for the SDK / CLI / CI.
 	// The auth-boundary lookup is app.resolve_api_key() (SECURITY DEFINER, called via
@@ -66,6 +69,7 @@ type Querier interface {
 	// ===========================================================================
 	CreateSkillFolder(ctx context.Context, arg CreateSkillFolderParams) (AppSkillFolder, error)
 	CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (AppSkillVersion, error)
+	DecideReviewCandidate(ctx context.Context, arg DecideReviewCandidateParams) (AppReviewCandidate, error)
 	DeleteAllowlistEntry(ctx context.Context, arg DeleteAllowlistEntryParams) error
 	DeleteChatLog(ctx context.Context, arg DeleteChatLogParams) (int64, error)
 	DeleteChatMessage(ctx context.Context, arg DeleteChatMessageParams) (int64, error)
@@ -98,6 +102,10 @@ type Querier interface {
 	// Drop a version's preview routes, returning the hosts so the caller can also
 	// delete the KV keys (publish and explicit preview deletion).
 	DeletePreviewRoutesForVersion(ctx context.Context, arg DeletePreviewRoutesForVersionParams) ([]string, error)
+	DeleteProjectRoom(ctx context.Context, arg DeleteProjectRoomParams) (int64, error)
+	DeleteProjectRoomMember(ctx context.Context, arg DeleteProjectRoomMemberParams) (int64, error)
+	DeleteProjectRoomSite(ctx context.Context, arg DeleteProjectRoomSiteParams) (int64, error)
+	DeleteReviewApproval(ctx context.Context, arg DeleteReviewApprovalParams) (int64, error)
 	// Remove a site. Its versions, host_routes, domains, access policy, allowlist,
 	// AI sessions, and site-scoped API keys cascade at the DB level; comments/votes
 	// (polymorphic) are cleaned separately in the same tx. RETURNING detects an
@@ -179,6 +187,17 @@ type Querier interface {
 	GetPlanTier(ctx context.Context, id string) (string, error)
 	// A feed post's net vote score (sum of +1/-1). RLS scopes the read to the org.
 	GetPostVoteScore(ctx context.Context, arg GetPostVoteScoreParams) (int64, error)
+	GetProjectRoomMember(ctx context.Context, arg GetProjectRoomMemberParams) (AppProjectRoomMember, error)
+	GetProjectRoomSite(ctx context.Context, arg GetProjectRoomSiteParams) (AppProjectRoomSite, error)
+	// ===========================================================================
+	// project rooms (migration 0019)
+	// Membership is filtered in every query. RLS remains the org backstop.
+	// ===========================================================================
+	GetProjectRoomsEnabled(ctx context.Context, orgID string) (bool, error)
+	GetReviewApproval(ctx context.Context, arg GetReviewApprovalParams) (AppReviewVersionApproval, error)
+	GetReviewCandidate(ctx context.Context, arg GetReviewCandidateParams) (AppReviewCandidate, error)
+	GetReviewCandidateForMember(ctx context.Context, arg GetReviewCandidateForMemberParams) (GetReviewCandidateForMemberRow, error)
+	GetReviewThreadForMember(ctx context.Context, arg GetReviewThreadForMemberParams) (GetReviewThreadForMemberRow, error)
 	GetSite(ctx context.Context, arg GetSiteParams) (AppSite, error)
 	GetSiteAccessPolicy(ctx context.Context, arg GetSiteAccessPolicyParams) (AppSiteAccessPolicy, error)
 	// The version stamp for an append while attached (NULL before first publish).
@@ -229,6 +248,15 @@ type Querier interface {
 	// yields a row (the size) ONLY when the blob is genuinely new, so the caller sums
 	// the returned sizes as the storage delta. No row (pgx.ErrNoRows) = already stored.
 	InsertOrgBlob(ctx context.Context, arg InsertOrgBlobParams) (int64, error)
+	InsertProjectRoom(ctx context.Context, arg InsertProjectRoomParams) (AppProjectRoom, error)
+	InsertProjectRoomMember(ctx context.Context, arg InsertProjectRoomMemberParams) (AppProjectRoomMember, error)
+	InsertProjectRoomSite(ctx context.Context, arg InsertProjectRoomSiteParams) (AppProjectRoomSite, error)
+	InsertReviewActivity(ctx context.Context, arg InsertReviewActivityParams) (AppReviewActivity, error)
+	InsertReviewAnchorRevision(ctx context.Context, arg InsertReviewAnchorRevisionParams) (AppReviewAnchorRevision, error)
+	InsertReviewApproval(ctx context.Context, arg InsertReviewApprovalParams) (AppReviewVersionApproval, error)
+	InsertReviewCandidate(ctx context.Context, arg InsertReviewCandidateParams) (AppReviewCandidate, error)
+	InsertReviewReply(ctx context.Context, arg InsertReviewReplyParams) (AppReviewReply, error)
+	InsertReviewThread(ctx context.Context, arg InsertReviewThreadParams) (AppReviewThread, error)
 	// The active org's keys, newest first (RLS-scoped; backed by api_keys_org_idx).
 	// Metadata + prefix only — never the hash, never the secret.
 	ListAPIKeys(ctx context.Context, orgID string) ([]ListAPIKeysRow, error)
@@ -292,6 +320,9 @@ type Querier interface {
 	// invariant. Expired rows are skipped (the edge would 410 them anyway).
 	ListPreviewRoutesForRebuild(ctx context.Context, orgID string) ([]ListPreviewRoutesForRebuildRow, error)
 	ListPreviewRoutesForVersion(ctx context.Context, arg ListPreviewRoutesForVersionParams) ([]AppHostRoute, error)
+	ListProjectRoomMembers(ctx context.Context, arg ListProjectRoomMembersParams) ([]AppProjectRoomMember, error)
+	ListProjectRoomSites(ctx context.Context, arg ListProjectRoomSitesParams) ([]AppProjectRoomSite, error)
+	ListProjectRoomsForMember(ctx context.Context, arg ListProjectRoomsForMemberParams) ([]ListProjectRoomsForMemberRow, error)
 	// Every site in the active org whose access_mode = 'public' (used by the reconcile
 	// on disabling external sharing: these are downgraded to org_only).
 	ListPublicSitesForOrg(ctx context.Context, orgID string) ([]AppSite, error)
@@ -302,6 +333,11 @@ type Querier interface {
 	// access_mode source (the site row). Drives projection.RebuildFromDB: Postgres
 	// is authoritative, the KV/D1 projection is a rebuildable cache.
 	ListPublishedSitesForRebuild(ctx context.Context, orgID string) ([]ListPublishedSitesForRebuildRow, error)
+	ListReviewActivity(ctx context.Context, arg ListReviewActivityParams) ([]AppReviewActivity, error)
+	ListReviewAnchorRevisions(ctx context.Context, arg ListReviewAnchorRevisionsParams) ([]AppReviewAnchorRevision, error)
+	ListReviewApprovals(ctx context.Context, arg ListReviewApprovalsParams) ([]AppReviewVersionApproval, error)
+	ListReviewReplies(ctx context.Context, arg ListReviewRepliesParams) ([]AppReviewReply, error)
+	ListReviewThreadsForMember(ctx context.Context, arg ListReviewThreadsForMemberParams) ([]AppReviewThread, error)
 	// LOGICAL storage per site for the active org (the current-version size of each
 	// site, 0 when it has no live version) paired with the owning user, so the caller
 	// can show per-site usage AND aggregate it per user. Same non-deduplicated model as
@@ -453,6 +489,7 @@ type Querier interface {
 	SetOrgMemoryDisabled(ctx context.Context, arg SetOrgMemoryDisabledParams) (SetOrgMemoryDisabledRow, error)
 	SetOrgMemoryPinned(ctx context.Context, arg SetOrgMemoryPinnedParams) (SetOrgMemoryPinnedRow, error)
 	SetOrgSkillsSeeded(ctx context.Context, arg SetOrgSkillsSeededParams) error
+	SetProjectRoomsEnabled(ctx context.Context, arg SetProjectRoomsEnabledParams) (bool, error)
 	// ===========================================================================
 	// access policy (Phase 2) — per-site gating config
 	// ===========================================================================
@@ -497,12 +534,18 @@ type Querier interface {
 	TouchAPIKeyLastUsed(ctx context.Context, arg TouchAPIKeyLastUsedParams) error
 	// Best-effort retrieval stamp for the dashboard's "last used" column.
 	TouchOrgMemoriesUsed(ctx context.Context, arg TouchOrgMemoriesUsedParams) error
+	TransferProjectRoomOwner(ctx context.Context, arg TransferProjectRoomOwnerParams) (int64, error)
 	// Advance the custom-domain state machine (pending → verifying → verified/failed)
 	// and the TLS status from a Cloudflare Status() poll.
 	UpdateDomainStatus(ctx context.Context, arg UpdateDomainStatusParams) (AppDomain, error)
 	// Admin edit: new content implies a new hash + embedding (the caller
 	// re-embeds before calling).
 	UpdateOrgMemoryContent(ctx context.Context, arg UpdateOrgMemoryContentParams) (UpdateOrgMemoryContentRow, error)
+	UpdateProjectRoomMemberRole(ctx context.Context, arg UpdateProjectRoomMemberRoleParams) (AppProjectRoomMember, error)
+	UpdateProjectRoomName(ctx context.Context, arg UpdateProjectRoomNameParams) (AppProjectRoom, error)
+	UpdateProjectRoomOwner(ctx context.Context, arg UpdateProjectRoomOwnerParams) error
+	UpdateReviewThreadAnchor(ctx context.Context, arg UpdateReviewThreadAnchorParams) (AppReviewThread, error)
+	UpdateReviewThreadStatus(ctx context.Context, arg UpdateReviewThreadStatusParams) (AppReviewThread, error)
 	// ===========================================================================
 	// allowlist (Phase 2)
 	// ===========================================================================
@@ -540,6 +583,7 @@ type Querier interface {
 	// only a row this org already owns AND that is a preview for the same site (a
 	// canonical/custom route can never be silently downgraded to a preview).
 	UpsertPreviewRoute(ctx context.Context, arg UpsertPreviewRouteParams) error
+	UpsertReviewRead(ctx context.Context, arg UpsertReviewReadParams) (AppReviewReadState, error)
 	// Insert or replace the per-site access policy (one row per site, PK = site_id).
 	// password_hash is non-null only for mode='password'; expires_at / unlisted are
 	// optional. The policy-mirror external-sharing trigger (0004) rejects mode='public'
