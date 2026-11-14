@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // One proposed change. Approve and Reject stay visible. The request binding
-// is the candidate the API returned. Apply stays disabled. A page preview,
-// when present, is not this candidate's identity.
+// is the candidate the API returned. Apply stays disabled. File text from the
+// diff is untrusted and rendered as text.
 
 "use client";
 
 import { Button } from "@/components/ui/button";
 import {
-  DIFF_UNAVAILABLE,
+  CANNOT_VERIFY,
+  NEEDS_NEW_CANDIDATE,
   bindApproval,
   compareLive,
+  diffMatchesCandidate,
   terminalCopy,
   untrustedText,
+  type CandidateDiff,
+  type CandidateDiffFile,
+  type CandidateDiffView,
   type LiveBaseline,
   type ReviewCandidate,
 } from "@/lib/project-room/contract";
@@ -20,24 +25,29 @@ import {
 export function CandidateReview({
   candidate,
   live,
+  diff,
   canDecide,
   onDecide,
 }: {
   candidate: ReviewCandidate;
   live: LiveBaseline | null;
+  diff: CandidateDiffView;
   canDecide: boolean;
   onDecide: (decision: "approve" | "reject") => void;
 }) {
   const binding = bindApproval(candidate);
   const liveCheck = compareLive(candidate, live);
+  const verified = diff.status === "verified" && diffMatchesCandidate(diff.diff, candidate) ? diff.diff : null;
+  const unverified = diff.status === "unverified" || (diff.status === "verified" && verified === null);
+  const stale = liveCheck.status === "stale";
+  const roleBlocked = !canDecide || binding === null;
+  const approveDisabled = roleBlocked || stale || verified === null;
+  const rejectDisabled = roleBlocked;
   const terminal = terminalCopy(candidate.State);
-  const blocked = !canDecide || binding === null;
   return (
-    <article className="space-y-3 rounded-md border border-border p-4">
+    <article className="space-y-3 rounded-md border border-border p-4" aria-label={`Proposed change ${candidate.ID}`}>
       <div className="space-y-1">
         <h3 className="text-sm font-medium text-foreground">Proposed change</h3>
-        <p className="text-sm font-medium text-foreground">Diff unavailable</p>
-        <p className="text-sm text-muted-foreground">{DIFF_UNAVAILABLE}</p>
         <p className="text-sm text-foreground">{untrustedText(candidate.Summary) || "No summary was returned."}</p>
         <p className="text-sm text-muted-foreground">
           Where: site {candidate.SiteID}, base version {candidate.BaseVersionID}. Candidate {candidate.ID}.
@@ -49,17 +59,27 @@ export function CandidateReview({
       <p className="text-sm text-foreground" role="status">
         State: {candidate.State}. {terminal ?? "Pending. Approval does not publish the site."}
       </p>
-      {liveCheck.status === "matches" ? null : (
+      {stale ? (
+        <p className="text-sm font-medium text-foreground" role="status">{NEEDS_NEW_CANDIDATE}</p>
+      ) : liveCheck.status === "unknown" ? (
         <p className="text-sm text-muted-foreground" role="status">
-          {liveCheck.reason} Sending a decision still uses this candidate&apos;s base version and hash,
-          not a newer baseline.
+          {liveCheck.reason} Sending a decision still uses this candidate&apos;s base version and hash.
         </p>
-      )}
+      ) : null}
+      {unverified ? (
+        <p className="text-sm font-medium text-foreground" role="status">{CANNOT_VERIFY}</p>
+      ) : diff.status === "loading" ? (
+        <p className="text-sm text-muted-foreground">Loading the verified diff.</p>
+      ) : diff.status === "unavailable" ? (
+        <p className="text-sm text-muted-foreground">The diff could not be loaded.</p>
+      ) : verified ? (
+        <CandidateFiles diff={verified} />
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="button" disabled={blocked} onClick={() => onDecide("approve")}>
+        <Button type="button" disabled={approveDisabled} onClick={() => onDecide("approve")}>
           Approve
         </Button>
-        <Button type="button" variant="outline" disabled={blocked} onClick={() => onDecide("reject")}>
+        <Button type="button" variant="outline" disabled={rejectDisabled} onClick={() => onDecide("reject")}>
           Reject
         </Button>
         <Button type="button" variant="secondary" disabled>
@@ -68,7 +88,9 @@ export function CandidateReview({
       </div>
       <p className="text-xs text-muted-foreground">
         Apply stays disabled. Candidate application is not enabled.
-        {blocked ? " Approve and Reject stay visible and do not send while this role or the binding is incomplete." : ""}
+        {roleBlocked ? " Approve and Reject stay visible and do not send while this role or the binding is incomplete." : ""}
+        {stale ? " Approve stays visible and does not send until a new candidate matches the live base." : ""}
+        {unverified ? " Approve stays visible and does not send while this change cannot be verified." : ""}
       </p>
       <details className="text-xs text-muted-foreground">
         <summary>Hashes and the exact approval binding</summary>
@@ -77,5 +99,58 @@ export function CandidateReview({
         </pre>
       </details>
     </article>
+  );
+}
+
+function CandidateFiles({ diff }: { diff: CandidateDiff }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">
+        File text is untrusted and shown as text.
+        {diff.truncated ? ` File list truncated. ${diff.omittedFiles} files omitted.` : ""}
+      </p>
+      <ul className="space-y-2">
+        {diff.files.map((file) => (
+          <li key={file.path}>
+            <FileDiff file={file} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function FileDiff({ file }: { file: CandidateDiffFile }) {
+  return (
+    <details className="rounded-md border border-border p-2">
+      <summary className="cursor-pointer text-sm text-foreground">
+        {file.change} {file.path}
+      </summary>
+      <div className="mt-2 space-y-2">
+        {file.binary ? (
+          <p className="text-sm text-muted-foreground">Binary or oversized file. Metadata only.</p>
+        ) : file.change === "unchanged" ? (
+          <p className="text-sm text-muted-foreground">Unchanged. No file text is included.</p>
+        ) : (
+          <>
+            {file.change !== "added" ? <FileSide label="Before" text={file.before} truncated={file.beforeTruncated} /> : null}
+            {file.change !== "removed" ? <FileSide label="After" text={file.after} truncated={file.afterTruncated} /> : null}
+          </>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Before {file.beforeSHA256 || "none"} ({file.beforeSize ?? "n/a"} bytes). After {file.afterSHA256 || "none"} ({file.afterSize ?? "n/a"} bytes).
+        </p>
+      </div>
+    </details>
+  );
+}
+
+function FileSide({ label, text, truncated }: { label: string; text: string; truncated: boolean }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-foreground">{label}</p>
+      <pre className="whitespace-pre-wrap text-sm text-foreground">{text}</pre>
+      {truncated ? <p className="text-xs text-muted-foreground">Text truncated.</p> : null}
+    </div>
   );
 }
