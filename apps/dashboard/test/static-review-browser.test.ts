@@ -4,7 +4,7 @@ import { chromium } from "@playwright/test";
 import { describe, expect, it } from "vitest";
 import { chromiumPage } from "./chromium-fixture";
 import { prepareStaticSnapshot } from "@/lib/collab/static-renderer";
-import { captureStaticText, captureStaticPoint, staticAnnotationRects } from "@/lib/collab/static-selection";
+import { captureStaticText, captureStaticPoint, captureStaticClick, staticAnnotationRects } from "@/lib/collab/static-selection";
 
 const chrome = process.env.COLLAB_CHROME_PATH || [chromium.executablePath(), "/opt/google/chrome/chrome"].find(existsSync) || "";
 describe.skipIf(!existsSync(chrome))("scriptless static review in Chromium", () => {
@@ -25,7 +25,7 @@ describe.skipIf(!existsSync(chrome))("scriptless static review in Chromium", () 
     try {
       const page = getPage();
       await page.goto(origin);
-      const result = await page.evaluate(async ({ html, textSource, pointSource, annotationSource }) => {
+      const result = await page.evaluate(async ({ html, textSource, pointSource, clickSource, annotationSource }) => {
         const frame = document.createElement("iframe");
         frame.setAttribute("sandbox", "allow-same-origin");
         frame.referrerPolicy = "no-referrer";
@@ -39,6 +39,7 @@ describe.skipIf(!existsSync(chrome))("scriptless static review in Chromium", () 
         doc.getSelection()!.removeAllRanges(); doc.getSelection()!.addRange(range);
         const captureText = new Function(`return (${textSource})`)() as typeof captureStaticText;
         const capturePoint = new Function(`return (${pointSource})`)() as typeof captureStaticPoint;
+        const captureClick = new Function("captureStaticPoint", `return (${clickSource})`)(capturePoint) as typeof captureStaticClick;
         const annotationRects = new Function(`return (${annotationSource})`)() as typeof staticAnnotationRects;
         const text = captureText(doc);
         const point = capturePoint(doc, { clientX: 20, clientY: 20 } as MouseEvent);
@@ -64,12 +65,22 @@ describe.skipIf(!existsSync(chrome))("scriptless static review in Chromium", () 
         const legacyImage = { ...(imagePoint.anchor.image as Record<string, unknown>) }; delete legacyImage.stable_id;
         const legacyImageRects = annotationRects(doc, { id: "legacy-image", kind: "point", anchor: { ...imagePoint.anchor, image: legacyImage } });
         const imageMarkerFollowsResize = imageRects.length === 1 && Math.abs(imageRects[0]!.left - photo.getBoundingClientRect().right) < 1;
+        const componentClick = captureClick(doc, { target: element, detail: 1 } as unknown as MouseEvent);
+        const imageClick = captureClick(doc, { target: photo, detail: 1, clientX: photo.getBoundingClientRect().left + 20, clientY: photo.getBoundingClientRect().top + 20 } as unknown as MouseEvent);
+        const keyboardImageClick = captureClick(doc, { target: photo, detail: 0 } as unknown as MouseEvent);
+        const canvasClick = captureClick(doc, { target: doc.getElementById("review-content"), detail: 1, clientX: 10, clientY: 10 } as unknown as MouseEvent);
+        const outsideClick = captureClick(doc, { target: overlay, detail: 1, clientX: 10, clientY: 10 } as unknown as MouseEvent);
         // A second independent defense: even a script deliberately inserted by trusted parent code is inert.
         const script = doc.createElement("script"); script.textContent = "parent.__attacked=true"; doc.body.appendChild(script);
         (element as HTMLElement).click();
-        return { text, point, imagePoint, overlayRendered, imageMarkerFollowsResize, legacyImageMarkers: legacyImageRects.length, annotations: { text: textRects.length, component: componentRects.length, stale: staleRects.length, missing: missingRects.length, wrongRendition: wrongRenditionRects.length, unchanged: before === doc.getElementById("review-content")!.textContent && JSON.stringify(after) === JSON.stringify(text) }, url: doc.URL, sandbox: frame.sandbox.value, attacked: Boolean((window as unknown as { __attacked?: boolean }).__attacked), forbidden: doc.querySelectorAll("form,iframe,svg,input,a[href],meta[http-equiv=refresh]").length };
-      }, { html: snapshot.html, textSource: captureStaticText.toString(), pointSource: captureStaticPoint.toString(), annotationSource: staticAnnotationRects.toString() });
+        return { componentClick, imageClick, keyboardImageClick, canvasClick, outsideClick, text, point, imagePoint, overlayRendered, imageMarkerFollowsResize, legacyImageMarkers: legacyImageRects.length, annotations: { text: textRects.length, component: componentRects.length, stale: staleRects.length, missing: missingRects.length, wrongRendition: wrongRenditionRects.length, unchanged: before === doc.getElementById("review-content")!.textContent && JSON.stringify(after) === JSON.stringify(text) }, url: doc.URL, sandbox: frame.sandbox.value, attacked: Boolean((window as unknown as { __attacked?: boolean }).__attacked), forbidden: doc.querySelectorAll("form,iframe,svg,input,a[href],meta[http-equiv=refresh]").length };
+      }, { html: snapshot.html, textSource: captureStaticText.toString(), pointSource: captureStaticPoint.toString(), clickSource: captureStaticClick.toString(), annotationSource: staticAnnotationRects.toString() });
       expect(result.text).toMatchObject({ kind: "text", anchor: { quote: "Hello immutable world", start_offset: 0, end_offset: 21, block_id: "static-v1:caption" } });
+      expect(result.componentClick).toMatchObject({ kind: "component", anchor: { stable_id: "static-v1:caption" } });
+      expect(result.imageClick).toMatchObject({ kind: "point", anchor: { image: { stable_id: "static-v1:photo" } } });
+      expect(result.keyboardImageClick).toMatchObject({ kind: "point", anchor: { x: 0.5, y: 0.5 } });
+      expect(result.canvasClick?.kind).toBe("point");
+      expect(result.outsideClick).toBeNull();
       expect(result.point?.kind).toBe("point");
       expect(result.annotations.text).toBeGreaterThan(0);
       expect(result.annotations.component).toBeGreaterThan(0);

@@ -124,3 +124,26 @@ export function captureStaticPoint(doc: Document, event: MouseEvent): StaticSele
     rendition: { width, height }, scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
   } };
 }
+
+/** Infer a click anchor from the trusted snapshot instead of requiring a tool mode. */
+export function captureStaticClick(doc: Document, event: MouseEvent): StaticSelection | null {
+  const target = (event.target as Node | null)?.nodeType === 1 ? event.target as Element : null;
+  const root = doc.getElementById("review-content");
+  if (!root || !target || (!root.contains(target) && target !== doc.body && target !== doc.documentElement)) return null;
+  const image = target.closest("img[data-review-component]");
+  if (image) {
+    // Keyboard activation pins the image centre; pointer activation pins the exact spot.
+    const rect = image.getBoundingClientRect();
+    return captureStaticPoint(doc, event.detail === 0
+      ? { target: image, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 } as unknown as MouseEvent
+      : event);
+  }
+  const component = target.closest("[data-review-component]");
+  const id = component?.getAttribute("data-review-component");
+  if (id && component && root.contains(component)) return {
+    kind: "component",
+    label: `Selected ${component.tagName.toLowerCase()}`,
+    anchor: { stable_id: id },
+  };
+  return event.detail === 0 ? null : captureStaticPoint(doc, event);
+}

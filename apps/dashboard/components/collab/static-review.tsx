@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import { Tooltip } from "@/components/ui/tooltip";
-import { TextSelect, Image, BoxSelect, MapPin, File, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 import {
-  captureStaticPoint,
+  captureStaticClick,
   captureStaticText,
   staticAnnotationRects,
   type StaticAnnotation,
@@ -15,8 +14,6 @@ import type {
   StaticSnapshot,
 } from "@/lib/collab/static-snapshot";
 
-type SelectionMode = "text" | "image" | "component" | "point" | "page";
-
 export function StaticReview({
   snapshot,
   onSelect,
@@ -25,14 +22,12 @@ export function StaticReview({
   activeThreadId,
   onThreadSelect,
   selectionResetKey,
-  imageCanvas = false,
   renderThread,
   renderDraft,
 }: {
   renderThread?: (id: string) => React.ReactNode;
   renderDraft?: () => React.ReactNode;
   readOnly?: boolean;
-  imageCanvas?: boolean;
   snapshot: StaticSnapshot;
   onSelect: (selection: StaticSelection | null) => void;
   /** Only annotations matching this snapshot's exact site/version/hash/page. */
@@ -60,13 +55,6 @@ export function StaticReview({
       popoverContent.current?.querySelector("textarea")?.focus();
     else if (popover?.id) closeButton.current?.focus();
   }, [popover?.id]);
-  const [mode, setMode] = React.useState<SelectionMode>(
-    imageCanvas ? "point" : "text",
-  );
-  React.useEffect(() => {
-    setMode(imageCanvas ? "point" : "text");
-  }, [imageCanvas, snapshot.siteId]);
-  const modeRef = React.useRef(mode);
   const readOnlyRef = React.useRef(readOnly);
   const onSelectRef = React.useRef(onSelect);
   const annotationsRef = React.useRef(annotations);
@@ -77,13 +65,11 @@ export function StaticReview({
   const clearFrameSelection = React.useRef<(() => void) | null>(null);
   const pendingSelection = React.useRef<StaticSelection | null>(null);
   readOnlyRef.current = readOnly;
-  modeRef.current = mode;
   onSelectRef.current = onSelect;
   annotationsRef.current = annotations;
   activeRef.current = activeThreadId;
   threadSelectRef.current = onThreadSelect;
   const [blocked, setBlocked] = React.useState(false);
-  const [selected, setSelected] = React.useState("");
 
   React.useEffect(() => {
     redraw.current?.();
@@ -93,7 +79,7 @@ export function StaticReview({
   }, [activeThreadId]);
   React.useEffect(() => {
     clearFrameSelection.current?.();
-  }, [mode, readOnly]);
+  }, [readOnly]);
   React.useEffect(() => {
     clearFrameSelection.current?.();
   }, [selectionResetKey]);
@@ -102,7 +88,7 @@ export function StaticReview({
     const container = host.current;
     if (!container) return;
     setBlocked(false);
-    setSelected("");
+
     popoverId.current = null;
     setPopover(null);
     pendingSelection.current = null;
@@ -257,7 +243,7 @@ export function StaticReview({
         doc.getSelection()?.removeAllRanges();
         pendingSelection.current = null;
         schedulePaint();
-        setSelected("");
+
         onSelectRef.current(null);
       };
       clearFrameSelection.current = clearSelection;
@@ -265,7 +251,7 @@ export function StaticReview({
         if (!selection || readOnlyRef.current) return;
         pendingSelection.current = selection;
         schedulePaint();
-        setSelected(selection.label);
+
         onSelectRef.current(selection);
         const rect = staticAnnotationRects(doc, {
           id: "pending-selection",
@@ -278,8 +264,7 @@ export function StaticReview({
         if (overlay.contains(event.target as Node)) return;
         event.preventDefault();
         if (readOnlyRef.current) return;
-        if (modeRef.current === "text" && !doc.getSelection()?.isCollapsed)
-          return;
+        if (!doc.getSelection()?.isCollapsed) return;
         if (doc.getSelection()?.isCollapsed) {
           const hit = hitRegions.find(({ rects }) =>
             rects.some(
@@ -296,48 +281,27 @@ export function StaticReview({
           }
         }
         closePopover();
-        const target =
-          (event.target as Node | null)?.nodeType === 1
-            ? (event.target as Element)
-            : null;
-        if (modeRef.current === "point") adopt(captureStaticPoint(doc, event));
-        if (modeRef.current === "component" || modeRef.current === "image") {
-          const component =
-            modeRef.current === "image"
-              ? target?.closest("img[data-review-component]")
-              : target?.closest("[data-review-component]");
-          const id = component?.getAttribute("data-review-component");
-          if (!id) return;
-          doc
-            .querySelectorAll(".dw-selected")
-            .forEach((item) => item.classList.remove("dw-selected"));
-          component!.classList.add("dw-selected");
-          adopt({
-            kind: "component",
-            label:
-              modeRef.current === "image"
-                ? "Selected image"
-                : `Selected ${component!.tagName.toLowerCase()}`,
-            anchor: { stable_id: id },
-          });
-        }
+        adopt(captureStaticClick(doc, event));
       };
       const text = () => {
-        if (modeRef.current === "text") adopt(captureStaticText(doc));
+        adopt(captureStaticText(doc));
       };
       const key = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
-          closePopover();
           clearSelection();
-          setMode("text");
+          return;
         }
-        if (
-          event.key === "Enter" &&
-          ["component", "image"].includes(modeRef.current) &&
-          (event.target as Node | null)?.nodeType === 1
-        )
-          (event.target as HTMLElement).click();
-        if (modeRef.current === "text") text();
+        if (event.key === "Shift") text();
+        if (event.key === "Enter" && !overlay.contains(event.target as Node)) {
+          const selection = captureStaticText(doc);
+          if (selection) adopt(selection);
+          else if (
+            (event.target as Element | null)?.closest?.(
+              "[data-review-component]",
+            )
+          )
+            (event.target as HTMLElement).click();
+        }
       };
       doc
         .querySelectorAll("[data-review-component]")
@@ -376,88 +340,10 @@ export function StaticReview({
       aria-label="Static review selection"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
-          closePopover();
-          setMode("text");
-          setSelected("");
-          onSelect(null);
+          clearFrameSelection.current?.();
         }
       }}
     >
-      {!readOnly ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background px-4 py-2">
-          <span className="mr-1 text-xs font-medium text-muted-foreground">
-            Comment on
-          </span>
-          {(imageCanvas
-            ? (["point", "image", "page"] as const)
-            : (["text", "image", "component", "point", "page"] as const)
-          ).map((value) => (
-            <Tooltip
-              label={
-                {
-                  text: "Comment on text",
-                  image: "Comment on an image",
-                  component: "Comment on an element",
-                  point: "Pin a comment",
-                  page: "Comment on the page",
-                }[value]
-              }
-              align="start"
-              key={value}
-            >
-              <Button
-                key={value}
-                type="button"
-                size="sm"
-                variant={mode === value ? "secondary" : "ghost"}
-                disabled={blocked}
-                aria-label={
-                  {
-                    text: "Text",
-                    image: "Image",
-                    component: "Element",
-                    point: "Point",
-                    page: "Page",
-                  }[value]
-                }
-                className="h-8 w-8 p-0"
-                aria-pressed={mode === value}
-                onClick={() => {
-                  setMode(value);
-                  setSelected("");
-                  onSelect(null);
-                }}
-              >
-                {React.createElement(
-                  {
-                    text: TextSelect,
-                    image: Image,
-                    component: BoxSelect,
-                    point: MapPin,
-                    page: File,
-                  }[value],
-                  { className: "h-4 w-4", "aria-hidden": true },
-                )}
-              </Button>
-            </Tooltip>
-          ))}
-          <span
-            role="status"
-            className="basis-full truncate text-xs text-muted-foreground sm:basis-auto sm:max-w-xs"
-          >
-            {selected ||
-              (mode === "text"
-                ? "Select text to leave a comment"
-                : mode === "image"
-                  ? "Click an image"
-                  : mode === "component"
-                    ? "Click an element"
-                    : mode === "point"
-                      ? "Click a point on the page"
-                      : "Comment on the whole page")}
-          </span>
-        </div>
-      ) : null}
       {blocked ? (
         <p role="alert" className="p-4 text-sm text-destructive">
           The preview could not be verified. Reload the page to try again.

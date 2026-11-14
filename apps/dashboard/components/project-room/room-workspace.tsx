@@ -1856,7 +1856,6 @@ export function RoomWorkspace({
                     ) : snapshot ? (
                       <StaticReview
                         snapshot={snapshot}
-                        imageCanvas={site.kind === "image"}
                         activeThreadId={activeThreadId}
                         selectionResetKey={selectionResetKey}
                         annotations={threads
@@ -1989,12 +1988,7 @@ export function RoomWorkspace({
                               Clear selection
                             </button>
                           </div>
-                        ) : (
-                          <p className="mb-2 text-xs text-muted-foreground">
-                            Select text, an image or a component to comment on
-                            it.
-                          </p>
-                        )}
+                        ) : null}
                         {commentComposer}
                       </div>
                     </aside>
