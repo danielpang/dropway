@@ -1605,39 +1605,63 @@ export function RoomWorkspace({
               <span className="rounded border border-border bg-muted px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Project mode
               </span>
-              <select
-                aria-label="Project"
-                value={roomId}
-                onChange={(e) => {
-                  setRoomId(e.target.value);
-                  setPanel("review");
-                  setLinkedThreadId("");
-                  setCommentFilter("all");
-                }}
-                className="max-w-48 rounded-md bg-transparent px-2 py-1.5 text-sm font-semibold"
-              >
-                {rooms.map((item) => (
-                  <option key={item.ID} value={item.ID}>
-                    {item.Name}
-                  </option>
-                ))}
-              </select>
+              <div className="relative inline-grid max-w-48 text-sm font-semibold">
+                <span
+                  aria-hidden="true"
+                  className="invisible truncate pl-2 pr-7 py-1.5"
+                >
+                  {room.Name}
+                </span>
+                <select
+                  aria-label="Project"
+                  value={roomId}
+                  onChange={(e) => {
+                    setRoomId(e.target.value);
+                    setPanel("review");
+                    setLinkedThreadId("");
+                    setCommentFilter("all");
+                  }}
+                  className="absolute inset-0 w-full min-w-0 appearance-none truncate rounded-md bg-transparent pl-2 pr-7 py-1.5 text-sm font-semibold"
+                >
+                  {rooms.map((item) => (
+                    <option key={item.ID} value={item.ID}>
+                      {item.Name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                  aria-hidden="true"
+                />
+              </div>
               <span className="text-border">/</span>
-              <select
-                aria-label="Site or image"
-                value={siteId}
-                onChange={(e) => chooseSite(e.target.value)}
-                className="max-w-48 rounded-md bg-transparent px-2 py-1.5 text-sm"
-              >
-                <option value="" disabled>
-                  Select a site or image
-                </option>
-                {projectSites.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label ?? item.slug}
+              <div className="relative inline-grid max-w-48 text-sm">
+                <span
+                  aria-hidden="true"
+                  className="invisible truncate pl-2 pr-7 py-1.5"
+                >
+                  {site?.label ?? site?.slug ?? "Select a site or image"}
+                </span>
+                <select
+                  aria-label="Site or image"
+                  value={siteId}
+                  onChange={(e) => chooseSite(e.target.value)}
+                  className="absolute inset-0 w-full min-w-0 appearance-none truncate rounded-md bg-transparent pl-2 pr-7 py-1.5 text-sm"
+                >
+                  <option value="" disabled>
+                    Select a site or image
                   </option>
-                ))}
-              </select>
+                  {projectSites.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label ?? item.slug}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                  aria-hidden="true"
+                />
+              </div>
               <Tooltip label="Create a new project" align="end">
                 <Button
                   size="sm"
