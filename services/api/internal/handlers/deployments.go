@@ -218,7 +218,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 
 	// Insert the immutable version (idempotent on per-site content_hash). The
 	// content_hash is the SERVER-computed digest, never the client's claim.
-	ver, err := a.Store.CreateSiteVersion(r.Context(), t, store.CreateSiteVersionParams{
+	ver, err := a.Store.CreateSiteVersion(sessionCtx(r), t, store.CreateSiteVersionParams{
 		SiteID:      siteID,
 		ContentHash: vm.Digest,
 		SizeBytes:   totalSize,

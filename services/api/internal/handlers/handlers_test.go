@@ -74,6 +74,23 @@ func (f *fakeStore) PageReviewReplies(context.Context, store.Tenant, string, str
 	return store.ReplyPage{}, nil
 }
 
+func (f *fakeStore) CandidateVersions(context.Context, store.Tenant, string, string) (store.Candidate, store.SiteVersion, store.SiteVersion, error) {
+	return store.Candidate{}, store.SiteVersion{}, store.SiteVersion{}, store.ErrNotFound
+}
+
+func (f *fakeStore) LiveContentHashes(_ context.Context, _ store.Tenant) (map[string]string, error) {
+	out := map[string]string{}
+	for _, site := range f.sites {
+		if site.CurrentVersionID == nil {
+			continue
+		}
+		if v, ok := f.versions[*site.CurrentVersionID]; ok {
+			out[site.ID] = v.ContentHash
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ProjectReviewControlled(_ context.Context, _ store.Tenant, siteID string) (bool, error) {
 	if f.controlled == nil {
 		return false, nil

@@ -57,13 +57,13 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 
 	var out SiteVersion
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
-		// Re-derive the site (RLS scopes it to the org) — a miss means the site
-		// is absent or belongs to another tenant.
-		site, err := q.GetSite(ctx, db.GetSiteParams{ID: p.SiteID, OrgID: t.OrgID})
+		// Same org-then-site locks as publish, before the version insert, so a
+		// room attach cannot land between a stale check and this write.
+		site, err := lockOrgThenSite(ctx, q, t.OrgID, p.SiteID)
 		if err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
-			}
+			return err
+		}
+		if err := rejectNonHumanControlledSite(ctx, q, t.OrgID, p.SiteID); err != nil {
 			return err
 		}
 		if site.OrgID != t.OrgID {

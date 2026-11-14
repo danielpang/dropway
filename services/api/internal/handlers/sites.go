@@ -32,8 +32,10 @@ type siteResponse struct {
 	OwnerID          string  `json:"owner_id"`
 	AccessMode       string  `json:"access_mode"`
 	CurrentVersionID *string `json:"current_version_id,omitempty"`
-	LiveURL          string  `json:"live_url"`
-	StorageBytes     int64   `json:"storage_bytes"`
+	// CurrentContentHash is the live version's content hash, when one is published.
+	CurrentContentHash string `json:"current_content_hash,omitempty"`
+	LiveURL            string `json:"live_url"`
+	StorageBytes       int64  `json:"storage_bytes"`
 	// FeedVisible is the org-feed discovery flag: true (default) shares the site to
 	// teammates' feed; false keeps it private (off the feed). Orthogonal to access.
 	FeedVisible bool `json:"feed_visible"`
@@ -52,21 +54,22 @@ type siteResponse struct {
 // from the configured scheme/port (API.ContentURL). All sites in one request
 // share the active tenant's org, so the caller resolves orgSlug once. storageBytes
 // is the site's logical size (0 for a just-created site with no live version).
-func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64) siteResponse {
+func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64, contentHash string) siteResponse {
 	return siteResponse{
-		ID:               s.ID,
-		OrgID:            s.OrgID,
-		Slug:             s.Slug,
-		OwnerID:          s.OwnerUserID,
-		AccessMode:       s.AccessMode,
-		CurrentVersionID: s.CurrentVersionID,
-		LiveURL:          a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
-		StorageBytes:     storageBytes,
-		FeedVisible:      s.FeedVisible,
-		Title:            s.Title,
-		Description:      s.Description,
-		AllowMemberEdits: s.AllowMemberEdits,
-		CreatedAt:        s.CreatedAt,
+		ID:                 s.ID,
+		OrgID:              s.OrgID,
+		Slug:               s.Slug,
+		OwnerID:            s.OwnerUserID,
+		AccessMode:         s.AccessMode,
+		CurrentVersionID:   s.CurrentVersionID,
+		CurrentContentHash: contentHash,
+		LiveURL:            a.ContentURL(projection.HostForSite(orgSlug, s.Slug)),
+		StorageBytes:       storageBytes,
+		FeedVisible:        s.FeedVisible,
+		Title:              s.Title,
+		Description:        s.Description,
+		AllowMemberEdits:   s.AllowMemberEdits,
+		CreatedAt:          s.CreatedAt,
 	}
 }
 
@@ -167,7 +170,7 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	// A just-created site has no live version yet → 0 logical bytes.
-	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0))
+	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0, ""))
 }
 
 // ListSites returns the caller org's sites.
@@ -201,9 +204,14 @@ func (a *API) ListSites(w http.ResponseWriter, r *http.Request) {
 	for _, s := range storage {
 		bytesBySite[s.SiteID] = s.Bytes
 	}
+	hashes, err := a.Store.LiveContentHashes(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	out := make([]siteResponse, len(sites))
 	for i, s := range sites {
-		out[i] = a.toSiteResponse(s, orgSlug, bytesBySite[s.ID])
+		out[i] = a.toSiteResponse(s, orgSlug, bytesBySite[s.ID], hashes[s.ID])
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sites": out})
 }
@@ -234,7 +242,13 @@ func (a *API) GetSite(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes))
+	hash := ""
+	if site.CurrentVersionID != nil {
+		if ver, verr := a.Store.GetSiteVersion(r.Context(), t, *site.CurrentVersionID); verr == nil {
+			hash = ver.ContentHash
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, a.toSiteResponse(site, orgSlug, bytes, hash))
 }
 
 // DeleteSite permanently removes a site (DELETE /v1/sites/{id}). Gated by
@@ -401,6 +415,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, fmt.Errorf("%w: this site is under project review; publish, rollback, and source writes require an authenticated human session", httpx.ErrForbidden))
 	case errors.Is(err, store.ErrCandidatePublishDenied):
 		httpx.WriteError(w, fmt.Errorf("%w: this version matches a review candidate and has no approved decision for the current baseline", httpx.ErrConflict))
+	case errors.Is(err, store.ErrCandidateArtifact):
+		httpx.WriteError(w, fmt.Errorf("%w: candidate artifact does not match its pinned hashes", httpx.ErrConflict))
 	case errors.Is(err, projectroom.ErrBadCursor):
 		httpx.WriteError(w, fmt.Errorf("%w: invalid cursor", httpx.ErrBadRequest))
 	case errors.Is(err, projectroom.ErrInvalidAnchor):

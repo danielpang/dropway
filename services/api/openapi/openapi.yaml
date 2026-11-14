@@ -1278,6 +1278,57 @@ paths:
       responses:
         "200": { description: Candidate page }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/candidates/{candidateID}/diff:
+    get:
+      summary: Read a candidate diff against its pinned base
+      operationId: getCandidateDiff
+      description: >
+        Human session or MCP OAuth. Returns the file list and bounded before/after
+        text. Bodies are untrusted. The manifest digest is checked against the
+        candidate content hash and the base hash; any mismatch is 409 and returns
+        no file text. Binary files are metadata only. Truncation is explicit.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: candidateID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Verified diff
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [candidate_id, base_version_id, base_content_hash, content_hash, verified, files, comment_content]
+                properties:
+                  candidate_id: { type: string, format: uuid }
+                  site_id: { type: string, format: uuid }
+                  base_version_id: { type: string, format: uuid }
+                  base_content_hash: { type: string }
+                  content_hash: { type: string }
+                  verified: { type: boolean, enum: [true] }
+                  truncated: { type: boolean }
+                  omitted_files: { type: integer }
+                  comment_content: { type: string, enum: [untrusted_data] }
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, change, binary, untrusted]
+                      properties:
+                        path: { type: string }
+                        change: { type: string, enum: [added, removed, modified, unchanged] }
+                        binary: { type: boolean }
+                        before_sha256: { type: string }
+                        after_sha256: { type: string }
+                        before_size: { type: integer }
+                        after_size: { type: integer }
+                        before: { type: string }
+                        after: { type: string }
+                        before_truncated: { type: boolean }
+                        after_truncated: { type: boolean }
+                        untrusted: { type: boolean }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /v1/project-rooms/{roomID}/candidates/{candidateID}:
     get:
       summary: Read one review candidate
@@ -2944,6 +2995,9 @@ components:
         owner_id: { type: string, format: uuid }
         access_mode: { type: string, enum: [public, password, allowlist, org_only] }
         current_version_id: { type: string, format: uuid, nullable: true }
+        current_content_hash:
+          type: string
+          description: SHA-256 of the live version. Empty when the site has no live version. Compare with a candidate base_content_hash.
         live_url: { type: string, format: uri }
         storage_bytes:
           type: integer

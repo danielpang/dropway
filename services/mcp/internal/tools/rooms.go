@@ -110,6 +110,15 @@ func (svc *Service) listRoomCandidatesHandler(ctx context.Context, _ *mcpsdk.Cal
 	return nil, out, err
 }
 
+func (svc *Service) getCandidateDiffHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in candidateReadIn) (*mcpsdk.CallToolResult, roomReadOut, error) {
+	token, ok := mcpToken(ctx)
+	if !ok {
+		return nil, roomReadOut{}, ErrNoToken
+	}
+	out, err := svc.readJSON(ctx, token, "/v1/project-rooms/"+in.RoomID+"/candidates/"+in.CandidateID+"/diff")
+	return nil, out, err
+}
+
 func (svc *Service) getRoomCandidateHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in candidateReadIn) (*mcpsdk.CallToolResult, roomReadOut, error) {
 	token, ok := mcpToken(ctx)
 	if !ok {

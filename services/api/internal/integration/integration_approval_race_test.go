@@ -130,7 +130,7 @@ func TestIntegration_ApprovalRaces(t *testing.T) {
 
 	t.Run("publish races approval", func(t *testing.T) {
 		c := submit(t, ctx, st, tn, room.ID, site.ID, v1.ID, strings.Repeat("31", 32))
-		v2, err := st.CreateSiteVersion(ctx, tn, store.CreateSiteVersionParams{
+		v2, err := st.CreateSiteVersion(store.WithHumanSession(ctx, true), tn, store.CreateSiteVersionParams{
 			SiteID: site.ID, ContentHash: strings.Repeat("32", 32), SizeBytes: 1, Status: "ready",
 		})
 		if err != nil {

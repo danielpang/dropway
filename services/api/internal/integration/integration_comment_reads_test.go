@@ -147,7 +147,7 @@ func TestIntegration_CommentReadsAndCandidatePublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v2, err := st.CreateSiteVersion(ctx, tn, store.CreateSiteVersionParams{
+	v2, err := st.CreateSiteVersion(store.WithHumanSession(ctx, true), tn, store.CreateSiteVersionParams{
 		SiteID: site.ID, ContentHash: cand.ContentHash, SizeBytes: 1, Status: "ready",
 	})
 	if err != nil {
@@ -168,6 +168,20 @@ func TestIntegration_CommentReadsAndCandidatePublish(t *testing.T) {
 	}
 	if _, err := st.PageReviewReplies(ctx, tr, threads[0], "", 1); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("revoked member err=%v", err)
+	}
+	if _, err := st.CreateChatLog(ctx, tn, "bound", "other", &site.ID); !errors.Is(err, store.ErrControlledSite) {
+		t.Fatalf("key-like chat create err=%v", err)
+	}
+	if _, err := st.CreateChatLog(store.WithHumanSession(ctx, true), tn, "bound", "other", &site.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateChatLog(ctx, tn, "free", "other", nil); err != nil {
+		t.Fatalf("unattached chat err=%v", err)
+	}
+	if _, err := st.CreateSiteVersion(ctx, tn, store.CreateSiteVersionParams{
+		SiteID: site.ID, ContentHash: strings.Repeat("11", 32), SizeBytes: 1, Status: "ready",
+	}); !errors.Is(err, store.ErrControlledSite) {
+		t.Fatalf("non-human version insert err=%v", err)
 	}
 	detail, err := st.GetRoomCandidate(ctx, tn, room.ID, cand.ID)
 	if err != nil || detail.ContentHash != cand.ContentHash || detail.State != projectroom.CandidatePending {

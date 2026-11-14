@@ -109,9 +109,14 @@ func (a *API) ListFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hashes, err := a.Store.LiveContentHashes(r.Context(), t)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	out := make([]feedPostResponse, 0, len(sites)+len(skills))
 	for _, s := range sites {
-		sr := a.toSiteResponse(s.Site, orgSlug, bytesBySite[s.ID])
+		sr := a.toSiteResponse(s.Site, orgSlug, bytesBySite[s.ID], hashes[s.ID])
 		out = append(out, feedPostResponse{
 			Kind:             "site",
 			ID:               sr.ID,

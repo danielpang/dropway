@@ -187,6 +187,70 @@ func (s *Store) PageReviewReplies(ctx context.Context, t Tenant, threadID, curso
 	return out, err
 }
 
+// CandidateVersions loads the pinned base version and the proposed version whose
+// content hash is the candidate hash. Either hash mismatch fails closed.
+func (s *Store) CandidateVersions(ctx context.Context, t Tenant, roomID, candidateID string) (Candidate, SiteVersion, SiteVersion, error) {
+	var cand Candidate
+	var base, proposed SiteVersion
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		if err := s.requireRooms(ctx, q, t.OrgID); err != nil {
+			return err
+		}
+		row, err := q.GetReviewCandidateForMember(ctx, db.GetReviewCandidateForMemberParams{
+			UserID: t.UserID, ID: candidateID, OrgID: t.OrgID, RoomID: roomID,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		cand = candidateFromMember(row)
+		baseRow, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: cand.BaseVersionID, OrgID: t.OrgID})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrCandidateArtifact
+			}
+			return err
+		}
+		if baseRow.SiteID != cand.SiteID || baseRow.ContentHash != cand.BaseContentHash {
+			return ErrCandidateArtifact
+		}
+		propRow, err := q.GetSiteVersionByContentHash(ctx, db.GetSiteVersionByContentHashParams{
+			SiteID: cand.SiteID, ContentHash: cand.ContentHash, OrgID: t.OrgID,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrCandidateArtifact
+			}
+			return err
+		}
+		if propRow.ContentHash != cand.ContentHash || propRow.SiteID != cand.SiteID {
+			return ErrCandidateArtifact
+		}
+		base = versionFromDB(baseRow)
+		proposed = versionFromDB(propRow)
+		return nil
+	})
+	return cand, base, proposed, err
+}
+
+// LiveContentHashes maps site id to the live version's content hash.
+func (s *Store) LiveContentHashes(ctx context.Context, t Tenant) (map[string]string, error) {
+	out := map[string]string{}
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		rows, err := q.ListLiveContentHashes(ctx, t.OrgID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			out[row.SiteID] = row.ContentHash
+		}
+		return nil
+	})
+	return out, err
+}
+
 func authorizeLockedCandidatePublish(ctx context.Context, q *db.Queries, orgID string, site db.AppSite, ver db.AppSiteVersion) error {
 	cands, err := q.ListCandidatesForArtifact(ctx, db.ListCandidatesForArtifactParams{
 		OrgID: orgID, SiteID: site.ID, ContentHash: ver.ContentHash,

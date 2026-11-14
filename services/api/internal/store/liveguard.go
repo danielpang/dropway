@@ -17,6 +17,9 @@ var ErrControlledSite = errors.New("store: controlled site requires a human sess
 // without exactly one approved decision for the locked baseline.
 var ErrCandidatePublishDenied = errors.New("store: candidate publish denied")
 
+// ErrCandidateArtifact means the stored bytes do not match the candidate's pinned hashes.
+var ErrCandidateArtifact = errors.New("store: candidate artifact mismatch")
+
 type humanSessionKey struct{}
 
 // WithHumanSession records whether this request was classified as an
@@ -52,6 +55,18 @@ func lockOrgThenSite(ctx context.Context, q *db.Queries, orgID, siteID string) (
 
 // rejectNonHumanControlledSite fails closed when the locked site is in an
 // enabled project room and the caller is not a human session.
+// guardControlledSite locks the org, then the site, and rejects a non-human
+// mutation when that site is in an enabled project room.
+func guardControlledSite(ctx context.Context, q *db.Queries, orgID, siteID string) error {
+	if siteID == "" {
+		return nil
+	}
+	if _, err := lockOrgThenSite(ctx, q, orgID, siteID); err != nil {
+		return err
+	}
+	return rejectNonHumanControlledSite(ctx, q, orgID, siteID)
+}
+
 func rejectNonHumanControlledSite(ctx context.Context, q *db.Queries, orgID, siteID string) error {
 	controlled, err := q.SiteInEnabledProjectRoom(ctx, db.SiteInEnabledProjectRoomParams{OrgID: orgID, SiteID: siteID})
 	if err != nil {
