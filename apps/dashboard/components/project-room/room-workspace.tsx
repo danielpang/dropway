@@ -7,6 +7,7 @@
 
 import * as React from "react";
 import {
+  Send,
   MessageSquare,
   Plus,
   PanelsTopLeft,
@@ -874,12 +875,7 @@ export function RoomWorkspace({
       {thread.Replies.slice(0, 1).map((item) => (
         <ReplyText key={item.ID} body={untrustedText(item.Body)} compact />
       ))}
-      <details open={inline} className="group space-y-2 text-xs">
-        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-          {thread.Replies.length > 1
-            ? `${thread.Replies.length - 1} replies · Reply & details`
-            : "Reply & details"}
-        </summary>
+      <div className="space-y-2 text-xs">
         <ul className="space-y-2 border-l border-border pl-2">
           {thread.Replies.slice(1).map((item) => (
             <li key={item.ID}>
@@ -904,7 +900,7 @@ export function RoomWorkspace({
           </Button>
         ) : null}
         <form
-          className="flex flex-wrap gap-2"
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             const text = (replyByThread[thread.ID] ?? "").trim();
@@ -920,6 +916,8 @@ export function RoomWorkspace({
         >
           <Input
             aria-label={`Reply to ${thread.ID}`}
+            placeholder="Write a reply…"
+            className="min-w-0"
             value={replyByThread[thread.ID] ?? ""}
             onChange={(event) =>
               setReplyByThread((prev) => ({
@@ -929,25 +927,30 @@ export function RoomWorkspace({
             }
           />
           {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
-            <MentionExecutionControls
-              body={replyByThread[thread.ID] ?? ""}
-              allowed={
-                !!executionConfigured &&
-                decideOk &&
-                thread.SiteID === site?.id &&
-                thread.VersionID === site.currentVersionId &&
-                thread.ContentHash === site.currentContentHash
-              }
-              onChange={(value) =>
-                setReplyExecutions((prev) => ({
-                  ...prev,
-                  [thread.ID]: value,
-                }))
-              }
-            />
+            <div className="order-last col-span-2">
+              <MentionExecutionControls
+                body={replyByThread[thread.ID] ?? ""}
+                allowed={
+                  !!executionConfigured &&
+                  decideOk &&
+                  thread.SiteID === site?.id &&
+                  thread.VersionID === site.currentVersionId &&
+                  thread.ContentHash === site.currentContentHash
+                }
+                onChange={(value) =>
+                  setReplyExecutions((prev) => ({
+                    ...prev,
+                    [thread.ID]: value,
+                  }))
+                }
+              />
+            </div>
           ) : null}
           <Button
             type="submit"
+            size="icon"
+            aria-label="Send reply"
+            title="Send reply"
             disabled={
               !commentOk ||
               (replyByThread[thread.ID] ?? "").trim().length === 0 ||
@@ -955,7 +958,7 @@ export function RoomWorkspace({
                 !replyExecutions[thread.ID])
             }
           >
-            Reply
+            <Send className="h-4 w-4" aria-hidden="true" />
           </Button>
         </form>
         <div className="flex flex-wrap gap-2">
@@ -1066,7 +1069,7 @@ export function RoomWorkspace({
             </Button>
           ) : null}
         </details>
-      </details>
+      </div>
     </li>
   );
   const commentsPanel = (
