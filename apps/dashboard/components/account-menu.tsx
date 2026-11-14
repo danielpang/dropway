@@ -22,7 +22,7 @@ import {
 
 import {
   DOCS_LINKS,
-  NAV_LINKS,
+  visibleNavLinks,
   ORG_LINKS,
   isNavActive,
   type NavLink,
@@ -80,10 +80,12 @@ export function AccountMenu({
   user,
   orgName,
   admin = false,
+  hasSharedProjects = false,
 }: {
   user: AccountMenuUser;
   orgName?: string | null;
   admin?: boolean;
+  hasSharedProjects?: boolean;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
@@ -253,7 +255,7 @@ export function AccountMenu({
           {/* Primary sections, only where the inline header nav is hidden. */}
           <div role="group" aria-label="Workspace" className="md:hidden">
             <Separator />
-            {NAV_LINKS.map((link) => renderLink(link, false))}
+            {visibleNavLinks(admin, hasSharedProjects).map((link) => renderLink(link, false))}
           </div>
 
           <Separator />

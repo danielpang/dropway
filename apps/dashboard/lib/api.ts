@@ -1501,6 +1501,19 @@ export const api = {
     });
   },
 
+  async sharedProjectRequest(path: string, method = "GET", body?: unknown): Promise<unknown> {
+    return apiFetch(`/v1/shared-projects${path}`, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  },
+  async projectShares(roomId: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/shares`);
+  },
+  async inviteProjectGuest(roomId: string, email: string, role: "viewer" | "reviewer"): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/shares`, { method: "POST", body: JSON.stringify({ email, role }) });
+  },
+  async revokeProjectGuest(roomId: string, shareId: string): Promise<void> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
+  },
+
   async projectCollaborationCapabilities(): Promise<{ enabled: boolean; execution_configured: boolean }> {
     return apiFetch("/v1/project-collaboration/capabilities");
   },

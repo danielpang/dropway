@@ -35,4 +35,4 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -tags integration -run '^TestIntegration_(HostedExecution|SharedProviderCredentials|SchemaPreflightRollingUpgrade|RolloutPreviousAPIKeyProjection|LegacyKeyUnenrolledSite|CandidateApplication|ApprovalRaces|ProjectRooms)$' -count=1 ./services/api/internal/integration
+      - run: go test -tags integration -run '^TestIntegration_(HostedExecution|SharedProviderCredentials|ProjectGuestSharing|SchemaPreflightRollingUpgrade|RolloutPreviousAPIKeyProjection|LegacyKeyUnenrolledSite|CandidateApplication|ApprovalRaces|ProjectRooms)$' -count=1 ./services/api/internal/integration

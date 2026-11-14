@@ -23,12 +23,19 @@ import { appEnvironment, posthogClientKey, posthogHost } from "@/lib/env";
  */
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
   const key = posthogClientKey();
+  const pathname = usePathname();
+  const invitationLanding = pathname?.startsWith("/shared-projects/accept") === true;
 
   useEffect(() => {
-    if (!key) return;
+    if (!key || invitationLanding) {
+      if (invitationLanding && posthog.__loaded) posthog.stopSessionRecording();
+      return;
+    }
     if (posthog.__loaded) return;
     posthog.init(key, {
       api_host: posthogHost(),
+      // Invitation bearer fragments must never enter analytics or error capture.
+      before_send: (event) => window.location.pathname.startsWith("/shared-projects/accept") ? null : event,
       capture_pageview: false, // captured manually on App Router navigation
       capture_pageleave: true,
       capture_performance: true, // Web Vitals + page-load timing
@@ -37,9 +44,9 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       defaults: "2025-05-24",
     });
     posthog.register({ environment: appEnvironment() });
-  }, [key]);
+  }, [key, invitationLanding]);
 
-  if (!key) return <>{children}</>;
+  if (!key || invitationLanding) return <>{children}</>;
 
   return (
     <PHProvider client={posthog}>

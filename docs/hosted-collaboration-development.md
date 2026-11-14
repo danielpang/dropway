@@ -24,7 +24,7 @@ Organization opt-in (`app.org_meta.project_rooms_enabled`) remains required, alo
 
 ## Configuration
 
-Apply migrations through `0024_mention_execution.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
+Apply migrations through `0025_project_guest_shares.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
 
 | Process | Setting | Value / purpose |
 | --- | --- | --- |
@@ -73,3 +73,15 @@ Ordinary comments do not start AI. A standalone `@dropway` mention in a new comm
 AI creates a candidate only. Review its summary and file changes, then **Accept change** or **Reject change**. Acceptance records approval; the separate **Apply** action publishes. Rejecting leaves the live site unchanged. No comment, model response, or mention automatically approves or publishes a candidate.
 
 Migrations 0023–0024 add credential scope/OpenAI support and reply/job linkage. Keep the expanded schema on application rollback; older workers must be drained/replaced before enabling new provider jobs. Production acceptance should exercise team revocation, mention retries, all three providers, and rejection with disposable sites under the PostHog test cohort. Local tests use fake provider responses, not paid calls.
+
+## External project guests
+
+A project can be shared by email without adding the recipient to its organization. Invite a **Viewer** for read-only access or a **Reviewer** for discussions and version sign-off. Guests cannot run AI, use team credentials, accept/apply proposed changes, or publish. Shared projects appear in a separate **Shared with me** area; guests do not need to create an organization.
+
+Invitation acceptance requires a human session with the invited email currently verified. Existing users can use their normal sign-in method; new users can use email magic-link sign-in. An invitation link alone does not grant access. Pending invitations expire; accepted access continues until revoked. Resending replaces the pending invitation link. Owners can list invitations and revoke access.
+
+A share covers the project's attached sites and discussions, including sites attached later. Detaching a site removes it from guest access. Guest previews are sanitized static renditions: uploaded JavaScript does not run, and sharing never makes the underlying site public or grants general access to its gated live URL. Revocation prevents subsequent authorized requests; it cannot erase content already delivered to a recipient.
+
+Both `allow_external_sharing` and `project_rooms_enabled` must be enabled in the host organization. The existing PostHog flag also evaluates the guest user in the host organization's context, so include invited test users in a restricted rollout cohort. All guest operations check the current share, verified identity, policy, and rollout decision. The normal organization API continues to require organization membership.
+
+Apply migration `0025_project_guest_shares.sql` before deploying this API. The API schema preflight checks the new table and discovery-function grants. Invitations reuse `MAIL_SMTP_URL` and `MAIL_FROM`; there is no new email service or feature toggle. The sharing UI reports a mail-server rejection or missing SMTP configuration instead of claiming delivery. SMTP acceptance is not proof of inbox delivery. Retain the additive schema on application rollback.

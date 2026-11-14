@@ -4,6 +4,193 @@
  */
 
 export interface paths {
+    "/v1/project-rooms/{roomID}/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List project invitations (project owner) */
+        get: operations["listProjectGuestShares"];
+        put?: never;
+        /**
+         * Invite a verified email to this project only
+         * @description Human project owner only. Requires host organization external sharing, room opt-in and collaboration rollout. The one-time response contains a secret invitation token; deliver by email, never log it. This API does not send email. Reinviting replaces the pending token.
+         */
+        post: operations["inviteProjectGuest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/shares/{shareID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a project guest invitation or accepted grant */
+        delete: operations["revokeProjectGuest"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List only accepted projects shared with the verified user
+         * @description Human-session JWT required; org_id may be absent. Does not provision or join an organization. Each project is filtered by live share, email verification, host policies and rollout.
+         */
+        get: operations["listSharedProjects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a project invitation for the currently verified email
+         * @description A forwarded token cannot grant access to another email. Requires current identity email verification, an unexpired invitation and host policy/rollout. Never changes identity.member.
+         */
+        post: operations["acceptProjectGuestInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/{roomID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a shared project and its attached sites */
+        get: operations["getSharedProject"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/{roomID}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read discussions scoped to this shared project */
+        get: operations["listSharedProjectThreads"];
+        put?: never;
+        /** Leave version-bound feedback as a guest Reviewer */
+        post: operations["createSharedProjectThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/{roomID}/threads/{threadID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a project thread and a page of replies */
+        get: operations["getSharedProjectThread"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/{roomID}/threads/{threadID}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reply as a guest Reviewer without starting AI */
+        post: operations["replyToSharedProjectThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/{roomID}/version-signoffs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Reviewer sign-off on a project site version
+         * @description Version sign-off does not approve an AI candidate or publish anything.
+         */
+        post: operations["signoffSharedProjectVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shared-projects/{roomID}/sites/{siteID}/versions/{versionID}/files/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read HTML or a raster image from an authorized project version
+         * @description Requires the site to remain attached. Historical access is limited to project-authorized review versions. Only HTML and supported raster images are exposed; scripts, source maps and reserved paths are denied. Does not grant a live-site edge token. Content is untrusted and must be rendered in an isolated sanitized preview.
+         */
+        get: operations["readSharedProjectFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -1906,6 +2093,63 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProjectGuestShare: {
+            /** Format: uuid */
+            id: string;
+            /** Format: email */
+            email: string;
+            /** @enum {string} */
+            role: "viewer" | "reviewer";
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            accepted_at?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+        };
+        SharedProject: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            role: "viewer" | "reviewer";
+            sites: {
+                /** Format: uuid */
+                id?: string;
+                slug?: string;
+                title?: string;
+                /** Format: uuid */
+                current_version_id?: string | null;
+                current_content_hash?: string;
+            }[];
+        };
+        SharedProjectReply: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            author_id: string;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        SharedProjectThread: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            site_id: string;
+            /** Format: uuid */
+            version_id: string;
+            content_hash: string;
+            page: string;
+            anchor_kind?: string;
+            anchor?: Record<string, never>;
+            anchor_state?: string;
+            status?: string;
+            /** Format: date-time */
+            created_at?: string;
+            replies: components["schemas"]["SharedProjectReply"][];
+            replies_next_cursor?: string;
+        };
         ProviderCredential: {
             id: string;
             /** @enum {string} */
@@ -2572,6 +2816,383 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listProjectGuestShares: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        shares?: components["schemas"]["ProjectGuestShare"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    inviteProjectGuest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    /** @enum {string} */
+                    role: "viewer" | "reviewer";
+                    /** @default 7 */
+                    expires_in_days?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        share?: components["schemas"]["ProjectGuestShare"];
+                        token?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    revokeProjectGuest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                shareID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Access revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listSharedProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        projects?: components["schemas"]["SharedProject"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    acceptProjectGuestInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        project?: components["schemas"]["SharedProject"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getSharedProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        project?: components["schemas"]["SharedProject"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listSharedProjectThreads: {
+        parameters: {
+            query?: {
+                site_id?: string;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        threads?: components["schemas"]["SharedProjectThread"][];
+                        next_cursor?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createSharedProjectThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    site_id: string;
+                    /** Format: uuid */
+                    version_id: string;
+                    content_hash: string;
+                    page: string;
+                    body: string;
+                    /** @enum {string} */
+                    anchor_kind?: "page" | "point" | "text" | "component";
+                    anchor?: Record<string, never>;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        thread?: components["schemas"]["SharedProjectThread"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getSharedProjectThread: {
+        parameters: {
+            query?: {
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        thread?: components["schemas"]["SharedProjectThread"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    replyToSharedProjectThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    body: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reply?: components["schemas"]["SharedProjectReply"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    signoffSharedProjectVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    site_id: string;
+                    /** Format: uuid */
+                    version_id: string;
+                    content_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        version_id?: string;
+                        content_hash?: string;
+                        signed_off?: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    readSharedProjectFile: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+                siteID: string;
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        site_id?: string;
+                        /** Format: uuid */
+                        version_id?: string;
+                        path?: string;
+                        content_hash?: string;
+                        content_type?: string;
+                        sha256?: string;
+                        content_base64?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     healthz: {
         parameters: {
             query?: never;
