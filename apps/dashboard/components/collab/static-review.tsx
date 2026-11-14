@@ -26,8 +26,10 @@ export function StaticReview({
   selectionResetKey,
   imageCanvas = false,
   renderThread,
+  renderDraft,
 }: {
   renderThread?: (id: string) => React.ReactNode;
+  renderDraft?: () => React.ReactNode;
   readOnly?: boolean;
   imageCanvas?: boolean;
   snapshot: StaticSnapshot;
@@ -51,8 +53,11 @@ export function StaticReview({
     setPopover(null);
   }, []);
   const closeButton = React.useRef<HTMLButtonElement>(null);
+  const popoverContent = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
-    if (popover?.id) closeButton.current?.focus();
+    if (popover?.id === "pending-selection")
+      popoverContent.current?.querySelector("textarea")?.focus();
+    else if (popover?.id) closeButton.current?.focus();
   }, [popover?.id]);
   const [mode, setMode] = React.useState<SelectionMode>(
     imageCanvas ? "point" : "text",
@@ -157,7 +162,7 @@ export function StaticReview({
       const openThread = (id: string, rect: DOMRect) => {
         popoverId.current = id;
         positionThread(id, rect);
-        threadSelectRef.current?.(id);
+        if (id !== "pending-selection") threadSelectRef.current?.(id);
       };
       const paint = () => {
         scheduled = 0;
@@ -216,7 +221,7 @@ export function StaticReview({
           marker.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (!annotation.pending) openThread(annotation.id, first);
+            openThread(annotation.id, first);
           });
           overlay.appendChild(marker);
         });
@@ -244,6 +249,7 @@ export function StaticReview({
       win.addEventListener("resize", schedulePaint);
       doc.addEventListener("load", schedulePaint, true);
       const clearSelection = () => {
+        closePopover();
         doc
           .querySelectorAll(".dw-selected")
           .forEach((item) => item.classList.remove("dw-selected"));
@@ -260,11 +266,19 @@ export function StaticReview({
         schedulePaint();
         setSelected(selection.label);
         onSelectRef.current(selection);
+        const rect = staticAnnotationRects(doc, {
+          id: "pending-selection",
+          kind: selection.kind,
+          anchor: selection.anchor,
+        })[0];
+        if (rect) openThread("pending-selection", rect);
       };
       const onClick = (event: MouseEvent) => {
         if (overlay.contains(event.target as Node)) return;
         event.preventDefault();
         if (readOnlyRef.current) return;
+        if (modeRef.current === "text" && !doc.getSelection()?.isCollapsed)
+          return;
         if (doc.getSelection()?.isCollapsed) {
           const hit = hitRegions.find(({ rects }) =>
             rects.some(
@@ -450,10 +464,17 @@ export function StaticReview({
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={host} className="h-full min-h-0" />
-        {popover && renderThread && !readOnly && !blocked ? (
+        {popover &&
+        (popover.id === "pending-selection" ? renderDraft : renderThread) &&
+        !readOnly &&
+        !blocked ? (
           <div
             role="dialog"
-            aria-label="Comment thread"
+            aria-label={
+              popover.id === "pending-selection"
+                ? "New comment"
+                : "Comment thread"
+            }
             className="absolute z-20 flex w-80 max-w-[calc(100%-1rem)] flex-col rounded-lg border border-border bg-background shadow-xl"
             style={{
               left: popover.left,
@@ -462,20 +483,31 @@ export function StaticReview({
             }}
           >
             <div className="flex shrink-0 items-center justify-between px-3 py-2">
-              <span className="text-xs font-medium">Comment</span>
+              <span className="text-xs font-medium">
+                {popover.id === "pending-selection" ? "New comment" : "Comment"}
+              </span>
               <button
                 ref={closeButton}
                 type="button"
                 aria-label="Close inline comment"
                 title="Close comment"
-                onClick={closePopover}
+                onClick={() => {
+                  if (popover.id === "pending-selection")
+                    clearFrameSelection.current?.();
+                  else closePopover();
+                }}
                 className="rounded p-1 hover:bg-muted"
               >
                 <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
-            <div className="min-h-0 overflow-y-auto px-2 pb-2">
-              {renderThread(popover.id)}
+            <div
+              ref={popoverContent}
+              className="min-h-0 overflow-y-auto px-2 pb-2"
+            >
+              {popover.id === "pending-selection"
+                ? renderDraft?.()
+                : renderThread?.(popover.id)}
             </div>
           </div>
         ) : null}

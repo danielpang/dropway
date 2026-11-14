@@ -7,6 +7,7 @@
 
 import * as React from "react";
 import {
+  ChevronDown,
   Send,
   MessageSquare,
   Plus,
@@ -114,7 +115,6 @@ export function RoomWorkspace({
   onAttachSite,
   onDetachSite,
   onResolve,
-  onReanchor,
 }: {
   activity?: RoomActivity[];
   activityCursor?: string | null;
@@ -270,7 +270,6 @@ export function RoomWorkspace({
   const [memberRole, setMemberRole] = React.useState<
     "editor" | "reviewer" | "viewer"
   >("reviewer");
-  const [reanchorReason, setReanchorReason] = React.useState("");
   const [linkedThreadId, setLinkedThreadId] = React.useState("");
   React.useEffect(() => {
     const readLink = () =>
@@ -772,6 +771,9 @@ export function RoomWorkspace({
         ) : null}
         <Button
           type="submit"
+          size="icon"
+          aria-label={commentBusy ? "Posting comment" : "Send comment"}
+          title="Send comment"
           disabled={
             commentBusy ||
             !commentOk ||
@@ -780,11 +782,7 @@ export function RoomWorkspace({
             (hasDropwayMention(body) && !commentExecution)
           }
         >
-          {commentBusy
-            ? "Posting…"
-            : staticSelection
-              ? "Comment on selection"
-              : "Comment on this page"}
+          <Send className="h-4 w-4" aria-hidden="true" />
         </Button>
         {commentOk ? null : (
           <p className="text-xs text-muted-foreground">
@@ -844,23 +842,37 @@ export function RoomWorkspace({
     <li
       id={inline ? undefined : `thread-${thread.ID}`}
       key={thread.ID}
-      className={`space-y-1.5 rounded-lg border p-2.5 text-sm ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}
+      className={`space-y-2 text-sm ${inline ? "px-1 pb-1" : `rounded-lg border p-2.5 ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}`}
     >
-      <button
-        type="button"
-        className="text-left font-medium text-foreground hover:underline"
-        onClick={() => {
-          setLinkedThreadId(thread.ID);
-          setActiveThreadId(thread.ID);
-        }}
-      >
-        {thread.AnchorKind === "page"
-          ? "Page comment"
-          : thread.AnchorKind === "point"
-            ? "Image pin"
-            : thread.AnchorKind}{" "}
-        on {thread.Page}
-      </button>
+      <div className="flex items-start justify-between gap-2">
+        <button
+          type="button"
+          className="text-left font-medium text-foreground hover:underline"
+          onClick={() => {
+            setLinkedThreadId(thread.ID);
+            setActiveThreadId(thread.ID);
+          }}
+        >
+          {thread.AnchorKind === "page"
+            ? "Page comment"
+            : thread.AnchorKind === "point"
+              ? "Image pin"
+              : thread.AnchorKind}{" "}
+          on {thread.Page}
+        </button>{" "}
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          disabled={!commentOk || !room || thread.Status === "resolved"}
+          className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-500"
+          aria-label="Resolve comment"
+          title="Resolve comment"
+          onClick={() => room && onResolve(room.ID, thread.ID)}
+        >
+          <Check className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
       <p className="text-xs text-muted-foreground">
         Version {thread.VersionID.slice(0, 8)} · {thread.Status}{" "}
         <a
@@ -961,113 +973,56 @@ export function RoomWorkspace({
             <Send className="h-4 w-4" aria-hidden="true" />
           </Button>
         </form>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!commentOk || !room || thread.Status === "resolved"}
-            aria-label="Resolve comment"
-            title="Resolve comment"
-            onClick={() => room && onResolve(room.ID, thread.ID)}
-          >
-            <Check className="h-4 w-4" aria-hidden="true" />
-          </Button>
-          <details className="w-full text-xs">
-            <summary className="cursor-pointer py-2 text-muted-foreground">
-              Move comment location
-            </summary>
-            <Input
-              aria-label={`Move reason for ${thread.ID}`}
-              value={reanchorReason}
-              onChange={(event) => setReanchorReason(event.target.value)}
-              placeholder="Reason for moving this comment"
+        <details className="group/history border-t border-border/60 pt-2 text-xs">
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1 py-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <History className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="flex-1">Anchor history</span>
+            <ChevronDown
+              className="h-3.5 w-3.5 transition-transform group-open/history:rotate-180"
+              aria-hidden="true"
             />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={
-                !commentOk || !room || reanchorReason.trim().length === 0
-              }
-              onClick={() =>
-                room && onReanchor(room.ID, thread.ID, reanchorReason.trim())
-              }
-            >
-              Move to page
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={
-                !commentOk ||
-                !room ||
-                !staticSelection ||
-                !reanchorReason.trim() ||
-                !snapshot ||
-                snapshot.siteId !== thread.SiteID ||
-                snapshot.versionId !== thread.VersionID ||
-                snapshot.contentHash !== thread.ContentHash ||
-                snapshot.page !== thread.Page
-              }
-              onClick={() => {
-                if (room && staticSelection)
-                  onReanchor(
-                    room.ID,
-                    thread.ID,
-                    reanchorReason.trim(),
-                    staticSelection,
-                  );
-              }}
-            >
-              Move to selection
-            </Button>
-          </details>
-        </div>
-        <details className="space-y-2 text-sm">
-          <summary className="cursor-pointer text-muted-foreground">
-            Anchor history
           </summary>
-          <p className="break-all text-xs text-muted-foreground">
-            Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
-            {thread.AnchorState}. Revisions preserve the original location.
-          </p>
-          <ol className="space-y-2">
-            {(thread.Revisions ?? []).map((revision) => (
-              <li
-                key={revision.id}
-                className="rounded-md border border-border p-2"
+          <div className="mt-2 space-y-2 rounded-md bg-muted/30 p-2.5">
+            <p className="break-all text-xs text-muted-foreground">
+              Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
+              {thread.AnchorState}. Revisions preserve the original location.
+            </p>
+            <ol className="space-y-2">
+              {(thread.Revisions ?? []).map((revision) => (
+                <li
+                  key={revision.id}
+                  className="rounded-md border border-border p-2"
+                >
+                  <p>
+                    {revision.anchorKind} · {revision.anchorState} · page{" "}
+                    {revision.page}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {revision.createdAt}
+                  </p>
+                  <p className="whitespace-pre-wrap">
+                    {untrustedText(revision.reason) || "No reason recorded."}
+                  </p>
+                </li>
+              ))}
+            </ol>
+            {thread.NextRevisionCursor ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  onLoadMoreRevisions?.(
+                    thread.RoomID,
+                    thread.ID,
+                    thread.NextRevisionCursor!,
+                  )
+                }
               >
-                <p>
-                  {revision.anchorKind} · {revision.anchorState} · page{" "}
-                  {revision.page}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {revision.createdAt}
-                </p>
-                <p className="whitespace-pre-wrap">
-                  {untrustedText(revision.reason) || "No reason recorded."}
-                </p>
-              </li>
-            ))}
-          </ol>
-          {thread.NextRevisionCursor ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                onLoadMoreRevisions?.(
-                  thread.RoomID,
-                  thread.ID,
-                  thread.NextRevisionCursor!,
-                )
-              }
-            >
-              Load older anchor revisions
-            </Button>
-          ) : null}
+                Load older anchor revisions
+              </Button>
+            ) : null}
+          </div>
         </details>
       </div>
     </li>
@@ -1733,6 +1688,7 @@ export function RoomWorkspace({
                           setActiveThreadId(id);
                           setCommentFilter("all");
                         }}
+                        renderDraft={() => commentComposer}
                         renderThread={(id) => {
                           const thread = threads.find(
                             (item) =>
@@ -1747,7 +1703,6 @@ export function RoomWorkspace({
                         onSelect={(selection) => {
                           setStaticSelection(selection);
                           if (selection) {
-                            setCommentsVisible(true);
                             setActiveThreadId("");
                           }
                         }}
