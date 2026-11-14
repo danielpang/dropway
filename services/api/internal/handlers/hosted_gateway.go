@@ -58,28 +58,17 @@ func (a *API) HostedGateway(w http.ResponseWriter, r *http.Request) {
 		writeHostedError(w, err)
 		return
 	}
-	if model != grant.Attempt.Job.Config.ModelID || (grant.Attempt.Job.Config.Provider == "anthropic" && !strings.HasSuffix(r.URL.Path, "/v1/messages")) || (grant.Attempt.Job.Config.Provider == "openrouter" && !strings.HasSuffix(r.URL.Path, "/v1/chat/completions")) {
+	if model != grant.Attempt.Job.Config.ModelID || !gatewayPathAllowed(grant.Attempt.Job.Config.Provider, id, r.URL.Path, r.URL.RawQuery) {
 		_ = a.Hosted.Store.SettleGatewayCall(r.Context(), token, 0, true)
 		writeHostedError(w, hosted.ErrInvalid)
 		return
 	}
-	filtered := map[string]json.RawMessage{}
-	for _, key := range []string{"model", "messages", "system", "tools", "tool_choice", "temperature", "top_p", "stream"} {
-		if value, ok := request[key]; ok {
-			filtered[key] = value
-		}
-	}
-	filtered["max_tokens"], _ = json.Marshal(grant.MaxOutputTokens)
 	provider := grant.Attempt.Job.Config.Provider
-	endpoint := "https://api.anthropic.com/v1/messages"
-	if provider == "openrouter" {
-		endpoint = "https://openrouter.ai/api/v1/chat/completions"
-		filtered["provider"] = json.RawMessage(`{"allow_fallbacks":false}`)
-		var stream bool
-		_ = json.Unmarshal(filtered["stream"], &stream)
-		if stream {
-			filtered["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-		}
+	endpoint, filtered, err := gatewayPayload(provider, request, grant.MaxOutputTokens)
+	if err != nil {
+		_ = a.Hosted.Store.SettleGatewayCall(r.Context(), token, 0, true)
+		writeHostedError(w, err)
+		return
 	}
 	payload, _ := json.Marshal(filtered)
 	ctx, cancel := context.WithDeadline(r.Context(), grant.Attempt.Deadline)
@@ -141,6 +130,61 @@ func (a *API) HostedGateway(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }
+
+func gatewayPathAllowed(provider, attemptID, path, query string) bool {
+	base := "/internal/room-gateway/" + attemptID
+	switch provider {
+	case "anthropic":
+		return path == base+"/v1/messages" && (query == "" || query == "beta=true")
+	case "openai", "openrouter":
+		return path == base+"/v1/chat/completions" && query == ""
+	default:
+		return false
+	}
+}
+
+// gatewayPayload selects an exact upstream and reconstructs supported fields.
+// Caller-controlled routing, persistence, and token bounds never pass through.
+func gatewayPayload(provider string, request map[string]json.RawMessage, maxOutput int64) (string, map[string]json.RawMessage, error) {
+	endpoint := ""
+	switch provider {
+	case "anthropic":
+		endpoint = "https://api.anthropic.com/v1/messages"
+	case "openrouter":
+		endpoint = "https://openrouter.ai/api/v1/chat/completions"
+	case "openai":
+		endpoint = "https://api.openai.com/v1/chat/completions"
+	default:
+		return "", nil, hosted.ErrInvalid
+	}
+	filtered := map[string]json.RawMessage{}
+	for _, key := range []string{"model", "messages", "tools", "tool_choice", "temperature", "top_p", "stream"} {
+		if value, ok := request[key]; ok {
+			filtered[key] = value
+		}
+	}
+	if provider == "anthropic" {
+		if value, ok := request["system"]; ok {
+			filtered["system"] = value
+		}
+	}
+	filtered["max_tokens"], _ = json.Marshal(maxOutput)
+	if provider == "openrouter" {
+		filtered["provider"] = json.RawMessage(`{"allow_fallbacks":false}`)
+	}
+	if provider == "openai" {
+		filtered["store"] = json.RawMessage(`false`)
+	}
+	if provider != "anthropic" {
+		var stream bool
+		_ = json.Unmarshal(filtered["stream"], &stream)
+		if stream {
+			filtered["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		}
+	}
+	return endpoint, filtered, nil
+}
+
 func hasRemoteModelInput(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:

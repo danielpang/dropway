@@ -53,6 +53,8 @@ export function RoomSession({
   parentOrigin: string;
   loadError?: string;
 }) {
+  const commentRetries = React.useRef(new Map<string, string>());
+  const commentRequests = React.useRef(new Set<string>());
   const [activity, setActivity] = React.useState<RoomActivity[]>([]);
   const [activityCursor, setActivityCursor] = React.useState<string | null>(null);
   const [roomList, setRoomList] = React.useState(rooms);
@@ -275,7 +277,12 @@ export function RoomSession({
         });
       }}
       onCreateThread={(input) => {
-        void createThreadAction(input).then((result) => {
+        const request = JSON.stringify(input);
+        if (commentRequests.current.has(request)) return;
+        commentRequests.current.add(request);
+        void createThreadAction({ ...input, retryThreadId: commentRetries.current.get(request) }).then((result) => {
+          if (!result.ok && "retryThreadId" in result && result.retryThreadId) commentRetries.current.set(request, result.retryThreadId);
+          if (result.ok) commentRetries.current.set(request, result.thread.ID);
           if (loadedRoom.current !== input.roomId) return;
           if (!result.ok) {
             setNotice(result.message);
@@ -286,12 +293,13 @@ export function RoomSession({
             return [result.thread, ...rest];
           });
           setNotice(
-            result.thread.AnchorKind === "page"
+            result.job ? "Comment stored and revision queued. Review the proposed change before accepting or rejecting it." : result.thread.AnchorKind === "page"
               ? "Page comment stored on the original version."
               : "Image pin stored on the original version.",
           );
           loadComments(input.siteId);
-        });
+        }).catch(() => setNotice("The comment request was interrupted. Refresh the thread before retrying."))
+          .finally(() => commentRequests.current.delete(request));
       }}
       onLoadMoreRevisions={(roomId, threadId, cursor) => {
         void loadThreadRevisionsAction(roomId, threadId, cursor).then((result) => {
@@ -312,8 +320,8 @@ export function RoomSession({
           }));
         });
       }}
-      onReply={(roomId, threadId, body) => {
-        void replyAction(roomId, threadId, body).then((result) => {
+      onReply={(roomId, threadId, body, execution) => {
+        void replyAction(roomId, threadId, body, execution).then((result) => {
           if (loadedRoom.current !== roomId) return;
           if (!result.ok) {
             setNotice(result.message);
@@ -322,11 +330,11 @@ export function RoomSession({
           setThreads((prev) =>
             prev.map((thread) =>
               thread.ID === threadId
-                ? { ...thread, Replies: [...thread.Replies, result.reply] }
+                ? { ...thread, Replies: [...thread.Replies.filter((item) => item.ID !== result.reply.ID), result.reply] }
                 : thread,
             ),
           );
-          setNotice("Reply stored.");
+          setNotice(result.job ? "Reply stored and revision queued. Review the proposed change before accepting or rejecting it." : "Reply stored.");
         });
       }}
       onSignoff={(roomId, siteId, versionId) => {

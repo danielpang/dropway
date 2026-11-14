@@ -82,6 +82,9 @@ func (c *Config) Normalize() error {
 	return c.Budget.Normalize()
 }
 func ModelAllowed(provider, model string) bool {
+	if provider == "openai" {
+		return model == "gpt-4.1" || model == "gpt-4.1-mini"
+	}
 	if provider == "openrouter" {
 		if !strings.HasPrefix(model, "anthropic/") {
 			return false

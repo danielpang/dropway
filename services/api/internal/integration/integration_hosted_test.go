@@ -174,6 +174,67 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		t.Fatalf("validate %d %s", status, body)
 	}
 	config := hosted.Config{Provider: "anthropic", ModelID: "claude-sonnet-4-5", Prompt: "Change the title", Budget: hosted.Budget{MaxTokens: 20000, MaxCalls: 5, MaxSeconds: 300, MaxOutputBytes: 1 << 20}}
+
+	t.Run("mention replies queue exactly once and plain comments never run", func(t *testing.T) {
+		th, err := st.CreateReviewThread(ctx, tn, room.ID, site.ID, ver.ID, "/index.html", "page", []byte(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := "/v1/project-rooms/" + room.ID + "/threads/" + th.ID + "/replies"
+		if code, out := request("POST", path, "human", map[string]any{"body": "ordinary comment"}); code != 201 {
+			t.Fatalf("plain %d %s", code, out)
+		}
+		jobs, err := st.ListExecutionJobs(ctx, tn, room.ID)
+		if err != nil || len(jobs) != 0 {
+			t.Fatalf("ordinary comment queued AI: %v %v", jobs, err)
+		}
+		if code, _ := request("POST", path, "human", map[string]any{"body": "@dropway change title"}); code != 400 {
+			t.Fatalf("missing execution %d", code)
+		}
+		run := store.MentionExecution{CredentialRef: credential.Credential.ID, Provider: config.Provider, ModelID: config.ModelID, Budget: config.Budget, IdempotencyKey: "mention-test-1"}
+		payload := map[string]any{"body": "@dropway change title", "execution": run}
+		var first, second struct {
+			Reply store.ReviewReply  `json:"reply"`
+			Job   store.ExecutionJob `json:"job"`
+		}
+		code, out := request("POST", path, "human", payload)
+		if code != 201 {
+			t.Fatalf("mention %d %s", code, out)
+		}
+		must(t, json.Unmarshal(out, &first))
+		code, out = request("POST", path, "human", payload)
+		if code != 201 {
+			t.Fatalf("mention retry %d %s", code, out)
+		}
+		must(t, json.Unmarshal(out, &second))
+		if first.Job.ID == "" || first.Job.ID != second.Job.ID || first.Reply.ID != second.Reply.ID {
+			t.Fatal("retry duplicated mention")
+		}
+		payload["body"] = "@dropway other request"
+		if code, _ := request("POST", path, "human", payload); code != 409 {
+			t.Fatalf("changed retry %d", code)
+		}
+		run.CredentialRef = "00000000-0000-0000-0000-000000000001"
+		run.IdempotencyKey = "mention-denied-1"
+		payload["execution"] = run
+		if code, _ := request("POST", path, "human", payload); code != 403 {
+			t.Fatalf("denied credential %d", code)
+		}
+		// Only the ordinary reply and one successful mention were committed.
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = tx.Exec(ctx, `SELECT set_config('app.current_org_id',$1,true)`, org)
+		must(t, err)
+		var count int
+		must(t, tx.QueryRow(ctx, `SELECT count(*) FROM app.review_replies WHERE org_id=$1 AND thread_id=$2`, org, th.ID).Scan(&count))
+		must(t, tx.Rollback(ctx))
+		if count != 2 {
+			t.Fatalf("failed request left reply: %d", count)
+		}
+		must(t, st.CancelExecutionJob(ctx, tn, room.ID, first.Job.ID))
+	})
 	queue := func(key string) store.ExecutionJob {
 		t.Helper()
 		job, err := st.QueueExecution(ctx, tn, room.ID, site.ID, ver.ID, credential.Credential.ID, key, config)

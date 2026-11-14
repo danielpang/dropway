@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ capability: vi.fn(), apply: vi.fn(), decide: vi.fn(), member: vi.fn(), thread: vi.fn(), file: vi.fn() }));
+const mocks = vi.hoisted(() => ({ reply: vi.fn(), createThread: vi.fn(), capability: vi.fn(), apply: vi.fn(), decide: vi.fn(), member: vi.fn(), thread: vi.fn(), file: vi.fn() }));
 vi.mock("@/lib/api", () => ({
   ApiError: class extends Error {
     constructor(public status: number, message: string, public body: unknown) { super(message); }
   },
-  api: { projectCollaborationCapabilities: mocks.capability, applyProjectRoomCandidate: mocks.apply, decideProjectRoomCandidate: mocks.decide, updateProjectRoomMember: mocks.member, getReviewThread: mocks.thread, getRoomVersionFile: mocks.file },
+  api: { addReviewReply: mocks.reply, createReviewThread: mocks.createThread, projectCollaborationCapabilities: mocks.capability, applyProjectRoomCandidate: mocks.apply, decideProjectRoomCandidate: mocks.decide, updateProjectRoomMember: mocks.member, getReviewThread: mocks.thread, getRoomVersionFile: mocks.file },
 }));
 import { ApiError } from "@/lib/api";
-import { applyCandidateAction, decideAction, loadThreadRevisionsAction, loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
+import { replyAction, createThreadAction, applyCandidateAction, decideAction, loadThreadRevisionsAction, loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
 import type { ReviewCandidate } from "@/lib/project-room/contract";
 
 const candidate: ReviewCandidate = {
@@ -80,5 +80,31 @@ describe("immutable static review reads", () => {
     expect(await loadStaticSnapshotAction("room", "site", "version", "/")).toMatchObject({ ok: false });
     mocks.file.mockResolvedValue({ ...file, version_id: "newer-version" });
     expect(await loadStaticSnapshotAction("room", "site", "version", "/")).toMatchObject({ ok: false });
+  });
+});
+
+
+describe("explicit mention execution", () => {
+  const execution = { credential_ref: "connection", provider: "openai" as const, model_id: "gpt-4.1", idempotency_key: "same-comment", budget: { max_tokens: 1000, max_calls: 2, max_seconds: 300, max_output_bytes: 2097152 } };
+  it("ordinary comments send no execution, and mentions require authorized configuration", async () => {
+    mocks.reply.mockResolvedValue({ reply: { ID: "reply", Body: "ordinary" } });
+    expect(await replyAction("room", "thread", "ordinary")).toMatchObject({ ok: true });
+    expect(mocks.reply).toHaveBeenLastCalledWith("room", "thread", "ordinary", undefined);
+    mocks.reply.mockClear();
+    expect(await replyAction("room", "thread", "@dropway revise")).toMatchObject({ ok: false });
+    expect(await replyAction("room", "thread", "ordinary", execution)).toMatchObject({ ok: false });
+    expect(mocks.reply).not.toHaveBeenCalled();
+    expect(await replyAction("room", "thread", "@dropway revise", execution)).toMatchObject({ ok: true });
+    expect(mocks.reply).toHaveBeenLastCalledWith("room", "thread", "@dropway revise", execution);
+  });
+  it("does not post a mention when execution readiness is withdrawn", async () => {
+    mocks.capability.mockResolvedValue({ enabled: true, execution_configured: false });
+    expect(await replyAction("room", "thread", "@dropway revise", execution)).toMatchObject({ ok: false });
+    expect(mocks.reply).not.toHaveBeenCalled();
+  });
+  it("returns the created thread identity if an authorized reply fails so retries preserve its target", async () => {
+    mocks.createThread.mockResolvedValue({ ID: "thread", RoomID: "room", SiteID: "site", VersionID: "version", Page: "/", ContentHash: "hash", AnchorKind: "page", Anchor: {}, AnchorState: "anchored", Status: "open", CreatedBy: "user", CreatedAt: "now" });
+    mocks.reply.mockRejectedValue(new Error("lost response"));
+    expect(await createThreadAction({ roomId: "room", siteId: "site", versionId: "version", page: "/", kind: "page", anchor: {}, body: "@dropway revise", execution })).toMatchObject({ ok: false, retryThreadId: "thread" });
   });
 });

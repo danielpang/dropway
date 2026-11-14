@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { prepareStaticSnapshot, verifiedRasterDataURL } from "@/lib/collab/static-renderer";
 import { snapshotPagePath } from "@/lib/collab/static-snapshot";
 import { collaborationEnabled } from "@/lib/project-room/capabilities";
+import { hasDropwayMention, parseHostedJob, type MentionExecution } from "@/lib/project-room/hosted";
 import { ApiError, api } from "@/lib/api";
 import {
   bindApproval,
@@ -74,29 +75,35 @@ export async function createThreadAction(input: {
   kind: "page" | "point" | "text" | "component";
   anchor: unknown;
   body: string;
+  execution?: MentionExecution;
+  retryThreadId?: string;
 }) {
   if (!(await collaborationEnabled())) return closed();
   if (!["page", "point", "text", "component"].includes(input.kind)) {
     return { ok: false as const, message: "That anchor is not available." };
   }
+  if (hasDropwayMention(input.body) !== Boolean(input.execution)) return { ok: false as const, message: "An @dropway request requires a connection and explicit task authorization." };
+  if (input.execution && !(await collaborationEnabled(true))) return closed();
+  let threadId = input.retryThreadId;
   try {
-    const thread = parseThread(await api.createReviewThread(input));
-    if (!thread) return { ok: false as const, message: "The thread response was not usable." };
-    const reply = input.body.trim()
-      ? await api.addReviewReply(input.roomId, thread.ID, input.body.trim())
-      : null;
-    if (reply) thread.Replies = [...thread.Replies, reply];
-    return { ok: true as const, thread };
+    const thread = threadId ? parseThreadDetail(await api.getReviewThread(threadId)) : parseThread(await api.createReviewThread(input));
+    if (!thread || thread.RoomID !== input.roomId || thread.SiteID !== input.siteId || thread.VersionID !== input.versionId || thread.Page !== input.page) return { ok: false as const, message: "The thread response was not usable." };
+    threadId = thread.ID;
+    const response = input.body.trim() ? await api.addReviewReply(input.roomId, thread.ID, input.body.trim(), input.execution) : null;
+    if (response?.reply) thread.Replies = [...thread.Replies.filter((item) => item.ID !== response.reply.ID), response.reply];
+    return { ok: true as const, thread, job: parseHostedJob(response?.job) };
   } catch (error) {
-    return { ok: false as const, message: messageOf(error) };
+    return { ok: false as const, message: messageOf(error), retryThreadId: threadId };
   }
 }
 
-export async function replyAction(roomId: string, threadId: string, body: string) {
+export async function replyAction(roomId: string, threadId: string, body: string, execution?: MentionExecution) {
   if (!(await collaborationEnabled())) return closed();
+  if (hasDropwayMention(body) !== Boolean(execution)) return { ok: false as const, message: "An @dropway request requires a connection and explicit task authorization." };
+  if (execution && !(await collaborationEnabled(true))) return closed();
   try {
-    const reply = await api.addReviewReply(roomId, threadId, body);
-    return { ok: true as const, reply };
+    const response = await api.addReviewReply(roomId, threadId, body, execution);
+    return { ok: true as const, reply: response.reply, job: parseHostedJob(response.job) };
   } catch (error) {
     return { ok: false as const, message: messageOf(error) };
   }

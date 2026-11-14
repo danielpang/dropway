@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { parseCredential, validHostedRun, type HostedRunInput } from "@/lib/project-room/hosted";
+import { parseCredential, validHostedRun, hasDropwayMention, hostedModels, type HostedRunInput } from "@/lib/project-room/hosted";
 
 const calls = vi.hoisted(() => ({ capability: vi.fn(), setup: vi.fn(), save: vi.fn(), run: vi.fn(), resume: vi.fn(), detail: vi.fn() }));
 vi.mock("@/lib/api", () => ({
@@ -51,5 +51,28 @@ describe("hosted room boundary", () => {
     calls.resume.mockResolvedValue({ job });
     expect(await resumeHostedJobAction("room", "session", "Use blue", "same-request")).toMatchObject({ ok: true });
     expect(calls.resume).toHaveBeenCalledWith("room", "session", "Use blue", "same-request");
+  });
+});
+
+
+describe("reusable provider connections", () => {
+  it("retains team management rights without exposing key material", async () => {
+    const metadata = { id: "team-key", provider: "openai", scope: "team", can_manage: false, owner_user_id: "admin", last_four: "1234", api_key: "secret-not-returned" };
+    expect(parseCredential(metadata)).toMatchObject({ scope: "team", canManage: false, ownerUserId: "admin", provider: "openai" });
+    expect(JSON.stringify(parseCredential(metadata))).not.toContain("secret-not-returned");
+    calls.save.mockResolvedValue({ credential: { ...metadata, can_manage: true } });
+    await saveCredentialAction("openai", "Shared OpenAI", "private-key-material", "team-key", "team");
+    expect(calls.save).toHaveBeenCalledWith({ provider: "openai", label: "Shared OpenAI", api_key: "private-key-material", scope: "team" }, "team-key");
+  });
+  it("validates provider-specific models without silently substituting a provider", () => {
+    expect(hostedModels("openai")).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+    expect(validHostedRun({ ...input, provider: "openai", modelId: "gpt-4.1" })).toBe(true);
+    expect(validHostedRun({ ...input, provider: "openai", modelId: "gpt-4.1-mini" })).toBe(true);
+    expect(validHostedRun({ ...input, provider: "openai", modelId: "claude-sonnet-4-5" })).toBe(false);
+    expect(validHostedRun({ ...input, provider: "anthropic", modelId: "gpt-4.1" })).toBe(false);
+  });
+  it("recognizes explicit standalone mentions without treating emails or other handles as commands", () => {
+    for (const text of ["@dropway revise", "Please (@DROPWAY) revise", "Hello @dropway!", "@dropway"]) expect(hasDropwayMention(text)).toBe(true);
+    for (const text of ["ordinary comment", "person@dropway.com", "@dropway-helper", "@dropway2", "hello@dropway"]) expect(hasDropwayMention(text)).toBe(false);
   });
 });

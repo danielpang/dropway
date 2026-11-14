@@ -83,10 +83,10 @@ export function CandidateReview({
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={approveDisabled} onClick={() => onDecide("approve")}>
-          Approve
+          Accept change
         </Button>
         <Button type="button" variant="outline" disabled={rejectDisabled} onClick={() => onDecide("reject")}>
-          Reject
+          Reject change
         </Button>
         <Button type="button" variant="secondary" disabled={applyDisabled} onClick={onApply}>
           Apply

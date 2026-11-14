@@ -19,6 +19,7 @@ export function assertSdkPin(): void {
 }
 
 export const ALLOWED_MODELS = {
+  openai: ["gpt-4.1", "gpt-4.1-mini"],
   anthropic: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
   openrouter: [
     "anthropic/claude-sonnet-4-5",
@@ -74,6 +75,8 @@ const SECRET_KEYS = new Set([
   "accesstoken",
   "anthropickey",
   "openrouterkey",
+  "openaikey",
+  "openaiapikey",
 ]);
 
 export function assertNoSecretFields(value: unknown, path = "input"): void {
@@ -144,7 +147,7 @@ export function validateCapability(capability: GatewayCapability, pin: RunPin, n
   }
 }
 
-const BLOCKED_GATEWAY_HOSTS = ["api.anthropic.com", "openrouter.ai", "api.sprites.dev", "api.fly.io"];
+const BLOCKED_GATEWAY_HOSTS = ["api.openai.com", "api.anthropic.com", "openrouter.ai", "api.sprites.dev", "api.fly.io"];
 
 export function assertGatewayUrl(raw: string): URL {
   let url: URL;
@@ -159,6 +162,7 @@ export function assertGatewayUrl(raw: string): URL {
   if (
     BLOCKED_GATEWAY_HOSTS.includes(host) ||
     host.endsWith(".anthropic.com") ||
+    host.endsWith(".openai.com") ||
     host.endsWith(".openrouter.ai") ||
     host.endsWith(".fly.io") ||
     host.endsWith(".sprites.app")

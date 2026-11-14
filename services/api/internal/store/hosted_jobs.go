@@ -118,7 +118,7 @@ func (s *Store) authorizeExecution(ctx context.Context, tx pgx.Tx, q *db.Queries
 	}
 	var generation int
 	var provider string
-	if err := tx.QueryRow(ctx, `SELECT generation,provider FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND owner_user_id=$3 AND revoked_at IS NULL AND validated_at IS NOT NULL FOR SHARE`, j.OrgID, j.CredentialRef, j.InitiatorUserID).Scan(&generation, &provider); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT generation,provider FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND (owner_user_id=$3 OR scope='team') AND revoked_at IS NULL AND validated_at IS NOT NULL FOR SHARE`, j.OrgID, j.CredentialRef, j.InitiatorUserID).Scan(&generation, &provider); err != nil {
 		return hosted.ErrDenied
 	}
 	if generation != j.CredentialGeneration || provider != j.Config.Provider {
@@ -128,6 +128,15 @@ func (s *Store) authorizeExecution(ctx context.Context, tx pgx.Tx, q *db.Queries
 }
 func (s *Store) QueueExecution(ctx context.Context, t Tenant, roomID, siteID, versionID, credentialID, key string, config hosted.Config) (ExecutionJob, error) {
 	var out ExecutionJob
+	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
+		var err error
+		out, err = s.queueExecutionTx(ctx, t, tx, q, roomID, siteID, versionID, credentialID, key, config)
+		return err
+	})
+	return out, err
+}
+func (s *Store) queueExecutionTx(ctx context.Context, t Tenant, tx pgx.Tx, q *db.Queries, roomID, siteID, versionID, credentialID, key string, config hosted.Config) (ExecutionJob, error) {
+	var out ExecutionJob
 	if !HumanSessionFromContext(ctx) || len(key) < 8 || len(key) > 128 {
 		return out, hosted.ErrInvalid
 	}
@@ -135,7 +144,7 @@ func (s *Store) QueueExecution(ctx context.Context, t Tenant, roomID, siteID, ve
 		return out, err
 	}
 	fingerprint := hosted.Fingerprint([]any{roomID, siteID, versionID, credentialID, config})
-	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
+	err := func() error {
 		// Tenant advisory lock serializes idempotency and queue caps without granting
 		// a global queue lock across organizations.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, t.OrgID+":execution-queue"); err != nil {
@@ -164,7 +173,7 @@ func (s *Store) QueueExecution(ctx context.Context, t Tenant, roomID, siteID, ve
 			return ErrNotFound
 		}
 		var generation int
-		if err := tx.QueryRow(ctx, `SELECT generation FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND owner_user_id=$3 AND revoked_at IS NULL`, t.OrgID, credentialID, t.UserID).Scan(&generation); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT generation FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND (owner_user_id=$3 OR scope='team') AND revoked_at IS NULL`, t.OrgID, credentialID, t.UserID).Scan(&generation); err != nil {
 			return hosted.ErrDenied
 		}
 		out = ExecutionJob{OrgID: t.OrgID, RoomID: roomID, SiteID: siteID, VersionID: versionID, ContentHash: version.ContentHash, InitiatorUserID: t.UserID, CredentialRef: credentialID, CredentialGeneration: generation, Config: config}
@@ -190,7 +199,7 @@ func (s *Store) QueueExecution(ctx context.Context, t Tenant, roomID, siteID, ve
 			return err
 		}
 		return recordHostedAudit(ctx, tx, t.OrgID, t.UserID, "execution.queued", "job:"+out.ID)
-	})
+	}()
 	return out, err
 }
 func (s *Store) ClaimExecutionJob(ctx context.Context, worker string) (*ExecutionClaim, error) {

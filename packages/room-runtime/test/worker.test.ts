@@ -62,6 +62,42 @@ describe("Pi remote attempt", () => {
     }
   });
 
+  it.each(["gpt-4.1", "gpt-4.1-mini"])("runs %s tool calls through the pinned OpenAI gateway with final usage", async (modelId) => {
+    const restore = withSentinels();
+    try {
+      const { worker, gateway, plane } = await stack();
+      const run = pin({ provider: "openai", modelId });
+      gateway.steps = [
+        { kind: "tool", name: "read", input: { path: "index.html" }, usage: { input: 3, output: 2 } },
+        { kind: "text", text: "reviewed", usage: { input: 2, output: 1 } },
+      ];
+      const result = await worker.run(run, capability(run), "read the page");
+      expect(result.status, JSON.stringify(result)).toBe("completed");
+      expect(result.usage).toEqual({ input: 5, output: 3, total: 8 });
+      expect(plane.ops.map(op => op.kind)).toEqual(["read"]);
+      expect(gateway.requests).toHaveLength(2);
+      for (const request of gateway.requests) {
+        expect(request.url).toBe("/v1/chat/completions");
+        expect(request.headers.authorization).toBe("Bearer dw_gateway_attempttoken");
+        const body = JSON.parse(request.body);
+        expect(body.model).toBe(modelId);
+        expect(body.stream_options).toEqual({ include_usage: true });
+        expect(body.max_completion_tokens).toBeUndefined();
+        for (const sentinel of SENTINELS) expect(JSON.stringify(request)).not.toContain(sentinel);
+      }
+      expect(result.destroyedReason).toBe("finish");
+    } finally { restore(); }
+  });
+
+  it("rejects OpenAI tool calls when the final usage chunk is missing", async () => {
+    const { worker, gateway, plane } = await stack();
+    const run = pin({ provider: "openai", modelId: "gpt-4.1" });
+    gateway.steps = [{ kind: "tool", name: "bash", input: { command: "pwd" }, usage: "absent" }];
+    const result = await worker.run(run, capability(run), "inspect");
+    expect(result.status).toBe("usage_absent");
+    expect(plane.ops).toEqual([]);
+  });
+
   it("runs file and shell tools only on the attempt sandbox", async () => {
     const restore = withSentinels();
     const dir = await trapDirectory();

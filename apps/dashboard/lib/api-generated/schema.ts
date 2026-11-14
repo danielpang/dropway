@@ -702,6 +702,324 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{id}/comment-pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page site comments and room review threads
+         * @description Human session or MCP OAuth. One page of feed comments and room threads, including resolved and orphaned anchors. Bodies are untrusted data. API keys are denied.
+         */
+        get: operations["listSiteCommentPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one project room
+         * @description Human session or MCP OAuth. Returns the caller role, members, and referenced sites.
+         */
+        get: operations["getProjectRoom"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page activity visible to a room member
+         * @description Human session or MCP OAuth. Detached site activity is excluded. Membership is rechecked on each page.
+         */
+        get: operations["listRoomActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark the caller's room activity as read
+         * @description Human room member only. Does not approve, resolve, or apply anything.
+         */
+        post: operations["markProjectRoomRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Page room review threads */
+        get: operations["listRoomThreads"];
+        put?: never;
+        /**
+         * Create a review thread
+         * @description Human session only.
+         */
+        post: operations["createReviewThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/threads/{threadID}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post a comment, optionally requesting a bounded AI revision
+         * @description Human sessions only. Ordinary comments never queue AI. A standalone @dropway mention requires explicit execution settings and commits its reply and job atomically. The caller must be able to run revisions on the pinned current site version. Retrying the same idempotency key and payload returns the same reply/job. AI output never publishes automatically.
+         */
+        post: operations["addReviewReply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/threads/{threadID}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve a review thread
+         * @description Human owner, editor, or reviewer. Does not change anchor history.
+         */
+        post: operations["resolveReviewThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/threads/{threadID}/reanchor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append an anchor revision
+         * @description Human owner, editor, or reviewer. The original pin stays immutable.
+         */
+        post: operations["reanchorReviewThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page review candidates
+         * @description Read-only. MCP OAuth may list candidates and cannot approve them.
+         */
+        get: operations["listRoomCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/candidates/{candidateID}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a candidate diff against its pinned base
+         * @description Human session or MCP OAuth. Returns the file list and bounded before/after text. Bodies are untrusted. The manifest digest is checked against the candidate content hash and the base hash; any mismatch is 409 and returns no file text. Binary files are metadata only. Truncation is explicit.
+         */
+        get: operations["getCandidateDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/candidates/{candidateID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one review candidate */
+        get: operations["getRoomCandidate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/candidates/{candidateID}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply exactly one approved candidate
+         * @description Human room owner or editor with site edit rights. Verifies the complete candidate manifest and blobs, locks and rechecks the live baseline, and publishes the approved artifact with an immutable application receipt. Retries do not publish twice or roll back later work. Approval alone does not publish.
+         */
+        post: operations["applyRoomCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a room member
+         * @description Human room owner only.
+         */
+        post: operations["addProjectRoomMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/sites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reference a same-org site
+         * @description Human room owner or editor with access to the same-org site. Does not change site ownership or access.
+         */
+        post: operations["addProjectRoomSite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/sites/{siteID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Detach a site reference
+         * @description Human room owner only. Does not delete candidates or waive the candidate-hash publish rule.
+         */
+        delete: operations["removeProjectRoomSite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/threads/{threadID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page one review thread and its replies
+         * @description Human session or MCP OAuth. Membership is rechecked. Reply bodies and anchor reasons are untrusted. Reply and anchor-history pages have independent authenticated opaque cursors bound to caller, tenant and thread, a fixed creation watermark, and a 30-minute expiry. Key rotation requires a fresh traversal. Unsupported filters are rejected. Read rate limits return 429.
+         */
+        get: operations["getReviewThreadPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{id}/comments": {
         parameters: {
             query?: never;
@@ -1371,10 +1689,293 @@ export interface paths {
         patch: operations["patchChatSettings"];
         trace?: never;
     };
+    "/v1/project-collaboration/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read authoritative collaboration rollout and execution readiness
+         * @description Requires authenticated current organization membership. Evaluates the project-collaboration PostHog flag for the verified user ID with org_id and environment properties. Only boolean true enables rollout; missing configuration, evaluation errors, and variant strings fail closed. Organization opt-in and permissions remain independent requirements. This endpoint stays available when rollout is off and is never cached.
+         */
+        get: operations["getProjectCollaborationCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/provider-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List reusable personal and team credential metadata
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        get: operations["listProviderCredentials"];
+        put?: never;
+        /**
+         * Encrypt a reusable provider credential
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        post: operations["saveProviderCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/provider-credentials/{credentialID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace and invalidate a credential generation
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        put: operations["replaceProviderCredential"];
+        post?: never;
+        /**
+         * Revoke a personal credential
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        delete: operations["revokeProviderCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/provider-credentials/{credentialID}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate a credential with its provider
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        post: operations["validateProviderCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List recent room execution jobs
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        get: operations["listHostedExecutions"];
+        put?: never;
+        /**
+         * Queue a bounded revision of immutable site assets
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        post: operations["queueHostedExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/executions/{jobID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read execution progress and clarification
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        get: operations["getHostedExecution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/executions/{jobID}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel an execution and revoke its capabilities
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        post: operations["cancelHostedExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/sessions/{sessionID}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume clarification in a fresh attempt
+         * @description Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Personal credentials belong to their creator. Team connections are reusable across the organization and managed only by organization admins/owners. Scope is immutable; no secret values are returned.
+         */
+        post: operations["resumeHostedExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/sites/{siteID}/versions/{versionID}/files/content": {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+                siteID: string;
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read authorized immutable bytes for a static review rendition
+         * @description Human session or MCP OAuth. Rechecks live room membership/site access and verifies manifest/blob integrity. Maximum 2 MiB per file. Response is private and not cacheable. The content must never be executed on the application origin.
+         */
+        get: operations["readReviewVersionFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProviderCredential: {
+            id: string;
+            /** @enum {string} */
+            provider: "anthropic" | "openrouter" | "openai";
+            label: string;
+            last_four: string;
+            generation: number;
+            validated_at: string | null;
+            revoked_at: string | null;
+            created_at: string;
+            /** @enum {string} */
+            scope: "personal" | "team";
+            can_manage: boolean;
+            /** Format: uuid */
+            owner_user_id: string;
+        };
+        ExecutionBudget: {
+            max_tokens: number;
+            max_calls: number;
+            max_seconds: number;
+            max_output_bytes: number;
+        };
+        ExecutionConfig: {
+            provider: string;
+            model_id: string;
+            harness_id: string;
+            harness_version: string;
+            prompt: string;
+            budget: components["schemas"]["ExecutionBudget"];
+            tool_policy: string;
+        };
+        ExecutionJob: {
+            id: string;
+            org_id: string;
+            room_id: string;
+            site_id: string;
+            version_id: string;
+            content_hash: string;
+            initiator_user_id: string;
+            credential_ref: string;
+            created_at: string;
+            updated_at: string;
+            /** @enum {string} */
+            state: "queued" | "running" | "clarification" | "completed" | "failed" | "cancelled";
+            config: components["schemas"]["ExecutionConfig"];
+            attempt_count: number;
+            tokens_used: number;
+            calls_used: number;
+            credential_generation: number;
+            candidate_id: string | null;
+            session_id: string | null;
+            failure_code: string | null;
+        };
+        RoomActivity: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            room_id: string;
+            /** Format: uuid */
+            actor_user_id: string;
+            kind: string;
+            /** Format: uuid */
+            thread_id?: string;
+            /** Format: uuid */
+            site_id?: string;
+            /** Format: uuid */
+            version_id?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         Me: {
             user_id?: string;
             org_id?: string;
@@ -1527,6 +2128,8 @@ export interface components {
             access_mode?: "public" | "password" | "allowlist" | "org_only";
             /** Format: uuid */
             current_version_id?: string | null;
+            /** @description SHA-256 of the live version. Empty when the site has no live version. Compare with a candidate base_content_hash. */
+            current_content_hash?: string;
             /** Format: uri */
             live_url?: string;
             /**
@@ -3301,6 +3904,533 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listSiteCommentPage: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description app.sites.id */
+                id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page. comment_content is untrusted_data. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @enum {string} */
+                            source: "feed" | "room";
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: date-time */
+                            created_at: string;
+                            body?: string;
+                            /** Format: uuid */
+                            room_id?: string;
+                            /** Format: uuid */
+                            version_id?: string;
+                            content_hash?: string;
+                            anchor_state?: string;
+                            status?: string;
+                            untrusted: boolean;
+                        }[];
+                        next_cursor?: string;
+                        /** @enum {string} */
+                        comment_content: "untrusted_data";
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getProjectRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Room detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listRoomActivity: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activity page and unread count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["RoomActivity"][];
+                        unread: number;
+                        next_cursor?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    markProjectRoomRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read timestamp */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        last_read_at: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listRoomThreads: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Thread page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createReviewThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addReviewReply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    body: string;
+                    execution?: {
+                        /** Format: uuid */
+                        credential_ref: string;
+                        /** @enum {string} */
+                        provider: "anthropic" | "openrouter" | "openai";
+                        model_id: string;
+                        idempotency_key: string;
+                        budget: components["schemas"]["ExecutionBudget"];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Reply and optional queued job */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description Changed request or stale baseline */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolveReviewThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resolved thread */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    reanchorReviewThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Thread and revisions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listRoomCandidates: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Candidate page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCandidateDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                candidateID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified diff */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        candidate_id: string;
+                        /** Format: uuid */
+                        site_id?: string;
+                        /** Format: uuid */
+                        base_version_id: string;
+                        base_content_hash: string;
+                        content_hash: string;
+                        /** @enum {boolean} */
+                        verified: true;
+                        truncated?: boolean;
+                        omitted_files?: number;
+                        /** @enum {string} */
+                        comment_content: "untrusted_data";
+                        files: {
+                            path: string;
+                            /** @enum {string} */
+                            change: "added" | "removed" | "modified" | "unchanged";
+                            binary: boolean;
+                            before_sha256?: string;
+                            after_sha256?: string;
+                            before_size?: number;
+                            after_size?: number;
+                            before?: string;
+                            after?: string;
+                            before_truncated?: boolean;
+                            after_truncated?: boolean;
+                            untrusted: boolean;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getRoomCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                candidateID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Candidate detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    applyRoomCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                candidateID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    candidate_id: string;
+                    content_hash: string;
+                    /** Format: uuid */
+                    base_version_id: string;
+                    base_content_hash: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Application receipt; changed is false for a retry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        applied: boolean;
+                        changed: boolean;
+                        /** Format: uuid */
+                        version_id: string;
+                        live_url?: string;
+                        candidate: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    addProjectRoomMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addProjectRoomSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Referenced */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    removeProjectRoomSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                siteID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detached */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getReviewThreadPage: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                /** @description Independent anchor-history continuation token */
+                revisions_cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                threadID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Thread with original pin, replies, revisions, next_cursor and next_revision_cursor. Each collection is independently byte-bounded and paginated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description One review item exceeds the supported response byte limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review read rate limit exceeded; retry after the Retry-After header */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listComments: {
         parameters: {
             query?: never;
@@ -4911,6 +6041,447 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getProjectCollaborationCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current rollout decision and server execution configuration */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Server-authoritative PostHog rollout decision for this user and organization. */
+                        enabled: boolean;
+                        /** @description Valid server vault, worker authentication and public API URL configuration; independent of rollout and organization consent. */
+                        execution_configured: boolean;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Organization membership store is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listProviderCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        credentials: components["schemas"]["ProviderCredential"][];
+                        execution_enabled: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    saveProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    provider: "anthropic" | "openrouter" | "openai";
+                    label: string;
+                    /**
+                     * @description Team creation and management require an organization admin or owner. Scope cannot be changed in place.
+                     * @default personal
+                     * @enum {string}
+                     */
+                    scope?: "personal" | "team";
+                    api_key: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        credential: components["schemas"]["ProviderCredential"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    replaceProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    provider: "anthropic" | "openrouter" | "openai";
+                    label: string;
+                    /**
+                     * @description Team creation and management require an organization admin or owner. Scope cannot be changed in place.
+                     * @default personal
+                     * @enum {string}
+                     */
+                    scope?: "personal" | "team";
+                    api_key: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        credential: components["schemas"]["ProviderCredential"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    revokeProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    validateProviderCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credentialID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        validated: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listHostedExecutions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        jobs: components["schemas"]["ExecutionJob"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    queueHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    site_id: string;
+                    version_id: string;
+                    credential_ref: string;
+                    /** @enum {string} */
+                    provider: "anthropic" | "openrouter" | "openai";
+                    model_id: string;
+                    prompt: string;
+                    idempotency_key: string;
+                    budget: components["schemas"]["ExecutionBudget"];
+                    thread_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job: components["schemas"]["ExecutionJob"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job: components["schemas"]["ExecutionJob"];
+                        events: {
+                            id: string;
+                            kind: string;
+                            message: string;
+                            created_at: string;
+                        }[];
+                        question?: string;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resumeHostedExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    answer: string;
+                    idempotency_key: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        job: components["schemas"]["ExecutionJob"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Hosted execution configuration is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readReviewVersionFile: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                roomID: string;
+                siteID: string;
+                versionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        site_id: string;
+                        version_id: string;
+                        content_hash: string;
+                        path: string;
+                        content_base64: string;
+                        content_type: string;
+                        sha256: string;
+                    };
+                };
+            };
             403: components["responses"]["Forbidden"];
         };
     };

@@ -207,13 +207,13 @@ describe("project room markup", () => {
         onDecide: () => undefined,
       }),
     );
-    expect(html).toContain("Approve");
-    expect(html).toContain("Reject");
+    expect(html).toContain("Accept change");
+    expect(html).toContain("Reject change");
     expect(html).toContain("Apply");
     expect(html).toContain("Apply publishes this exact approved change");
     expect(buttonDisabled(html, "Apply")).toBe(true);
-    expect(buttonDisabled(html, "Approve")).toBe(false);
-    expect(buttonDisabled(html, "Reject")).toBe(false);
+    expect(buttonDisabled(html, "Accept change")).toBe(false);
+    expect(buttonDisabled(html, "Reject change")).toBe(false);
     expect(html).toContain("modified");
     expect(html).toContain("added");
     expect(html).toContain("removed");
@@ -237,8 +237,8 @@ describe("project room markup", () => {
       }),
     );
     expect(stale).toContain("needs a new candidate");
-    expect(buttonDisabled(stale, "Approve")).toBe(true);
-    expect(buttonDisabled(stale, "Reject")).toBe(false);
+    expect(buttonDisabled(stale, "Accept change")).toBe(true);
+    expect(buttonDisabled(stale, "Reject change")).toBe(false);
 
     const mismatch = renderToStaticMarkup(
       createElement(CandidateReview, {
@@ -250,8 +250,8 @@ describe("project room markup", () => {
       }),
     );
     expect(mismatch).toContain("Cannot verify this change.");
-    expect(buttonDisabled(mismatch, "Approve")).toBe(true);
-    expect(buttonDisabled(mismatch, "Reject")).toBe(false);
+    expect(buttonDisabled(mismatch, "Accept change")).toBe(true);
+    expect(buttonDisabled(mismatch, "Reject change")).toBe(false);
 
     const room = renderToStaticMarkup(
       createElement(RoomWorkspace, {
@@ -407,8 +407,8 @@ describe("application review controls", () => {
   }
   it("requires approval, a verified exact diff, matching baseline and content rights before applying", () => {
     expect(buttonDisabled(markup(), "Apply")).toBe(false);
-    expect(buttonDisabled(markup(), "Reject")).toBe(true);
-    expect(buttonDisabled(markup(), "Approve")).toBe(true);
+    expect(buttonDisabled(markup(), "Reject change")).toBe(true);
+    expect(buttonDisabled(markup(), "Accept change")).toBe(true);
     for (const change of [
       { candidate }, { candidate: { ...candidate, State: "rejected" } },
       { candidate: { ...candidate, State: "approved", AppliedVersionID: "next" } },
@@ -417,7 +417,7 @@ describe("application review controls", () => {
       { diff: { status: "unverified" as const } },
       { diff: { status: "verified" as const, diff: { ...diff, siteId: "other-site" } } },
     ]) expect(buttonDisabled(markup(change), "Apply")).toBe(true);
-    expect(buttonDisabled(markup({ busy: true }), "Reject")).toBe(true);
+    expect(buttonDisabled(markup({ busy: true }), "Reject change")).toBe(true);
     const applied = markup({ candidate: { ...candidate, State: "approved", AppliedVersionID: "next" }, live: { versionId: "next", contentHash: "hash-next" } });
     expect(applied).toContain("Applied as version next");
     expect(applied).not.toContain("needs a new candidate");

@@ -7,6 +7,8 @@
 "use client";
 
 import * as React from "react";
+import { MentionExecutionControls } from "./mention-execution";
+import { hasDropwayMention, type MentionExecution } from "@/lib/project-room/hosted";
 
 import { HostedExecution } from "@/components/project-room/hosted-execution";
 import { StaticReview } from "@/components/collab/static-review";
@@ -126,10 +128,11 @@ export function RoomWorkspace({
     kind: "page" | "point" | "text" | "component";
     anchor: unknown;
     body: string;
+    execution?: MentionExecution;
   }) => void;
   onLoadMoreRevisions?: (roomId: string, threadId: string, cursor: string) => void;
   onLoadMoreReplies?: (roomId: string, threadId: string, cursor: string) => void;
-  onReply: (roomId: string, threadId: string, body: string) => void;
+  onReply: (roomId: string, threadId: string, body: string, execution?: MentionExecution) => void;
   onSignoff: (roomId: string, siteId: string, versionId: string) => void;
   onDecide: (roomId: string, candidate: ReviewCandidate, decision: "approve" | "reject") => void;
   onApply?: (roomId: string, candidate: ReviewCandidate) => void;
@@ -228,6 +231,8 @@ export function RoomWorkspace({
   const role = room ? parseRole(room.Role) : null;
   const site = sites.find((item) => item.id === siteId) ?? null;
   const rights: SiteRights = { canRead: site !== null, canEditContent: site?.canEditContent === true };
+  const [commentExecution, setCommentExecution] = React.useState<MentionExecution>();
+  const [replyExecutions, setReplyExecutions] = React.useState<Record<string, MentionExecution | undefined>>({});
   const commentOk = role ? canComment(role, rights) : false;
   const decideOk = role ? canDecideChange(role, rights) : false;
   const signoffOk = role ? canSignOffVersion(role, rights) : false;
@@ -245,7 +250,7 @@ export function RoomWorkspace({
       <header className="space-y-2">
         <h1 className="text-lg font-medium text-foreground">Project rooms</h1>
         <p className="text-sm text-muted-foreground">
-          Same-org review of an existing site. Comments do not run an agent. Version sign-off is
+          Same-org review of an existing site. Ordinary comments do not run an agent. An authorized @dropway mention requests a revision. Version sign-off is
           not approval of a change. Frame messages cannot approve or execute tools.
         </p>
         {notice ? <p role="status" className="text-sm text-foreground">{notice}</p> : null}
@@ -449,7 +454,7 @@ export function RoomWorkspace({
             src={preview}
             disabled={!commentOk || !room}
             onPin={(anchor) => {
-              if (!room || !site || !versionId.trim() || !body.trim()) return;
+              if (!room || !site || !versionId.trim() || !body.trim() || (hasDropwayMention(body) && !commentExecution)) return;
               onCreateThread({
                 roomId: room.ID,
                 siteId: site.id,
@@ -458,6 +463,7 @@ export function RoomWorkspace({
                 kind: "point",
                 anchor,
                 body: body.trim(),
+                execution: hasDropwayMention(body) ? commentExecution : undefined,
               });
             }}
           />
@@ -466,7 +472,7 @@ export function RoomWorkspace({
           className="space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!room || !commentOk) return;
+            if (!room || !commentOk || (hasDropwayMention(body) && !commentExecution)) return;
             const anchor = staticSelection && snapshot?.siteId === siteId && snapshot.versionId === versionId && snapshot.page === page ? staticSelection : pageCommentAnchor();
             onCreateThread({
               roomId: room.ID,
@@ -476,6 +482,7 @@ export function RoomWorkspace({
               kind: anchor.kind,
               anchor: anchor.anchor,
               body: body.trim(),
+                execution: hasDropwayMention(body) ? commentExecution : undefined,
             });
           }}
         >
@@ -505,7 +512,8 @@ export function RoomWorkspace({
             onChange={(event) => setBody(event.target.value)}
             className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
           />
-          <Button type="submit" disabled={!commentOk || body.trim().length === 0}>
+          {hasDropwayMention(body) ? <MentionExecutionControls key={`${room?.ID}:${siteId}:${versionId}:${page}`} body={body} allowed={!!executionConfigured && decideOk && versionId === site?.currentVersionId} onChange={setCommentExecution} /> : null}
+          <Button type="submit" disabled={!commentOk || body.trim().length === 0 || (hasDropwayMention(body) && !commentExecution)}>
             {staticSelection ? "Comment on selection" : "Comment on this page"}
           </Button>
           {commentOk ? null : (
@@ -590,7 +598,8 @@ export function RoomWorkspace({
                   event.preventDefault();
                   const text = (replyByThread[thread.ID] ?? "").trim();
                   if (!room || !commentOk || text.length === 0) return;
-                  onReply(room.ID, thread.ID, text);
+                  if (hasDropwayMention(text) && !replyExecutions[thread.ID]) return;
+                  onReply(room.ID, thread.ID, text, hasDropwayMention(text) ? replyExecutions[thread.ID] : undefined);
                 }}
               >
                 <Input
@@ -598,7 +607,8 @@ export function RoomWorkspace({
                   value={replyByThread[thread.ID] ?? ""}
                   onChange={(event) => setReplyByThread((prev) => ({ ...prev, [thread.ID]: event.target.value }))}
                 />
-                <Button type="submit" disabled={!commentOk || (replyByThread[thread.ID] ?? "").trim().length === 0}>
+                {hasDropwayMention(replyByThread[thread.ID] ?? "") ? <MentionExecutionControls body={replyByThread[thread.ID] ?? ""} allowed={!!executionConfigured && decideOk && thread.SiteID === site?.id && thread.VersionID === site.currentVersionId && thread.ContentHash === site.currentContentHash} onChange={(value) => setReplyExecutions((prev) => ({ ...prev, [thread.ID]: value }))} /> : null}
+                <Button type="submit" disabled={!commentOk || (replyByThread[thread.ID] ?? "").trim().length === 0 || (hasDropwayMention(replyByThread[thread.ID] ?? "") && !replyExecutions[thread.ID])}>
                   Reply
                 </Button>
               </form>

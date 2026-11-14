@@ -51,3 +51,20 @@ func TestBudgetAndPinnedModels(t *testing.T) {
 		t.Fatal("unbounded calls")
 	}
 }
+
+func TestOpenAIPinnedModelsAndRedaction(t *testing.T) {
+	for _, model := range []string{"gpt-4.1", "gpt-4.1-mini"} {
+		c := Config{Provider: "openai", ModelID: model, Prompt: "edit"}
+		if err := c.Normalize(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, model := range []string{"gpt-4.1-nano", "gpt-5", "anthropic/claude-sonnet-4-5"} {
+		if ModelAllowed("openai", model) {
+			t.Fatalf("unpinned model accepted: %s", model)
+		}
+	}
+	if Redact("sk-proj-private-provider-secret") != "[redacted]" {
+		t.Fatal("OpenAI project secret not redacted")
+	}
+}

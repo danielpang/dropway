@@ -1,6 +1,6 @@
 # Hosted collaboration: development setup and verification
 
-This branch adds hosted editing of existing uploaded static site assets. A personal Anthropic or OpenRouter credential authorizes model calls. A dedicated Node 24 Fly worker claims Postgres jobs, stages an immutable site version in a fresh private Sprite, runs pinned Pi 1.5.0, captures the resulting files, destroys the Sprite, and submits an immutable candidate. Human approval and Apply remain separate actions. A clarification stores the transcript and modified file snapshot in Postgres and destroys the Sprite; an answer starts a fresh attempt with the same configuration and cumulative budget.
+This branch adds hosted editing of existing uploaded static site assets. A reusable personal or team Anthropic, OpenRouter, or OpenAI connection authorizes model calls. A dedicated Node 24 Fly worker claims Postgres jobs, stages an immutable site version in a fresh private Sprite, runs pinned Pi 1.5.0, captures the resulting files, destroys the Sprite, and submits an immutable candidate. Human approval and Apply remain separate actions. A clarification stores the transcript and modified file snapshot in Postgres and destroys the Sprite; an answer starts a fresh attempt with the same configuration and cumulative budget.
 
 No production migration, deployment, paid model call, or Sprite provisioning was performed during implementation. Live development testing is the project owner's next step. Mock tests do not establish real network isolation or billing behavior.
 
@@ -24,7 +24,7 @@ Organization opt-in (`app.org_meta.project_rooms_enabled`) remains required, alo
 
 ## Configuration
 
-Apply migrations through `0022_projection_polling.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
+Apply migrations through `0024_mention_execution.sql` to the development database using the repository migration workflow. API and identity schemas must already be initialized. Keep the same development R2 storage and tenant setup used by the API.
 
 | Process | Setting | Value / purpose |
 | --- | --- | --- |
@@ -61,3 +61,15 @@ The API keeps encrypted keys separate from leased attempt and gateway capabiliti
 The worker has no local shell/file tool fallback. Sandbox networking is deny-all; this integration edits already-built assets and does not install dependencies. Source and output files are limited to 2 MiB each. Output is limited to 500 files and 10 MiB, additionally bounded by the job's configured output limit. Historical file reads are limited to 2 MiB per file. Existing review pins, outstanding candidates and active execution sources are retained by garbage collection.
 
 To pause rollout, disable `project-collaboration` in PostHog and keep workers running to clean up existing leases. For an application rollback, retain the expanded schema and redeploy a compatible image as described in the API rollout guide. Do not use migration Down to disable a feature: it drops hosted state and review records.
+
+## Shared connections and mention requests
+
+Connections are reusable across all rooms and sites in the same organization. A personal connection is visible and usable only by its creator. An organization owner/admin may create a team connection, which authorized room editors can use without seeing the key. Owners/admins manage team connections; room roles and site edit rights still control who can request changes. Scope and provider are immutable: create a new connection to change them. Rotating or revoking a connection invalidates previously authorized attempts through its generation/current status.
+
+In `/rooms`, select a room and open **Hosted revisions → Your provider connections** to create, validate, replace, or revoke a connection. Choose **Personal** or **Team** when creating it (Team requires organization admin/owner). Existing connections retain personal scope after migration. OpenAI connections support `gpt-4.1` and `gpt-4.1-mini` through the bounded gateway; raw provider keys never enter the Sprite. Model usage is billed to the selected provider account.
+
+Ordinary comments do not start AI. A standalone `@dropway` mention in a new comment or reply requests a revision only with explicit connection/model/budget settings and paid-use authorization in the composer. An incomplete setup fails visibly; it never silently selects another person's personal key. The server atomically commits the reply and queued job and deduplicates retries. Historical threads cannot launch edits against a newer live baseline. The separate **Run hosted revision** control remains an explicit alternative trigger.
+
+AI creates a candidate only. Review its summary and file changes, then **Accept change** or **Reject change**. Acceptance records approval; the separate **Apply** action publishes. Rejecting leaves the live site unchanged. No comment, model response, or mention automatically approves or publishes a candidate.
+
+Migrations 0023–0024 add credential scope/OpenAI support and reply/job linkage. Keep the expanded schema on application rollback; older workers must be drained/replaced before enabling new provider jobs. Production acceptance should exercise team revocation, mention retries, all three providers, and rejection with disposable sites under the PostHog test cohort. Local tests use fake provider responses, not paid calls.

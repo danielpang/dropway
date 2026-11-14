@@ -15,6 +15,7 @@ import (
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/services/api/internal/apikeygrant"
+	"github.com/danielpang/dropway/services/api/internal/hosted"
 	"github.com/danielpang/dropway/services/api/internal/orchestrate"
 	"github.com/danielpang/dropway/services/api/internal/projectroom"
 	"github.com/danielpang/dropway/services/api/internal/sprites"
@@ -260,10 +261,27 @@ func (a *API) AddReviewReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Body string `json:"body"`
+		Body      string                  `json:"body"`
+		Execution *store.MentionExecution `json:"execution,omitempty"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+	if hosted.HasDropwayMention(req.Body) || req.Execution != nil {
+		if !hosted.HasDropwayMention(req.Body) || req.Execution == nil {
+			writeHostedError(w, hosted.ErrInvalid)
+			return
+		}
+		if !a.hostedReady(w) || !a.requireOrgMember(w, r, t) {
+			return
+		}
+		reply, job, err := a.Hosted.Store.AddMentionReply(store.WithHumanSession(r.Context(), true), t, chi.URLParam(r, "roomID"), chi.URLParam(r, "threadID"), req.Body, *req.Execution)
+		if err != nil {
+			writeHostedError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"reply": reply, "job": job})
 		return
 	}
 	reply, err := a.Rooms.AddReviewReply(r.Context(), t, chi.URLParam(r, "roomID"), chi.URLParam(r, "threadID"), req.Body)
