@@ -1,5 +1,73 @@
 import type { StaticSelection } from "./static-snapshot";
 
+export interface StaticAnnotation {
+  id: string;
+  kind: string;
+  anchor: unknown;
+  label?: string;
+}
+
+/** Resolve against this exact snapshot, never by fuzzy quote matching. Rendering
+ * overlays outside review-content keeps these stored text offsets unchanged. */
+export function staticAnnotationRects(doc: Document, annotation: StaticAnnotation): DOMRect[] {
+  const root = doc.getElementById("review-content");
+  const anchor = annotation.anchor && typeof annotation.anchor === "object" ? annotation.anchor as Record<string, unknown> : null;
+  if (!root || !anchor) return [];
+  const component = (id: unknown) => typeof id === "string"
+    ? [...root.querySelectorAll("[data-review-component]")].find((el) => el.getAttribute("data-review-component") === id)
+    : undefined;
+  if (annotation.kind === "component") {
+    const target = component(anchor.stable_id);
+    return target ? [...target.getClientRects()] : [];
+  }
+  if (annotation.kind === "text") {
+    const scope = anchor.block_id == null ? root : component(anchor.block_id);
+    const start = anchor.start_offset, end = anchor.end_offset;
+    if (!scope || typeof start !== "number" || typeof end !== "number" || !Number.isInteger(start) || !Number.isInteger(end)
+      || start < 0 || end <= start || typeof anchor.quote !== "string" || (scope.textContent ?? "").slice(start, end) !== anchor.quote) return [];
+    const walker = doc.createTreeWalker(scope, 4 /* SHOW_TEXT */);
+    let offset = 0, node = walker.nextNode(), startNode: Node | null = null, endNode: Node | null = null, startOffset = 0, endOffset = 0;
+    while (node) {
+      const length = node.textContent?.length ?? 0;
+      if (!startNode && start < offset + length) { startNode = node; startOffset = start - offset; }
+      if (startNode && end <= offset + length) { endNode = node; endOffset = end - offset; break; }
+      offset += length;
+      node = walker.nextNode();
+    }
+    if (!startNode || !endNode) return [];
+    const range = doc.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    return [...range.getClientRects()];
+  }
+  if (annotation.kind === "point" && anchor.image && typeof anchor.image === "object") {
+    const image = anchor.image as Record<string, unknown>;
+    const element = component(image.stable_id) as HTMLImageElement | undefined;
+    if (!element || element.tagName !== "IMG" || element.naturalWidth !== image.intrinsic_width || element.naturalHeight !== image.intrinsic_height) return [];
+    const x = image.x, y = image.y;
+    if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)
+      || element.naturalWidth <= 0 || element.naturalHeight <= 0 || x < 0 || x > element.naturalWidth || y < 0 || y > element.naturalHeight) return [];
+    const imageRect = element.getBoundingClientRect();
+    if (imageRect.width <= 0 || imageRect.height <= 0) return [];
+    const left = imageRect.left + imageRect.width * x / element.naturalWidth;
+    const top = imageRect.top + imageRect.height * y / element.naturalHeight;
+    return [{ x: left, y: top, left, top, right: left + 1, bottom: top + 1, width: 1, height: 1, toJSON: () => ({ left, top }) } as DOMRect];
+  }
+  if (annotation.kind === "point" && !anchor.image) {
+    const x = anchor.x, y = anchor.y;
+    const rendition = anchor.rendition as { width?: unknown; height?: unknown } | undefined;
+    const width = Math.max(doc.documentElement.scrollWidth, doc.body.scrollWidth);
+    const height = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight);
+    // Point coordinates describe one rendition, not an arbitrary responsive
+    // reflow. Only display them when that rendition's dimensions still match.
+    if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1
+      || rendition?.width !== width || rendition?.height !== height) return [];
+    const left = x * width - (doc.defaultView?.scrollX ?? 0), top = y * height - (doc.defaultView?.scrollY ?? 0);
+    return [{ x: left, y: top, left, top, right: left + 1, bottom: top + 1, width: 1, height: 1, toJSON: () => ({ left, top }) } as DOMRect];
+  }
+  return [];
+}
+
 /** Parent-side range inspection; only called on the trusted reconstructed scriptless document. */
 export function captureStaticText(doc: Document): StaticSelection | null {
   const selection = doc.getSelection();
@@ -41,7 +109,8 @@ export function captureStaticPoint(doc: Document, event: MouseEvent): StaticSele
       rendition: { width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) },
       scroll: { x: Math.round(win.scrollX), y: Math.round(win.scrollY) },
       image: { intrinsic_width: target.naturalWidth, intrinsic_height: target.naturalHeight,
-        x: Math.round(x * target.naturalWidth), y: Math.round(y * target.naturalHeight) },
+        x: Math.round(x * target.naturalWidth), y: Math.round(y * target.naturalHeight),
+        ...(target.getAttribute("data-review-component") ? { stable_id: target.getAttribute("data-review-component") } : {}) },
     } };
   }
   const width = Math.max(doc.documentElement.scrollWidth, doc.body.scrollWidth);

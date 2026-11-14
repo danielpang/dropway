@@ -81,11 +81,13 @@ export function AccountMenu({
   orgName,
   admin = false,
   hasSharedProjects = false,
+  collaborationEnabled = false,
 }: {
   user: AccountMenuUser;
   orgName?: string | null;
   admin?: boolean;
   hasSharedProjects?: boolean;
+  collaborationEnabled?: boolean;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
@@ -255,7 +257,7 @@ export function AccountMenu({
           {/* Primary sections, only where the inline header nav is hidden. */}
           <div role="group" aria-label="Workspace" className="md:hidden">
             <Separator />
-            {visibleNavLinks(admin, hasSharedProjects).map((link) => renderLink(link, false))}
+            {visibleNavLinks(admin, hasSharedProjects, collaborationEnabled).map((link) => renderLink(link, false))}
           </div>
 
           <Separator />

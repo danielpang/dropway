@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, EyeOff, Globe, Rocket } from "lucide-react";
+import { ArrowRight, EyeOff, Globe, ImageIcon, Rocket } from "lucide-react";
 
 import { AccessModeBadge } from "@/components/sites/access-mode-badge";
 import { NewSiteDialog } from "@/components/sites/new-site-dialog";
@@ -76,6 +76,8 @@ export default async function DashboardPage({
   };
   const members = org?.members ?? [];
 
+  // Keep image storage discoverable for recovery/deletion even if room rollout
+  // is later disabled or the original upload never completed.
   const allVisible = degraded
     ? (sites ?? [])
     : (sites ?? []).filter((site) => isSiteVisibleTo(site, viewer));
@@ -208,14 +210,14 @@ function SiteRow({ site, owner }: { site: Site; owner: string | null }) {
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-2">
             <span className="grid size-8 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
-              <Globe className="size-4" aria-hidden />
+              {site.resource_kind === "image" ? <ImageIcon className="size-4" aria-hidden /> : <Globe className="size-4" aria-hidden />}
             </span>
             <span className="min-w-0 truncate font-medium text-foreground">
-              {site.slug}
+              {site.resource_kind === "image" ? site.title || site.slug : site.slug}
             </span>
           </div>
           <p className="truncate font-mono text-xs text-muted-foreground">
-            {site.live_url ?? `${site.slug}.dropwaycontent.com`}
+            {site.resource_kind === "image" ? "Project image · manage upload and storage" : site.live_url ?? `${site.slug}.dropwaycontent.com`}
           </p>
         </div>
         <ArrowRight

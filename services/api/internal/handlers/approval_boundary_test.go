@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,9 +19,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/manifest"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -47,26 +50,53 @@ func publishHarness(t *testing.T, authn func(http.Handler) http.Handler, control
 	a := NewFull(quota.Unlimited{}, rec, nil, projection.NewLocal())
 	r := chi.NewRouter()
 	r.Use(authn)
+	r.Use(EnforceAPIKeyGrant)
 	r.Post("/v1/sites/{id}/publish", a.Publish)
 	r.Post("/v1/sites/{id}/deployments", a.FinalizeDeployment)
 	r.Post("/v1/sites/{id}/deployments/prepare", a.PrepareDeployment)
 	return rec, r
 }
 
-func TestOrgAPIKeyCannotPublishControlledSiteWithoutAgentHeader(t *testing.T) {
+func TestOrgAPIKeyCanPublishControlledSite(t *testing.T) {
 	c := claims("user_1", "org_1", "member")
-	_, h := publishHarness(t, middleware.AuthWithKeys(fakeVerifier{claims: c}, keyAuthFunc(func() *middleware.KeyPrincipal {
+	rec, h := publishHarness(t, middleware.AuthWithKeys(fakeVerifier{claims: c}, keyAuthFunc(func() *middleware.KeyPrincipal {
 		return &middleware.KeyPrincipal{Claims: c, KeyID: "key_1", Scopes: []string{"sites:*"}}
 	})), true)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sites/site/publish", strings.NewReader(`{"version_id":"ver"}`))
 	req.Header.Set("Authorization", "Bearer dw_live_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
+	if rr.Code != http.StatusOK || !rec.published {
 		t.Fatalf("status = %d, body %s", rr.Code, rr.Body.String())
 	}
 	if strings.Contains(rr.Body.String(), "sk-") {
 		t.Fatal("response leaked key material")
+	}
+}
+
+func TestProjectPublishingRetainsAPIKeyGrants(t *testing.T) {
+	otherSite := "other-site"
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+		siteID *string
+	}{
+		{name: "read only", scopes: []string{"sites:read"}},
+		{name: "different site", scopes: []string{"sites:*"}, siteID: &otherSite},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := claims("user_1", "org_1", "member")
+			rec, h := publishHarness(t, middleware.AuthWithKeys(fakeVerifier{claims: c}, keyAuthFunc(func() *middleware.KeyPrincipal {
+				return &middleware.KeyPrincipal{Claims: c, KeyID: "key_1", Scopes: tc.scopes, SiteID: tc.siteID}
+			})), true)
+			req := httptest.NewRequest(http.MethodPost, "/v1/sites/site/publish", strings.NewReader(`{"version_id":"ver"}`))
+			req.Header.Set("Authorization", "Bearer dw_live_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusForbidden || rec.published {
+				t.Fatalf("status=%d published=%v body=%s", rr.Code, rec.published, rr.Body.String())
+			}
+		})
 	}
 }
 
@@ -87,15 +117,69 @@ func TestOrgAPIKeyCanPublishSiteOutsideReview(t *testing.T) {
 	}
 }
 
-func TestMCPOAuthCannotFinalizeControlledSite(t *testing.T) {
-	v := mcpVerifier{claims: claims("user_1", "org_1", "member")}
-	_, h := publishHarness(t, middleware.Auth(v), true)
-	req := httptest.NewRequest(http.MethodPost, "/v1/sites/site/deployments", strings.NewReader(`{"manifest":[{"path":"index.html","sha256":"abcd","size":1}],"digest":"abcd"}`))
-	req.Header.Set("Authorization", "Bearer mcp-user-jwt")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, body %s", rr.Code, rr.Body.String())
+func TestProjectSiteDeploymentWithMCPAndAPIKey(t *testing.T) {
+	for _, keyed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("api_key=%v", keyed), func(t *testing.T) {
+			c := claims("user_1", "org_1", "member")
+			fs := newFakeStore()
+			fs.sites["site"] = store.Site{ID: "site", OrgID: "org_1", Slug: "s", OwnerUserID: "user_1", AllowMemberEdits: true, AccessMode: projection.AccessOrgOnly}
+			fs.controlled = map[string]bool{"site": true}
+			fs.p2().members["user_1"] = store.RoleMember
+			obj := storage.NewFake()
+			a := NewFull(quota.Unlimited{}, fs, obj, projection.NewLocal())
+			r := chi.NewRouter()
+			token := "mcp-user-jwt"
+			scopedSite := "site"
+			if keyed {
+				r.Use(middleware.AuthWithKeys(fakeVerifier{claims: c}, keyAuthFunc(func() *middleware.KeyPrincipal {
+					return &middleware.KeyPrincipal{Claims: c, KeyID: "key_1", Scopes: []string{"sites:*"}, SiteID: &scopedSite}
+				})))
+				token = "dw_live_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+			} else {
+				r.Use(middleware.Auth(mcpVerifier{claims: c}))
+			}
+			r.Use(EnforceAPIKeyGrant)
+			r.Post("/v1/sites/{id}/deployments/prepare", a.PrepareDeployment)
+			r.Post("/v1/sites/{id}/deployments", a.FinalizeDeployment)
+			r.Post("/v1/sites/{id}/publish", a.Publish)
+			request := func(path, body string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+token)
+				rr := httptest.NewRecorder()
+				r.ServeHTTP(rr, req)
+				return rr
+			}
+			content := []byte("<h1>CLI update</h1>")
+			hash := sha(content)
+			files, _ := json.Marshal([]ManifestFile{{Path: "index.html", SHA256: hash, Size: int64(len(content)), ContentType: "text/html"}})
+			rr := request("/v1/sites/site/deployments/prepare", `{"manifest":`+string(files)+`}`)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("prepare: %d %s", rr.Code, rr.Body.String())
+			}
+			must(t, obj.PutBlobBytes(context.Background(), "org_1", hash, content))
+			digest := manifest.Digest([]manifest.File{{Path: "index.html", SHA256: hash}})
+			rr = request("/v1/sites/site/deployments", `{"manifest":`+string(files)+`,"digest":"`+digest+`"}`)
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("finalize: %d %s", rr.Code, rr.Body.String())
+			}
+			var fin finalizeResponse
+			mustJSON(t, rr, &fin)
+			rr = request("/v1/sites/site/publish", `{"version_id":"`+fin.VersionID+`"}`)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("publish: %d %s", rr.Code, rr.Body.String())
+			}
+			// A project does not grant write rights to a non-owner when edits are disabled.
+			site := fs.sites["site"]
+			site.OwnerUserID = "someone_else"
+			site.AllowMemberEdits = false
+			fs.sites["site"] = site
+			for _, path := range []string{"deployments/prepare", "deployments", "publish"} {
+				rr = request("/v1/sites/site/"+path, `{"version_id":"`+fin.VersionID+`"}`)
+				if rr.Code != http.StatusForbidden {
+					t.Fatalf("non-editor %s: %d %s", path, rr.Code, rr.Body.String())
+				}
+			}
+		})
 	}
 }
 
@@ -222,7 +306,7 @@ func TestMCPAndKeyCannotDeleteOrRetargetControlledSite(t *testing.T) {
 	}
 }
 
-func TestVerifiedMixedAudienceCannotPublishOrApprove(t *testing.T) {
+func TestVerifiedMCPAudienceCanPublishButCannotApprove(t *testing.T) {
 	const issuer = "https://app.dropway.test"
 	const apiAud = "https://api.dropway.test"
 	const mcpBase = "https://mcp.dropway.test"
@@ -266,7 +350,7 @@ func TestVerifiedMixedAudienceCannotPublishOrApprove(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+sign(aud))
 		rr := httptest.NewRecorder()
 		pub.ServeHTTP(rr, req)
-		if rr.Code != http.StatusForbidden {
+		if rr.Code != http.StatusOK {
 			t.Fatalf("publish aud %v status=%d body=%s", aud, rr.Code, rr.Body.String())
 		}
 		req = httptest.NewRequest(http.MethodPost, "/v1/project-rooms/room/candidates/cand/approve", strings.NewReader(`{"content_hash":"ab","base_version_id":"ver","base_content_hash":"cd"}`))

@@ -38,7 +38,7 @@ CREATE TABLE app.org_meta (
     memory_enabled         boolean NOT NULL DEFAULT false,
     -- Project rooms (migration 0019). Defaults FALSE: private review rooms
     -- are opt-in per org and are not part of public serving.
-    project_rooms_enabled  boolean NOT NULL DEFAULT false
+    project_rooms_enabled  boolean NOT NULL DEFAULT true
 );
 
 -- org_usage: per-org counter rows backing the hard-cap quota gate.
@@ -80,6 +80,7 @@ CREATE TABLE app.sites (
     -- Collaboration toggle (migration 0014): true (default) lets any org member
     -- modify content; false restricts content edits to creator-or-admin.
     allow_member_edits boolean NOT NULL DEFAULT true,
+    resource_kind      text NOT NULL DEFAULT 'site' CHECK (resource_kind IN ('site','image')),
     CONSTRAINT sites_org_slug_key UNIQUE (org_id, slug)
 );
 

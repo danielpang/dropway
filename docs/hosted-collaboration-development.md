@@ -8,9 +8,9 @@ No production migration, deployment, paid model call, or Sprite provisioning was
 
 Follow [API schema rollout](../deploy/API-ROLLOUT.md) before deploying. Fly runs a read-only `--check-schema` release check; a missing migration or runtime grant rejects the new release before serving instances are updated. The API repeats this check before opening its listener. Apply migrations separately; keep the expanded schema if rolling back application code.
 
-The ordinary API-key publishing/rollback path remains available for sites outside enabled rooms, including sites detached from rooms or in organizations that disable rooms. Enrolled sites continue to require human review. The enable/attach UI explains this change before the action. Disabling a room does not revoke an API key's own explicit scope/site restrictions.
+Ordinary CLI/API-key and MCP publishing and rollback remain available for attached project sites, with the same site edit rights, API-key scopes, and site restrictions. Attaching or enabling a project does not block existing deployment workflows. AI-generated review candidates still require human approval and verified Apply; ordinary publishing invalidates proposals pinned to an older baseline.
 
-Normal keys created by Dropway have `sites:*` and no site restriction, so their existing unenrolled-site workflows remain compatible. Narrower scopes or a site restriction are security boundaries and remain enforced; do not broaden a key's privileges just to bypass an expected denial. Before rollout, audit any custom-provisioned restricted keys and test their intended routes.
+Normal keys created by Dropway have `sites:*` and no site restriction, so their existing site deployment workflows remain compatible. Narrower scopes or a site restriction are security boundaries and remain enforced; do not broaden a key's privileges just to bypass an expected denial. Before rollout, audit any custom-provisioned restricted keys and test their intended routes.
 
 Ordinary site mutations share the organization configuration lock and lock only their target site exclusively. This preserves concurrent publishing to different sites while still serializing enrollment and configuration changes. Recovery polls only organizations with due candidate projections, so organizations with no collaboration history do not incur one query each every polling interval. These concurrency properties have local Postgres regression tests; production capacity still requires normal monitoring.
 
@@ -20,7 +20,7 @@ Ordinary site mutations share the organization configuration lock and lock only 
 
 The dashboard reads `GET /v1/project-collaboration/capabilities` through its authenticated API client. The response contains `enabled` and `execution_configured`: the first is the PostHog decision; the second reports runtime configuration readiness, not another feature flag. Pages fail closed and server actions recheck capability. The API enforces authorization independently of the UI.
 
-Organization opt-in (`app.org_meta.project_rooms_enabled`) remains required, along with room/site permissions. Turning the PostHog flag off does not detach sites or bypass their existing human-review protections. The worker stays running for cleanup; the API gates new claims and sensitive operations using the initiating user's current decision. Keep the worker running while draining/reaping existing Sprite leases, even when rollout is disabled.
+Organization availability (`app.org_meta.project_rooms_enabled`) defaults on after migration 0026. Existing explicit opt-outs remain enforced, along with room/site permissions. Turning the PostHog flag off does not detach sites or bypass their existing human-review protections. The worker stays running for cleanup; the API gates new claims and sensitive operations using the initiating user's current decision. Keep the worker running while draining/reaping existing Sprite leases, even when rollout is disabled.
 
 ## Configuration
 

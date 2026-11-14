@@ -13,11 +13,24 @@ The collaboration PRs form a stack. Promote the final tested revision containing
 
    Set `DATABASE_URL` in the invoking environment. Do not put credentials in the command line or substitute an owner connection to make a permission failure pass. The command needs only this database configuration, exits nonzero for missing schema or runtime permissions, and does not start HTTP, telemetry, background jobs or migrations.
 3. Deploy the API with the repository's `fly.toml`. Its `release_command = "--check-schema"` runs the same check in the new image before Fly updates serving Machines. Do not bypass the release command. If it fails, complete the migration or fix runtime grants, then retry the deployment; leave the serving release in place.
-4. Check the rollout's health checks and existing API-key/site workflows before enabling the single [PostHog `project-collaboration` flag](https://us.posthog.com/project/479412/feature-flags/1059373) for a development cohort and opting its organization into rooms. The flag is inactive at 0% as of 2026-11-10. Reuse `POSTHOG_KEY` / `POSTHOG_HOST`; do not add dashboard or worker enablement toggles. Live provider/Sprite acceptance remains required before production rollout.
+4. Check the rollout's health checks and existing API-key/site workflows before enabling the single [PostHog `project-collaboration` flag](https://us.posthog.com/project/479412/feature-flags/1059373) for a development cohort and checking that its organization has not explicitly disabled rooms. The flag is inactive at 0% as of 2026-11-10. Reuse `POSTHOG_KEY` / `POSTHOG_HOST`; do not add dashboard or worker enablement toggles. Live provider/Sprite acceptance remains required before production rollout.
 
 The API also checks the schema on ordinary startup before accepting traffic, including when deployed outside Fly. Other platforms should run the image preflight as a deployment prerequisite, then use readiness checks to keep existing instances until replacements are healthy. A process startup check alone cannot preserve availability if an operator stops every old instance first.
 
 The preflight checks required objects, result shapes and runtime access, rather than trusting a migration version number. The runtime role does not need access to Goose's owner-managed bookkeeping table. A successful check verifies schema readiness; it does not validate provider credentials or perform live model/Sprite calls.
+
+Migration 0026 removes the extra organization opt-in for first-time project use.
+It defaults new organizations to enabled and backfills only organizations with
+neither existing rooms nor an organization room-toggle audit record. Explicit
+opt-outs remain off. The PostHog flag still controls access; the migration does
+not attach sites or grant membership. Its down migration restores the old default
+without rewriting organizations' current settings.
+
+Migration 0027 adds the persistent `site` / `image` resource kind. Deploy the API
+after this migration: the runtime schema preflight checks the new column. Project
+image uploads reuse immutable version storage, normal resource/storage quotas,
+and version-anchored comments. They start organization-only and hidden from the
+feed; the image upload UI accepts PNG, JPEG and WebP up to 2 MiB.
 
 For an application rollback, retain the expanded schema and redeploy the previous compatible API image. The previous API-key resolver explicitly selects its original seven columns, so adding `scopes` and `site_id` does not break it. Do not run destructive Goose down migrations while either release is serving; they remove review and execution records. Migration 0022 adds a bounded pending-projection lookup without replacing the old API's functions.
 

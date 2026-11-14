@@ -319,7 +319,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// mirrors /orgs/mcp). The read is on GET /orgs/policy.
 		r.Patch("/orgs/api-keys", api.SetApiKeysEnabled)
 
-		// Project rooms are opt-in (project_rooms_enabled defaults false) and
+		// Project rooms default on behind the PostHog rollout gate and are
 		// session-only. Approve-change is separate from version sign-off.
 		r.Get("/orgs/project-rooms", api.GetProjectRoomSettings)
 		r.Patch("/orgs/project-rooms", api.SetProjectRoomSettings)

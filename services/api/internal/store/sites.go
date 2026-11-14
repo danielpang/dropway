@@ -145,6 +145,7 @@ type Org struct {
 
 // Site is a shareable static site.
 type Site struct {
+	ResourceKind     string
 	ID               string
 	OrgID            string
 	Slug             string
@@ -258,6 +259,16 @@ func (s *Store) EnsureOrgProvisioned(ctx context.Context, t Tenant) error {
 // NOT public: a brand-new org has allow_external_sharing=false, and a public site
 // would be 403'd by the external-sharing trigger.
 func (s *Store) CreateSite(ctx context.Context, t Tenant, siteSlug, accessMode string) (Site, error) {
+	return s.createResource(ctx, t, siteSlug, accessMode, "site", "")
+}
+
+// CreateProjectImage reuses immutable version storage, quota and RLS without
+// exposing the image publicly or adding it to the organization feed.
+func (s *Store) CreateProjectImage(ctx context.Context, t Tenant, siteSlug, title string) (Site, error) {
+	return s.createResource(ctx, t, siteSlug, projection.AccessOrgOnly, "image", title)
+}
+
+func (s *Store) createResource(ctx context.Context, t Tenant, siteSlug, accessMode, kind, title string) (Site, error) {
 	// Validate the slug shape BEFORE it is interpolated into the canonical host
 	// or the KV route key (defense in depth — the handler validates too, but the
 	// store is also reachable from the MCP path and tests).
@@ -270,6 +281,11 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, siteSlug, accessMode s
 
 	var out Site
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
+		if kind == "image" {
+			if err := s.requireRooms(ctx, q, t.OrgID); err != nil {
+				return err
+			}
+		}
 		// The canonical content host is ORG-NAMESPACED: <orgSlug>--<slug>. Read the
 		// org slug under the active tenant context (identity.organization, outside RLS) so
 		// the global host registry reserves the org-scoped host, not a bare slug.
@@ -315,10 +331,13 @@ func (s *Store) CreateSite(ctx context.Context, t Tenant, siteSlug, accessMode s
 		}
 
 		row, err := q.CreateSite(ctx, db.CreateSiteParams{
-			OrgID:       t.OrgID,
-			Slug:        siteSlug,
-			OwnerUserID: t.UserID,
-			AccessMode:  accessMode,
+			OrgID:        t.OrgID,
+			Slug:         siteSlug,
+			OwnerUserID:  t.UserID,
+			AccessMode:   accessMode,
+			ResourceKind: kind,
+			Title:        pgtype.Text{String: title, Valid: title != ""},
+			FeedVisible:  kind == "site",
 		})
 		if err != nil {
 			if uniqueViolation(err, "sites_org_slug_key") {
@@ -569,6 +588,7 @@ func (s *Store) DeleteSite(ctx context.Context, t Tenant, id string) ([]string, 
 func siteFromDB(r db.AppSite) Site {
 	s := Site{
 		ID:               r.ID,
+		ResourceKind:     r.ResourceKind,
 		OrgID:            r.OrgID,
 		Slug:             r.Slug,
 		OwnerUserID:      r.OwnerUserID,

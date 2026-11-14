@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  * A navigation entry. `match` is the path prefix used for active state; `admin`
  * hides it from non-admins (a convenience gate, pages re-check server-side).
  */
-export type NavLink = { href: string; label: string; match: string; admin?: boolean; shared?: boolean };
+export type NavLink = { href: string; label: string; match: string; admin?: boolean; shared?: boolean; collaboration?: boolean };
 
 /**
  * Day-to-day workspace sections. These stay inline in the desktop header; the
@@ -18,6 +18,7 @@ export type NavLink = { href: string; label: string; match: string; admin?: bool
  */
 export const NAV_LINKS: NavLink[] = [
   { href: "/dashboard", label: "Sites", match: "/dashboard" },
+  { href: "/rooms", label: "Rooms", match: "/rooms", collaboration: true },
   { href: "/shared-projects", label: "Shared with me", match: "/shared-projects", shared: true },
   { href: "/feed", label: "Feed", match: "/feed" },
   { href: "/skills", label: "Skills", match: "/skills" },
@@ -57,12 +58,12 @@ export function isNavActive(pathname: string, match: string): boolean {
  * by path prefix (so /sites/[id] keeps "Sites" lit). Client component for
  * `usePathname`.
  */
-export function MainNav({ hasSharedProjects = false }: { hasSharedProjects?: boolean }) {
+export function MainNav({ hasSharedProjects = false, collaborationEnabled = false }: { hasSharedProjects?: boolean; collaborationEnabled?: boolean }) {
   const pathname = usePathname();
 
   return (
     <nav className="flex items-center gap-1" aria-label="Primary">
-      {visibleNavLinks(false, hasSharedProjects).map((link) => {
+      {visibleNavLinks(false, hasSharedProjects, collaborationEnabled).map((link) => {
         const active = isNavActive(pathname, link.match);
         return (
           <Link
@@ -85,6 +86,6 @@ export function MainNav({ hasSharedProjects = false }: { hasSharedProjects?: boo
   );
 }
 
-export function visibleNavLinks(admin = false, hasSharedProjects = false): NavLink[] {
-  return NAV_LINKS.filter((link) => (!link.admin || admin) && (!link.shared || hasSharedProjects));
+export function visibleNavLinks(admin = false, hasSharedProjects = false, collaborationEnabled = false): NavLink[] {
+  return NAV_LINKS.filter((link) => (!link.admin || admin) && (!link.shared || hasSharedProjects) && (!link.collaboration || collaborationEnabled));
 }
