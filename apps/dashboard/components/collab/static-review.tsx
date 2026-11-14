@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { TextSelect, Image, BoxSelect, MapPin, File, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   captureStaticPoint,
@@ -24,7 +25,9 @@ export function StaticReview({
   onThreadSelect,
   selectionResetKey,
   imageCanvas = false,
+  renderThread,
 }: {
+  renderThread?: (id: string) => React.ReactNode;
   readOnly?: boolean;
   imageCanvas?: boolean;
   snapshot: StaticSnapshot;
@@ -37,8 +40,26 @@ export function StaticReview({
   selectionResetKey?: string | number;
 }) {
   const host = React.useRef<HTMLDivElement>(null);
-  const [mode, setMode] = React.useState<SelectionMode>(imageCanvas ? "point" : "text");
-  React.useEffect(() => { setMode(imageCanvas ? "point" : "text"); }, [imageCanvas, snapshot.siteId]);
+  const [popover, setPopover] = React.useState<{
+    id: string;
+    left: number;
+    top: number;
+  } | null>(null);
+  const popoverId = React.useRef<string | null>(null);
+  const closePopover = React.useCallback(() => {
+    popoverId.current = null;
+    setPopover(null);
+  }, []);
+  const closeButton = React.useRef<HTMLButtonElement>(null);
+  React.useEffect(() => {
+    if (popover?.id) closeButton.current?.focus();
+  }, [popover?.id]);
+  const [mode, setMode] = React.useState<SelectionMode>(
+    imageCanvas ? "point" : "text",
+  );
+  React.useEffect(() => {
+    setMode(imageCanvas ? "point" : "text");
+  }, [imageCanvas, snapshot.siteId]);
   const modeRef = React.useRef(mode);
   const readOnlyRef = React.useRef(readOnly);
   const onSelectRef = React.useRef(onSelect);
@@ -76,6 +97,8 @@ export function StaticReview({
     if (!container) return;
     setBlocked(false);
     setSelected("");
+    popoverId.current = null;
+    setPopover(null);
     pendingSelection.current = null;
     onSelectRef.current(null);
     const frame = document.createElement("iframe");
@@ -120,6 +143,22 @@ export function StaticReview({
       doc.body.appendChild(overlay);
       let scheduled = 0;
       let hitRegions: { id: string; rects: DOMRect[] }[] = [];
+      const positionThread = (id: string, rect: DOMRect) => {
+        if (rect.bottom < 0 || rect.top > win.innerHeight) {
+          setPopover(null);
+          return;
+        }
+        setPopover({
+          id,
+          left: Math.max(8, Math.min(win.innerWidth - 328, rect.right + 12)),
+          top: Math.max(8, Math.min(win.innerHeight - 180, rect.top)),
+        });
+      };
+      const openThread = (id: string, rect: DOMRect) => {
+        popoverId.current = id;
+        positionThread(id, rect);
+        threadSelectRef.current?.(id);
+      };
       const paint = () => {
         scheduled = 0;
         overlay.replaceChildren();
@@ -136,11 +175,23 @@ export function StaticReview({
             label: "New comment",
             pending: true,
           });
+        if (
+          popoverId.current &&
+          !visible.some((item) => item.id === popoverId.current)
+        ) {
+          popoverId.current = null;
+          setPopover(null);
+        }
         visible.forEach((annotation, index) => {
           const rects = staticAnnotationRects(doc, annotation).filter(
             (rect) => rect.width > 0 && rect.height > 0,
           );
-          if (!rects.length) return;
+          if (!rects.length) {
+            if (popoverId.current === annotation.id) setPopover(null);
+            return;
+          }
+          if (popoverId.current === annotation.id)
+            positionThread(annotation.id, rects[0]!);
           if (!annotation.pending)
             hitRegions.push({ id: annotation.id, rects });
           const active = activeRef.current === annotation.id;
@@ -165,7 +216,7 @@ export function StaticReview({
           marker.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (!annotation.pending) threadSelectRef.current?.(annotation.id);
+            if (!annotation.pending) openThread(annotation.id, first);
           });
           overlay.appendChild(marker);
         });
@@ -214,10 +265,7 @@ export function StaticReview({
         if (overlay.contains(event.target as Node)) return;
         event.preventDefault();
         if (readOnlyRef.current) return;
-        if (
-          (modeRef.current === "text" || modeRef.current === "page") &&
-          doc.getSelection()?.isCollapsed
-        ) {
+        if (doc.getSelection()?.isCollapsed) {
           const hit = hitRegions.find(({ rects }) =>
             rects.some(
               (rect) =>
@@ -228,10 +276,11 @@ export function StaticReview({
             ),
           );
           if (hit) {
-            threadSelectRef.current?.(hit.id);
+            openThread(hit.id, hit.rects[0]!);
             return;
           }
         }
+        closePopover();
         const target =
           (event.target as Node | null)?.nodeType === 1
             ? (event.target as Element)
@@ -263,6 +312,7 @@ export function StaticReview({
       };
       const key = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
+          closePopover();
           clearSelection();
           setMode("text");
         }
@@ -303,7 +353,7 @@ export function StaticReview({
       frame.removeEventListener("load", onLoad);
       frame.remove();
     };
-  }, [snapshot]);
+  }, [snapshot, closePopover]);
 
   return (
     <section
@@ -311,6 +361,7 @@ export function StaticReview({
       aria-label="Static review selection"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
+          closePopover();
           setMode("text");
           setSelected("");
           onSelect(null);
@@ -322,33 +373,54 @@ export function StaticReview({
           <span className="mr-1 text-xs font-medium text-muted-foreground">
             Comment on
           </span>
-          {(imageCanvas ? (["point", "image", "page"] as const) : (["text", "image", "component", "point", "page"] as const)).map(
-            (value) => (
-              <Button
-                key={value}
-                type="button"
-                size="sm"
-                variant={mode === value ? "secondary" : "ghost"}
-                disabled={blocked}
-                aria-pressed={mode === value}
-                onClick={() => {
-                  setMode(value);
-                  setSelected("");
-                  onSelect(null);
-                }}
-              >
-                {value === "text"
-                  ? "Text"
-                  : value === "image"
-                    ? "Image"
-                    : value === "component"
-                      ? "Element"
-                      : value === "point"
-                        ? "Point"
-                        : "Page"}
-              </Button>
-            ),
-          )}
+          {(imageCanvas
+            ? (["point", "image", "page"] as const)
+            : (["text", "image", "component", "point", "page"] as const)
+          ).map((value) => (
+            <Button
+              key={value}
+              type="button"
+              size="sm"
+              variant={mode === value ? "secondary" : "ghost"}
+              disabled={blocked}
+              aria-label={
+                {
+                  text: "Text",
+                  image: "Image",
+                  component: "Element",
+                  point: "Point",
+                  page: "Page",
+                }[value]
+              }
+              title={
+                {
+                  text: "Comment on text",
+                  image: "Comment on an image",
+                  component: "Comment on an element",
+                  point: "Pin a comment",
+                  page: "Comment on the page",
+                }[value]
+              }
+              className="h-8 w-8 p-0"
+              aria-pressed={mode === value}
+              onClick={() => {
+                setMode(value);
+                setSelected("");
+                onSelect(null);
+              }}
+            >
+              {React.createElement(
+                {
+                  text: TextSelect,
+                  image: Image,
+                  component: BoxSelect,
+                  point: MapPin,
+                  page: File,
+                }[value],
+                { className: "h-4 w-4", "aria-hidden": true },
+              )}
+            </Button>
+          ))}
           <span
             role="status"
             className="basis-full truncate text-xs text-muted-foreground sm:basis-auto sm:max-w-xs"
@@ -376,7 +448,38 @@ export function StaticReview({
           {snapshot.omittedAssets} images unavailable in this preview.
         </p>
       ) : null}
-      <div ref={host} className="min-h-0 flex-1" />
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div ref={host} className="h-full min-h-0" />
+        {popover && renderThread && !readOnly && !blocked ? (
+          <div
+            role="dialog"
+            aria-label="Comment thread"
+            className="absolute z-20 flex w-80 max-w-[calc(100%-1rem)] flex-col rounded-lg border border-border bg-background shadow-xl"
+            style={{
+              left: popover.left,
+              top: popover.top,
+              maxHeight: `calc(100% - ${popover.top + 8}px)`,
+            }}
+          >
+            <div className="flex shrink-0 items-center justify-between px-3 py-2">
+              <span className="text-xs font-medium">Comment</span>
+              <button
+                ref={closeButton}
+                type="button"
+                aria-label="Close inline comment"
+                title="Close comment"
+                onClick={closePopover}
+                className="rounded p-1 hover:bg-muted"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="min-h-0 overflow-y-auto px-2 pb-2">
+              {renderThread(popover.id)}
+            </div>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }

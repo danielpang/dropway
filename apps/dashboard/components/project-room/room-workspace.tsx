@@ -6,7 +6,18 @@
 "use client";
 
 import * as React from "react";
-import { MessageSquare } from "lucide-react";
+import {
+  MessageSquare,
+  Plus,
+  PanelsTopLeft,
+  GitPullRequest,
+  History,
+  Settings,
+  ExternalLink,
+  Link,
+  Check,
+  X,
+} from "lucide-react";
 import { UploadProjectImage } from "./upload-project-image";
 import { NewProjectSite } from "./new-project-site";
 import { ProjectSharing } from "./project-sharing";
@@ -828,6 +839,236 @@ export function RoomWorkspace({
       </section>
     </>
   );
+  const renderThread = (thread: ReviewThread, inline = false) => (
+    <li
+      id={inline ? undefined : `thread-${thread.ID}`}
+      key={thread.ID}
+      className={`space-y-1.5 rounded-lg border p-2.5 text-sm ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}
+    >
+      <button
+        type="button"
+        className="text-left font-medium text-foreground hover:underline"
+        onClick={() => {
+          setLinkedThreadId(thread.ID);
+          setActiveThreadId(thread.ID);
+        }}
+      >
+        {thread.AnchorKind === "page"
+          ? "Page comment"
+          : thread.AnchorKind === "point"
+            ? "Image pin"
+            : thread.AnchorKind}{" "}
+        on {thread.Page}
+      </button>
+      <p className="text-xs text-muted-foreground">
+        Version {thread.VersionID.slice(0, 8)} · {thread.Status}{" "}
+        <a
+          href={`/rooms?room=${encodeURIComponent(thread.RoomID)}#thread-${encodeURIComponent(thread.ID)}`}
+          className="inline-flex align-middle"
+          aria-label="Link to thread"
+          title="Link to thread"
+        >
+          <Link className="h-3 w-3" aria-hidden="true" />
+        </a>
+      </p>
+      {thread.Replies.slice(0, 1).map((item) => (
+        <ReplyText key={item.ID} body={untrustedText(item.Body)} compact />
+      ))}
+      <details open={inline} className="group space-y-2 text-xs">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+          {thread.Replies.length > 1
+            ? `${thread.Replies.length - 1} replies · Reply & details`
+            : "Reply & details"}
+        </summary>
+        <ul className="space-y-2 border-l border-border pl-2">
+          {thread.Replies.slice(1).map((item) => (
+            <li key={item.ID}>
+              <ReplyText body={untrustedText(item.Body)} compact />
+            </li>
+          ))}
+        </ul>
+        {thread.NextReplyCursor ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              onLoadMoreReplies?.(
+                thread.RoomID,
+                thread.ID,
+                thread.NextReplyCursor!,
+              )
+            }
+          >
+            Load older replies
+          </Button>
+        ) : null}
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const text = (replyByThread[thread.ID] ?? "").trim();
+            if (!room || !commentOk || text.length === 0) return;
+            if (hasDropwayMention(text) && !replyExecutions[thread.ID]) return;
+            onReply(
+              room.ID,
+              thread.ID,
+              text,
+              hasDropwayMention(text) ? replyExecutions[thread.ID] : undefined,
+            );
+          }}
+        >
+          <Input
+            aria-label={`Reply to ${thread.ID}`}
+            value={replyByThread[thread.ID] ?? ""}
+            onChange={(event) =>
+              setReplyByThread((prev) => ({
+                ...prev,
+                [thread.ID]: event.target.value,
+              }))
+            }
+          />
+          {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
+            <MentionExecutionControls
+              body={replyByThread[thread.ID] ?? ""}
+              allowed={
+                !!executionConfigured &&
+                decideOk &&
+                thread.SiteID === site?.id &&
+                thread.VersionID === site.currentVersionId &&
+                thread.ContentHash === site.currentContentHash
+              }
+              onChange={(value) =>
+                setReplyExecutions((prev) => ({
+                  ...prev,
+                  [thread.ID]: value,
+                }))
+              }
+            />
+          ) : null}
+          <Button
+            type="submit"
+            disabled={
+              !commentOk ||
+              (replyByThread[thread.ID] ?? "").trim().length === 0 ||
+              (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
+                !replyExecutions[thread.ID])
+            }
+          >
+            Reply
+          </Button>
+        </form>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!commentOk || !room || thread.Status === "resolved"}
+            aria-label="Resolve comment"
+            title="Resolve comment"
+            onClick={() => room && onResolve(room.ID, thread.ID)}
+          >
+            <Check className="h-4 w-4" aria-hidden="true" />
+          </Button>
+          <details className="w-full text-xs">
+            <summary className="cursor-pointer py-2 text-muted-foreground">
+              Move comment location
+            </summary>
+            <Input
+              aria-label={`Move reason for ${thread.ID}`}
+              value={reanchorReason}
+              onChange={(event) => setReanchorReason(event.target.value)}
+              placeholder="Reason for moving this comment"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={
+                !commentOk || !room || reanchorReason.trim().length === 0
+              }
+              onClick={() =>
+                room && onReanchor(room.ID, thread.ID, reanchorReason.trim())
+              }
+            >
+              Move to page
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={
+                !commentOk ||
+                !room ||
+                !staticSelection ||
+                !reanchorReason.trim() ||
+                !snapshot ||
+                snapshot.siteId !== thread.SiteID ||
+                snapshot.versionId !== thread.VersionID ||
+                snapshot.contentHash !== thread.ContentHash ||
+                snapshot.page !== thread.Page
+              }
+              onClick={() => {
+                if (room && staticSelection)
+                  onReanchor(
+                    room.ID,
+                    thread.ID,
+                    reanchorReason.trim(),
+                    staticSelection,
+                  );
+              }}
+            >
+              Move to selection
+            </Button>
+          </details>
+        </div>
+        <details className="space-y-2 text-sm">
+          <summary className="cursor-pointer text-muted-foreground">
+            Anchor history
+          </summary>
+          <p className="break-all text-xs text-muted-foreground">
+            Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
+            {thread.AnchorState}. Revisions preserve the original location.
+          </p>
+          <ol className="space-y-2">
+            {(thread.Revisions ?? []).map((revision) => (
+              <li
+                key={revision.id}
+                className="rounded-md border border-border p-2"
+              >
+                <p>
+                  {revision.anchorKind} · {revision.anchorState} · page{" "}
+                  {revision.page}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {revision.createdAt}
+                </p>
+                <p className="whitespace-pre-wrap">
+                  {untrustedText(revision.reason) || "No reason recorded."}
+                </p>
+              </li>
+            ))}
+          </ol>
+          {thread.NextRevisionCursor ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                onLoadMoreRevisions?.(
+                  thread.RoomID,
+                  thread.ID,
+                  thread.NextRevisionCursor!,
+                )
+              }
+            >
+              Load older anchor revisions
+            </Button>
+          ) : null}
+        </details>
+      </details>
+    </li>
+  );
   const commentsPanel = (
     <>
       <section className="space-y-3" aria-label="Comments">
@@ -864,248 +1105,7 @@ export function RoomWorkspace({
           Includes resolved comments and earlier versions.
         </p>
         <ul className="space-y-1.5">
-          {visibleThreads.map((thread) => (
-            <li
-              id={`thread-${thread.ID}`}
-              key={thread.ID}
-              className={`space-y-1.5 rounded-lg border p-2.5 text-sm ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}
-            >
-              <button
-                type="button"
-                className="text-left font-medium text-foreground hover:underline"
-                onClick={() => {
-                  setLinkedThreadId(thread.ID);
-                  setActiveThreadId(thread.ID);
-                }}
-              >
-                {thread.AnchorKind === "page"
-                  ? "Page comment"
-                  : thread.AnchorKind === "point"
-                    ? "Image pin"
-                    : thread.AnchorKind}{" "}
-                on {thread.Page}
-              </button>
-              <p className="text-xs text-muted-foreground">
-                Version {thread.VersionID.slice(0, 8)} · {thread.Status}{" "}
-                <a
-                  href={`/rooms?room=${encodeURIComponent(thread.RoomID)}#thread-${encodeURIComponent(thread.ID)}`}
-                  className="underline"
-                >
-                  Link to thread
-                </a>
-              </p>
-              {thread.Replies.slice(0, 1).map((item) => (
-                <ReplyText
-                  key={item.ID}
-                  body={untrustedText(item.Body)}
-                  compact
-                />
-              ))}
-              <details className="group space-y-2 text-xs">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                  {thread.Replies.length > 1
-                    ? `${thread.Replies.length - 1} replies · Reply & details`
-                    : "Reply & details"}
-                </summary>
-                <ul className="space-y-2 border-l border-border pl-2">
-                  {thread.Replies.slice(1).map((item) => (
-                    <li key={item.ID}>
-                      <ReplyText body={untrustedText(item.Body)} compact />
-                    </li>
-                  ))}
-                </ul>
-                {thread.NextReplyCursor ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      onLoadMoreReplies?.(
-                        thread.RoomID,
-                        thread.ID,
-                        thread.NextReplyCursor!,
-                      )
-                    }
-                  >
-                    Load older replies
-                  </Button>
-                ) : null}
-                <form
-                  className="flex flex-wrap gap-2"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const text = (replyByThread[thread.ID] ?? "").trim();
-                    if (!room || !commentOk || text.length === 0) return;
-                    if (hasDropwayMention(text) && !replyExecutions[thread.ID])
-                      return;
-                    onReply(
-                      room.ID,
-                      thread.ID,
-                      text,
-                      hasDropwayMention(text)
-                        ? replyExecutions[thread.ID]
-                        : undefined,
-                    );
-                  }}
-                >
-                  <Input
-                    aria-label={`Reply to ${thread.ID}`}
-                    value={replyByThread[thread.ID] ?? ""}
-                    onChange={(event) =>
-                      setReplyByThread((prev) => ({
-                        ...prev,
-                        [thread.ID]: event.target.value,
-                      }))
-                    }
-                  />
-                  {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
-                    <MentionExecutionControls
-                      body={replyByThread[thread.ID] ?? ""}
-                      allowed={
-                        !!executionConfigured &&
-                        decideOk &&
-                        thread.SiteID === site?.id &&
-                        thread.VersionID === site.currentVersionId &&
-                        thread.ContentHash === site.currentContentHash
-                      }
-                      onChange={(value) =>
-                        setReplyExecutions((prev) => ({
-                          ...prev,
-                          [thread.ID]: value,
-                        }))
-                      }
-                    />
-                  ) : null}
-                  <Button
-                    type="submit"
-                    disabled={
-                      !commentOk ||
-                      (replyByThread[thread.ID] ?? "").trim().length === 0 ||
-                      (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
-                        !replyExecutions[thread.ID])
-                    }
-                  >
-                    Reply
-                  </Button>
-                </form>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      !commentOk || !room || thread.Status === "resolved"
-                    }
-                    onClick={() => room && onResolve(room.ID, thread.ID)}
-                  >
-                    Resolve
-                  </Button>
-                  <details className="w-full text-xs">
-                    <summary className="cursor-pointer py-2 text-muted-foreground">
-                      Move comment location
-                    </summary>
-                    <Input
-                      aria-label={`Move reason for ${thread.ID}`}
-                      value={reanchorReason}
-                      onChange={(event) =>
-                        setReanchorReason(event.target.value)
-                      }
-                      placeholder="Reason for moving this comment"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        !commentOk ||
-                        !room ||
-                        reanchorReason.trim().length === 0
-                      }
-                      onClick={() =>
-                        room &&
-                        onReanchor(room.ID, thread.ID, reanchorReason.trim())
-                      }
-                    >
-                      Move to page
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        !commentOk ||
-                        !room ||
-                        !staticSelection ||
-                        !reanchorReason.trim() ||
-                        !snapshot ||
-                        snapshot.siteId !== thread.SiteID ||
-                        snapshot.versionId !== thread.VersionID ||
-                        snapshot.contentHash !== thread.ContentHash ||
-                        snapshot.page !== thread.Page
-                      }
-                      onClick={() => {
-                        if (room && staticSelection)
-                          onReanchor(
-                            room.ID,
-                            thread.ID,
-                            reanchorReason.trim(),
-                            staticSelection,
-                          );
-                      }}
-                    >
-                      Move to selection
-                    </Button>
-                  </details>
-                </div>
-                <details className="space-y-2 text-sm">
-                  <summary className="cursor-pointer text-muted-foreground">
-                    Anchor history
-                  </summary>
-                  <p className="break-all text-xs text-muted-foreground">
-                    Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
-                    {thread.AnchorState}. Revisions preserve the original
-                    location.
-                  </p>
-                  <ol className="space-y-2">
-                    {(thread.Revisions ?? []).map((revision) => (
-                      <li
-                        key={revision.id}
-                        className="rounded-md border border-border p-2"
-                      >
-                        <p>
-                          {revision.anchorKind} · {revision.anchorState} · page{" "}
-                          {revision.page}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {revision.createdAt}
-                        </p>
-                        <p className="whitespace-pre-wrap">
-                          {untrustedText(revision.reason) ||
-                            "No reason recorded."}
-                        </p>
-                      </li>
-                    ))}
-                  </ol>
-                  {thread.NextRevisionCursor ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        onLoadMoreRevisions?.(
-                          thread.RoomID,
-                          thread.ID,
-                          thread.NextRevisionCursor!,
-                        )
-                      }
-                    >
-                      Load older anchor revisions
-                    </Button>
-                  ) : null}
-                </details>
-              </details>
-            </li>
-          ))}
+          {visibleThreads.map((thread) => renderThread(thread))}
         </ul>
         {threadCursor && room ? (
           <Button
@@ -1532,8 +1532,10 @@ export function RoomWorkspace({
                 size="sm"
                 variant="ghost"
                 onClick={() => setShowCreate(true)}
+                aria-label="New project"
+                title="New project"
               >
-                New project
+                <Plus className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
             <nav
@@ -1545,17 +1547,40 @@ export function RoomWorkspace({
                   <button
                     key={value}
                     type="button"
+                    aria-label={
+                      {
+                        review: "Canvas",
+                        changes: `Changes${pendingCount ? ` (${pendingCount})` : ""}`,
+                        activity: "Activity",
+                        settings: "Settings & sharing",
+                      }[value]
+                    }
+                    title={
+                      {
+                        review: "Canvas",
+                        changes: "Changes",
+                        activity: "Activity",
+                        settings: "Settings & sharing",
+                      }[value]
+                    }
                     aria-current={panel === value ? "page" : undefined}
                     onClick={() => setPanel(value)}
-                    className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs transition-colors ${panel === value ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                    className={`inline-flex h-9 min-w-9 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors ${panel === value ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {value === "review"
-                      ? "Canvas"
-                      : value === "changes"
-                        ? `Changes${pendingCount ? ` (${pendingCount})` : ""}`
-                        : value === "activity"
-                          ? "Activity"
-                          : "Settings & sharing"}
+                    {React.createElement(
+                      {
+                        review: PanelsTopLeft,
+                        changes: GitPullRequest,
+                        activity: History,
+                        settings: Settings,
+                      }[value],
+                      { className: "h-4 w-4", "aria-hidden": true },
+                    )}
+                    {value === "changes" && pendingCount > 0 ? (
+                      <span className="text-[10px] font-semibold">
+                        {pendingCount}
+                      </span>
+                    ) : null}
                   </button>
                 ),
               )}
@@ -1633,13 +1658,21 @@ export function RoomWorkspace({
                     {site.liveUrl ? (
                       <a
                         href={site.liveUrl}
+                        aria-label={
+                          site.kind === "image"
+                            ? "Open original"
+                            : "Open live site"
+                        }
+                        title={
+                          site.kind === "image"
+                            ? "Open original"
+                            : "Open live site"
+                        }
                         target="_blank"
                         rel="noopener noreferrer"
                         className="px-2 text-xs text-muted-foreground underline underline-offset-4"
                       >
-                        {site.kind === "image"
-                          ? "Open original ↗"
-                          : "Open live site ↗"}
+                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
                       </a>
                     ) : null}
                     <Button
@@ -1696,7 +1729,17 @@ export function RoomWorkspace({
                         onThreadSelect={(id) => {
                           setActiveThreadId(id);
                           setCommentFilter("all");
-                          setCommentsVisible(true);
+                        }}
+                        renderThread={(id) => {
+                          const thread = threads.find(
+                            (item) =>
+                              item.ID === id &&
+                              item.RoomID === roomId &&
+                              item.SiteID === siteId,
+                          );
+                          return thread ? (
+                            <ul>{renderThread(thread, true)}</ul>
+                          ) : null;
                         }}
                         onSelect={(selection) => {
                           setStaticSelection(selection);
@@ -1753,7 +1796,7 @@ export function RoomWorkspace({
                           aria-label="Close comments"
                           className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
                         >
-                          ×
+                          <X className="h-4 w-4" aria-hidden="true" />
                         </button>
                       </div>
                       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
