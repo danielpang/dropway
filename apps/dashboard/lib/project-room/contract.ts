@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 //
 // Dashboard view of the project-room HTTP contract in
-// services/api/internal/projectroom/API.md and the handlers that implement it.
+// services/api/openapi/openapi.yaml and the handlers that implement it.
 
 import type { operations } from "@dropway/sdk/schema";
 
