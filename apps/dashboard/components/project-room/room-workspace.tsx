@@ -774,6 +774,7 @@ export function RoomWorkspace({
           size="icon"
           aria-label={commentBusy ? "Posting comment" : "Send comment"}
           title="Send comment"
+          className="ml-auto flex"
           disabled={
             commentBusy ||
             !commentOk ||
@@ -912,7 +913,7 @@ export function RoomWorkspace({
           </Button>
         ) : null}
         <form
-          className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2"
+          className="flex flex-col gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             const text = (replyByThread[thread.ID] ?? "").trim();
@@ -939,7 +940,7 @@ export function RoomWorkspace({
             }
           />
           {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
-            <div className="order-last col-span-2">
+            <div>
               <MentionExecutionControls
                 body={replyByThread[thread.ID] ?? ""}
                 allowed={
@@ -963,6 +964,7 @@ export function RoomWorkspace({
             size="icon"
             aria-label="Send reply"
             title="Send reply"
+            className="self-end"
             disabled={
               !commentOk ||
               (replyByThread[thread.ID] ?? "").trim().length === 0 ||
