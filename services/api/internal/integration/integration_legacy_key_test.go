@@ -71,7 +71,7 @@ func TestIntegration_LegacyKeyUnenrolledSite(t *testing.T) {
 	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v1.ID+`"}`, 200)
 	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v2.ID+`"}`, 200)
 	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v1.ID+`"}`, 200)
-	// Opting in protects only enrolled sites; disabling restores the old route.
+	// Attaching a site preserves ordinary publishing and rollback for existing keys.
 	must(t, st.SetProjectRoomsEnabled(ctx, tn, true, store.AuditRecord{}))
 	room, err := st.CreateProjectRoom(ctx, tn, "Explicit opt in", store.AuditRecord{})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestIntegration_LegacyKeyUnenrolledSite(t *testing.T) {
 	}
 	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v2.ID+`"}`, 200)
 	must(t, st.AddProjectRoomSite(ctx, tn, room.ID, site.ID, store.AuditRecord{}))
-	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v1.ID+`"}`, 403)
+	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v1.ID+`"}`, 200)
 	must(t, st.SetProjectRoomsEnabled(ctx, tn, false, store.AuditRecord{}))
 	request("POST", "/v1/sites/"+site.ID+"/publish", `{"version_id":"`+v1.ID+`"}`, 200)
 	request("DELETE", "/v1/sites/"+site.ID, "", 204)
