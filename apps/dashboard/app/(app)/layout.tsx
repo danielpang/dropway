@@ -2,15 +2,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
+import { AccountMenu } from "@/components/account-menu";
 import { AnalyticsIdentify } from "@/components/analytics/analytics-identify";
 import { SessionCacheRefresh } from "@/components/auth/session-cache-refresh";
 import { BrandMark } from "@/components/brand-mark";
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { DashboardFooter } from "@/components/dashboard-footer";
 import { MainNav } from "@/components/main-nav";
-import { MobileNav } from "@/components/mobile-nav";
-import { SignOutButton } from "@/components/sign-out-button";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
 import { supportEmail } from "@/lib/env";
 import { loadOrgBillingState } from "@/lib/billing-server";
@@ -41,7 +39,7 @@ export default async function AppLayout({
   //  - billing: account state (over_limit / past_due) → drives the
   //    non-dismissible banner. UX mirror of the server-side quota enforcement;
   //    a billing-API hiccup degrades to "active" so the shell never wrongly locks.
-  //  - role: gates admin-only nav (the Audit link); fails soft to "member".
+  //  - role: gates admin-only menu items (Audit log); fails soft to "member".
   // For the rare org-less user the billing/role reads are wasted work before the
   // onboarding redirect, but both fail soft, and the common case saves a full
   // round trip.
@@ -55,10 +53,14 @@ export default async function AppLayout({
 
   // Attribute browser analytics to this user + their active org (client-side;
   // no-op when PostHog isn't configured).
-  const sessionUser = session.user as { id?: string; email?: string } | undefined;
+  const sessionUser = session.user as
+    | { id?: string; email?: string; name?: string | null; image?: string | null }
+    | undefined;
   const activeOrgId =
     (session.session as { activeOrganizationId?: string | null } | undefined)
       ?.activeOrganizationId ?? null;
+  const activeOrgName =
+    (orgs.find((o) => o.id === activeOrgId) ?? orgs[0])?.name ?? null;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -70,7 +72,7 @@ export default async function AppLayout({
           organization={activeOrgId}
         />
       ) : null}
-      {/* z-40 keeps the sticky header (and mobile hamburger menu) above page
+      {/* z-40 keeps the sticky header (and its account menu) above page
           content that uses relative z-10 for nested clickable regions, while
           staying below portaled dialogs/sheets at z-50. */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
@@ -82,17 +84,21 @@ export default async function AppLayout({
             <BrandMark />
             Dropway
           </Link>
-          {/* Desktop: full nav + actions inline. */}
-          <div className="hidden items-center gap-2 md:flex">
-            <MainNav admin={isAdmin} />
-            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-            <ThemeToggle />
-            <SignOutButton />
-          </div>
-          {/* Mobile: theme toggle + the nav/actions collapsed into a menu. */}
-          <div className="flex items-center gap-1 md:hidden">
-            <ThemeToggle />
-            <MobileNav admin={isAdmin} />
+          <div className="flex items-center gap-3">
+            {/* Inline primary sections on desktop; below md they move into
+                the account menu. */}
+            <div className="hidden md:block">
+              <MainNav />
+            </div>
+            <AccountMenu
+              user={{
+                name: sessionUser?.name,
+                email: sessionUser?.email,
+                image: sessionUser?.image,
+              }}
+              orgName={activeOrgName}
+              admin={isAdmin}
+            />
           </div>
         </div>
       </header>

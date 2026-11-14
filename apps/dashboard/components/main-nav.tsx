@@ -5,29 +5,36 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 
-/** Top-level app sections. `match` is the path prefix used for active state. */
+/**
+ * A navigation entry. `match` is the path prefix used for active state; `admin`
+ * hides it from non-admins (a convenience gate, pages re-check server-side).
+ */
 export type NavLink = { href: string; label: string; match: string; admin?: boolean };
 
-/** Shared by the desktop nav and the mobile menu so they never drift. */
+/**
+ * Day-to-day workspace sections. These stay inline in the desktop header; the
+ * rarely visited org and reference pages live in the account menu instead, so
+ * the header no longer overflows into a wall of ten links.
+ */
 export const NAV_LINKS: NavLink[] = [
   { href: "/dashboard", label: "Sites", match: "/dashboard" },
   { href: "/feed", label: "Feed", match: "/feed" },
   { href: "/skills", label: "Skills", match: "/skills" },
   { href: "/chats", label: "Chats", match: "/chats" },
+];
+
+/** Organization administration, grouped in the account menu. */
+export const ORG_LINKS: NavLink[] = [
   { href: "/members", label: "Members", match: "/members" },
   // Audit is owner/admin only (the page also re-gates server-side).
-  { href: "/audit", label: "Audit", match: "/audit", admin: true },
+  { href: "/audit", label: "Audit log", match: "/audit", admin: true },
   { href: "/billing", label: "Billing", match: "/billing" },
   { href: "/settings", label: "Settings", match: "/settings" },
 ];
 
-/**
- * Reference docs (the in-app MCP + CLI pages). Kept separate from NAV_LINKS so
- * they render as their own group, after a divider on desktop, in their own
- * section in the mobile menu, rather than mixing in with the org's app sections.
- */
+/** Reference docs (the in-app MCP + CLI pages), grouped in the account menu. */
 export const DOCS_LINKS: NavLink[] = [
-  { href: "/mcp", label: "MCP", match: "/mcp" },
+  { href: "/mcp", label: "MCP server", match: "/mcp" },
   { href: "/cli", label: "CLI", match: "/cli" },
 ];
 
@@ -45,42 +52,34 @@ export function isNavActive(pathname: string, match: string): boolean {
 }
 
 /**
- * Primary navigation in the app shell. Highlights the active section by path
- * prefix (so /sites/[id] keeps "Sites" lit). Client component for `usePathname`.
- *
- * `admin` controls visibility of admin-only entries (the Audit log). This is a
- * convenience gate, the audit page itself re-checks owner/admin server-side and
- * the Go API independently enforces the role on /v1/audit.
+ * Primary navigation in the app shell (desktop). Highlights the active section
+ * by path prefix (so /sites/[id] keeps "Sites" lit). Client component for
+ * `usePathname`.
  */
-export function MainNav({ admin = false }: { admin?: boolean }) {
+export function MainNav() {
   const pathname = usePathname();
-  const links = NAV_LINKS.filter((link) => !link.admin || admin);
-
-  function renderLink(link: NavLink) {
-    const active = isNavActive(pathname, link.match);
-    return (
-      <Link
-        key={link.href}
-        href={link.href}
-        aria-current={active ? "page" : undefined}
-        className={cn(
-          "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-          active
-            ? "bg-secondary text-secondary-foreground"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        {link.label}
-      </Link>
-    );
-  }
 
   return (
     <nav className="flex items-center gap-1" aria-label="Primary">
-      {links.map(renderLink)}
-      <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-      {DOCS_LINKS.map(renderLink)}
+      {NAV_LINKS.map((link) => {
+        const active = isNavActive(pathname, link.match);
+        return (
+          <Link
+            key={link.href}
+            href={link.href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              active
+                ? "bg-secondary text-secondary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {link.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
