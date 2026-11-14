@@ -185,6 +185,16 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
         const loadsAfterChild = loads;
         iframe.src = `${origin}/?doc=C`;
         await new Promise((resolve) => (iframe.onload = () => resolve(true)));
+        await new Promise((resolve, reject) => {
+          const timer = window.setTimeout(() => reject(new Error("doc C did not report")), 2000);
+          const finish = () => {
+            if (!reports.some((entry) => entry.data.doc === "C")) return;
+            window.clearTimeout(timer);
+            resolve(true);
+          };
+          finish();
+          window.addEventListener("message", finish);
+        });
         return { srcAfterChild, loadsAfterChild, loads, reports };
       }, site.origin);
       expect(observed.srcAfterChild).toContain("doc=A");

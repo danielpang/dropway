@@ -8,9 +8,11 @@
 
 import { Button } from "@/components/ui/button";
 import {
+  DIFF_UNAVAILABLE,
   bindApproval,
   compareLive,
   terminalCopy,
+  untrustedText,
   type LiveBaseline,
   type ReviewCandidate,
 } from "@/lib/project-room/contract";
@@ -34,13 +36,14 @@ export function CandidateReview({
     <article className="space-y-3 rounded-md border border-border p-4">
       <div className="space-y-1">
         <h3 className="text-sm font-medium text-foreground">Proposed change</h3>
-        <p className="text-sm text-foreground">{candidate.Summary || "No summary was returned."}</p>
+        <p className="text-sm font-medium text-foreground">Diff unavailable</p>
+        <p className="text-sm text-muted-foreground">{DIFF_UNAVAILABLE}</p>
+        <p className="text-sm text-foreground">{untrustedText(candidate.Summary) || "No summary was returned."}</p>
         <p className="text-sm text-muted-foreground">
-          Where: site {candidate.SiteID}, base version {candidate.BaseVersionID}.
+          Where: site {candidate.SiteID}, base version {candidate.BaseVersionID}. Candidate {candidate.ID}.
         </p>
         <p className="text-sm text-muted-foreground">
-          The candidate payload has no changed-file list and no diff body. The evidence on hand is
-          content hash {candidate.ContentHash} and diff hash {candidate.DiffHash}.
+          Identity: content hash {candidate.ContentHash}, base hash {candidate.BaseContentHash}, diff hash {candidate.DiffHash}.
         </p>
       </div>
       <p className="text-sm text-foreground" role="status">

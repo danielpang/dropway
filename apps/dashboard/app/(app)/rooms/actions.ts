@@ -5,21 +5,31 @@ import { ApiError, api } from "@/lib/api";
 import {
   bindApproval,
   parseCandidate,
+  parseCandidatePage,
   parseRoom,
+  parseRoomDetail,
+  parseSiteCommentPage,
   parseThread,
+  parseThreadDetail,
+  parseThreadPage,
   type ApprovalBinding,
   type CandidateDecisionBody,
   type ReviewCandidate,
+  type ReviewThread,
 } from "@/lib/project-room/contract";
 
 function closed(): { ok: false; message: string } {
   return { ok: false, message: "Project rooms are off." };
 }
 
-function enabled(): boolean {
+function enabledFlag(): boolean {
   return isCollabReviewEnabled({
     NEXT_PUBLIC_COLLAB_REVIEW: process.env.NEXT_PUBLIC_COLLAB_REVIEW,
   });
+}
+
+function enabled(): boolean {
+  return enabledFlag();
 }
 
 function messageOf(error: unknown): string {
@@ -35,6 +45,18 @@ function decisionFrom(error: ApiError): CandidateDecisionBody | null {
   if (!candidate || typeof row.changed !== "boolean") return null;
   if (row.decision !== "approve_change" && row.decision !== "reject_change") return null;
   return { candidate, changed: row.changed, decision: row.decision };
+}
+
+export async function enableRoomsAction(enabled: boolean) {
+  if (!enabledFlag()) return closed();
+  try {
+    const settings = await api.projectRoomSettings();
+    if (settings.enabled === enabled) return { ok: true as const, enabled };
+    await api.setProjectRoomsEnabled(enabled);
+    return { ok: true as const, enabled };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
 }
 
 export async function createRoomAction(name: string) {
@@ -89,6 +111,164 @@ export async function signoffAction(roomId: string, siteId: string, versionId: s
   try {
     const signoff = await api.signoffProjectRoomVersion(roomId, siteId, versionId);
     return { ok: true as const, signoff };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadRoomAction(roomId: string) {
+  if (!enabled()) return closed();
+  try {
+    const [detailBody, threadBody, candidateBody] = await Promise.all([
+      api.getProjectRoom(roomId),
+      api.listRoomThreads(roomId),
+      api.listRoomCandidates(roomId),
+    ]);
+    const detail = parseRoomDetail(detailBody);
+    const threads = parseThreadPage(threadBody);
+    const candidates = parseCandidatePage(candidateBody);
+    if (!detail || !threads || !candidates) {
+      return { ok: false as const, message: "The room read was not usable." };
+    }
+    const withReplies = await hydrateThreads(threads.threads);
+    const identified = await hydrateCandidates(roomId, candidates.candidates);
+    return {
+      ok: true as const,
+      detail,
+      threads: withReplies,
+      threadCursor: threads.nextCursor,
+      candidates: identified,
+      candidateCursor: candidates.nextCursor,
+    };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+async function hydrateThreads(threads: ReviewThread[]) {
+  return Promise.all(threads.map(async (thread) => {
+    const full = parseThreadDetail(await api.getReviewThread(thread.ID));
+    return full ?? thread;
+  }));
+}
+
+async function hydrateCandidates(roomId: string, candidates: ReviewCandidate[]) {
+  return Promise.all(candidates.map(async (candidate) => {
+    const body = await api.getRoomCandidate(roomId, candidate.ID);
+    const row = body && typeof body === "object" && "candidate" in body ? (body as { candidate: unknown }).candidate : body;
+    return parseCandidate(row) ?? candidate;
+  }));
+}
+
+export async function loadMoreThreadsAction(roomId: string, cursor: string) {
+  if (!enabled()) return closed();
+  try {
+    const threads = parseThreadPage(await api.listRoomThreads(roomId, cursor));
+    if (!threads) return { ok: false as const, message: "The thread page was not usable." };
+    return { ok: true as const, threads: await hydrateThreads(threads.threads), nextCursor: threads.nextCursor };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadMoreCandidatesAction(roomId: string, cursor: string) {
+  if (!enabled()) return closed();
+  try {
+    const candidates = parseCandidatePage(await api.listRoomCandidates(roomId, cursor));
+    if (!candidates) return { ok: false as const, message: "The candidate page was not usable." };
+    return {
+      ok: true as const,
+      candidates: await hydrateCandidates(roomId, candidates.candidates),
+      nextCursor: candidates.nextCursor,
+    };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadSiteCommentsAction(siteId: string, cursor?: string) {
+  if (!enabled()) return closed();
+  try {
+    const page = parseSiteCommentPage(await api.listSiteCommentPages(siteId, cursor));
+    if (!page) return { ok: false as const, message: "The site comment page was not usable." };
+    return { ok: true as const, items: page.items, nextCursor: page.nextCursor };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function addMemberAction(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") {
+  if (!enabled()) return closed();
+  try {
+    await api.addProjectRoomMember(roomId, userId, role);
+    return { ok: true as const };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function attachSiteAction(roomId: string, siteId: string) {
+  if (!enabled()) return closed();
+  try {
+    await api.addProjectRoomSite(roomId, siteId);
+    return { ok: true as const };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function detachSiteAction(roomId: string, siteId: string) {
+  if (!enabled()) return closed();
+  try {
+    await api.removeProjectRoomSite(roomId, siteId);
+    return { ok: true as const };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function resolveAction(roomId: string, threadId: string) {
+  if (!enabled()) return closed();
+  try {
+    const thread = parseThreadDetail(await api.resolveReviewThread(roomId, threadId));
+    if (!thread) return { ok: false as const, message: "The resolved thread was not usable." };
+    return { ok: true as const, thread };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function reanchorAction(roomId: string, threadId: string, reason: string) {
+  if (!enabled()) return closed();
+  try {
+    const thread = parseThreadDetail(await api.reanchorReviewThread(roomId, threadId, {
+      kind: "page",
+      anchor: {},
+      anchorState: "anchored",
+      reason,
+    }));
+    if (!thread) return { ok: false as const, message: "The reanchored thread was not usable." };
+    return { ok: true as const, thread };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function submitCandidateAction(input: {
+  roomId: string;
+  siteId: string;
+  baseVersionId: string;
+  contentHash: string;
+  diffHash: string;
+  summary: string;
+}) {
+  if (!enabled()) return closed();
+  try {
+    const body = await api.submitProjectRoomCandidate(input);
+    const row = body && typeof body === "object" && "candidate" in body ? (body as { candidate: unknown }).candidate : body;
+    const candidate = parseCandidate(row);
+    if (!candidate) return { ok: false as const, message: "The candidate response was not usable." };
+    return { ok: true as const, candidate };
   } catch (error) {
     return { ok: false as const, message: messageOf(error) };
   }
