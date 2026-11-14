@@ -87,11 +87,11 @@ func (s *Store) SetSiteAccess(ctx context.Context, t Tenant, p SetAccessParams) 
 
 	var res PublishResult
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
-		site, err := q.GetSite(ctx, db.GetSiteParams{ID: p.SiteID, OrgID: t.OrgID})
+		site, err := lockOrgThenSite(ctx, q, t.OrgID, p.SiteID)
 		if err != nil {
-			if isNoRows(err) {
-				return ErrNotFound
-			}
+			return err
+		}
+		if err := rejectNonHumanControlledSite(ctx, q, t.OrgID, p.SiteID); err != nil {
 			return err
 		}
 		if site.OrgID != t.OrgID {

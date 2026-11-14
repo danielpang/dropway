@@ -36,16 +36,26 @@ Thread pins are immutable: `site_id`, `version_id`, `content_hash` (copied from 
 - Reject is terminal.
 - `POST .../candidates/{id}/apply` checks those rules and then returns `candidate application is not enabled`. It does not call publish.
 
-## Legacy publish
+## Live mutation boundary
 
-`POST /v1/sites/{id}/publish` and `POST /v1/sites/{id}/deployments` reject `X-Dropway-Attempt-Token`, `X-Dropway-Gateway-Token`, and bearer tokens prefixed `dw_attempt_` or `dw_gateway_`.
+Credential class is stamped by the auth middleware after it verifies the bearer. It is not read from a request header or from an unverified token prefix.
 
-An org API key with `sites:*` and a null `site_id` can still publish. That is the remaining agent-credential bypass until agent credentials are a distinct class from CI keys. Tests still needed:
+- `human_session`: JWT whose verified audience is this API's interactive audience.
+- `mcp_oauth`: JWT admitted only because its audience is an MCP resource audience.
+- `org_api_key`: secret resolved by `app.resolve_api_key`. Agent keys and CI keys share this class.
+- `dw_attempt_` and `dw_gateway_` tokens are not API credentials. They fail authentication.
 
-- an agent-class credential receives 403 from publish, rollback (publish of an older version), and deployment finalize
-- approve and reject racing on one pending row leave exactly one terminal state and one audit effect
-- a candidate whose base version is no longer live stays `conflict` under a concurrent publish
-- an approval for candidate A cannot be replayed against candidate B or another base version
+For a site that is **not** in an enabled project room, prepare, finalize, and publish behave as before, including `sites:*` CI keys.
+
+For a site that **is** referenced by a project room while `project_rooms_enabled` is true, `POST /v1/sites/{id}/deployments/prepare`, `POST /v1/sites/{id}/deployments`, and `POST /v1/sites/{id}/publish` (including rollback) require `human_session`. Org API keys and MCP OAuth receive 403. Omitting `X-Dropway-Attempt-Token` does not change that. Candidate apply stays disabled and re-checks the live baseline under the same site row lock publish uses.
+
+Approval and publish lock `app.sites` before deciding, then lock the candidate. A second decision does not write a second audit. A hash or base version that belongs to a different candidate does not change either row.
+
+`DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. There is no route that removes a site from a room.
+
+Publish and rollback re-check that membership inside the same transaction that locks `app.org_meta` and then `app.sites`. Attaching a site, approving a candidate, and applying a candidate take those locks in that order. A non-human publish that is still waiting on the site lock sees a membership committed by the transaction that held the lock. Disabling `project_rooms_enabled` is a human admin action; it locks the same org row, so a key cannot observe the old flag and then publish after the flag has changed.
+
+Skills, chats, and memories are outside this boundary. An org-wide key (`sites:*`, null `site_id`) can still call them. A non-null `site_id` cannot.
 
 ## Execution seam
 

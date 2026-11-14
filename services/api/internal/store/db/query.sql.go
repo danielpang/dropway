@@ -4694,6 +4694,28 @@ func (q *Queries) LockOrgMemoryQuota(ctx context.Context, dollar_1 string) error
 	return err
 }
 
+const lockOrgMeta = `-- name: LockOrgMeta :one
+SELECT id, project_rooms_enabled
+FROM app.org_meta
+WHERE id = $1
+FOR UPDATE
+`
+
+type LockOrgMetaRow struct {
+	ID                  string
+	ProjectRoomsEnabled bool
+}
+
+// Lock the org row before a site lock. Publish, access changes, deletes, and
+// room attach/detach all take this lock first so the feature flag and the
+// site row cannot deadlock.
+func (q *Queries) LockOrgMeta(ctx context.Context, orgID string) (LockOrgMetaRow, error) {
+	row := q.db.QueryRow(ctx, lockOrgMeta, orgID)
+	var i LockOrgMetaRow
+	err := row.Scan(&i.ID, &i.ProjectRoomsEnabled)
+	return i, err
+}
+
 const lockOrgSiteQuota = `-- name: LockOrgSiteQuota :exec
 SELECT pg_advisory_xact_lock(hashtext($1::text || ':sites'))
 `
@@ -4750,6 +4772,107 @@ SELECT pg_advisory_xact_lock(hashtext($1::text || ':storage'))
 func (q *Queries) LockOrgStorageQuota(ctx context.Context, dollar_1 string) error {
 	_, err := q.db.Exec(ctx, lockOrgStorageQuota, dollar_1)
 	return err
+}
+
+const lockReviewCandidateForMember = `-- name: LockReviewCandidateForMember :one
+SELECT c.id, c.org_id, c.room_id, c.site_id, c.base_version_id, c.base_content_hash, c.content_hash,
+       c.diff_hash, c.summary, c.state, c.created_by, c.created_at, c.approved_by, c.approved_at,
+       c.rejected_by, c.rejected_at, m.role
+FROM app.review_candidates c
+JOIN app.project_room_members m
+  ON m.room_id = c.room_id AND m.org_id = c.org_id AND m.user_id = $1
+WHERE c.id = $2 AND c.org_id = $3 AND c.room_id = $4
+FOR UPDATE OF c
+`
+
+type LockReviewCandidateForMemberParams struct {
+	UserID string
+	ID     string
+	OrgID  string
+	RoomID string
+}
+
+type LockReviewCandidateForMemberRow struct {
+	ID              string
+	OrgID           string
+	RoomID          string
+	SiteID          string
+	BaseVersionID   string
+	BaseContentHash string
+	ContentHash     string
+	DiffHash        string
+	Summary         string
+	State           string
+	CreatedBy       string
+	CreatedAt       time.Time
+	ApprovedBy      *string
+	ApprovedAt      pgtype.Timestamptz
+	RejectedBy      *string
+	RejectedAt      pgtype.Timestamptz
+	Role            string
+}
+
+func (q *Queries) LockReviewCandidateForMember(ctx context.Context, arg LockReviewCandidateForMemberParams) (LockReviewCandidateForMemberRow, error) {
+	row := q.db.QueryRow(ctx, lockReviewCandidateForMember,
+		arg.UserID,
+		arg.ID,
+		arg.OrgID,
+		arg.RoomID,
+	)
+	var i LockReviewCandidateForMemberRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RoomID,
+		&i.SiteID,
+		&i.BaseVersionID,
+		&i.BaseContentHash,
+		&i.ContentHash,
+		&i.DiffHash,
+		&i.Summary,
+		&i.State,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.RejectedBy,
+		&i.RejectedAt,
+		&i.Role,
+	)
+	return i, err
+}
+
+const lockSite = `-- name: LockSite :one
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+FROM app.sites
+WHERE id = $1 AND org_id = $2
+FOR UPDATE
+`
+
+type LockSiteParams struct {
+	ID    string
+	OrgID string
+}
+
+// Row lock shared with candidate approval so a live-pointer publish and an
+// approval decision cannot observe a stale baseline.
+func (q *Queries) LockSite(ctx context.Context, arg LockSiteParams) (AppSite, error) {
+	row := q.db.QueryRow(ctx, lockSite, arg.ID, arg.OrgID)
+	var i AppSite
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.OwnerUserID,
+		&i.AccessMode,
+		&i.CurrentVersionID,
+		&i.FeedVisible,
+		&i.Title,
+		&i.Description,
+		&i.CreatedAt,
+		&i.AllowMemberEdits,
+	)
+	return i, err
 }
 
 const lockSkillFolderQuota = `-- name: LockSkillFolderQuota :exec
@@ -5836,6 +5959,29 @@ type SetVersionPreviewExpiryParams struct {
 func (q *Queries) SetVersionPreviewExpiry(ctx context.Context, arg SetVersionPreviewExpiryParams) error {
 	_, err := q.db.Exec(ctx, setVersionPreviewExpiry, arg.ID, arg.PreviewExpiresAt, arg.OrgID)
 	return err
+}
+
+const siteInEnabledProjectRoom = `-- name: SiteInEnabledProjectRoom :one
+SELECT EXISTS (
+    SELECT 1
+    FROM app.project_room_sites s
+    JOIN app.org_meta m ON m.id = s.org_id
+    WHERE s.org_id = $1
+      AND s.site_id = $2
+      AND m.project_rooms_enabled
+) AS controlled
+`
+
+type SiteInEnabledProjectRoomParams struct {
+	OrgID  string
+	SiteID string
+}
+
+func (q *Queries) SiteInEnabledProjectRoom(ctx context.Context, arg SiteInEnabledProjectRoomParams) (bool, error) {
+	row := q.db.QueryRow(ctx, siteInEnabledProjectRoom, arg.OrgID, arg.SiteID)
+	var controlled bool
+	err := row.Scan(&controlled)
+	return controlled, err
 }
 
 const subOrgStorage = `-- name: SubOrgStorage :exec

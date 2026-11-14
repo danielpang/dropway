@@ -36,25 +36,30 @@ type ProjectRoomStore interface {
 	RoomAccess(ctx context.Context, t store.Tenant, roomID, siteID string) (string, projectroom.SiteRights, error)
 }
 
-// rejectAgentLiveMutation denies attempt and gateway credentials on the legacy
-// deploy, publish, and rollback routes. An org API key without those headers
-// is still the CI credential and is not rewritten here.
-func rejectAgentLiveMutation(r *http.Request) error {
-	if r.Header.Get("X-Dropway-Attempt-Token") != "" || r.Header.Get("X-Dropway-Gateway-Token") != "" {
-		return fmt.Errorf("%w: agent credentials cannot publish or update the live site", httpx.ErrForbidden)
-	}
-	authz := r.Header.Get("Authorization")
-	if strings.Contains(authz, "dw_attempt_") || strings.Contains(authz, "dw_gateway_") {
-		return fmt.Errorf("%w: agent credentials cannot publish or update the live site", httpx.ErrForbidden)
-	}
-	return nil
+// rejectAgentLiveMutation was a caller-controlled header check. Credential
+// class now comes only from the middleware that verified the request.
+func humanSession(r *http.Request) bool {
+	class, ok := middleware.CredentialClassFromContext(r.Context())
+	return ok && class == middleware.CredentialHumanSession
 }
 
-func humanSession(r *http.Request) bool {
-	if _, keyed := middleware.APIKeyIDFromContext(r.Context()); keyed {
+// allowControlledSiteMutation fail-closes live source writes and publish on
+// sites that belong to an enabled project room. Org API keys and MCP OAuth
+// are not human sessions. Sites outside a room keep the existing CI path.
+func (a *API) allowControlledSiteMutation(w http.ResponseWriter, r *http.Request, t store.Tenant, siteID string) bool {
+	controlled, err := a.Store.ProjectReviewControlled(r.Context(), t, siteID)
+	if err != nil {
+		writeStoreError(w, err)
 		return false
 	}
-	return rejectAgentLiveMutation(r) == nil
+	if !controlled {
+		return true
+	}
+	if humanSession(r) {
+		return true
+	}
+	httpx.WriteError(w, fmt.Errorf("%w: this site is under project review; publish, rollback, and source writes require an authenticated human session", httpx.ErrForbidden))
+	return false
 }
 
 // EnforceAPIKeyGrant applies stored key scopes and site_id. Human sessions pass.

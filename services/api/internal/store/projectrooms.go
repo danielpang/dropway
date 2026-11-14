@@ -310,6 +310,9 @@ func (s *Store) AddProjectRoomSite(ctx context.Context, t Tenant, roomID, siteID
 			return err
 		}
 		ownerBefore := site.OwnerUserID
+		if _, err := lockOrgThenSite(ctx, q, t.OrgID, siteID); err != nil {
+			return err
+		}
 		if _, err := q.InsertProjectRoomSite(ctx, db.InsertProjectRoomSiteParams{
 			OrgID: t.OrgID, RoomID: roomID, SiteID: siteID, CreatedBy: t.UserID,
 		}); err != nil {
@@ -611,11 +614,12 @@ func (s *Store) RejectCandidate(ctx context.Context, t Tenant, roomID string, re
 
 func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, req projectroom.ApprovalRequest, approve bool, rec AuditRecord) (CandidateDecision, error) {
 	var out CandidateDecision
+	conflict := false
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		if err := s.requireRooms(ctx, q, t.OrgID); err != nil {
 			return err
 		}
-		row, err := q.GetReviewCandidateForMember(ctx, db.GetReviewCandidateForMemberParams{
+		peek, err := q.GetReviewCandidateForMember(ctx, db.GetReviewCandidateForMemberParams{
 			UserID: t.UserID, ID: req.CandidateID, OrgID: t.OrgID, RoomID: roomID,
 		})
 		if err != nil {
@@ -624,18 +628,33 @@ func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, re
 			}
 			return err
 		}
-		rights, site, err := s.siteRights(ctx, q, t, row.SiteID)
+		if _, err := lockOrgThenSite(ctx, q, t.OrgID, peek.SiteID); err != nil {
+			return err
+		}
+		row, err := q.LockReviewCandidateForMember(ctx, db.LockReviewCandidateForMemberParams{
+			UserID: t.UserID, ID: req.CandidateID, OrgID: t.OrgID, RoomID: roomID,
+		})
+		if err != nil {
+			if isNoRows(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		rights, _, err := s.siteRights(ctx, q, t, row.SiteID)
 		if err != nil {
 			return err
 		}
-		// Approve-change requires run/accept rights. Reviewer sign-off does not.
 		if !projectroom.CanAccept(projectroom.Role(row.Role), rights) {
 			return ErrRoomForbidden
 		}
+		lockedSite, err := q.GetSite(ctx, db.GetSiteParams{ID: row.SiteID, OrgID: t.OrgID})
+		if err != nil {
+			return err
+		}
 		req.LiveVersionID = ""
 		req.LiveContentHash = ""
-		if site.CurrentVersionID != nil {
-			ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: *site.CurrentVersionID, OrgID: t.OrgID})
+		if lockedSite.CurrentVersionID != nil {
+			ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: *lockedSite.CurrentVersionID, OrgID: t.OrgID})
 			if err != nil {
 				return err
 			}
@@ -654,7 +673,7 @@ func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, re
 			decision, derr = projectroom.DecideReject(c, req)
 		}
 		if decision.Idempotent {
-			out = CandidateDecision{Candidate: candidateFromMember(row), Changed: false}
+			out = CandidateDecision{Candidate: candidateFromLock(row), Changed: false}
 			return nil
 		}
 		if derr != nil && !errors.Is(derr, projectroom.ErrCandidateConflict) {
@@ -677,16 +696,19 @@ func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, re
 			if !isNoRows(uerr) {
 				return mapRoomErr(uerr)
 			}
-			// Lost a race. Re-read and do not apply a second effect.
 			cur, gerr := q.GetReviewCandidate(ctx, db.GetReviewCandidateParams{ID: row.ID, OrgID: t.OrgID, RoomID: roomID})
 			if gerr != nil {
 				return gerr
 			}
 			out = CandidateDecision{Candidate: candidateFrom(cur), Changed: false}
-			if approve && cur.State == projectroom.CandidateApproved && cur.ContentHash == req.ContentHash {
+			if approve && cur.State == projectroom.CandidateApproved && cur.ContentHash == req.ContentHash && cur.BaseVersionID == req.BaseVersionID {
 				return nil
 			}
-			if !approve && cur.State == projectroom.CandidateRejected {
+			if !approve && cur.State == projectroom.CandidateRejected && cur.ContentHash == req.ContentHash {
+				return nil
+			}
+			if cur.State == projectroom.CandidateConflict {
+				conflict = true
 				return nil
 			}
 			return ErrCandidateState
@@ -699,6 +721,7 @@ func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, re
 		} else if next == projectroom.CandidateConflict {
 			kind = "candidate_conflict"
 			action = audit.ActionCandidateConflict
+			conflict = true
 		}
 		if err := writeActivity(ctx, q, t, roomID, kind, nil, &row.SiteID, &row.BaseVersionID); err != nil {
 			return err
@@ -718,12 +741,15 @@ func (s *Store) decideCandidate(ctx context.Context, t Tenant, roomID string, re
 			return err
 		}
 		out = CandidateDecision{Candidate: candidateFrom(updated), Changed: true}
-		if errors.Is(derr, projectroom.ErrCandidateConflict) {
-			return derr
-		}
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	if conflict {
+		return out, projectroom.ErrCandidateConflict
+	}
+	return out, nil
 }
 
 func (s *Store) RoomAccess(ctx context.Context, t Tenant, roomID, siteID string) (string, projectroom.SiteRights, error) {
@@ -773,16 +799,16 @@ func (s *Store) ApplyCandidate(ctx context.Context, t Tenant, roomID string, req
 			}
 			return err
 		}
-		rights, site, err := s.siteRights(ctx, q, t, row.SiteID)
+		locked, err := lockOrgThenSite(ctx, q, t.OrgID, row.SiteID)
+		if err != nil {
+			return err
+		}
+		rights, _, err := s.siteRights(ctx, q, t, row.SiteID)
 		if err != nil {
 			return err
 		}
 		if !projectroom.CanAccept(projectroom.Role(row.Role), rights) {
 			return ErrRoomForbidden
-		}
-		before := ""
-		if site.CurrentVersionID != nil {
-			before = *site.CurrentVersionID
 		}
 		c := projectroom.Candidate{
 			ID: row.ID, State: row.State, ContentHash: row.ContentHash,
@@ -791,21 +817,33 @@ func (s *Store) ApplyCandidate(ctx context.Context, t Tenant, roomID string, req
 		if err := projectroom.CanApply(c, req); err != nil {
 			return err
 		}
-		afterSite, err := q.GetSite(ctx, db.GetSiteParams{ID: row.SiteID, OrgID: t.OrgID})
+		if locked.CurrentVersionID == nil || *locked.CurrentVersionID != row.BaseVersionID {
+			return projectroom.ErrCandidateConflict
+		}
+		ver, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: *locked.CurrentVersionID, OrgID: t.OrgID})
 		if err != nil {
 			return err
 		}
-		after := ""
-		if afterSite.CurrentVersionID != nil {
-			after = *afterSite.CurrentVersionID
-		}
-		if after != before {
-			return ErrRoomConflict
+		if ver.ContentHash != row.BaseContentHash {
+			return projectroom.ErrCandidateConflict
 		}
 		out = candidateFromMember(row)
 		return ErrApplicationDisabled
 	})
 	return out, err
+}
+
+func (s *Store) ProjectReviewControlled(ctx context.Context, t Tenant, siteID string) (bool, error) {
+	var controlled bool
+	err := s.withTx(ctx, t, func(q *db.Queries) error {
+		v, err := q.SiteInEnabledProjectRoom(ctx, db.SiteInEnabledProjectRoomParams{OrgID: t.OrgID, SiteID: siteID})
+		if err != nil {
+			return err
+		}
+		controlled = v
+		return nil
+	})
+	return controlled, err
 }
 
 func (s *Store) requireRooms(ctx context.Context, q *db.Queries, orgID string) error {
@@ -883,6 +921,17 @@ func candidateFrom(row db.AppReviewCandidate) Candidate {
 }
 
 func candidateFromMember(row db.GetReviewCandidateForMemberRow) Candidate {
+	return candidateFromLock(db.LockReviewCandidateForMemberRow{
+		ID: row.ID, OrgID: row.OrgID, RoomID: row.RoomID, SiteID: row.SiteID,
+		BaseVersionID: row.BaseVersionID, BaseContentHash: row.BaseContentHash,
+		ContentHash: row.ContentHash, DiffHash: row.DiffHash, Summary: row.Summary,
+		State: row.State, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
+		ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt,
+		RejectedBy: row.RejectedBy, RejectedAt: row.RejectedAt, Role: row.Role,
+	})
+}
+
+func candidateFromLock(row db.LockReviewCandidateForMemberRow) Candidate {
 	return Candidate{
 		ID: row.ID, RoomID: row.RoomID, SiteID: row.SiteID, BaseVersionID: row.BaseVersionID,
 		BaseContentHash: row.BaseContentHash, ContentHash: row.ContentHash, DiffHash: row.DiffHash,

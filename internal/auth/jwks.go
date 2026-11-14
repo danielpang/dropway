@@ -189,6 +189,37 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 	return claims, nil
 }
 
+// Credential classes assigned from the verified audience. Callers must not
+// infer these from a header or an unverified token prefix.
+const (
+	ClassHumanSession = "human_session"
+	ClassMCPOAuth     = "mcp_oauth"
+)
+
+// CredentialClass reports which verified audience admitted the token.
+// Any MCP resource audience classifies the token as MCP OAuth, including a
+// token that also carries the interactive API audience, in either order.
+// Only a verified audience set that contains the primary audience and no MCP
+// audience is an interactive human session. Anything else is unclassified.
+func (v *Verifier) CredentialClass(c *Claims) string {
+	if v == nil || c == nil {
+		return ""
+	}
+	for _, a := range c.Audience {
+		for _, extra := range v.extraAudiences {
+			if a == extra {
+				return ClassMCPOAuth
+			}
+		}
+	}
+	for _, a := range c.Audience {
+		if a == v.audience {
+			return ClassHumanSession
+		}
+	}
+	return ""
+}
+
 // audienceAllowed reports whether the token's audience claim contains any of the
 // accepted audiences ({audience} ∪ extraAudiences). Only consulted when extra
 // audiences are configured.

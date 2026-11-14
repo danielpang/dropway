@@ -391,6 +391,10 @@ type Querier interface {
 	// Serialize concurrent memory creates for the SAME org (the same COUNT →
 	// policy → INSERT critical section the site/skill/chat caps use).
 	LockOrgMemoryQuota(ctx context.Context, dollar_1 string) error
+	// Lock the org row before a site lock. Publish, access changes, deletes, and
+	// room attach/detach all take this lock first so the feature flag and the
+	// site row cannot deadlock.
+	LockOrgMeta(ctx context.Context, orgID string) (LockOrgMetaRow, error)
 	// Serialize concurrent site creates for the SAME org: take a transaction-scoped
 	// advisory lock keyed by hashtext(org||':sites'). Held until the create-site tx
 	// commits/rolls back, it makes the COUNT → policy check → INSERT a critical
@@ -415,6 +419,10 @@ type Querier interface {
 	// → ledger INSERT → counter UPDATE is a critical section (the same TOCTOU guard the
 	// site cap uses). Held until the deploy tx commits/rolls back.
 	LockOrgStorageQuota(ctx context.Context, dollar_1 string) error
+	LockReviewCandidateForMember(ctx context.Context, arg LockReviewCandidateForMemberParams) (LockReviewCandidateForMemberRow, error)
+	// Row lock shared with candidate approval so a live-pointer publish and an
+	// approval decision cannot observe a stale baseline.
+	LockSite(ctx context.Context, arg LockSiteParams) (AppSite, error)
 	// Serialize concurrent membership inserts for the SAME folder, so the COUNT →
 	// per-folder cap check → INSERT is a critical section (free tier caps skills per
 	// folder; see quota.ResourceSkillPerFolder).
@@ -525,6 +533,7 @@ type Querier interface {
 	// preview); the draft-aware GC and the dashboard's "preview expired" state read
 	// this without joining host_routes.
 	SetVersionPreviewExpiry(ctx context.Context, arg SetVersionPreviewExpiryParams) error
+	SiteInEnabledProjectRoom(ctx context.Context, arg SiteInEnabledProjectRoomParams) (bool, error)
 	// Decrement the org's running storage total by the freed bytes (GC). GREATEST(0,…)
 	// floors at zero so a reconciliation skew can never make the counter negative.
 	SubOrgStorage(ctx context.Context, arg SubOrgStorageParams) error

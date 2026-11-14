@@ -1678,6 +1678,43 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, room_id, site_id, base_version_id, base_content_hash, content_hash, diff_hash,
           summary, state, created_by, created_at, approved_by, approved_at, rejected_by, rejected_at;
 
+-- name: LockOrgMeta :one
+-- Lock the org row before a site lock. Publish, access changes, deletes, and
+-- room attach/detach all take this lock first so the feature flag and the
+-- site row cannot deadlock.
+SELECT id, project_rooms_enabled
+FROM app.org_meta
+WHERE id = sqlc.arg(org_id)
+FOR UPDATE;
+
+-- name: LockSite :one
+-- Row lock shared with candidate approval so a live-pointer publish and an
+-- approval decision cannot observe a stale baseline.
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+FROM app.sites
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id)
+FOR UPDATE;
+
+-- name: LockReviewCandidateForMember :one
+SELECT c.id, c.org_id, c.room_id, c.site_id, c.base_version_id, c.base_content_hash, c.content_hash,
+       c.diff_hash, c.summary, c.state, c.created_by, c.created_at, c.approved_by, c.approved_at,
+       c.rejected_by, c.rejected_at, m.role
+FROM app.review_candidates c
+JOIN app.project_room_members m
+  ON m.room_id = c.room_id AND m.org_id = c.org_id AND m.user_id = sqlc.arg(user_id)
+WHERE c.id = sqlc.arg(id) AND c.org_id = sqlc.arg(org_id) AND c.room_id = sqlc.arg(room_id)
+FOR UPDATE OF c;
+
+-- name: SiteInEnabledProjectRoom :one
+SELECT EXISTS (
+    SELECT 1
+    FROM app.project_room_sites s
+    JOIN app.org_meta m ON m.id = s.org_id
+    WHERE s.org_id = sqlc.arg(org_id)
+      AND s.site_id = sqlc.arg(site_id)
+      AND m.project_rooms_enabled
+) AS controlled;
+
 -- name: CountUnreadReviewActivity :one
 SELECT count(*)::bigint AS count
 FROM app.review_activity a
