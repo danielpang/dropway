@@ -22,6 +22,7 @@ import { defineConfig } from "vitest/config";
 const root = fileURLToPath(new URL("./", import.meta.url));
 
 export default defineConfig({
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     alias: [
       { find: "server-only", replacement: fileURLToPath(new URL("./test/stubs/server-only.ts", import.meta.url)) },
