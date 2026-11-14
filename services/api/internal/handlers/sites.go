@@ -444,7 +444,7 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrApplicationDisabled):
 		httpx.WriteError(w, fmt.Errorf("%w: candidate application is not enabled", httpx.ErrForbidden))
 	case errors.Is(err, store.ErrControlledSite):
-		httpx.WriteError(w, fmt.Errorf("%w: this site is under project review; publish, rollback, and source writes require an authenticated human session", httpx.ErrForbidden))
+		httpx.WriteError(w, fmt.Errorf("%w: this operation on a project site requires an authenticated human session", httpx.ErrForbidden))
 	case errors.Is(err, store.ErrCandidatePublishDenied):
 		httpx.WriteError(w, fmt.Errorf("%w: this version matches a review candidate and has no approved decision for the current baseline", httpx.ErrConflict))
 	case errors.Is(err, store.ErrCandidateArtifact):

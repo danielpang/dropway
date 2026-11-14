@@ -58,12 +58,9 @@ func (s *Store) CreateSiteVersion(ctx context.Context, t Tenant, p CreateSiteVer
 	var out SiteVersion
 	err := s.withTx(ctx, t, func(q *db.Queries) error {
 		// Same org-then-site locks as publish, before the version insert, so a
-		// room attach cannot land between a stale check and this write.
+		// candidate application and ordinary deployment serialize consistently.
 		site, err := lockOrgThenSite(ctx, q, t.OrgID, p.SiteID)
 		if err != nil {
-			return err
-		}
-		if err := rejectNonHumanControlledSite(ctx, q, t.OrgID, p.SiteID); err != nil {
 			return err
 		}
 		if site.OrgID != t.OrgID {
@@ -344,9 +341,6 @@ func (s *Store) Publish(ctx context.Context, t Tenant, siteID, versionID string)
 	err := s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		locked, err := lockOrgThenSite(ctx, q, t.OrgID, siteID)
 		if err != nil {
-			return err
-		}
-		if err := rejectNonHumanControlledSite(ctx, q, t.OrgID, siteID); err != nil {
 			return err
 		}
 		site := locked

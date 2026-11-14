@@ -6,7 +6,6 @@ package integration
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -19,7 +18,7 @@ import (
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
-func TestIntegration_ProtectionPublishRace(t *testing.T) {
+func TestIntegration_ProjectAttachPreservesPublishRace(t *testing.T) {
 	ctx := context.Background()
 	startPostgres(t)
 	applyMigrations(t, repoRoot(t))
@@ -104,12 +103,12 @@ func TestIntegration_ProtectionPublishRace(t *testing.T) {
 		t.Fatal(err)
 	}
 	wg.Wait()
-	if !errors.Is(publishErr, store.ErrControlledSite) {
-		t.Fatalf("publish after concurrent attach = %v, want controlled-site denial", publishErr)
+	if publishErr != nil {
+		t.Fatalf("publish after concurrent attach = %v, want ordinary publish to succeed", publishErr)
 	}
 	live, err := st.GetSite(ctx, tn, site.ID)
-	if err != nil || live.CurrentVersionID == nil || *live.CurrentVersionID != v1.ID {
-		t.Fatalf("live pointer moved: %+v %v", live.CurrentVersionID, err)
+	if err != nil || live.CurrentVersionID == nil || *live.CurrentVersionID != v2.ID {
+		t.Fatalf("live pointer did not update: %+v %v", live.CurrentVersionID, err)
 	}
 
 	other, err := st.CreateSite(ctx, tn, "beta", projection.AccessOrgOnly)
@@ -223,7 +222,7 @@ func TestIntegration_VersionInsertSeesConcurrentReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-done
-	if !errors.Is(insertErr, store.ErrControlledSite) {
+	if insertErr != nil {
 		t.Fatalf("version insert err=%v", insertErr)
 	}
 }

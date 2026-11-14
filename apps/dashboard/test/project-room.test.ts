@@ -371,7 +371,7 @@ describe("project room markup", () => {
     expect(room).toContain("Expand reply");
     expect(room).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(room).not.toContain("<script>alert");
-    expect(room).toContain("Site comment page");
+    expect(room).toContain("Site-wide comment history");
     expect(room).toContain("did not include a body");
     expect(room).toContain("Load older threads");
     expect(room).toContain("Resolve");

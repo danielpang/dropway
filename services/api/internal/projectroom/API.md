@@ -49,15 +49,15 @@ Credential class is stamped by the auth middleware after it verifies the bearer.
 - `org_api_key`: secret resolved by `app.resolve_api_key`. Agent keys and CI keys share this class.
 - `dw_attempt_` and `dw_gateway_` tokens are not API credentials. They fail authentication.
 
-For a site that is **not** in an enabled project room, prepare, finalize, and publish behave as before, including `sites:*` CI keys.
+Ordinary site deployment remains available inside and outside projects. Verified `human_session`, `org_api_key`, and `mcp_oauth` callers may prepare, finalize, publish, and roll back when they have site edit rights. API-key scopes and any site restriction still apply. Project membership does not grant site-write permission. Job and gateway tokens are not API credentials.
 
-For a site that **is** referenced by a project room while `project_rooms_enabled` is true, `POST /v1/sites/{id}/deployments/prepare`, `POST /v1/sites/{id}/deployments`, and `POST /v1/sites/{id}/publish` (including rollback) require `human_session`. Org API keys and MCP OAuth receive 403. Omitting `X-Dropway-Attempt-Token` does not change that. Candidate apply rechecks the live baseline under the same site row lock publish uses.
+AI candidate approval and Apply remain human-only. Candidate apply rechecks the live baseline under the same site row lock used by ordinary publishing, so an intervening CLI/MCP deployment makes a proposal based on the old version stale.
 
 Approval and publish lock `app.sites` before deciding, then lock the candidate. A second decision does not write a second audit. A hash or base version that belongs to a different candidate does not change either row.
 
 `DELETE /v1/sites/{id}` and `PUT /v1/sites/{id}/access` use the same human-session rule on a controlled site. Org API keys and MCP OAuth cannot delete it, change its access mode, or turn project rooms off. A human room owner can detach a site with `DELETE /v1/project-rooms/{roomID}/sites/{siteID}`. That locks the site first and does not delete candidates. A version whose content hash equals a review candidate cannot use legacy publish, even after approval. It must pass complete artifact verification and the application receipt transaction through candidate Apply.
 
-Publish and rollback re-check that membership inside the same transaction that locks `app.org_meta` and then `app.sites`. Attaching a site, approving a candidate, and applying a candidate take those locks in that order. A non-human publish that is still waiting on the site lock sees a membership committed by the transaction that held the lock. Disabling `project_rooms_enabled` is a human admin action; it locks the same org row, so a key cannot observe the old flag and then publish after the flag has changed.
+Publish and rollback check candidate provenance inside the same transaction that locks `app.org_meta` and then `app.sites`. Attaching a site, approving a candidate, and applying a candidate take those locks in that order. Attaching a project does not block a waiting ordinary deployment or publish. It still cannot publish candidate bytes through the legacy publish route while review protection applies.
 
 Site-linked chats and memories are protected as described below. Org-wide skill writes and chats/manual memories with no site remain available to org keys; a non-null key `site_id` cannot access those org-wide routes.
 

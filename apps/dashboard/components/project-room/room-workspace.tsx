@@ -234,6 +234,13 @@ export function RoomWorkspace({
   const [panel, setPanel] = React.useState<
     "review" | "changes" | "activity" | "settings"
   >("review");
+  const [toast, setToast] = React.useState(notice);
+  React.useEffect(() => {
+    setToast(notice);
+    if (!notice) return;
+    const timer = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   const [commentsVisible, setCommentsVisible] = React.useState(true);
   const [activeThreadId, setActiveThreadId] = React.useState("");
   const [commentBusy, setCommentBusy] = React.useState(false);
@@ -491,8 +498,8 @@ export function RoomWorkspace({
                 ))}
               </select>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Automated changes to this site will require review. Direct
-                API-key and MCP publishing will be blocked.
+                AI-proposed changes require review. Users with site write access
+                can continue publishing through the CLI or MCP.
               </p>
               <Button
                 size="sm"
@@ -803,9 +810,6 @@ export function RoomWorkspace({
   const siteFeed = (
     <>
       <section className="space-y-3" aria-label="Site comment page">
-        <h2 className="text-sm font-medium text-foreground">
-          Site comment page
-        </h2>
         <p className="text-sm text-muted-foreground">
           Comments from across this site, including earlier versions.
         </p>
@@ -1076,9 +1080,6 @@ export function RoomWorkspace({
             comment.
           </p>
         ) : null}
-        <p className="text-[11px] text-muted-foreground">
-          Includes resolved comments and earlier versions.
-        </p>
         <ul className="space-y-1.5">
           {visibleThreads.map((thread) => renderThread(thread))}
         </ul>
@@ -1097,9 +1098,6 @@ export function RoomWorkspace({
   const signoffPanel = (
     <>
       <section className="space-y-3" aria-label="Version sign-off">
-        <h2 className="text-sm font-medium text-foreground">
-          Version sign-off
-        </h2>
         <p className="text-sm text-muted-foreground">
           Sign-off records that you looked at a version. It does not approve a
           change and it does not publish.
@@ -1269,13 +1267,24 @@ export function RoomWorkspace({
           </Button>
         </header>
       ) : null}
-      {notice && (!room || showCreate) ? (
-        <p
+      {toast ? (
+        <div
           role="status"
-          className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm"
+          aria-live="polite"
+          className="fixed bottom-5 left-5 z-[60] flex max-w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-lg border border-border bg-popover px-4 py-3 text-sm text-popover-foreground shadow-lg"
         >
-          {notice}
-        </p>
+          <span>{toast}</span>
+          <Tooltip label="Dismiss notification" align="start" side="top">
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              onClick={() => setToast(null)}
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </div>
       ) : null}
       {!orgEnabled ? (
         <section className="rounded-xl border border-border p-8">
@@ -1409,9 +1418,9 @@ export function RoomWorkspace({
               </fieldset>
               {selectedSiteIds.length > 0 ? (
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Adding items puts their automated changes behind review.
-                  Direct API-key and MCP publishing will be blocked for those
-                  sites.
+                  AI-proposed changes require review before publishing. Existing
+                  site permissions still apply. CLI and MCP publishing remain
+                  available.
                 </p>
               ) : null}
               <div className="flex items-center gap-3">
@@ -1567,14 +1576,6 @@ export function RoomWorkspace({
               )}
             </nav>
           </div>
-          {notice ? (
-            <p
-              role="status"
-              className="shrink-0 border-b border-border bg-muted/30 px-4 py-2 text-xs"
-            >
-              {notice}
-            </p>
-          ) : null}
           {detailsRoomId !== roomId ? (
             <div className="p-8 text-sm text-muted-foreground">
               {roomLoadError?.roomId === roomId ? (
@@ -1797,15 +1798,23 @@ export function RoomWorkspace({
                       </div>
                       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                         {commentsPanel}
-                        <details className="border-t border-border pt-3">
-                          <summary className="cursor-pointer text-xs text-muted-foreground">
+                        <details className="group/section border-t border-border pt-2">
+                          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
                             Version sign-off
+                            <ChevronDown
+                              className="h-3.5 w-3.5 transition-transform group-open/section:rotate-180"
+                              aria-hidden="true"
+                            />
                           </summary>
                           <div className="mt-3">{signoffPanel}</div>
                         </details>
-                        <details className="border-t border-border pt-3">
-                          <summary className="cursor-pointer text-xs text-muted-foreground">
+                        <details className="group/section border-t border-border pt-2">
+                          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
                             Site-wide comment history
+                            <ChevronDown
+                              className="h-3.5 w-3.5 transition-transform group-open/section:rotate-180"
+                              aria-hidden="true"
+                            />
                           </summary>
                           <div className="mt-3">{siteFeed}</div>
                         </details>

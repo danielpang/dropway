@@ -309,7 +309,7 @@ export function RoomSession({
           }
           setOrgEnabled(true);
           setNotice(
-            "Project rooms are enabled. API-key and MCP deployment and publish writes to attached sites are now blocked.",
+            "Project rooms are enabled. Existing CLI and MCP publishing access is unchanged.",
           );
         });
       }}
@@ -573,7 +573,7 @@ export function RoomSession({
           loadedRoom.current = "";
           applyRoom(roomId);
           setNotice(
-            "Site attached. Direct API-key and MCP deployment and publish writes are now blocked while project rooms are enabled.",
+            "Site attached. Existing CLI and MCP publishing access is unchanged.",
           );
         });
       }}
