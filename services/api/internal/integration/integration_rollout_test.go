@@ -50,7 +50,7 @@ func TestIntegration_RolloutPreviousAPIKeyProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roomsEnabled {
-		t.Fatal("migration enabled project rooms by default")
+	if !roomsEnabled {
+		t.Fatal("new organizations should have project rooms enabled by default")
 	}
 }

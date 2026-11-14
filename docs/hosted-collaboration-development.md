@@ -20,7 +20,7 @@ Ordinary site mutations share the organization configuration lock and lock only 
 
 The dashboard reads `GET /v1/project-collaboration/capabilities` through its authenticated API client. The response contains `enabled` and `execution_configured`: the first is the PostHog decision; the second reports runtime configuration readiness, not another feature flag. Pages fail closed and server actions recheck capability. The API enforces authorization independently of the UI.
 
-Organization opt-in (`app.org_meta.project_rooms_enabled`) remains required, along with room/site permissions. Turning the PostHog flag off does not detach sites or bypass their existing human-review protections. The worker stays running for cleanup; the API gates new claims and sensitive operations using the initiating user's current decision. Keep the worker running while draining/reaping existing Sprite leases, even when rollout is disabled.
+Organization availability (`app.org_meta.project_rooms_enabled`) defaults on after migration 0026. Existing explicit opt-outs remain enforced, along with room/site permissions. Turning the PostHog flag off does not detach sites or bypass their existing human-review protections. The worker stays running for cleanup; the API gates new claims and sensitive operations using the initiating user's current decision. Keep the worker running while draining/reaping existing Sprite leases, even when rollout is disabled.
 
 ## Configuration
 

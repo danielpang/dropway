@@ -3,10 +3,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -26,6 +28,7 @@ import (
 // NOT deduplicated across sites, so it's the "how big is this site on its own"
 // number, like a Dropbox/Drive folder size.
 type siteResponse struct {
+	ResourceKind     string  `json:"resource_kind"`
 	ID               string  `json:"id"`
 	OrgID            string  `json:"org_id"`
 	Slug             string  `json:"slug"`
@@ -56,6 +59,7 @@ type siteResponse struct {
 // is the site's logical size (0 for a just-created site with no live version).
 func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64, contentHash string) siteResponse {
 	return siteResponse{
+		ResourceKind:       s.ResourceKind,
 		ID:                 s.ID,
 		OrgID:              s.OrgID,
 		Slug:               s.Slug,
@@ -78,8 +82,10 @@ func (a *API) toSiteResponse(s store.Site, orgSlug string, storageBytes int64, c
 // no-extra-config modes are accepted at create time; password/allowlist are
 // configured afterward via PUT /v1/sites/{id}/access (they need a password / entries).
 type createSiteRequest struct {
-	Slug       string `json:"slug"`
-	AccessMode string `json:"access_mode,omitempty"`
+	Slug         string `json:"slug"`
+	AccessMode   string `json:"access_mode,omitempty"`
+	ResourceKind string `json:"resource_kind,omitempty"`
+	Title        string `json:"title,omitempty"`
 }
 
 // CreateSite reserves quota for one more site for the caller and inserts it under
@@ -136,7 +142,33 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 	// + COUNT → quota.Provider.Allow → INSERT), so it's race-safe. OSS = Unlimited;
 	// cloud returns a *quota.ExceededError that writeStoreError renders as 402.
 	// access_mode "" → store inherits the org's default_visibility (org_only).
-	site, err := a.Store.CreateSite(r.Context(), t, req.Slug, req.AccessMode)
+	var site store.Site
+	var err error
+	switch req.ResourceKind {
+	case "", "site":
+		site, err = a.Store.CreateSite(r.Context(), t, req.Slug, req.AccessMode)
+	case "image":
+		if !humanSession(r) || a.CollaborationAllowed == nil || !a.CollaborationAllowed(r.Context(), t.UserID, t.OrgID) {
+			httpx.WriteJSON(w, http.StatusForbidden, httpx.ErrorBody{Error: "collaboration_disabled", Message: "project image uploads require an enabled human session"})
+			return
+		}
+		imageStore, ok := a.Store.(interface {
+			CreateProjectImage(context.Context, store.Tenant, string, string) (store.Site, error)
+		})
+		if !ok {
+			httpx.WriteJSON(w, http.StatusServiceUnavailable, httpx.ErrorBody{Error: "unavailable", Message: "image storage is unavailable"})
+			return
+		}
+		title := strings.TrimSpace(req.Title)
+		if title == "" || len(title) > 255 {
+			httpx.WriteError(w, fmt.Errorf("%w: image title must be 1-255 bytes", httpx.ErrBadRequest))
+			return
+		}
+		site, err = imageStore.CreateProjectImage(r.Context(), t, req.Slug, title)
+	default:
+		httpx.WriteError(w, fmt.Errorf("%w: invalid resource_kind", httpx.ErrBadRequest))
+		return
+	}
 	if err != nil {
 		writeStoreError(w, err)
 		return

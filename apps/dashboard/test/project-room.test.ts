@@ -365,7 +365,8 @@ describe("project room markup", () => {
         onReanchor: () => undefined,
       }),
     );
-    expect(room).toContain("modified");
+    expect(room).toContain("Changes (1)");
+    expect(room).not.toContain("Candidate content hash");
     expect(room).not.toContain("Diff unavailable");
     expect(room).toContain("Expand reply");
     expect(room).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
@@ -380,14 +381,14 @@ describe("project room markup", () => {
     expect(room).toContain("orphaned");
     expect(room).toContain("&lt;script&gt;history&lt;/script&gt;");
     expect(room).not.toContain("<script>history</script>");
-    expect(room).toContain("Add member");
-    expect(room).toContain("Text highlight: available in static review");
-    expect(room).toContain("Component id: available in static review");
+    expect(room).toContain("Settings &amp; sharing");
+    expect(room).toContain("All versions");
+    expect(room).toContain("View or review");
     expect(room).toContain("Comment on this page");
     expect(room).not.toContain("Highlight text");
-    expect(room).toContain("credential_store_unavailable");
+    expect(room).not.toContain("credential_store_unavailable");
     expect(room).not.toContain("type=\"password\"");
-    expect(room).toContain("not an allowed https content origin");
+    expect(room).toContain("Safe preview of this version");
     expect(room).toContain("Record version sign-off");
     expect(room).toContain("does not approve a change");
   });

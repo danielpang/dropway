@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareStaticSnapshot, verifiedRasterDataURL } from "@/lib/collab/static-renderer";
+import { prepareStaticSnapshot, verifiedRasterDataURL, STATIC_IMAGE_MAX_BYTES, STATIC_IMAGES_TOTAL_MAX_BYTES } from "@/lib/collab/static-renderer";
 import { snapshotPagePath, staticAssetPath } from "@/lib/collab/static-snapshot";
 
 const target = { siteId: "site", versionId: "version", contentHash: "a".repeat(64), page: "/index.html" };
@@ -36,5 +36,16 @@ describe("trusted static snapshot reconstruction", () => {
     for (const source of ["https://evil.test/x", "//evil.test/x", "javascript:alert(1)", "data:image/png,x", "/x%5cevil", "/x?token=secret"]) expect(staticAssetPath("/index.html", source)).toBeNull();
     expect(snapshotPagePath("/")).toBe("index.html");
     expect(snapshotPagePath("/docs/")).toBe("docs/index.html");
+  });
+  it("accepts a 2 MiB raster but bounds total embedded bytes, including repeated paths", () => {
+    const image = Buffer.alloc(STATIC_IMAGE_MAX_BYTES);
+    Buffer.from([137,80,78,71,13,10,26,10]).copy(image);
+    const data = verifiedRasterDataURL(image, "image/png")!;
+    expect(data).toBeTruthy();
+    expect(verifiedRasterDataURL(Buffer.concat([image, Buffer.from([0])]), "image/png")).toBeNull();
+    const repeated = prepareStaticSnapshot('<img src="image.png">'.repeat(12), "/index.html").render(new Map([["image.png", data]]), target);
+    expect((repeated.html.match(/<img\b/g) ?? []).length).toBe(STATIC_IMAGES_TOTAL_MAX_BYTES / STATIC_IMAGE_MAX_BYTES);
+    expect(repeated.omittedAssets).toBe(10);
+    expect(repeated.html.length).toBeLessThan(STATIC_IMAGES_TOTAL_MAX_BYTES * 1.4);
   });
 });

@@ -320,6 +320,7 @@ type AppSite struct {
 	Description      pgtype.Text
 	CreatedAt        time.Time
 	AllowMemberEdits bool
+	ResourceKind     string
 }
 
 type AppSiteAccessPolicy struct {

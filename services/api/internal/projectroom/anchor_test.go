@@ -3,6 +3,7 @@
 package projectroom
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -66,6 +67,24 @@ func TestValidateAnchorImageBounds(t *testing.T) {
 	}`)
 	if _, err := ValidateAnchor(AnchorPoint, raw); err == nil {
 		t.Fatal("image point outside intrinsic bounds must fail")
+	}
+}
+
+func TestValidateImagePointStableIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		id    string
+		valid bool
+	}{
+		{"", true}, {"static-v1:project-image", true}, {strings.Repeat("a", 257), false}, {"bad\nidentity", false},
+	} {
+		raw, _ := json.Marshal(pointAnchor{X: 0.5, Y: 0.5, Viewport: box{100, 100}, Rendition: box{100, 100}, Image: &imagePoint{StableID: tc.id, IntrinsicWidth: 100, IntrinsicHeight: 100, X: 50, Y: 50}})
+		anchor, err := ValidateAnchor(AnchorPoint, raw)
+		if (err == nil) != tc.valid {
+			t.Fatalf("id=%q err=%v", tc.id, err)
+		}
+		if tc.valid && tc.id != "" && !bytes.Contains(anchor.JSON, []byte(tc.id)) {
+			t.Fatal("image stable identity lost")
+		}
 	}
 }
 

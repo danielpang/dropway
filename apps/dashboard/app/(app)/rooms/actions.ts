@@ -349,6 +349,7 @@ export async function loadRoomSitesAction() {
     return { ok: true as const, sites: sites.flatMap((site) => site.id && site.slug ? [{
       canEditContent: canEditRoomSite(site, me),
       id: site.id, slug: site.slug, liveUrl: site.live_url ?? null,
+      kind: site.resource_kind ?? "site", label: site.title || site.slug,
       currentVersionId: site.current_version_id ?? null,
       currentContentHash: (site as { current_content_hash?: string }).current_content_hash ?? null,
     }] : []) };

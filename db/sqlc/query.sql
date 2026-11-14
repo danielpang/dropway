@@ -153,12 +153,12 @@ WHERE app.org_usage.org_id = $1;
 -- ===========================================================================
 
 -- name: CreateSite :one
-INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
-VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
+INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode, resource_kind, title, feed_visible)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind;
 
 -- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE id = $1 AND org_id = $2;
 
@@ -199,7 +199,7 @@ WHERE s.org_id = $1
 ORDER BY s.created_at DESC;
 
 -- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE org_id = $1
 ORDER BY created_at DESC;
@@ -280,7 +280,7 @@ WHERE subject_type = $1 AND subject_id = $2 AND org_id = $3;
 UPDATE app.sites
 SET feed_visible = $2
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind;
 
 -- name: SetSiteFeedMeta :one
 -- Set a site's human feed metadata (title + description). Empty strings are passed
@@ -290,7 +290,7 @@ UPDATE app.sites
 SET title       = $2,
     description  = $3
 WHERE id = $1 AND org_id = $4
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind;
 
 -- name: SetCurrentVersion :exec
 -- Flip the live-version pointer (publish / rollback). RLS guarantees we can only
@@ -602,7 +602,7 @@ WHERE id = $1;
 -- name: ListPublicSitesForOrg :many
 -- Every site in the active org whose access_mode = 'public' (used by the reconcile
 -- on disabling external sharing: these are downgraded to org_only).
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE access_mode = 'public' AND org_id = $1
 ORDER BY created_at;
@@ -1174,7 +1174,7 @@ WHERE id = $1 AND org_id = $2;
 UPDATE app.sites
 SET allow_member_edits = $2
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits;
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind;
 
 -- name: SetSkillAllowMemberEdits :one
 UPDATE app.skills
@@ -1696,7 +1696,7 @@ FOR SHARE;
 -- name: LockSite :one
 -- Row lock shared with candidate approval so a live-pointer publish and an
 -- approval decision cannot observe a stale baseline.
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id)
 FOR UPDATE;
