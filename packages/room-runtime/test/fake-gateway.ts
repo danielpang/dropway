@@ -161,8 +161,8 @@ function openAIEvents(step: GatewayStep): string {
       object: "chat.completion.chunk",
       model: "anthropic/claude-sonnet-4-5",
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-      ...(usage === "absent" ? {} : { usage: { prompt_tokens: usage.input, completion_tokens: usage.output, total_tokens: usage.input + usage.output } }),
     },
+    ...(usage === "absent" ? [] : [{ choices: [], usage: { prompt_tokens: usage.input, completion_tokens: usage.output, total_tokens: usage.input + usage.output } }]),
   ];
   return `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`;
 }

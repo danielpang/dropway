@@ -45,6 +45,11 @@ export interface WorkerConfig {
 }
 
 export interface RunOptions {
+  enableClarification?: boolean;
+  transcript?: TranscriptMessage[];
+  onPrepareSandbox?: (handle: SandboxHandle, signal: AbortSignal) => Promise<void>;
+  onBeforeRelease?: (handle: SandboxHandle, result: RunResult, signal: AbortSignal) => Promise<void>;
+  onProgress?: (text: string) => void;
   signal?: AbortSignal;
   timeoutMs?: number;
   now?: () => Date;
@@ -53,6 +58,7 @@ export interface RunOptions {
 }
 
 export interface RunResult {
+  question?: string;
   status: RunStatus;
   text: string;
   deltas: string[];
@@ -113,6 +119,7 @@ export class RoomWorker {
     const deltas: string[] = [];
     const drafts: CandidateDraft[] = [];
     const remoteOps: string[] = [];
+    let question: string | undefined;
     let status: RunStatus | undefined;
     let handle: SandboxHandle | undefined;
     let session: Awaited<ReturnType<typeof openLockedSession>>["session"] | undefined;
@@ -132,7 +139,7 @@ export class RoomWorker {
     const onAbort = () => {
       status ??= abortKind.current === "timeout" ? "timeout" : "cancelled";
       void session?.abort();
-      void executor?.cancel(status);
+      void executor?.cancel(status).catch(() => undefined);
     };
     ac.signal.addEventListener("abort", onAbort);
 
@@ -150,6 +157,8 @@ export class RoomWorker {
         status = "policy_rejected";
         throw error;
       }
+      if (ac.signal.aborted) throw new RoomRuntimeError("cancelled", "attempt cancelled during provisioning");
+      await options.onPrepareSandbox?.(handle, ac.signal);
       const bound = bindAttemptExecutor(this.plane, handle);
       executor = {
         ...bound,
@@ -173,12 +182,14 @@ export class RoomWorker {
         pin,
         capability,
         gatewayOrigin: gateway.origin,
-        transcript: record?.transcript ?? [],
+        gatewayBaseUrl: gateway.href.replace(/\/$/, ""),
+        transcript: options.transcript ?? record?.transcript ?? [],
         executor,
         observer,
         stop: (next) => {
           status ??= next;
         },
+        clarify: options.enableClarification ? (text) => { question = text; } : undefined,
       });
       session = opened.session;
       if (opened.modelFallbackMessage) {
@@ -190,22 +201,24 @@ export class RoomWorker {
         throw new RoomRuntimeError("extensions", "Pi loaded an extension");
       }
       const activeTools = opened.session.getActiveToolNames();
-      if (!sameRemoteTools(activeTools)) {
+      if (!sameRemoteTools(activeTools, options.enableClarification)) {
         status = "error";
         throw new RoomRuntimeError("tools", `active tools were ${activeTools.join(",")}`);
       }
       unsubscribe = opened.session.subscribe((event) => {
         if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
           deltas.push(event.assistantMessageEvent.delta);
+          options.onProgress?.(event.assistantMessageEvent.delta);
         }
       });
-      await withGatewayFetch(gateway.origin, observer, async () => {
+      await withGatewayFetch(gateway.href, observer, async () => {
         await opened.session.prompt(prompt);
       });
       status ??= deriveStatus(observer, pin.budget.maxTotalTokens);
       result = {
         ...baseResult(opened.session, observer, activeTools, remoteOps, drafts, deltas, status),
         spriteName: handle.spriteName,
+        question,
       };
       return result;
     } catch (error) {
@@ -224,19 +237,29 @@ export class RoomWorker {
         transcript: session ? transcriptFrom(session.messages) : [],
         text: deltas.join(""),
         error: error instanceof Error ? error.message : "run failed",
+        question,
       };
       return result;
     } finally {
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onUserAbort);
       unsubscribe();
       session?.dispose();
-      if (handle) {
-        const reason = destroyReasonFor(status);
-        await this.plane.destroy(handle, reason);
-        result.destroyedReason = reason;
+      try {
+        if (handle) {
+          try {
+            if (result.status === "completed" || result.status === "awaiting_clarification") {
+              await options.onBeforeRelease?.(handle, result, ac.signal);
+            }
+          } finally {
+            const reason = destroyReasonFor(status);
+            await this.plane.destroy(handle, reason);
+            result.destroyedReason = reason;
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onUserAbort);
+        if (ownedDir) await rm(dir, { recursive: true, force: true });
       }
-      if (ownedDir) await rm(dir, { recursive: true, force: true });
     }
   }
 

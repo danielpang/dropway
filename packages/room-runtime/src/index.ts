@@ -41,17 +41,14 @@ export { REMOTE_TOOL_NAMES } from "./tools.js";
 export { RoomWorker } from "./worker.js";
 export type { ClarifyInput, ClarifyResult, RunOptions, RunResult, WorkerConfig } from "./worker.js";
 
-/**
- * Not wired into services/api. Room execution routes stay disabled.
- * Live Sprite egress, DNS, direct-IP, sleep/wake, and checkpoint checks are release gates.
- */
-export const EXECUTION_WIRED = false;
-
+/** Execution is wired behind explicit API, dashboard and worker feature flags. */
+export const EXECUTION_WIRED = true;
 export const LIVE_INTEGRATION_GATES = [
-  "real_sprite_not_provisioned",
-  "egress_dns_and_direct_ip_not_observed",
-  "sleep_wake_and_checkpoint_not_observed",
-  "clarification_store_has_no_database_adapter",
-  "api_execution_routes_remain_disabled",
-  "builtin_bash_wrapper_copies_process_env_and_can_write_a_local_temp_file",
+  "development_sprite_and_provider_verification_required",
+  "egress_dns_and_direct_ip_live_verification_required",
+  "restart_orphan_cleanup_live_verification_required",
 ] as const;
+export { FlySpriteControlPlane, artifactHash, verifySpriteArtifact, SPRITES_SDK_VERSION } from "./sprites-adapter.js";
+export type { FlySpriteConfig, SpriteArtifact, SpriteArtifactFile } from "./sprites-adapter.js";
+export { HostedClient } from "./hosted-client.js";
+export { executeHostedClaim } from "./hosted-worker.js";

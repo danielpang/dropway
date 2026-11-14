@@ -2898,6 +2898,486 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/project-collaboration/capabilities:
+    get:
+      operationId: getProjectCollaborationCapabilities
+      summary: Read authoritative collaboration rollout and execution readiness
+      description: >
+        Requires authenticated current organization membership. Evaluates the
+        project-collaboration PostHog flag for the verified user ID with org_id
+        and environment properties. Only boolean true enables rollout; missing
+        configuration, evaluation errors, and variant strings fail closed.
+        Organization opt-in and permissions remain independent requirements.
+        This endpoint stays available when rollout is off and is never cached.
+      responses:
+        "200":
+          description: Current rollout decision and server execution configuration
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enabled, execution_configured]
+                properties:
+                  enabled:
+                    type: boolean
+                    description: Server-authoritative PostHog rollout decision for this user and organization.
+                  execution_configured:
+                    type: boolean
+                    description: Valid server vault, worker authentication and public API URL configuration; independent of rollout and organization consent.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Organization membership store is unavailable
+
+  /v1/provider-credentials:
+    "get":
+      "operationId": "listProviderCredentials"
+      "summary": "List personal credential metadata"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "credentials":
+                    "type": "array"
+                    "items":
+                      "$ref": "#/components/schemas/ProviderCredential"
+                  "execution_enabled":
+                    "type": "boolean"
+                "required":
+                  - "credentials"
+                  - "execution_enabled"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+    "post":
+      "operationId": "saveProviderCredential"
+      "summary": "Encrypt a personal provider credential"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "credential":
+                    "$ref": "#/components/schemas/ProviderCredential"
+                "required":
+                  - "credential"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "properties":
+                "provider":
+                  "type": "string"
+                  "enum":
+                    - "anthropic"
+                    - "openrouter"
+                "label":
+                  "type": "string"
+                "api_key":
+                  "type": "string"
+                  "writeOnly": true
+              "required":
+                - "provider"
+                - "label"
+                - "api_key"
+  /v1/provider-credentials/{credentialID}:
+    "parameters":
+      -
+        "name": "credentialID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+    "put":
+      "operationId": "replaceProviderCredential"
+      "summary": "Replace and invalidate a credential generation"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "credential":
+                    "$ref": "#/components/schemas/ProviderCredential"
+                "required":
+                  - "credential"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "properties":
+                "provider":
+                  "type": "string"
+                  "enum":
+                    - "anthropic"
+                    - "openrouter"
+                "label":
+                  "type": "string"
+                "api_key":
+                  "type": "string"
+                  "writeOnly": true
+              "required":
+                - "provider"
+                - "label"
+                - "api_key"
+    "delete":
+      "operationId": "revokeProviderCredential"
+      "summary": "Revoke a personal credential"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "204":
+          "description": "Success"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+  /v1/provider-credentials/{credentialID}/validate:
+    "parameters":
+      -
+        "name": "credentialID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+    "post":
+      "operationId": "validateProviderCredential"
+      "summary": "Validate a credential with its provider"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "validated":
+                    "type": "boolean"
+                "required":
+                  - "validated"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+  /v1/project-rooms/{roomID}/executions:
+    "parameters":
+      -
+        "name": "roomID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+    "get":
+      "operationId": "listHostedExecutions"
+      "summary": "List recent room execution jobs"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "jobs":
+                    "type": "array"
+                    "items":
+                      "$ref": "#/components/schemas/ExecutionJob"
+                "required":
+                  - "jobs"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+    "post":
+      "operationId": "queueHostedExecution"
+      "summary": "Queue a bounded revision of immutable site assets"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "202":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "job":
+                    "$ref": "#/components/schemas/ExecutionJob"
+                "required":
+                  - "job"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "properties":
+                "site_id":
+                  "type": "string"
+                "version_id":
+                  "type": "string"
+                "credential_ref":
+                  "type": "string"
+                "provider":
+                  "type": "string"
+                  "enum":
+                    - "anthropic"
+                    - "openrouter"
+                "model_id":
+                  "type": "string"
+                "prompt":
+                  "type": "string"
+                "idempotency_key":
+                  "type": "string"
+                "budget":
+                  "$ref": "#/components/schemas/ExecutionBudget"
+                "thread_id":
+                  "type": "string"
+              "required":
+                - "site_id"
+                - "version_id"
+                - "credential_ref"
+                - "provider"
+                - "model_id"
+                - "prompt"
+                - "idempotency_key"
+                - "budget"
+  /v1/project-rooms/{roomID}/executions/{jobID}:
+    "parameters":
+      -
+        "name": "roomID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+      -
+        "name": "jobID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+    "get":
+      "operationId": "getHostedExecution"
+      "summary": "Read execution progress and clarification"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "job":
+                    "$ref": "#/components/schemas/ExecutionJob"
+                  "events":
+                    "type": "array"
+                    "items":
+                      "type": "object"
+                      "properties":
+                        "id":
+                          "type": "string"
+                        "kind":
+                          "type": "string"
+                        "message":
+                          "type": "string"
+                        "created_at":
+                          "type": "string"
+                      "required":
+                        - "id"
+                        - "kind"
+                        - "message"
+                        - "created_at"
+                  "question":
+                    "type": "string"
+                "required":
+                  - "job"
+                  - "events"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+  /v1/project-rooms/{roomID}/executions/{jobID}/cancel:
+    "parameters":
+      -
+        "name": "roomID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+      -
+        "name": "jobID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+    "post":
+      "operationId": "cancelHostedExecution"
+      "summary": "Cancel an execution and revoke its capabilities"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "204":
+          "description": "Success"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+  /v1/project-rooms/{roomID}/sessions/{sessionID}/resume:
+    "parameters":
+      -
+        "name": "roomID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+      -
+        "name": "sessionID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+    "post":
+      "operationId": "resumeHostedExecution"
+      "summary": "Resume clarification in a fresh attempt"
+      "description": "Requires an authenticated human session. The project-collaboration PostHog flag must evaluate to boolean true and hosted execution must be configured. Credentials belong to the caller; no secret values are returned."
+      "responses":
+        "202":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "job":
+                    "$ref": "#/components/schemas/ExecutionJob"
+                "required":
+                  - "job"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+        "503":
+          "description": "Hosted execution configuration is unavailable"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "type": "object"
+              "properties":
+                "answer":
+                  "type": "string"
+                "idempotency_key":
+                  "type": "string"
+              "required":
+                - "answer"
+                - "idempotency_key"
+  /v1/project-rooms/{roomID}/sites/{siteID}/versions/{versionID}/files/content:
+    "parameters":
+      -
+        "name": "roomID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+      -
+        "name": "siteID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+      -
+        "name": "versionID"
+        "in": "path"
+        "required": true
+        "schema":
+          "type": "string"
+          "format": "uuid"
+      -
+        "name": "path"
+        "in": "query"
+        "required": true
+        "schema":
+          "type": "string"
+    "get":
+      "operationId": "readReviewVersionFile"
+      "summary": "Read authorized immutable bytes for a static review rendition"
+      "description": "Human session or MCP OAuth. Rechecks live room membership/site access and verifies manifest/blob integrity. Maximum 2 MiB per file. Response is private and not cacheable. The content must never be executed on the application origin."
+      "responses":
+        "200":
+          "description": "Success"
+          "content":
+            "application/json":
+              "schema":
+                "type": "object"
+                "properties":
+                  "site_id":
+                    "type": "string"
+                  "version_id":
+                    "type": "string"
+                  "content_hash":
+                    "type": "string"
+                  "path":
+                    "type": "string"
+                  "content_base64":
+                    "type": "string"
+                  "content_type":
+                    "type": "string"
+                  "sha256":
+                    "type": "string"
+                "required":
+                  - "site_id"
+                  - "version_id"
+                  - "content_hash"
+                  - "path"
+                  - "content_base64"
+                  - "content_type"
+                  - "sha256"
+        "403":
+          "$ref": "#/components/responses/Forbidden"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2938,6 +3418,83 @@ components:
       description: app.chat_logs.id
 
   schemas:
+    ProviderCredential: {"type":"object","properties":{"id":{"type":"string"},"provider":{"type":"string","enum":["anthropic","openrouter"]},"label":{"type":"string"},"last_four":{"type":"string"},"generation":{"type":"integer"},"validated_at":{"type":["string","null"]},"revoked_at":{"type":["string","null"]},"created_at":{"type":"string"}},"required":["id","provider","label","last_four","generation","validated_at","revoked_at","created_at"]}
+    ExecutionBudget: {"type":"object","properties":{"max_tokens":{"type":"integer","minimum":1,"maximum":500000},"max_calls":{"type":"integer","minimum":1,"maximum":100},"max_seconds":{"type":"integer","minimum":1,"maximum":900},"max_output_bytes":{"type":"integer","minimum":1,"maximum":10485760}},"required":["max_tokens","max_calls","max_seconds","max_output_bytes"]}
+    ExecutionConfig: {"type":"object","properties":{"provider":{"type":"string"},"model_id":{"type":"string"},"harness_id":{"type":"string"},"harness_version":{"type":"string"},"prompt":{"type":"string"},"budget":{"$ref":"#/components/schemas/ExecutionBudget"},"tool_policy":{"type":"string"}},"required":["provider","model_id","harness_id","harness_version","prompt","budget","tool_policy"]}
+    ExecutionJob:
+      "type": "object"
+      "properties":
+        "id":
+          "type": "string"
+        "org_id":
+          "type": "string"
+        "room_id":
+          "type": "string"
+        "site_id":
+          "type": "string"
+        "version_id":
+          "type": "string"
+        "content_hash":
+          "type": "string"
+        "initiator_user_id":
+          "type": "string"
+        "credential_ref":
+          "type": "string"
+        "created_at":
+          "type": "string"
+        "updated_at":
+          "type": "string"
+        "state":
+          "type": "string"
+          "enum":
+            - "queued"
+            - "running"
+            - "clarification"
+            - "completed"
+            - "failed"
+            - "cancelled"
+        "config":
+          "$ref": "#/components/schemas/ExecutionConfig"
+        "attempt_count":
+          "type": "integer"
+        "tokens_used":
+          "type": "integer"
+        "calls_used":
+          "type": "integer"
+        "credential_generation":
+          "type": "integer"
+        "candidate_id":
+          "type":
+            - "string"
+            - "null"
+        "session_id":
+          "type":
+            - "string"
+            - "null"
+        "failure_code":
+          "type":
+            - "string"
+            - "null"
+      "required":
+        - "id"
+        - "org_id"
+        - "room_id"
+        - "site_id"
+        - "version_id"
+        - "content_hash"
+        - "initiator_user_id"
+        - "credential_ref"
+        - "created_at"
+        - "updated_at"
+        - "state"
+        - "config"
+        - "attempt_count"
+        - "tokens_used"
+        - "calls_used"
+        - "credential_generation"
+        - "candidate_id"
+        - "session_id"
+        - "failure_code"
     RoomActivity:
       type: object
       required: [id, room_id, actor_user_id, kind, created_at]

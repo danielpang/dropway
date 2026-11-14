@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/auth"
+	"github.com/danielpang/dropway/internal/collaborationflag"
 	"github.com/danielpang/dropway/internal/customdomains"
 	"github.com/danielpang/dropway/internal/edgetoken"
 	"github.com/danielpang/dropway/internal/errtrack"
@@ -102,6 +104,18 @@ func wireTelemetry(service string) (posthog.Client, errtrack.Reporter, string, a
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		if len(os.Args) != 2 || os.Args[1] != "--check-schema" {
+			fmt.Fprintln(os.Stderr, "usage: api [--check-schema]")
+			os.Exit(2)
+		}
+		if err := checkDeploymentSchema(os.Getenv("DATABASE_URL")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("Database schema is compatible with this API (through migration 0022).")
+		return
+	}
 	// Build the single shared posthog client + wire both telemetry seams over it
 	// (see wireTelemetry). Error tracking is wired here, before config.Load, so the
 	// default logger is wrapped immediately and captures even startup failures.
@@ -110,7 +124,7 @@ func main() {
 	slog.SetDefault(logger)
 	slog.Info("error tracking wired", "provider", label)
 
-	err := run(logger, emitter)
+	err := run(logger, emitter, phClient)
 	if err != nil {
 		// Log before Close so this final fatal error is captured + flushed.
 		slog.Error("server exited with error", "err", err)
@@ -125,7 +139,7 @@ func main() {
 	}
 }
 
-func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
+func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter, phClient posthog.Client) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -160,6 +174,12 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		}
 		pool = p
 		defer pool.Close()
+		checkCtx, finishCheck := context.WithTimeout(ctx, 30*time.Second)
+		err = store.CheckSchema(checkCtx, pool)
+		finishCheck()
+		if err != nil {
+			return err
+		}
 		st = store.New(pool, qp)
 		slog.Info("store wired (RLS tenant context per request)")
 	} else {
@@ -235,6 +255,20 @@ func run(baseLogger *slog.Logger, analyticsEmitter analytics.Emitter) error {
 		siteStore = st
 	}
 	api := handlers.NewFull(qp, siteStore, obj, proj)
+	gate := collaborationflag.Evaluator{Client: phClient, Environment: phclient.ConfigFromEnv().Environment}
+	api.CollaborationAllowed = gate.Allowed
+	if st != nil {
+		st.SetCollaborationGate(gate.Allowed)
+	}
+	credentialKey, keyErr := base64.StdEncoding.DecodeString(os.Getenv("ROOM_CREDENTIAL_MASTER_KEY"))
+	var hostedErr error
+	if keyErr == nil {
+		api.Hosted, hostedErr = handlers.NewHostedRuntime(st, credentialKey, os.Getenv("ROOM_WORKER_TOKEN"), os.Getenv("ROOM_API_PUBLIC_URL"))
+	}
+	if keyErr != nil || hostedErr != nil {
+		api.Hosted = nil
+		slog.Info("hosted execution unavailable: configure credential master key, worker token and public API URL")
+	}
 	if st != nil {
 		api.Rooms = st
 		stopRecovery := startCandidateProjectionRecovery(st, proj)

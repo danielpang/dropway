@@ -1,0 +1,38 @@
+name: hosted collaboration
+on:
+  pull_request:
+    paths:
+      - 'packages/room-runtime/**'
+      - 'services/api/**'
+      - 'services/room-worker/**'
+      - 'db/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/hosted-collaboration.yml'
+permissions:
+  contents: read
+concurrency:
+  group: hosted-collaboration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile --filter @dropway/room-runtime...
+      - run: pnpm --filter @dropway/room-runtime typecheck
+      - run: pnpm --filter @dropway/room-runtime test
+      - run: docker build -f services/room-worker/Dockerfile -t room-worker:test .
+      - run: docker run --rm --network none room-worker:test node --input-type=module -e 'await import("./dist/daemon.js")'
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -tags integration -run '^TestIntegration_(HostedExecution|SchemaPreflightRollingUpgrade|RolloutPreviousAPIKeyProjection|LegacyKeyUnenrolledSite|CandidateApplication|ApprovalRaces|ProjectRooms)$' -count=1 ./services/api/internal/integration

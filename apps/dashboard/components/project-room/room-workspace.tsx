@@ -8,6 +8,10 @@
 
 import * as React from "react";
 
+import { HostedExecution } from "@/components/project-room/hosted-execution";
+import { StaticReview } from "@/components/collab/static-review";
+import { loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
+import type { StaticSelection, StaticSnapshot } from "@/lib/collab/static-snapshot";
 import { CandidatePreviewFrame } from "@/components/collab/candidate-preview-frame";
 import { CandidateReview } from "@/components/project-room/candidate-review";
 import { Button } from "@/components/ui/button";
@@ -61,6 +65,7 @@ export function RoomWorkspace({
   parentOrigin,
   notice,
   orgEnabled,
+  executionConfigured = false,
   onEnableRooms,
   onCreateRoom,
   onSelectRoom,
@@ -104,6 +109,7 @@ export function RoomWorkspace({
   parentOrigin: string;
   notice: string | null;
   orgEnabled: boolean;
+  executionConfigured?: boolean;
   onEnableRooms: () => void;
   onCreateRoom: (name: string) => void;
   onSelectRoom: (roomId: string) => void;
@@ -117,7 +123,7 @@ export function RoomWorkspace({
     siteId: string;
     versionId: string;
     page: string;
-    kind: "page" | "point";
+    kind: "page" | "point" | "text" | "component";
     anchor: unknown;
     body: string;
   }) => void;
@@ -142,7 +148,7 @@ export function RoomWorkspace({
   onAttachSite: (roomId: string, siteId: string) => void;
   onDetachSite: (roomId: string, siteId: string) => void;
   onResolve: (roomId: string, threadId: string) => void;
-  onReanchor: (roomId: string, threadId: string, reason: string) => void;
+  onReanchor: (roomId: string, threadId: string, reason: string, selection?: StaticSelection) => void;
 }) {
   const [roomId, setRoomId] = React.useState(rooms[0]?.ID ?? "");
   const restoredRoomLink = React.useRef(false);
@@ -157,6 +163,11 @@ export function RoomWorkspace({
   const [versionId, setVersionId] = React.useState(sites[0]?.currentVersionId ?? "");
   const [page, setPage] = React.useState("/");
   const [body, setBody] = React.useState("");
+  const [snapshot, setSnapshot] = React.useState<StaticSnapshot | null>(null);
+  const [snapshotNotice, setSnapshotNotice] = React.useState("");
+  const [snapshotLoading, setSnapshotLoading] = React.useState(false);
+  const [staticSelection, setStaticSelection] = React.useState<StaticSelection | null>(null);
+  const snapshotRequest = React.useRef(0);
   const [replyByThread, setReplyByThread] = React.useState<Record<string, string>>({});
   const [memberId, setMemberId] = React.useState("");
   const [memberRole, setMemberRole] = React.useState<"editor" | "reviewer" | "viewer">("reviewer");
@@ -172,12 +183,37 @@ export function RoomWorkspace({
   const linkedSiteId = linkedThread?.SiteID;
   const linkedVersionId = linkedThread?.VersionID;
   const linkedPage = linkedThread?.Page;
+  const linkedContentHash = linkedThread?.ContentHash;
+  const restoredSnapshot = React.useRef("");
   React.useEffect(() => {
     if (!linkedSiteId || !linkedVersionId || !linkedPage) return;
     setSiteId(linkedSiteId);
     setVersionId(linkedVersionId);
     setPage(linkedPage);
   }, [linkedSiteId, linkedVersionId, linkedPage]);
+  React.useEffect(() => {
+    ++snapshotRequest.current;
+    setSnapshot(null);
+    setStaticSelection(null);
+    setSnapshotNotice("");
+    setSnapshotLoading(false);
+  }, [roomId, siteId, versionId, page]);
+  React.useEffect(() => {
+    if (!linkedThreadId || !linkedSiteId || siteId !== linkedSiteId || versionId !== linkedVersionId || page !== linkedPage) return;
+    const identity = `${roomId}:${linkedThreadId}:${versionId}:${page}`;
+    if (restoredSnapshot.current === identity) return;
+    restoredSnapshot.current = identity;
+    const request = ++snapshotRequest.current;
+    setSnapshotLoading(true);
+    void loadStaticSnapshotAction(roomId, siteId, versionId, page).then((result) => {
+      if (request !== snapshotRequest.current) return;
+      setSnapshotLoading(false);
+      if (!result.ok || result.snapshot.contentHash !== linkedContentHash) {
+        setSnapshot(null); setSnapshotNotice(result.ok ? "The original thread content hash could not be verified." : result.message); return;
+      }
+      setSnapshot(result.snapshot);
+    }).catch(() => { if (request === snapshotRequest.current) { setSnapshotLoading(false); setSnapshotNotice("The original static review could not be loaded."); } });
+  }, [linkedThreadId, linkedSiteId, linkedVersionId, linkedPage, linkedContentHash, roomId, siteId, versionId, page]);
   const frameRef = React.useRef<HTMLIFrameElement>(null);
   const room = rooms.find((item) => item.ID === roomId) ?? null;
   React.useEffect(() => {
@@ -198,6 +234,9 @@ export function RoomWorkspace({
   const originalUnavailable = linkedThread !== null && (linkedThread.VersionID !== site?.currentVersionId || linkedThread.ContentHash !== site?.currentContentHash);
   const previewUrl = site?.liveUrl ? (linkedThread ? threadPageUrl(site.liveUrl, linkedThread.Page) : site.liveUrl) : null;
   const preview = !originalUnavailable && previewUrl && previewFrameDecision(previewUrl, parentOrigin).ok ? previewUrl : null;
+  const sourceContentHash = versionId === site?.currentVersionId ? site.currentContentHash : snapshot?.versionId === versionId && snapshot.siteId === siteId ? snapshot.contentHash : null;
+  const compatibleRunThreads = threads.filter((item) => item.RoomID === roomId && item.SiteID === siteId && item.VersionID === versionId && item.ContentHash === sourceContentHash);
+  const historicalThreadCount = threads.filter((item) => item.RoomID === roomId && item.SiteID === siteId).length - compatibleRunThreads.length;
   const imagePreview = preview !== null && /\.(png|jpe?g|gif|webp)(\?|$)/i.test(preview);
 
 
@@ -213,7 +252,14 @@ export function RoomWorkspace({
         {room ? <Button type="button" size="sm" variant="outline" disabled={!onRefreshRoom || busyCandidates.length > 0}
           onClick={() => onRefreshRoom?.(room.ID)}>Refresh room</Button> : null}
         {orgEnabled ? null : (
-          <Button type="button" onClick={onEnableRooms}>Enable project rooms for this organization</Button>
+          <div className="space-y-2">
+            <p id="room-enable-impact" className="text-sm text-muted-foreground">
+              Enabling rooms makes attached sites subject to human review. API-key and MCP deployment and publish writes
+              to those sites will be blocked, including existing automated deployments.
+              Unattached sites are unaffected.
+            </p>
+            <Button type="button" aria-describedby="room-enable-impact" onClick={onEnableRooms}>Enable project rooms for this organization</Button>
+          </div>
         )}
       </header>
 
@@ -334,9 +380,15 @@ export function RoomWorkspace({
           </select>
           <Button type="submit" disabled={role !== "owner" || memberId.trim().length === 0}>Add member</Button>
         </form>
+        <p id="room-attach-impact" className="text-sm text-muted-foreground">
+          Attaching this site blocks direct API-key and MCP deployment and publish writes while project rooms are enabled,
+          including existing automated deployments. Automated changes must go through review and
+          human approval before they are applied.
+        </p>
         <Button
           type="button"
           variant="outline"
+          aria-describedby="room-attach-impact"
           disabled={(role !== "owner" && role !== "editor") || !room || siteId.trim().length === 0 || attachedSites.some((item) => item.siteId === siteId)}
           onClick={() => room && onAttachSite(room.ID, siteId.trim())}
         >
@@ -348,19 +400,36 @@ export function RoomWorkspace({
         <h2 className="text-sm font-medium text-foreground">Preview</h2>
         <p className="text-sm text-muted-foreground">
           The preview is a sandboxed page. It is not the identity of a proposed change.
-          Opaque HTML cannot take a precise text or component selection, so those controls are
-          absent. A page comment is only a page comment.
+          Interactive HTML uses page comments. Open static review to select text, components or points in an immutable, simplified rendition.
           {shippedPreciseHtmlSelection() ? "" : ""}
         </p>
         <ul className="text-sm text-muted-foreground">
           <li>Page comment: available on this side.</li>
           <li>Image pin: available when the URL is an allowed content image, measured here.</li>
-          <li>Text highlight: not available on sandboxed HTML.</li>
-          <li>Component id: not available on sandboxed HTML.</li>
+          <li>Text highlight: available in static review; not available on interactive sandboxed HTML.</li>
+          <li>Component id: available in static review; not available on interactive sandboxed HTML.</li>
         </ul>
+        <Button type="button" variant="outline" disabled={!room || !site || !versionId || snapshotLoading} onClick={() => {
+          if (!room || !site) return;
+          const request = ++snapshotRequest.current;
+          setSnapshotLoading(true);
+          setStaticSelection(null);
+          void loadStaticSnapshotAction(room.ID, site.id, versionId, page).then((result) => {
+            if (request !== snapshotRequest.current) return;
+            setSnapshotLoading(false);
+            if (!result.ok) { setSnapshotNotice(result.message); setSnapshot(null); return; }
+            setSnapshot(result.snapshot);
+            setSnapshotNotice("");
+          }).catch(() => {
+            if (request !== snapshotRequest.current) return;
+            setSnapshotLoading(false); setSnapshotNotice("The static review could not be loaded.");
+          });
+        }}>{snapshotLoading ? "Loading immutable page…" : "Open static review of this version"}</Button>
+        {snapshotNotice ? <p role="status" className="text-sm text-muted-foreground">{snapshotNotice}</p> : null}
+        {snapshot && snapshot.siteId === siteId && snapshot.versionId === versionId && snapshot.page === page ? <StaticReview snapshot={snapshot} onSelect={setStaticSelection} /> : null}
         {linkedThread ? <p className="text-sm text-foreground">
           Original thread context: version {linkedThread.VersionID}, page {linkedThread.Page}, content hash {linkedThread.ContentHash}.
-          {originalUnavailable ? " This is an older version. Its immutable preview is unavailable here; the current live page is not shown in its place." : ""}
+          {originalUnavailable ? " This is an older version. Open static review to inspect its immutable content; the current live page is not shown in its place." : ""}
         </p> : null}
         {preview ? (
           <CandidatePreviewFrame
@@ -398,7 +467,7 @@ export function RoomWorkspace({
           onSubmit={(event) => {
             event.preventDefault();
             if (!room || !commentOk) return;
-            const anchor = pageCommentAnchor();
+            const anchor = staticSelection && snapshot?.siteId === siteId && snapshot.versionId === versionId && snapshot.page === page ? staticSelection : pageCommentAnchor();
             onCreateThread({
               roomId: room.ID,
               siteId: siteId.trim(),
@@ -437,7 +506,7 @@ export function RoomWorkspace({
             className="min-h-24 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
           />
           <Button type="submit" disabled={!commentOk || body.trim().length === 0}>
-            Comment on this page
+            {staticSelection ? "Comment on selection" : "Comment on this page"}
           </Button>
           {commentOk ? null : (
             <p className="text-xs text-muted-foreground">This room role cannot comment.</p>
@@ -552,6 +621,11 @@ export function RoomWorkspace({
                 >
                   Append page reanchor
                 </Button>
+                <Button type="button" size="sm" variant="outline"
+                  disabled={!commentOk || !room || !staticSelection || !reanchorReason.trim() || !snapshot || snapshot.siteId !== thread.SiteID || snapshot.versionId !== thread.VersionID || snapshot.contentHash !== thread.ContentHash || snapshot.page !== thread.Page}
+                  onClick={() => { if (room && staticSelection) onReanchor(room.ID, thread.ID, reanchorReason.trim(), staticSelection); }}>
+                  Reanchor to selected target
+                </Button>
               </div>
             </li>
           ))}
@@ -568,8 +642,7 @@ export function RoomWorkspace({
           placeholder="Why this page reanchor"
         />
         <p className="text-xs text-muted-foreground">
-          Reanchor appends a page revision and leaves the original pin in place. It is not a text
-          or component selection.
+          Page reanchor appends a page revision. A selected static target can reanchor only a thread on that exact site, version, hash and page. The original pin and every prior revision stay in history.
         </p>
       </section>
 
@@ -643,15 +716,16 @@ export function RoomWorkspace({
         ) : null}
       </section>
 
-      <section className="space-y-2" aria-label="Execution">
+      {room && executionConfigured ? <HostedExecution
+        key={`${room.ID}:${siteId}:${versionId}`} roomId={room.ID} siteId={siteId} versionId={versionId} canRun={decideOk && versionId === site?.currentVersionId}
+        threads={compatibleRunThreads.map((item) => ({ id: item.ID, page: item.Page }))}
+        historicalThreadCount={historicalThreadCount}
+        onCandidateReady={() => onRefreshRoom?.(room.ID)}
+      /> : <section className="space-y-2" aria-label="Execution">
         <h2 className="text-sm font-medium text-foreground">Execution</h2>
-        <p className="text-sm text-muted-foreground">
-          Hosted execution is disabled. No provider key is collected.
-        </p>
-        <ul className="list-disc pl-5 text-sm text-muted-foreground">
-          {EXECUTION_BLOCKERS.map((blocker) => <li key={blocker}>{blocker}</li>)}
-        </ul>
-      </section>
+        <p className="text-sm text-muted-foreground">Hosted execution is disabled. No provider key is collected.</p>
+        <ul className="list-disc pl-5 text-sm text-muted-foreground">{EXECUTION_BLOCKERS.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+      </section>}
     </div>
   );
 }

@@ -1,6 +1,9 @@
 "use server";
 
-import { isCollabReviewEnabled } from "@/lib/collab";
+import { createHash } from "node:crypto";
+import { prepareStaticSnapshot, verifiedRasterDataURL } from "@/lib/collab/static-renderer";
+import { snapshotPagePath } from "@/lib/collab/static-snapshot";
+import { collaborationEnabled } from "@/lib/project-room/capabilities";
 import { ApiError, api } from "@/lib/api";
 import {
   bindApproval,
@@ -25,16 +28,6 @@ function closed(): { ok: false; message: string } {
   return { ok: false, message: "Project rooms are off." };
 }
 
-function enabledFlag(): boolean {
-  return isCollabReviewEnabled({
-    NEXT_PUBLIC_COLLAB_REVIEW: process.env.NEXT_PUBLIC_COLLAB_REVIEW,
-  });
-}
-
-function enabled(): boolean {
-  return enabledFlag();
-}
-
 function messageOf(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return "The room request failed.";
@@ -51,7 +44,7 @@ function decisionFrom(error: ApiError): CandidateDecisionBody | null {
 }
 
 export async function enableRoomsAction(enabled: boolean) {
-  if (!enabledFlag()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const settings = await api.projectRoomSettings();
     if (settings.enabled === enabled) return { ok: true as const, enabled };
@@ -63,7 +56,7 @@ export async function enableRoomsAction(enabled: boolean) {
 }
 
 export async function createRoomAction(name: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const room = parseRoom(await api.createProjectRoom(name));
     if (!room) return { ok: false as const, message: "The room response was not usable." };
@@ -78,12 +71,12 @@ export async function createThreadAction(input: {
   siteId: string;
   versionId: string;
   page: string;
-  kind: "page" | "point";
+  kind: "page" | "point" | "text" | "component";
   anchor: unknown;
   body: string;
 }) {
-  if (!enabled()) return closed();
-  if (input.kind !== "page" && input.kind !== "point") {
+  if (!(await collaborationEnabled())) return closed();
+  if (!["page", "point", "text", "component"].includes(input.kind)) {
     return { ok: false as const, message: "That anchor is not available." };
   }
   try {
@@ -100,7 +93,7 @@ export async function createThreadAction(input: {
 }
 
 export async function replyAction(roomId: string, threadId: string, body: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const reply = await api.addReviewReply(roomId, threadId, body);
     return { ok: true as const, reply };
@@ -110,7 +103,7 @@ export async function replyAction(roomId: string, threadId: string, body: string
 }
 
 export async function signoffAction(roomId: string, siteId: string, versionId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const signoff = await api.signoffProjectRoomVersion(roomId, siteId, versionId);
     return { ok: true as const, signoff };
@@ -120,7 +113,7 @@ export async function signoffAction(roomId: string, siteId: string, versionId: s
 }
 
 export async function loadRoomAction(roomId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const [detailBody, threadBody, candidateBody] = await Promise.all([
       api.getProjectRoom(roomId),
@@ -164,7 +157,7 @@ async function hydrateCandidates(roomId: string, candidates: ReviewCandidate[]) 
 }
 
 export async function loadMoreThreadsAction(roomId: string, cursor: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const threads = parseThreadPage(await api.listRoomThreads(roomId, cursor));
     if (!threads) return { ok: false as const, message: "The thread page was not usable." };
@@ -175,7 +168,7 @@ export async function loadMoreThreadsAction(roomId: string, cursor: string) {
 }
 
 export async function loadMoreCandidatesAction(roomId: string, cursor: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const candidates = parseCandidatePage(await api.listRoomCandidates(roomId, cursor));
     if (!candidates) return { ok: false as const, message: "The candidate page was not usable." };
@@ -190,7 +183,7 @@ export async function loadMoreCandidatesAction(roomId: string, cursor: string) {
 }
 
 export async function loadCandidateDiffAction(roomId: string, candidateId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const parsed = parseCandidateDiff(await api.getCandidateDiff(roomId, candidateId));
     if (!parsed) return { ok: false as const, unverified: false, message: "The diff was not usable." };
@@ -207,7 +200,7 @@ export async function loadCandidateDiffAction(roomId: string, candidateId: strin
 }
 
 export async function loadSiteCommentsAction(siteId: string, cursor?: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const page = parseSiteCommentPage(await api.listSiteCommentPages(siteId, cursor));
     if (!page) return { ok: false as const, message: "The site comment page was not usable." };
@@ -218,7 +211,7 @@ export async function loadSiteCommentsAction(siteId: string, cursor?: string) {
 }
 
 export async function addMemberAction(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     await api.addProjectRoomMember(roomId, userId, role);
     return { ok: true as const };
@@ -228,7 +221,7 @@ export async function addMemberAction(roomId: string, userId: string, role: "edi
 }
 
 export async function attachSiteAction(roomId: string, siteId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     await api.addProjectRoomSite(roomId, siteId);
     return { ok: true as const };
@@ -238,7 +231,7 @@ export async function attachSiteAction(roomId: string, siteId: string) {
 }
 
 export async function detachSiteAction(roomId: string, siteId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     await api.removeProjectRoomSite(roomId, siteId);
     return { ok: true as const };
@@ -248,7 +241,7 @@ export async function detachSiteAction(roomId: string, siteId: string) {
 }
 
 export async function resolveAction(roomId: string, threadId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const thread = parseThreadDetail(await api.resolveReviewThread(roomId, threadId));
     if (!thread) return { ok: false as const, message: "The resolved thread was not usable." };
@@ -258,12 +251,12 @@ export async function resolveAction(roomId: string, threadId: string) {
   }
 }
 
-export async function reanchorAction(roomId: string, threadId: string, reason: string) {
-  if (!enabled()) return closed();
+export async function reanchorAction(roomId: string, threadId: string, reason: string, selection?: { kind: "point" | "text" | "component"; anchor: Record<string, unknown> }) {
+  if (!(await collaborationEnabled())) return closed();
   try {
     const thread = parseThreadDetail(await api.reanchorReviewThread(roomId, threadId, {
-      kind: "page",
-      anchor: {},
+      kind: selection?.kind ?? "page",
+      anchor: selection?.anchor ?? {},
       anchorState: "anchored",
       reason,
     }));
@@ -282,7 +275,7 @@ export async function submitCandidateAction(input: {
   diffHash: string;
   summary: string;
 }) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const body = await api.submitProjectRoomCandidate(input);
     const row = body && typeof body === "object" && "candidate" in body ? (body as { candidate: unknown }).candidate : body;
@@ -299,7 +292,7 @@ export async function decideAction(
   candidate: ReviewCandidate,
   decision: "approve" | "reject",
 ) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   const binding: ApprovalBinding | null = bindApproval(candidate);
   if (!binding || candidate.RoomID !== roomId) return { ok: false as const, message: "The candidate identity is incomplete." };
   try {
@@ -323,7 +316,7 @@ export async function decideAction(
 }
 
 export async function updateMemberAction(roomId: string, userId: string, role: "editor" | "reviewer" | "viewer") {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     await api.updateProjectRoomMember(roomId, userId, role);
     return { ok: true as const };
@@ -333,7 +326,7 @@ export async function updateMemberAction(roomId: string, userId: string, role: "
 }
 
 export async function removeMemberAction(roomId: string, userId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     await api.removeProjectRoomMember(roomId, userId);
     return { ok: true as const };
@@ -343,7 +336,7 @@ export async function removeMemberAction(roomId: string, userId: string) {
 }
 
 export async function loadRoomSitesAction() {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const [sites, me] = await Promise.all([api.listSites(), api.me()]);
     return { ok: true as const, sites: sites.flatMap((site) => site.id && site.slug ? [{
@@ -358,7 +351,7 @@ export async function loadRoomSitesAction() {
 }
 
 export async function applyCandidateAction(roomId: string, candidate: ReviewCandidate) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   const binding = bindApproval(candidate);
   if (!binding || candidate.RoomID !== roomId || candidate.State !== "approved") {
     return { ok: false as const, message: "An approved candidate with a complete identity is required." };
@@ -380,7 +373,7 @@ export async function applyCandidateAction(roomId: string, candidate: ReviewCand
 }
 
 export async function loadRoomActivityAction(roomId: string, cursor?: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const activity = parseRoomActivity(await api.listRoomActivity(roomId, cursor));
     if (!activity) return { ok: false as const, message: "The activity response was not usable." };
@@ -391,7 +384,7 @@ export async function loadRoomActivityAction(roomId: string, cursor?: string) {
 }
 
 export async function markRoomReadAction(roomId: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     await api.markRoomRead(roomId);
     return { ok: true as const };
@@ -401,7 +394,7 @@ export async function markRoomReadAction(roomId: string) {
 }
 
 export async function loadThreadLinkAction(roomId: string, threadId: string, cursor?: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const thread = parseThreadDetail(await api.getReviewThread(threadId, cursor));
     if (!thread || thread.RoomID !== roomId) return { ok: false as const, message: "This thread is not available in this room." };
@@ -412,12 +405,50 @@ export async function loadThreadLinkAction(roomId: string, threadId: string, cur
 }
 
 export async function loadThreadRevisionsAction(roomId: string, threadId: string, revisionsCursor: string) {
-  if (!enabled()) return closed();
+  if (!(await collaborationEnabled())) return closed();
   try {
     const thread = parseThreadDetail(await api.getReviewThread(threadId, undefined, revisionsCursor));
     if (!thread || thread.ID !== threadId || thread.RoomID !== roomId) return { ok: false as const, message: "This anchor history is not available in this room." };
     return { ok: true as const, thread };
   } catch (error) {
     return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+
+function verifiedSnapshotFile(value: unknown, siteId: string, versionId: string, path: string) {
+  if (!value || typeof value !== "object") throw new Error("Invalid snapshot file.");
+  const row = value as Record<string, unknown>;
+  if (row.site_id !== siteId || row.version_id !== versionId || row.path !== path || typeof row.content_base64 !== "string"
+    || typeof row.content_type !== "string" || typeof row.sha256 !== "string" || typeof row.content_hash !== "string"
+    || !/^[0-9a-f]{64}$/.test(row.content_hash) || row.content_base64.length > 2800000) throw new Error("Invalid snapshot identity.");
+  const bytes = Buffer.from(row.content_base64, "base64");
+  if (bytes.toString("base64") !== row.content_base64 || createHash("sha256").update(bytes).digest("hex") !== row.sha256) throw new Error("Snapshot verification failed.");
+  return { bytes, contentType: row.content_type, contentHash: row.content_hash };
+}
+
+export async function loadStaticSnapshotAction(roomId: string, siteId: string, versionId: string, page: string) {
+  if (!(await collaborationEnabled())) return closed();
+  const path = snapshotPagePath(page);
+  if (!path) return { ok: false as const, message: "Choose a file path inside this version." };
+  try {
+    const file = verifiedSnapshotFile(await api.getRoomVersionFile(roomId, siteId, versionId, path), siteId, versionId, path);
+    const mime = file.contentType.split(";")[0]!.trim().toLowerCase();
+    if (mime !== "text/html" && mime !== "application/xhtml+xml") return { ok: false as const, message: "Static review currently supports HTML pages. Other files keep page comments." };
+    const html = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
+    const prepared = prepareStaticSnapshot(html, `/${path}`);
+    const images = new Map<string, string>();
+    await Promise.all(prepared.imagePaths.slice(0, 8).map(async (assetPath) => {
+      try {
+        const asset = verifiedSnapshotFile(await api.getRoomVersionFile(roomId, siteId, versionId, assetPath), siteId, versionId, assetPath);
+        if (asset.contentHash !== file.contentHash) return;
+        const url = verifiedRasterDataURL(asset.bytes, asset.contentType);
+        if (url) images.set(assetPath, url);
+      } catch { /* Missing, oversized or unsupported assets stay visibly omitted. */ }
+    }));
+    return { ok: true as const, snapshot: prepared.render(images, { siteId, versionId, contentHash: file.contentHash, page }) };
+  } catch {
+    // Never return source bytes, object-store details, or raw parser errors.
+    return { ok: false as const, message: "This immutable page could not be verified or is too large for static review. Page comments remain available." };
   }
 }

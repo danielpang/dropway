@@ -38,9 +38,10 @@ type Tenant struct {
 
 // Store is the tx-per-call data layer.
 type Store struct {
-	pool          *pgxpool.Pool
-	quota         quota.Provider
-	reviewCursors *projectroom.CursorCodec
+	collaborationAllowed func(context.Context, string, string) bool
+	pool                 *pgxpool.Pool
+	quota                quota.Provider
+	reviewCursors        *projectroom.CursorCodec
 }
 
 // New wraps a pgx pool with the open-core quota policy. The pool MUST connect as
@@ -148,4 +149,10 @@ type txAdapter struct{ tx pgx.Tx }
 
 func (a txAdapter) Exec(ctx context.Context, sql string, args ...any) (any, error) {
 	return a.tx.Exec(ctx, sql, args...)
+}
+
+// SetCollaborationGate installs the server-authoritative rollout evaluator before
+// serving traffic. Nil fails closed for hosted execution.
+func (s *Store) SetCollaborationGate(gate func(context.Context, string, string) bool) {
+	s.collaborationAllowed = gate
 }

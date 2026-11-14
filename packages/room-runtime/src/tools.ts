@@ -29,6 +29,7 @@ export interface ToolGuard {
   observer: GatewayObserver;
   maxTotalTokens: number;
   stop(status: RunStatus): void;
+  clarify?: (question: string) => void;
 }
 
 /**
@@ -73,7 +74,7 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
     }
   };
 
-  return [
+  const tools: ToolDefinition[] = [
     defineTool({
       name: "read",
       label: "Read",
@@ -132,6 +133,24 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
         run(signal, () => guard.executor.build({ command: params.command }, liveSignal(signal))),
     }),
   ];
+  if (guard.clarify) tools.push(defineTool({
+    name: "ask_clarification",
+    label: "Ask for clarification",
+    description: "Ask the initiating human a required question. This pauses work and releases the sandbox; it is never approval to publish.",
+    parameters: Type.Object({ question: Type.String({ minLength: 1, maxLength: 4000 }) }),
+    prepareArguments: (args) => checkedArguments<{ question: string }>(args, ["question"]),
+    execute: async (_id, params) => {
+      const decision = decisionFor(guard);
+      if (decision) { guard.stop(decision); guard.observer.blockFurtherModelCalls = true; return { content: [{ type: "text", text: decision }], details: {}, isError: true, terminate: true }; }
+      const question = params.question.trim();
+      if (!question || question.length > 4000) throw new Error("invalid clarification question");
+      guard.clarify?.(question);
+      guard.observer.blockFurtherModelCalls = true;
+      guard.stop("awaiting_clarification");
+      return { content: [{ type: "text", text: "Work paused for human clarification." }], details: {}, terminate: true };
+    },
+  }));
+  return tools;
 }
 
 function decisionFor(guard: ToolGuard): RunStatus | undefined {
@@ -162,8 +181,8 @@ function checkedArguments<T>(args: unknown, fields: string[]): T {
   return out as T;
 }
 
-export function sameRemoteTools(names: readonly string[]): boolean {
+export function sameRemoteTools(names: readonly string[], clarification = false): boolean {
   const got = [...names].sort();
-  const expected = [...REMOTE_TOOL_NAMES].sort();
+  const expected = [...REMOTE_TOOL_NAMES, ...(clarification ? ["ask_clarification"] : [])].sort();
   return got.length === expected.length && got.every((name, index) => name === expected[index]);
 }

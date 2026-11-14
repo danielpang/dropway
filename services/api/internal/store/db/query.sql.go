@@ -4854,7 +4854,7 @@ const lockOrgMeta = `-- name: LockOrgMeta :one
 SELECT id, project_rooms_enabled
 FROM app.org_meta
 WHERE id = $1
-FOR UPDATE
+FOR SHARE
 `
 
 type LockOrgMetaRow struct {
@@ -4862,9 +4862,9 @@ type LockOrgMetaRow struct {
 	ProjectRoomsEnabled bool
 }
 
-// Lock the org row before a site lock. Publish, access changes, deletes, and
-// room attach/detach all take this lock first so the feature flag and the
-// site row cannot deadlock.
+// Share-lock the org flag before exclusively locking a site. Unrelated sites
+// proceed concurrently, while feature toggles wait for all in-flight mutations.
+// Publish, access, deletes, and room attach/detach use the same lock order.
 func (q *Queries) LockOrgMeta(ctx context.Context, orgID string) (LockOrgMetaRow, error) {
 	row := q.db.QueryRow(ctx, lockOrgMeta, orgID)
 	var i LockOrgMetaRow

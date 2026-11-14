@@ -394,9 +394,9 @@ type Querier interface {
 	// Serialize concurrent memory creates for the SAME org (the same COUNT →
 	// policy → INSERT critical section the site/skill/chat caps use).
 	LockOrgMemoryQuota(ctx context.Context, dollar_1 string) error
-	// Lock the org row before a site lock. Publish, access changes, deletes, and
-	// room attach/detach all take this lock first so the feature flag and the
-	// site row cannot deadlock.
+	// Share-lock the org flag before exclusively locking a site. Unrelated sites
+	// proceed concurrently, while feature toggles wait for all in-flight mutations.
+	// Publish, access, deletes, and room attach/detach use the same lock order.
 	LockOrgMeta(ctx context.Context, orgID string) (LockOrgMetaRow, error)
 	// Serialize concurrent site creates for the SAME org: take a transaction-scoped
 	// advisory lock keyed by hashtext(org||':sites'). Held until the create-site tx

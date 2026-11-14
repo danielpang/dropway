@@ -211,6 +211,10 @@ can self-host for free, plus an optional hosted SaaS for convenience and scale.
   ships in the self-host build**, so self-host has no limits. **`ee/`** holds
   license-gated enterprise features (SSO/SAML, audit export, custom domains).
 
+## Project collaboration rollout
+
+Project rooms and hosted editing are controlled by the single server-evaluated [PostHog `project-collaboration`](https://us.posthog.com/project/479412/feature-flags/1059373) flag (inactive, 0% rollout as of 2026-11-10). The API reuses `POSTHOG_KEY` / `POSTHOG_HOST`; the dashboard reads authenticated capabilities without build-time switches. Organization opt-in and existing permissions still apply. See [setup and rollout](docs/hosted-collaboration-development.md) and [implementation status](docs/project-collaboration-status.md).
+
 ## Docs & status
 
 - **[`docs/diagrams/`](docs/diagrams/)**: component + sequence diagrams (sign-up,

@@ -40,12 +40,14 @@ import type { RoomActivity, CandidateDiffView, ProjectRoom, ReviewCandidate, Rev
 
 export function RoomSession({
   orgEnabled: initialOrgEnabled,
+  executionConfigured = false,
   rooms,
   sites,
   parentOrigin,
   loadError,
 }: {
   orgEnabled: boolean;
+  executionConfigured?: boolean;
   rooms: ProjectRoom[];
   sites: RoomSiteOption[];
   parentOrigin: string;
@@ -208,6 +210,7 @@ export function RoomSession({
       candidateCursor={candidateCursor}
       parentOrigin={parentOrigin}
       notice={notice}
+      executionConfigured={executionConfigured}
       orgEnabled={orgEnabled}
       onEnableRooms={() => {
         void enableRoomsAction(true).then((result) => {
@@ -216,7 +219,7 @@ export function RoomSession({
             return;
           }
           setOrgEnabled(true);
-          setNotice("Project rooms are enabled for this organization. Sites are still unchanged.");
+          setNotice("Project rooms are enabled. API-key and MCP deployment and publish writes to attached sites are now blocked.");
         });
       }}
       onSelectRoom={applyRoom}
@@ -370,7 +373,7 @@ export function RoomSession({
           }
           loadedRoom.current = "";
           applyRoom(roomId);
-          setNotice("Site attached. The site files were not changed.");
+          setNotice("Site attached. Direct API-key and MCP deployment and publish writes are now blocked while project rooms are enabled.");
         });
       }}
       onDetachSite={(roomId, siteId) => {
@@ -396,15 +399,15 @@ export function RoomSession({
           setNotice("Thread resolved. The anchor history was not rewritten.");
         });
       }}
-      onReanchor={(roomId, threadId, reason) => {
-        void reanchorAction(roomId, threadId, reason).then((result) => {
+      onReanchor={(roomId, threadId, reason, selection) => {
+        void reanchorAction(roomId, threadId, reason, selection).then((result) => {
           if (loadedRoom.current !== roomId) return;
           if (!result.ok) {
             setNotice(result.message);
             return;
           }
           setThreads((prev) => prev.map((item) => item.ID === threadId ? { ...item, AnchorState: result.thread.AnchorState } : item));
-          setNotice("Page reanchor appended. The original pin is unchanged.");
+          setNotice("Anchor revision appended. The original pin is unchanged.");
           void loadThreadLinkAction(roomId, threadId).then((refreshed) => {
             if (loadedRoom.current !== roomId || !refreshed.ok) return;
             setThreads((prev) => prev.map((thread) => thread.ID === threadId ? {

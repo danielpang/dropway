@@ -79,12 +79,12 @@ func (s *Store) FlushCandidateProjection(ctx context.Context, t Tenant, candidat
 }
 
 // DrainCandidateProjections is the process-restart recovery worker. Enumeration
-// uses the existing narrow all_org_ids function; every job remains under tenant
+// uses a narrow due-outbox org function; every job remains under tenant
 // RLS. Multiple API processes safely serialize delivery at the org/site lock.
 // At most 100 sites per org are delivered per pass. Successful sites are checked
 // again after five minutes to repair late stale writes from legacy handlers.
 func (s *Store) DrainCandidateProjections(ctx context.Context, w projection.Writer) (int, error) {
-	orgs, err := s.ListAllOrgIDs(ctx)
+	orgs, err := s.listCandidateProjectionOrgIDs(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -130,4 +130,36 @@ func (s *Store) DrainCandidateProjections(ctx context.Context, w projection.Writ
 		}
 	}
 	return done, errors.Join(failures...)
+}
+
+// listCandidateProjectionOrgIDs enumerates only tenants with due intents. A
+// deployment with no review history performs one small query, not one tenant
+// transaction per organization. The SECURITY DEFINER function exposes IDs only.
+func (s *Store) listCandidateProjectionOrgIDs(ctx context.Context) ([]string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.ops_mode', '1', true)`); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM app.candidate_projection_org_ids()`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, tx.Commit(ctx)
 }

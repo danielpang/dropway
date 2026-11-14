@@ -58,6 +58,17 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	// under /v1/authz/password to match the API contract.
 	r.Post("/v1/authz/password", api.AuthzPassword)
 
+	// Dedicated worker/capability credentials never enter the user/API-key router.
+	r.Post("/internal/room-worker/claims", api.ClaimHostedWork)
+	r.Get("/internal/room-attempts/{attemptID}/source", api.HostedAttemptSource)
+	r.Post("/internal/room-attempts/{attemptID}/heartbeat", api.HeartbeatHostedAttempt)
+	r.Post("/internal/room-attempts/{attemptID}/candidate", api.HostedAttemptCandidate)
+	r.Post("/internal/room-attempts/{attemptID}/clarify", api.HostedAttemptClarify)
+	r.Post("/internal/room-attempts/{attemptID}/events", api.HostedAttemptEvent)
+	r.Post("/internal/room-attempts/{attemptID}/fail", api.HostedAttemptFail)
+	r.Post("/internal/room-gateway/{attemptID}/v1/messages", api.HostedGateway)
+	r.Post("/internal/room-gateway/{attemptID}/v1/chat/completions", api.HostedGateway)
+
 	// Authenticated control-plane surface. Everything else under /v1 requires a
 	// verified EdDSA JWT (the authz boundary), then ensure-org-provisioned.
 	r.Route("/v1", func(r chi.Router) {
@@ -71,10 +82,18 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 		// Attribute any downstream exception to the authenticated user (runs after
 		// Auth, before EnsureOrgProvisioned, so even provisioning errors carry the id).
 		r.Use(attributeErrors)
+		r.Use(api.CollaborationRollout)
 		r.Use(api.EnsureOrgProvisioned)
 		r.Use(handlers.EnforceAPIKeyGrant)
 
 		r.Get("/me", api.Me)
+		r.Get("/project-collaboration/capabilities", api.GetCollaborationCapabilities)
+		r.Get("/provider-credentials", api.ListProviderCredentials)
+		r.Post("/provider-credentials", api.SaveProviderCredential)
+		r.Put("/provider-credentials/{credentialID}", api.SaveProviderCredential)
+		r.Delete("/provider-credentials/{credentialID}", api.RevokeProviderCredential)
+		r.Post("/provider-credentials/{credentialID}/validate", api.ValidateProviderCredential)
+
 		r.Get("/members", api.ListMembers)
 		// Logical storage usage per user (the members-page usage column). Any member
 		// may read it (org-scoped). Display-only attribution, not an entitlement.
@@ -294,6 +313,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Get("/threads/{threadID}", api.GetReviewThreadPage)
 			r.Get("/{roomID}", api.GetProjectRoom)
 			r.Get("/{roomID}/activity", api.ListRoomActivity)
+			r.Get("/{roomID}/sites/{siteID}/versions/{versionID}/files/content", api.ReadReviewVersionFile)
 			r.Post("/{roomID}/read", api.MarkProjectRoomRead)
 			r.Post("/{roomID}/members", api.AddProjectRoomMember)
 			r.Patch("/{roomID}/members/{userID}", api.UpdateProjectRoomMember)
@@ -313,7 +333,11 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/{roomID}/candidates/{candidateID}/approve", api.ApproveCandidate)
 			r.Post("/{roomID}/candidates/{candidateID}/reject", api.RejectCandidate)
 			r.Post("/{roomID}/candidates/{candidateID}/apply", api.ApplyCandidate)
-			r.Post("/{roomID}/executions", api.ClaimExecution)
+			r.Post("/{roomID}/executions", api.QueueHostedExecution)
+			r.Get("/{roomID}/executions", api.ListHostedExecutions)
+			r.Get("/{roomID}/executions/{jobID}", api.GetHostedExecution)
+			r.Post("/{roomID}/executions/{jobID}/cancel", api.CancelHostedExecution)
+			r.Post("/{roomID}/sessions/{sessionID}/resume", api.ResumeHostedExecution)
 			r.Post("/{roomID}/sessions/clarify", api.ClarifySession)
 		})
 

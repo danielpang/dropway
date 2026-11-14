@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "license": "FSL-1.1-Apache-2.0",
-  "description": "Spike: server-side Pi session whose file, shell, and build tools are a remote Sprite attempt. Not wired to API routes.",
+  "description": "Hosted static-site revision worker with capability-bound Pi sessions and disposable Fly Sprites.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,18 +14,20 @@
     }
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "start": "node dist/daemon.js"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.5.0",
     "@earendil-works/pi-coding-agent": "1.5.0",
-    "typebox": "1.3.27"
+    "typebox": "1.3.27",
+    "@fly/sprites": "0.2.4"
   },
   "devDependencies": {
     "@types/node": "22.10.2",

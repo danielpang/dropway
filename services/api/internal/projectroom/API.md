@@ -1,7 +1,10 @@
 # Project rooms API contract (phase 1)
 
-This slice is default-off (`app.org_meta.project_rooms_enabled`, default `false`).
-It does not run Pi, start Sprites, or store provider keys. An authenticated human can explicitly apply an approved candidate.
+The server-authoritative PostHog flag `project-collaboration` gates the review and hosted execution APIs. Only boolean `true` enables access for the verified user ID with `org_id` and `environment` evaluation properties; missing configuration and evaluation errors fail closed. Organization consent remains separate (`app.org_meta.project_rooms_enabled`, default `false`). An authenticated human can explicitly apply an approved candidate.
+
+`GET /v1/project-collaboration/capabilities` requires current organization membership and returns `{enabled, execution_configured}` with `Cache-Control: no-store`. The first field is the authoritative rollout decision; the second reports valid vault/worker/API URL configuration independently of rollout. The dashboard uses these fields instead of build-time feature gates. Missing execution configuration leaves the API running and review available to eligible users.
+
+An admin can still `PATCH /v1/orgs/project-rooms` with `{"enabled":false}` while rollout is unavailable, to withdraw consent and restore ordinary site deployment behavior. Enabling consent requires rollout eligibility. Active hosted attempts recheck their initiating user's rollout eligibility on claims, heartbeats, model calls, source reads, and candidate submission. Provider credentials remain encrypted and owner-scoped; hosted changes require human approval and application before publication.
 
 ## Rooms
 
@@ -164,4 +167,4 @@ Thread replies and anchor revisions paginate independently: `cursor` / `next_cur
 
 Candidate application writes a durable projection intent with its receipt. The API tries immediate delivery and polls recovery every 30 seconds with a 20-second deadline. Recovery derives the current database route under publication locks, including current access policy and custom hosts. A successful site is reconciled again after five minutes to repair delayed stale writes from legacy handlers. Delivery is bounded to 100 sites per org per pass, with randomized tenant scheduling. KV convergence is eventual; this does not promise linearizable edge reads.
 
-Apply migration 0020 before starting this API revision. The organization and dashboard review flags remain off by default; migration, flag enablement, and production deployment are separate rollout actions.
+Apply migration 0020 before starting this API revision. The single server-evaluated PostHog `project-collaboration` flag and organization opt-in remain off by default; migration, flag enablement, and production deployment are separate rollout actions. See [current rollout configuration](../../../../docs/hosted-collaboration-development.md#feature-rollout).

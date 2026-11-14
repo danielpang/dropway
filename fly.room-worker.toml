@@ -1,0 +1,18 @@
+# Development worker. Supply your dedicated app with fly deploy --app <dev-worker>.
+# No public service and no automatic deployment workflow.
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "60s"
+
+[build]
+  dockerfile = "services/room-worker/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[[restart]]
+  policy = "always"
