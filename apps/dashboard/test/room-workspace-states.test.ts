@@ -125,8 +125,8 @@ describe("project workspace states", () => {
       }),
     );
     expect(html).toContain("first upload");
-    expect(html).toMatch(
-      /<button[^>]*disabled=""[^>]*>Comment on this page<\/button>/,
-    );
+    const sendButton = html.match(/<button\b[^>]*aria-label="Send comment"[^>]*>/)?.[0];
+    expect(sendButton).toBeDefined();
+    expect(sendButton).toContain('disabled=""');
   });
 });
