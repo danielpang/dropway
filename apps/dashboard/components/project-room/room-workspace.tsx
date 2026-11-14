@@ -847,12 +847,18 @@ export function RoomWorkspace({
         }}
       >
         <textarea
+          rows={1}
+          onInput={(event) => {
+            const input = event.currentTarget;
+            input.style.height = "auto";
+            input.style.height = `${Math.min(160, input.scrollHeight)}px`;
+          }}
           placeholder="Leave feedback on this page…"
           aria-label="Comment on this page"
           value={body}
           disabled={commentBusy}
           onChange={(event) => setBody(event.target.value)}
-          className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          className="block min-h-10 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         {hasDropwayMention(body) ? (
           <div className="order-last col-span-2">
