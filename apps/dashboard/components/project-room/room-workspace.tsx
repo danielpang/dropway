@@ -221,7 +221,6 @@ export function RoomWorkspace({
   const [panel, setPanel] = React.useState<
     "review" | "changes" | "activity" | "settings"
   >("review");
-  const [reviewMode, setReviewMode] = React.useState(true);
   const [commentsVisible, setCommentsVisible] = React.useState(true);
   const [activeThreadId, setActiveThreadId] = React.useState("");
   const [commentBusy, setCommentBusy] = React.useState(false);
@@ -234,7 +233,9 @@ export function RoomWorkspace({
   }, [activeThreadId, commentsVisible]);
   const [commentFilter, setCommentFilter] = React.useState("all");
   const [attachId, setAttachId] = React.useState("");
-  const requestedSite = React.useRef<{roomId:string; siteId:string} | null>(null);
+  const requestedSite = React.useRef<{ roomId: string; siteId: string } | null>(
+    null,
+  );
   const [siteId, setSiteId] = React.useState(attachedSites[0]?.siteId ?? "");
   const [versionId, setVersionId] = React.useState(
     sites.find((s) => s.id === attachedSites[0]?.siteId)?.currentVersionId ??
@@ -284,7 +285,6 @@ export function RoomWorkspace({
     setVersionId(linkedVersionId);
     setPage(linkedPage);
     setPanel("review");
-    setReviewMode(true);
     setCommentFilter("all");
   }, [linkedSiteId, linkedVersionId, linkedPage]);
   React.useEffect(() => {
@@ -353,9 +353,26 @@ export function RoomWorkspace({
     if (siteId) onSelectSite(siteId);
   }, [onSelectSite, siteId]);
   React.useEffect(() => {
-    if (detailsRoomId === roomId && requestedSite.current?.roomId === roomId && attachedSites.some((item) => item.siteId === requestedSite.current?.siteId)) {
-      const next = sites.find((item) => item.id === requestedSite.current?.siteId);
-      if (next) { requestedSite.current = null; setLinkedThreadId(""); setSiteId(next.id); setVersionId(next.currentVersionId ?? ""); setPage("/"); setCommentFilter("all"); setPanel("review"); return; }
+    if (
+      detailsRoomId === roomId &&
+      requestedSite.current?.roomId === roomId &&
+      attachedSites.some(
+        (item) => item.siteId === requestedSite.current?.siteId,
+      )
+    ) {
+      const next = sites.find(
+        (item) => item.id === requestedSite.current?.siteId,
+      );
+      if (next) {
+        requestedSite.current = null;
+        setLinkedThreadId("");
+        setSiteId(next.id);
+        setVersionId(next.currentVersionId ?? "");
+        setPage("/");
+        setCommentFilter("all");
+        setPanel("review");
+        return;
+      }
     }
     if (
       detailsRoomId !== roomId ||
@@ -470,7 +487,7 @@ export function RoomWorkspace({
                 variant="outline"
                 disabled={!attachId}
                 onClick={() => {
-                  requestedSite.current = {roomId:room.ID,siteId:attachId};
+                  requestedSite.current = { roomId: room.ID, siteId: attachId };
                   onAttachSite(room.ID, attachId);
                   setAttachId("");
                 }}
@@ -479,13 +496,13 @@ export function RoomWorkspace({
               </Button>
               {newSiteControl((created) => {
                 onSiteCreated?.(created);
-                requestedSite.current = {roomId:room.ID,siteId:created.id};
-                  onAttachSite(room.ID, created.id);
+                requestedSite.current = { roomId: room.ID, siteId: created.id };
+                onAttachSite(room.ID, created.id);
               })}
               {imageUploadControl((image) => {
                 onSiteCreated?.(image);
-                requestedSite.current = {roomId:room.ID,siteId:image.id};
-                  onAttachSite(room.ID, image.id);
+                requestedSite.current = { roomId: room.ID, siteId: image.id };
+                onAttachSite(room.ID, image.id);
               })}
             </div>
           </details>
@@ -606,8 +623,13 @@ export function RoomWorkspace({
         <ul className="text-sm text-foreground">
           {attachedSites.map((item) => (
             <li key={item.siteId} className="flex items-center gap-2">
-              <a className="min-w-0 flex-1 truncate underline underline-offset-4" href={`/sites/${item.siteId}`}>
-                {sites.find((site) => site.id === item.siteId)?.label ?? sites.find((site) => site.id === item.siteId)?.slug ?? item.siteId}
+              <a
+                className="min-w-0 flex-1 truncate underline underline-offset-4"
+                href={`/sites/${item.siteId}`}
+              >
+                {sites.find((site) => site.id === item.siteId)?.label ??
+                  sites.find((site) => site.id === item.siteId)?.slug ??
+                  item.siteId}
               </a>
               <Button
                 type="button"
@@ -838,16 +860,15 @@ export function RoomWorkspace({
             comment.
           </p>
         ) : null}
-        <p className="text-sm text-muted-foreground">
-          Feedback stays with its original version. Choose All versions to see
-          the full history, including resolved comments.
+        <p className="text-[11px] text-muted-foreground">
+          Includes resolved comments and earlier versions.
         </p>
-        <ul className="space-y-3">
+        <ul className="space-y-1.5">
           {visibleThreads.map((thread) => (
             <li
               id={`thread-${thread.ID}`}
               key={thread.ID}
-              className={`space-y-2 rounded-lg border p-3 text-sm ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}
+              className={`space-y-1.5 rounded-lg border p-2.5 text-sm ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}
             >
               <button
                 type="button"
@@ -855,7 +876,6 @@ export function RoomWorkspace({
                 onClick={() => {
                   setLinkedThreadId(thread.ID);
                   setActiveThreadId(thread.ID);
-                  setReviewMode(true);
                 }}
               >
                 {thread.AnchorKind === "page"
@@ -874,196 +894,216 @@ export function RoomWorkspace({
                   Link to thread
                 </a>
               </p>
-              <details className="space-y-2 text-sm">
-                <summary className="cursor-pointer text-muted-foreground">
-                  Anchor history
+              {thread.Replies.slice(0, 1).map((item) => (
+                <ReplyText
+                  key={item.ID}
+                  body={untrustedText(item.Body)}
+                  compact
+                />
+              ))}
+              <details className="group space-y-2 text-xs">
+                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                  {thread.Replies.length > 1
+                    ? `${thread.Replies.length - 1} replies · Reply & details`
+                    : "Reply & details"}
                 </summary>
-                <p className="break-all text-xs text-muted-foreground">
-                  Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
-                  {thread.AnchorState}. Revisions preserve the original
-                  location.
-                </p>
-                <ol className="space-y-2">
-                  {(thread.Revisions ?? []).map((revision) => (
-                    <li
-                      key={revision.id}
-                      className="rounded-md border border-border p-2"
-                    >
-                      <p>
-                        {revision.anchorKind} · {revision.anchorState} · page{" "}
-                        {revision.page}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {revision.createdAt}
-                      </p>
-                      <p className="whitespace-pre-wrap">
-                        {untrustedText(revision.reason) ||
-                          "No reason recorded."}
-                      </p>
+                <ul className="space-y-2 border-l border-border pl-2">
+                  {thread.Replies.slice(1).map((item) => (
+                    <li key={item.ID}>
+                      <ReplyText body={untrustedText(item.Body)} compact />
                     </li>
                   ))}
-                </ol>
-                {thread.NextRevisionCursor ? (
+                </ul>
+                {thread.NextReplyCursor ? (
                   <Button
                     type="button"
                     size="sm"
                     variant="outline"
                     onClick={() =>
-                      onLoadMoreRevisions?.(
+                      onLoadMoreReplies?.(
                         thread.RoomID,
                         thread.ID,
-                        thread.NextRevisionCursor!,
+                        thread.NextReplyCursor!,
                       )
                     }
                   >
-                    Load older anchor revisions
+                    Load older replies
                   </Button>
                 ) : null}
-              </details>
-              <ul className="space-y-2">
-                {thread.Replies.map((item) => (
-                  <li key={item.ID}>
-                    <ReplyText body={untrustedText(item.Body)} />
-                  </li>
-                ))}
-              </ul>
-              {thread.NextReplyCursor ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    onLoadMoreReplies?.(
-                      thread.RoomID,
+                <form
+                  className="flex flex-wrap gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const text = (replyByThread[thread.ID] ?? "").trim();
+                    if (!room || !commentOk || text.length === 0) return;
+                    if (hasDropwayMention(text) && !replyExecutions[thread.ID])
+                      return;
+                    onReply(
+                      room.ID,
                       thread.ID,
-                      thread.NextReplyCursor!,
-                    )
-                  }
+                      text,
+                      hasDropwayMention(text)
+                        ? replyExecutions[thread.ID]
+                        : undefined,
+                    );
+                  }}
                 >
-                  Load older replies
-                </Button>
-              ) : null}
-              <form
-                className="flex flex-wrap gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const text = (replyByThread[thread.ID] ?? "").trim();
-                  if (!room || !commentOk || text.length === 0) return;
-                  if (hasDropwayMention(text) && !replyExecutions[thread.ID])
-                    return;
-                  onReply(
-                    room.ID,
-                    thread.ID,
-                    text,
-                    hasDropwayMention(text)
-                      ? replyExecutions[thread.ID]
-                      : undefined,
-                  );
-                }}
-              >
-                <Input
-                  aria-label={`Reply to ${thread.ID}`}
-                  value={replyByThread[thread.ID] ?? ""}
-                  onChange={(event) =>
-                    setReplyByThread((prev) => ({
-                      ...prev,
-                      [thread.ID]: event.target.value,
-                    }))
-                  }
-                />
-                {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
-                  <MentionExecutionControls
-                    body={replyByThread[thread.ID] ?? ""}
-                    allowed={
-                      !!executionConfigured &&
-                      decideOk &&
-                      thread.SiteID === site?.id &&
-                      thread.VersionID === site.currentVersionId &&
-                      thread.ContentHash === site.currentContentHash
-                    }
-                    onChange={(value) =>
-                      setReplyExecutions((prev) => ({
+                  <Input
+                    aria-label={`Reply to ${thread.ID}`}
+                    value={replyByThread[thread.ID] ?? ""}
+                    onChange={(event) =>
+                      setReplyByThread((prev) => ({
                         ...prev,
-                        [thread.ID]: value,
+                        [thread.ID]: event.target.value,
                       }))
                     }
                   />
-                ) : null}
-                <Button
-                  type="submit"
-                  disabled={
-                    !commentOk ||
-                    (replyByThread[thread.ID] ?? "").trim().length === 0 ||
-                    (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
-                      !replyExecutions[thread.ID])
-                  }
-                >
-                  Reply
-                </Button>
-              </form>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={!commentOk || !room || thread.Status === "resolved"}
-                  onClick={() => room && onResolve(room.ID, thread.ID)}
-                >
-                  Resolve
-                </Button>
-                <details className="w-full text-xs">
-                  <summary className="cursor-pointer py-2 text-muted-foreground">
-                    Move comment location
-                  </summary>
-                  <Input
-                    aria-label={`Move reason for ${thread.ID}`}
-                    value={reanchorReason}
-                    onChange={(event) => setReanchorReason(event.target.value)}
-                    placeholder="Reason for moving this comment"
-                  />
+                  {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
+                    <MentionExecutionControls
+                      body={replyByThread[thread.ID] ?? ""}
+                      allowed={
+                        !!executionConfigured &&
+                        decideOk &&
+                        thread.SiteID === site?.id &&
+                        thread.VersionID === site.currentVersionId &&
+                        thread.ContentHash === site.currentContentHash
+                      }
+                      onChange={(value) =>
+                        setReplyExecutions((prev) => ({
+                          ...prev,
+                          [thread.ID]: value,
+                        }))
+                      }
+                    />
+                  ) : null}
                   <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      !commentOk || !room || reanchorReason.trim().length === 0
-                    }
-                    onClick={() =>
-                      room &&
-                      onReanchor(room.ID, thread.ID, reanchorReason.trim())
-                    }
-                  >
-                    Move to page
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
+                    type="submit"
                     disabled={
                       !commentOk ||
-                      !room ||
-                      !staticSelection ||
-                      !reanchorReason.trim() ||
-                      !snapshot ||
-                      snapshot.siteId !== thread.SiteID ||
-                      snapshot.versionId !== thread.VersionID ||
-                      snapshot.contentHash !== thread.ContentHash ||
-                      snapshot.page !== thread.Page
+                      (replyByThread[thread.ID] ?? "").trim().length === 0 ||
+                      (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
+                        !replyExecutions[thread.ID])
                     }
-                    onClick={() => {
-                      if (room && staticSelection)
-                        onReanchor(
-                          room.ID,
-                          thread.ID,
-                          reanchorReason.trim(),
-                          staticSelection,
-                        );
-                    }}
                   >
-                    Move to selection
+                    Reply
                   </Button>
+                </form>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      !commentOk || !room || thread.Status === "resolved"
+                    }
+                    onClick={() => room && onResolve(room.ID, thread.ID)}
+                  >
+                    Resolve
+                  </Button>
+                  <details className="w-full text-xs">
+                    <summary className="cursor-pointer py-2 text-muted-foreground">
+                      Move comment location
+                    </summary>
+                    <Input
+                      aria-label={`Move reason for ${thread.ID}`}
+                      value={reanchorReason}
+                      onChange={(event) =>
+                        setReanchorReason(event.target.value)
+                      }
+                      placeholder="Reason for moving this comment"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        !commentOk ||
+                        !room ||
+                        reanchorReason.trim().length === 0
+                      }
+                      onClick={() =>
+                        room &&
+                        onReanchor(room.ID, thread.ID, reanchorReason.trim())
+                      }
+                    >
+                      Move to page
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={
+                        !commentOk ||
+                        !room ||
+                        !staticSelection ||
+                        !reanchorReason.trim() ||
+                        !snapshot ||
+                        snapshot.siteId !== thread.SiteID ||
+                        snapshot.versionId !== thread.VersionID ||
+                        snapshot.contentHash !== thread.ContentHash ||
+                        snapshot.page !== thread.Page
+                      }
+                      onClick={() => {
+                        if (room && staticSelection)
+                          onReanchor(
+                            room.ID,
+                            thread.ID,
+                            reanchorReason.trim(),
+                            staticSelection,
+                          );
+                      }}
+                    >
+                      Move to selection
+                    </Button>
+                  </details>
+                </div>
+                <details className="space-y-2 text-sm">
+                  <summary className="cursor-pointer text-muted-foreground">
+                    Anchor history
+                  </summary>
+                  <p className="break-all text-xs text-muted-foreground">
+                    Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
+                    {thread.AnchorState}. Revisions preserve the original
+                    location.
+                  </p>
+                  <ol className="space-y-2">
+                    {(thread.Revisions ?? []).map((revision) => (
+                      <li
+                        key={revision.id}
+                        className="rounded-md border border-border p-2"
+                      >
+                        <p>
+                          {revision.anchorKind} · {revision.anchorState} · page{" "}
+                          {revision.page}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {revision.createdAt}
+                        </p>
+                        <p className="whitespace-pre-wrap">
+                          {untrustedText(revision.reason) ||
+                            "No reason recorded."}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                  {thread.NextRevisionCursor ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        onLoadMoreRevisions?.(
+                          thread.RoomID,
+                          thread.ID,
+                          thread.NextRevisionCursor!,
+                        )
+                      }
+                    >
+                      Load older anchor revisions
+                    </Button>
+                  ) : null}
                 </details>
-              </div>
+              </details>
             </li>
           ))}
         </ul>
@@ -1367,13 +1407,22 @@ export function RoomWorkspace({
                           </span>
                           <span className="block truncate text-xs text-muted-foreground">
                             {site.kind === "image"
-                              ? (site.currentVersionId ? "Image" : "Image · upload incomplete")
+                              ? site.currentVersionId
+                                ? "Image"
+                                : "Image · upload incomplete"
                               : site.currentVersionId
                                 ? "Published site"
                                 : "No published version"}
                           </span>
                         </span>
-                        <a className="ml-auto shrink-0 text-xs text-muted-foreground underline" href={`/sites/${site.id}`} target="_blank" rel="noopener noreferrer">Manage</a>
+                        <a
+                          className="ml-auto shrink-0 text-xs text-muted-foreground underline"
+                          href={`/sites/${site.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Manage
+                        </a>
                       </label>
                     ))}
                   {sites.filter((site) => site.canEditContent).length === 0 ? (
@@ -1588,25 +1637,11 @@ export function RoomWorkspace({
                         rel="noopener noreferrer"
                         className="px-2 text-xs text-muted-foreground underline underline-offset-4"
                       >
-                        {site.kind === "image" ? "Open original ↗" : "Open live site ↗"}
+                        {site.kind === "image"
+                          ? "Open original ↗"
+                          : "Open live site ↗"}
                       </a>
                     ) : null}
-                    <div
-                      className="flex rounded-md bg-muted p-0.5"
-                      aria-label="View or review"
-                    >
-                      {[false, true].map((review) => (
-                        <button
-                          key={String(review)}
-                          type="button"
-                          aria-pressed={reviewMode === review}
-                          onClick={() => setReviewMode(review)}
-                          className={`rounded px-3 py-1 text-xs font-medium ${reviewMode === review ? "bg-background shadow-sm" : "text-muted-foreground"}`}
-                        >
-                          {review ? "Review" : "View"}
-                        </button>
-                      ))}
-                    </div>
                     <Button
                       size="sm"
                       variant={commentsVisible ? "secondary" : "outline"}
@@ -1641,7 +1676,6 @@ export function RoomWorkspace({
                       <StaticReview
                         snapshot={snapshot}
                         imageCanvas={site.kind === "image"}
-                        readOnly={!reviewMode}
                         activeThreadId={activeThreadId}
                         selectionResetKey={selectionResetKey}
                         annotations={threads
@@ -1711,7 +1745,7 @@ export function RoomWorkspace({
                       className="absolute inset-y-0 right-0 z-10 flex w-[min(22rem,100%)] min-h-0 flex-col border-l border-border bg-background shadow-lg lg:static lg:w-auto lg:shadow-none"
                       aria-label="Review panel"
                     >
-                      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+                      <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
                         <h2 className="text-sm font-semibold">Discussion</h2>
                         <button
                           type="button"
@@ -1722,7 +1756,7 @@ export function RoomWorkspace({
                           ×
                         </button>
                       </div>
-                      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+                      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                         {commentsPanel}
                         <details className="border-t border-border pt-3">
                           <summary className="cursor-pointer text-xs text-muted-foreground">
@@ -1817,13 +1851,24 @@ export function RoomWorkspace({
   );
 }
 
-function ReplyText({ body }: { body: string }) {
+function ReplyText({
+  body,
+  compact = false,
+}: {
+  body: string;
+  compact?: boolean;
+}) {
   const [open, setOpen] = React.useState(false);
-  const long = body.length > 280;
-  const shown = long && !open ? `${body.slice(0, 280)}…` : body;
+  const limit = compact ? 160 : 280;
+  const long = body.length > limit;
+  const shown = long && !open ? `${body.slice(0, limit)}…` : body;
   return (
     <div className="space-y-1">
-      <p className="whitespace-pre-wrap text-sm text-foreground">{shown}</p>
+      <p
+        className={`whitespace-pre-wrap text-foreground ${compact ? "text-xs leading-5" : "text-sm"}`}
+      >
+        {shown}
+      </p>
       {long ? (
         <button
           type="button"

@@ -383,7 +383,8 @@ describe("project room markup", () => {
     expect(room).not.toContain("<script>history</script>");
     expect(room).toContain("Settings &amp; sharing");
     expect(room).toContain("All versions");
-    expect(room).toContain("View or review");
+    expect(room).not.toContain("View or review");
+    expect(room).toContain("Hide comments");
     expect(room).toContain("Comment on this page");
     expect(room).not.toContain("Highlight text");
     expect(room).not.toContain("credential_store_unavailable");
