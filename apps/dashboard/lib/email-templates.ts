@@ -264,3 +264,10 @@ export function passwordResetEmail(p: {
     }),
   };
 }
+
+export function projectInvitationEmail(p: { url: string; appUrl: string; role: "viewer" | "reviewer"; expiresAt: string; projectName: string }): RenderedEmail {
+  const heading = `You are invited to ${p.projectName}`;
+  const body = `You have been invited as a ${p.role} to the Dropway project "${p.projectName}". This grants access only to this project, not organization membership. Sign in with this email address and accept the invitation.`;
+  const security = `This invitation expires at ${p.expiresAt}. If you weren't expecting it, ignore this email.`;
+  return { subject: heading, html: renderLayout({ preheader: heading, kicker: "Project invitation", heading, bodyHtml: esc(body), buttonLabel: "View invitation", url: p.url, securityHtml: esc(security), footerReason: "You received this email because a project owner invited you.", appUrl: p.appUrl }), text: renderText({ heading, body, cta: "View invitation", url: p.url, security }) };
+}

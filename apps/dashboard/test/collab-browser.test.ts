@@ -8,6 +8,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { existsSync } from "node:fs";
 import { chromium } from "@playwright/test";
 import { describe, expect, it } from "vitest";
+import { chromiumPage } from "./chromium-fixture";
 
 import { armPreviewFrame, createFrameSession, guestBridgeSource, noteFrameLoad, validateBridgeEvent } from "@/lib/collab";
 
@@ -19,13 +20,17 @@ async function listen(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
 ): Promise<{ server: Server; origin: string }> {
   const server = createServer(handler);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("no port");
   return { server, origin: `http://127.0.0.1:${address.port}` };
 }
 
 describe.skipIf(!hasChrome)("collab browser behavior", () => {
+  const getPage = chromiumPage(CHROME);
   it("omits cookies only when credentialless is set before src", async () => {
     const hits: { url: string; cookie: string }[] = [];
     const site = await listen((req, res) => {
@@ -36,14 +41,8 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
       res.setHeader("Content-Type", "text/html");
       res.end("<!doctype html><p>ok</p>");
     });
-    const { chromium } = await import("@playwright/test");
-    const browser = await chromium.launch({
-      executablePath: CHROME,
-      headless: true,
-      args: ["--no-sandbox"],
-    });
     try {
-      const page = await browser.newPage();
+      const page = getPage();
       await page.goto(`${site.origin}/parent`);
       const late = await page.evaluate(async (origin) => {
         const iframe = document.createElement("iframe");
@@ -77,7 +76,6 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
       expect(early[0]?.cookie).toBe("");
       expect(early.slice(1).every((hit) => hit.cookie === "")).toBe(true);
     } finally {
-      await browser.close();
       site.server.close();
     }
   }, 20000);
@@ -96,14 +94,8 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
       res.setHeader("Content-Type", "text/html");
       res.end("<!doctype html><p>hostile</p>");
     });
-    const { chromium } = await import("@playwright/test");
-    const browser = await chromium.launch({
-      executablePath: CHROME,
-      headless: true,
-      args: ["--no-sandbox"],
-    });
     try {
-      const page = await browser.newPage();
+      const page = getPage();
       async function frameFrom(parentOrigin: string) {
         await page.goto(`${parentOrigin}/`);
         await page.evaluate(async (contentOrigin) => {
@@ -145,7 +137,6 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
       const trustedMessages = await frameFrom(trusted.origin);
       expect(JSON.stringify(trustedMessages)).toContain("hello unique");
     } finally {
-      await browser.close();
       trusted.server.close();
       content.server.close();
       hostile.server.close();
@@ -161,14 +152,8 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
         if (${JSON.stringify(doc)} === "A") location.replace(location.pathname + "?doc=B");
       </script>`);
     });
-    const { chromium } = await import("@playwright/test");
-    const browser = await chromium.launch({
-      executablePath: CHROME,
-      headless: true,
-      args: ["--no-sandbox"],
-    });
     try {
-      const page = await browser.newPage();
+      const page = getPage();
       const observed = await page.evaluate(async (origin) => {
         const reports: { data: { doc: string; href: string }; origin: string }[] = [];
         let loads = 0;
@@ -230,7 +215,6 @@ describe.skipIf(!hasChrome)("collab browser behavior", () => {
         ),
       ).toEqual({ ok: false, reason: "opaque-origin" });
     } finally {
-      await browser.close();
       site.server.close();
     }
   }, 20000);

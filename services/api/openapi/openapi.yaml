@@ -17,8 +17,9 @@ info:
   description: >
     The Dropway control plane. Most /v1 routes require a Bearer EdDSA JWT
     (issued by Better Auth) which the Go API verifies itself (the authz boundary).
-    Every request runs under a Postgres RLS tenant context derived from the
-    verified org_id/user_id claims.
+    Organization requests run under a Postgres RLS tenant context derived from
+    verified org_id/user_id claims. Shared-project guest routes instead resolve
+    an accepted, verified-email project grant without organization membership.
 
 
     Phase 2 adds access control & domains: the /authz viewer exchange (mint +
@@ -39,6 +40,87 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/project-rooms/{roomID}/shares:
+    get:
+      operationId: "listProjectGuestShares"
+      summary: "List project invitations (project owner)"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"shares":{"type":"array","items":{"$ref":"#/components/schemas/ProjectGuestShare"}}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+    post:
+      operationId: "inviteProjectGuest"
+      summary: "Invite a verified email to this project only"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"201":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"share":{"$ref":"#/components/schemas/ProjectGuestShare"},"token":{"type":"string"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"email":{"type":"string","format":"email"},"role":{"type":"string","enum":["viewer","reviewer"]},"expires_in_days":{"type":"integer","minimum":1,"maximum":30,"default":7}},"required":["email","role"]}}}}
+      description: "Human project owner only. Requires host organization external sharing, room opt-in and collaboration rollout. The one-time response contains a secret invitation token; deliver by email, never log it. This API does not send email. Reinviting replaces the pending token."
+  /v1/project-rooms/{roomID}/shares/{shareID}:
+    delete:
+      operationId: "revokeProjectGuest"
+      summary: "Revoke a project guest invitation or accepted grant"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"shareID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"204":{"description":"Access revoked"},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+  /v1/shared-projects:
+    get:
+      operationId: "listSharedProjects"
+      summary: "List only accepted projects shared with the verified user"
+      parameters: []
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"projects":{"type":"array","items":{"$ref":"#/components/schemas/SharedProject"}}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      description: "Human-session JWT required; org_id may be absent. Does not provision or join an organization. Each project is filtered by live share, email verification, host policies and rollout."
+  /v1/shared-projects/accept:
+    post:
+      operationId: "acceptProjectGuestInvitation"
+      summary: "Accept a project invitation for the currently verified email"
+      parameters: []
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"project":{"$ref":"#/components/schemas/SharedProject"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"token":{"type":"string","minLength":43,"maxLength":43}},"required":["token"]}}}}
+      description: "A forwarded token cannot grant access to another email. Requires current identity email verification, an unexpired invitation and host policy/rollout. Never changes identity.member."
+  /v1/shared-projects/{roomID}:
+    get:
+      operationId: "getSharedProject"
+      summary: "Read a shared project and its attached sites"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"project":{"$ref":"#/components/schemas/SharedProject"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+  /v1/shared-projects/{roomID}/threads:
+    get:
+      operationId: "listSharedProjectThreads"
+      summary: "Read discussions scoped to this shared project"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"site_id","in":"query","schema":{"type":"string"}},{"name":"cursor","in":"query","schema":{"type":"string"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"threads":{"type":"array","items":{"$ref":"#/components/schemas/SharedProjectThread"}},"next_cursor":{"type":"string"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+    post:
+      operationId: "createSharedProjectThread"
+      summary: "Leave version-bound feedback as a guest Reviewer"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"201":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"thread":{"$ref":"#/components/schemas/SharedProjectThread"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"site_id":{"type":"string","format":"uuid"},"version_id":{"type":"string","format":"uuid"},"content_hash":{"type":"string"},"page":{"type":"string"},"body":{"type":"string","maxLength":4000},"anchor_kind":{"type":"string","enum":["page","point","text","component"]},"anchor":{"type":"object","properties":{}}},"required":["site_id","version_id","content_hash","page","body"]}}}}
+  /v1/shared-projects/{roomID}/threads/{threadID}:
+    get:
+      operationId: "getSharedProjectThread"
+      summary: "Read a project thread and a page of replies"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"threadID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"cursor","in":"query","schema":{"type":"string"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"thread":{"$ref":"#/components/schemas/SharedProjectThread"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+  /v1/shared-projects/{roomID}/threads/{threadID}/replies:
+    post:
+      operationId: "replyToSharedProjectThread"
+      summary: "Reply as a guest Reviewer without starting AI"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"threadID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"201":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"reply":{"$ref":"#/components/schemas/SharedProjectReply"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"body":{"type":"string","maxLength":4000}},"required":["body"]}}}}
+  /v1/shared-projects/{roomID}/version-signoffs:
+    post:
+      operationId: "signoffSharedProjectVersion"
+      summary: "Record Reviewer sign-off on a project site version"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"version_id":{"type":"string","format":"uuid"},"content_hash":{"type":"string"},"signed_off":{"type":"boolean"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      requestBody: {"required":true,"content":{"application/json":{"schema":{"type":"object","properties":{"site_id":{"type":"string","format":"uuid"},"version_id":{"type":"string","format":"uuid"},"content_hash":{"type":"string"}},"required":["site_id","version_id","content_hash"]}}}}
+      description: "Version sign-off does not approve an AI candidate or publish anything."
+  /v1/shared-projects/{roomID}/sites/{siteID}/versions/{versionID}/files/content:
+    get:
+      operationId: "readSharedProjectFile"
+      summary: "Read HTML or a raster image from an authorized project version"
+      parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"siteID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"versionID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"path","in":"query","schema":{"type":"string"},"required":true}]
+      responses: {"200":{"description":"Success","content":{"application/json":{"schema":{"type":"object","properties":{"site_id":{"type":"string","format":"uuid"},"version_id":{"type":"string","format":"uuid"},"path":{"type":"string"},"content_hash":{"type":"string"},"content_type":{"type":"string"},"sha256":{"type":"string"},"content_base64":{"type":"string"}}}}}},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+      description: "Requires the site to remain attached. Historical access is limited to project-authorized review versions. Only HTML and supported raster images are exposed; scripts, source maps and reserved paths are denied. Does not grant a live-site edge token. Content is untrusted and must be rendered in an isolated sanitized preview."
+
   /healthz:
     get:
       summary: Liveness probe (unauthenticated)
@@ -3460,6 +3542,11 @@ components:
       description: app.chat_logs.id
 
   schemas:
+    ProjectGuestShare: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"email":{"type":"string","format":"email"},"role":{"type":"string","enum":["viewer","reviewer"]},"expires_at":{"type":"string","format":"date-time"},"accepted_at":{"type":["string","null"],"format":"date-time"},"revoked_at":{"type":["string","null"],"format":"date-time"}},"required":["id","email","role","expires_at"]}
+    SharedProject: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"name":{"type":"string"},"role":{"type":"string","enum":["viewer","reviewer"]},"sites":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"slug":{"type":"string"},"title":{"type":"string"},"current_version_id":{"type":["string","null"],"format":"uuid"},"current_content_hash":{"type":"string"}}}}},"required":["id","name","role","sites"]}
+    SharedProjectReply: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"author_id":{"type":"string","format":"uuid"},"body":{"type":"string"},"created_at":{"type":"string","format":"date-time"}},"required":["id","author_id","body","created_at"]}
+    SharedProjectThread: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"site_id":{"type":"string","format":"uuid"},"version_id":{"type":"string","format":"uuid"},"content_hash":{"type":"string"},"page":{"type":"string"},"anchor_kind":{"type":"string"},"anchor":{"type":"object","properties":{}},"anchor_state":{"type":"string"},"status":{"type":"string"},"created_at":{"type":"string","format":"date-time"},"replies":{"type":"array","items":{"$ref":"#/components/schemas/SharedProjectReply"}},"replies_next_cursor":{"type":"string"}},"required":["id","site_id","version_id","content_hash","page","replies"]}
+
     ProviderCredential: {"type":"object","properties":{"id":{"type":"string"},"provider":{"type":"string","enum":["anthropic","openrouter","openai"]},"label":{"type":"string"},"last_four":{"type":"string"},"generation":{"type":"integer"},"validated_at":{"type":["string","null"]},"revoked_at":{"type":["string","null"]},"created_at":{"type":"string"},"scope":{"type":"string","enum":["personal","team"]},"can_manage":{"type":"boolean"},"owner_user_id":{"type":"string","format":"uuid"}},"required":["id","provider","label","last_four","generation","validated_at","revoked_at","created_at","scope","can_manage","owner_user_id"]}
     ExecutionBudget: {"type":"object","properties":{"max_tokens":{"type":"integer","minimum":1,"maximum":500000},"max_calls":{"type":"integer","minimum":1,"maximum":100},"max_seconds":{"type":"integer","minimum":1,"maximum":900},"max_output_bytes":{"type":"integer","minimum":1,"maximum":10485760}},"required":["max_tokens","max_calls","max_seconds","max_output_bytes"]}
     ExecutionConfig: {"type":"object","properties":{"provider":{"type":"string"},"model_id":{"type":"string"},"harness_id":{"type":"string"},"harness_version":{"type":"string"},"prompt":{"type":"string"},"budget":{"$ref":"#/components/schemas/ExecutionBudget"},"tool_policy":{"type":"string"}},"required":["provider","model_id","harness_id","harness_version","prompt","budget","tool_policy"]}

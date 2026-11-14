@@ -31,6 +31,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	}
 	r := chi.NewRouter()
 	reviewReads := handlers.ReviewReadLimiter()
+	guestLimits := handlers.GuestAccessLimiter()
 
 	// Baseline middleware: SANITIZE the inbound X-Request-Id (drop a forgeable value
 	// so chi mints a fresh one — prevents log/audit forgery via injected newlines /
@@ -69,6 +70,22 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	r.Post("/internal/room-gateway/{attemptID}/v1/messages", api.HostedGateway)
 	r.Post("/internal/room-gateway/{attemptID}/v1/chat/completions", api.HostedGateway)
 
+	// External guests authenticate as humans without an active org. This router
+	// deliberately does not provision orgs or pass through generic tenant APIs.
+	r.Route("/v1/shared-projects", func(r chi.Router) {
+		r.Use(middleware.Auth(verifier))
+		r.Use(attributeErrors)
+		r.Use(guestLimits)
+		r.Get("/", api.ListGuestProjects)
+		r.Post("/accept", api.AcceptGuestProject)
+		r.Get("/{roomID}", api.GetGuestProject)
+		r.Get("/{roomID}/threads", api.GuestThreads)
+		r.Get("/{roomID}/threads/{threadID}", api.GuestThreads)
+		r.Post("/{roomID}/threads", api.GuestCreateThread)
+		r.Post("/{roomID}/threads/{threadID}/replies", api.GuestAddReply)
+		r.Post("/{roomID}/version-signoffs", api.GuestSignoff)
+		r.Get("/{roomID}/sites/{siteID}/versions/{versionID}/files/content", api.GuestReadFile)
+	})
 	// Authenticated control-plane surface. Everything else under /v1 requires a
 	// verified EdDSA JWT (the authz boundary), then ensure-org-provisioned.
 	r.Route("/v1", func(r chi.Router) {
@@ -312,6 +329,9 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 			r.Post("/", api.CreateProjectRoom)
 			r.Get("/threads/{threadID}", api.GetReviewThreadPage)
 			r.Get("/{roomID}", api.GetProjectRoom)
+			r.With(guestLimits).Get("/{roomID}/shares", api.ListProjectShares)
+			r.With(guestLimits).Post("/{roomID}/shares", api.InviteProjectGuest)
+			r.With(guestLimits).Delete("/{roomID}/shares/{shareID}", api.RevokeProjectGuest)
 			r.Get("/{roomID}/activity", api.ListRoomActivity)
 			r.Get("/{roomID}/sites/{siteID}/versions/{versionID}/files/content", api.ReadReviewVersionFile)
 			r.Post("/{roomID}/read", api.MarkProjectRoomRead)

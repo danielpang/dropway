@@ -9,6 +9,8 @@ import { BrandMark } from "@/components/brand-mark";
 import { OverLimitBanner } from "@/components/billing/over-limit-banner";
 import { DashboardFooter } from "@/components/dashboard-footer";
 import { MainNav } from "@/components/main-nav";
+import { api } from "@/lib/api";
+import { object } from "@/lib/project-room/sharing";
 import { auth } from "@/lib/auth";
 import { supportEmail } from "@/lib/env";
 import { loadOrgBillingState } from "@/lib/billing-server";
@@ -30,7 +32,7 @@ export default async function AppLayout({
   const session = await getCurrentSession();
   if (!session) redirect("/sign-in");
 
-  // Three independent reads, resolved in ONE parallel step so the shell waits
+  // Four independent reads, resolved in ONE parallel step so the shell waits
   // on the slowest of them rather than their sum (previously listOrganizations
   // was awaited on its own first, a serial round trip on every app page):
   //  - orgs: a signed-in user with no org (e.g. a fresh Google sign-up) must
@@ -40,15 +42,22 @@ export default async function AppLayout({
   //    non-dismissible banner. UX mirror of the server-side quota enforcement;
   //    a billing-API hiccup degrades to "active" so the shell never wrongly locks.
   //  - role: gates admin-only menu items (Audit log); fails soft to "member".
+  //  - shared projects: shows guest navigation only for live, enabled grants.
   // For the rare org-less user the billing/role reads are wasted work before the
   // onboarding redirect, but both fail soft, and the common case saves a full
   // round trip.
-  const [orgs, { orgStatus }, role] = await Promise.all([
+  const [orgs, { orgStatus }, role, shared] = await Promise.all([
     auth.api.listOrganizations({ headers: requestHeaders }).catch(() => []),
     loadOrgBillingState(),
     loadActiveRole(),
+    api.sharedProjectRequest("").catch(() => null),
   ]);
-  if (!orgs || orgs.length === 0) redirect("/onboarding");
+  const projects = object(shared).projects;
+  const hasSharedProjects = Array.isArray(projects) && projects.length > 0;
+  if (!orgs || orgs.length === 0) {
+    if (hasSharedProjects) redirect("/shared-projects");
+    redirect("/onboarding");
+  }
   const isAdmin = canManage(role);
 
   // Attribute browser analytics to this user + their active org (client-side;
@@ -88,7 +97,7 @@ export default async function AppLayout({
             {/* Inline primary sections on desktop; below md they move into
                 the account menu. */}
             <div className="hidden md:block">
-              <MainNav />
+              <MainNav hasSharedProjects={hasSharedProjects} />
             </div>
             <AccountMenu
               user={{
@@ -98,6 +107,7 @@ export default async function AppLayout({
               }}
               orgName={activeOrgName}
               admin={isAdmin}
+              hasSharedProjects={hasSharedProjects}
             />
           </div>
         </div>

@@ -85,3 +85,13 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
     console.error(`[email] failed to send to ${msg.to}: ${String(err)}`);
   }
 }
+
+/** Invitations must report delivery failures and never log their bearer links. */
+export async function sendEmailStrict(msg: EmailMessage): Promise<void> {
+  const url = mailSmtpUrl();
+  if (!url) throw new Error("Email delivery is not configured.");
+  try {
+    const result = await transport(url).sendMail({ from: mailFrom(), to: msg.to, subject: msg.subject, text: msg.text, html: msg.html ?? msg.text });
+    if (!Array.isArray(result.accepted) || result.accepted.length === 0 || (result.rejected?.length ?? 0) > 0) throw new Error("Recipient rejected.");
+  } catch { throw new Error("Invitation delivery failed."); }
+}

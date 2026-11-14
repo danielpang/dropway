@@ -7,6 +7,7 @@
 "use client";
 
 import * as React from "react";
+import { ProjectSharing } from "./project-sharing";
 import { MentionExecutionControls } from "./mention-execution";
 import { hasDropwayMention, type MentionExecution } from "@/lib/project-room/hosted";
 
@@ -268,6 +269,7 @@ export function RoomWorkspace({
         )}
       </header>
 
+      {room && role === "owner" ? <ProjectSharing key={room.ID} roomId={room.ID} /> : null}
       <section className="space-y-3" aria-label="Rooms">
         <h2 className="text-sm font-medium text-foreground">Rooms you can read</h2>
         {rooms.length === 0 ? (
