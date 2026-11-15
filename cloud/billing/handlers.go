@@ -161,6 +161,17 @@ func (h *Handlers) Checkout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, err)
 		return
 	} else if found {
+		// One subscription per org: a paying org changes plan on its EXISTING
+		// subscription via the Billing Portal. A second Checkout would create a
+		// second subscription that keeps billing (and whose renewals used to flip
+		// the org's tier back and forth).
+		if (CurrentSubscription{ID: sub.StripeSubscriptionID, PlanTier: sub.PlanTier, Status: sub.Status}).live() {
+			httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorBody{
+				Error:   "subscription_exists",
+				Message: "This organization already has an active subscription. Change plans from Manage billing.",
+			})
+			return
+		}
 		existingCustomer = sub.StripeCustomerID
 	}
 	customerID, err := h.stripe.EnsureCustomer(existingCustomer, orgID, email)

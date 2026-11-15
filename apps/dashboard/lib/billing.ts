@@ -226,6 +226,9 @@ const TIER_ORDER: PlanTier[] = ["free", "pro", "business", "enterprise"];
  * What CTA a given tier offers relative to the org's CURRENT tier:
  *  - "current"   → the org is already on it (no action)
  *  - "upgrade"   → a higher self-serve tier (Pro/Business) → Stripe Checkout
+ *                  for a Free org; an org that already pays is sent to the
+ *                  Billing Portal (one subscription per org, see
+ *                  createCheckoutAction)
  *  - "contact"   → a higher "Custom" tier (Enterprise) → Contact Sales
  *  - "downgrade" → a lower tier (handled via the Stripe Billing Portal)
  * Shared by the change-plan drawer cards and the plan-matrix CTA row so they

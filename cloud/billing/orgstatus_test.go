@@ -161,8 +161,13 @@ func TestApplyEvent_UnknownPrice_RefusesWithoutTouchingEntitlement(t *testing.T)
 // SetCanceled captures the (injected) computed status, exactly as the real adapter
 // does after setCanceledTx.
 type statusRecorder struct {
-	canceledStatus string // status setCanceledTx would compute for this org
+	canceledStatus string              // status setCanceledTx would compute for this org
+	current        CurrentSubscription // what CurrentSubscription returns
 	org, status    string
+}
+
+func (r *statusRecorder) CurrentSubscription(_ context.Context, _ string) (CurrentSubscription, error) {
+	return r.current, nil
 }
 
 func (r *statusRecorder) UpsertSubscription(_ context.Context, d EventData) error {

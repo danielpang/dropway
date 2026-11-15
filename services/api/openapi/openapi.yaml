@@ -1878,7 +1878,10 @@ paths:
         Session for {target_tier} with client_reference_id=org_id and
         metadata{org_id,target_tier} so the signed webhook can resolve + entitle the
         org. Returns the Stripe-hosted checkout_url. The success redirect grants
-        NOTHING — only the webhook flips plan_tier.
+        NOTHING — only the webhook flips plan_tier. An org has ONE subscription:
+        if it already has a live paid subscription this returns 409
+        {error: subscription_exists} and the plan change goes through the
+        Billing Portal (POST /v1/billing/portal) instead.
       operationId: createCheckout
       tags: [billing-cloud]
       requestBody:
@@ -1904,6 +1907,11 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The org already has a live subscription (error=subscription_exists); change plans via the Billing Portal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/billing/portal:
     post:

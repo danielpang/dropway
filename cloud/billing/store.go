@@ -308,6 +308,14 @@ type txSubsStore struct {
 
 var _ SubscriptionStore = (*txSubsStore)(nil)
 
+// CurrentSubscription reads the org's tracked subscription inside the webhook tx.
+// FOR UPDATE locks the org's row so two concurrent webhooks for the same org
+// serialize: the second one sees the first one's write before deciding whether
+// its subscription is the current one.
+func (t *txSubsStore) CurrentSubscription(ctx context.Context, orgID string) (CurrentSubscription, error) {
+	return readCurrentSubscription(ctx, t.tx, orgID, true)
+}
+
 func (t *txSubsStore) UpsertSubscription(ctx context.Context, d EventData) error {
 	if d.OrgID == "" {
 		return errors.New("billing: UpsertSubscription with empty OrgID")
@@ -590,15 +598,49 @@ func readPlanTierTx(ctx context.Context, tx pgx.Tx, orgID string) (PlanTier, err
 	return PlanTier(tier), nil
 }
 
+// CurrentSubscription reads the org's tracked subscription (no row lock); the
+// standalone counterpart of txSubsStore.CurrentSubscription.
+func (s *BillingStore) CurrentSubscription(ctx context.Context, orgID string) (CurrentSubscription, error) {
+	return readCurrentSubscription(ctx, s.pool, orgID, false)
+}
+
+// rowQuerier is the QueryRow surface shared by pgx.Tx and *pgxpool.Pool.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// readCurrentSubscription returns the subscription id, tier and status recorded
+// for orgID in billing.subscriptions (the zero value when there is no row).
+// billing.subscriptions has no RLS, so a read scoped by the org_id PK needs no GUC.
+func readCurrentSubscription(ctx context.Context, q rowQuerier, orgID string, forUpdate bool) (CurrentSubscription, error) {
+	query := `SELECT COALESCE(stripe_subscription_id, ''), plan_tier, status
+	            FROM billing.subscriptions WHERE org_id = $1`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	var cur CurrentSubscription
+	var tier string
+	err := q.QueryRow(ctx, query, orgID).Scan(&cur.ID, &tier, &cur.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CurrentSubscription{}, nil
+	}
+	if err != nil {
+		return CurrentSubscription{}, fmt.Errorf("billing: read current subscription %s: %w", orgID, err)
+	}
+	cur.PlanTier = PlanTier(tier)
+	return cur, nil
+}
+
 // Subscription is the billing-page view of an org's current subscription row.
 type Subscription struct {
-	OrgID             string
-	StripeCustomerID  string
-	PlanTier          PlanTier
-	Seats             int64
-	Status            string
-	OrgStatus         string
-	CancelAtPeriodEnd bool
+	OrgID                string
+	StripeCustomerID     string
+	StripeSubscriptionID string // "" until a subscription event has been applied
+	PlanTier             PlanTier
+	Seats                int64
+	Status               string
+	OrgStatus            string
+	CancelAtPeriodEnd    bool
 }
 
 // GetSubscription returns the org's subscription row (for the billing page and to
@@ -611,10 +653,10 @@ func (s *BillingStore) GetSubscription(ctx context.Context, orgID string) (sub S
 	// billing.subscriptions has no RLS; a plain read scoped by the org_id PK is
 	// safe and needs no GUC.
 	row := s.pool.QueryRow(ctx,
-		`SELECT org_id, stripe_customer_id, plan_tier, seats, status, org_status, cancel_at_period_end
+		`SELECT org_id, stripe_customer_id, COALESCE(stripe_subscription_id, ''), plan_tier, seats, status, org_status, cancel_at_period_end
 		   FROM billing.subscriptions WHERE org_id = $1`, orgID)
 	var tier, status, orgStatus string
-	err = row.Scan(&sub.OrgID, &sub.StripeCustomerID, &tier, &sub.Seats, &status, &orgStatus, &sub.CancelAtPeriodEnd)
+	err = row.Scan(&sub.OrgID, &sub.StripeCustomerID, &sub.StripeSubscriptionID, &tier, &sub.Seats, &status, &orgStatus, &sub.CancelAtPeriodEnd)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Subscription{}, false, nil
 	}

@@ -22,6 +22,11 @@ export type CheckoutActionResult =
  * Start a Stripe Checkout session for a paid tier and hand back the hosted URL
  * for the client to redirect to. Used by the 402 upgrade modal and the billing
  * page's upgrade buttons.
+ *
+ * An org has ONE subscription. If it already pays, the API refuses a second
+ * Checkout (409 subscription_exists) and the plan change has to happen on the
+ * existing subscription, so we hand back the Billing Portal URL instead. Callers
+ * redirect to whichever URL comes back.
  */
 export async function createCheckoutAction(input: {
   targetTier: CheckoutTier;
@@ -40,8 +45,22 @@ export async function createCheckoutAction(input: {
     }
     return { ok: true, checkoutUrl: checkout_url };
   } catch (err) {
+    if (isSubscriptionExists(err)) {
+      const portal = await createPortalAction();
+      if (portal.ok) return { ok: true, checkoutUrl: portal.portalUrl };
+      return { ok: false, message: portal.message };
+    }
     return { ok: false, message: checkoutErrorMessage(err) };
   }
+}
+
+/** The API's 409 for "this org already has a live subscription". */
+function isSubscriptionExists(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 409 &&
+    (err.body as { error?: string } | null)?.error === "subscription_exists"
+  );
 }
 
 export type PortalActionResult =
