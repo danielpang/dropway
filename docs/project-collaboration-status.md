@@ -87,7 +87,7 @@ An authenticated full-browser hosted walkthrough and Firefox/Safari verification
 - Legacy publish/rollback is restored after a site detaches or rooms are disabled; currently protected candidate artifacts still require the human Apply path.
 - Read-only schema preflight runs during Fly release and normal API startup. Migration 0022 adds indexed due-projection discovery; migrations remain separate from deployment.
 - Shared organization locks allow unrelated sites to publish concurrently. Site enrollment and flag changes retain their synchronization; moving a chat between sites locks both in stable order.
-- Room enable/attach controls explain the effect on automated API-key/MCP writes. Existing unrestricted-key behavior and old-binary resolver compatibility have regression coverage.
+- Room enable/attach preserves ordinary CLI/API-key and MCP deployment access; AI candidate approval and Apply remain protected. Existing unrestricted-key behavior and old-binary resolver compatibility have regression coverage.
 
 See [API rollout instructions](../deploy/API-ROLLOUT.md). This work reduces known rollout risks; live Sprite/provider acceptance and production capacity verification remain separate release checks.
 

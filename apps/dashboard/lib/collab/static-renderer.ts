@@ -10,6 +10,8 @@ const VOID = new Set(["br", "hr"]);
 const CSS = "html{color-scheme:light;background:#fff;color:#17202a;font:16px/1.6 system-ui,sans-serif}body{margin:24px;overflow-wrap:anywhere}img{max-width:100%;height:auto}pre{white-space:pre-wrap}table{border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}.dw-selected{outline:3px solid #2563eb;outline-offset:2px}[data-review-component]:focus-visible{outline:3px solid #2563eb}";
 const STYLE_HASH = createHash("sha256").update(CSS).digest("base64");
 const CSP = `default-src 'none'; script-src 'none'; style-src 'sha256-${STYLE_HASH}'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'`;
+export const STATIC_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+export const STATIC_IMAGES_TOTAL_MAX_BYTES = 4 * 1024 * 1024;
 
 function escaped(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -41,6 +43,7 @@ export function prepareStaticSnapshot(html: string, page: string): { render: (im
   return { imagePaths: [...paths], render(images, target) {
     let count = 0;
     let omittedAssets = 0;
+    let embeddedImageBytes = 0;
     const ids = new Set<string>();
     function renderNode(node: Node): string {
       if (node.nodeName === "#text" && "value" in node) return escaped(node.value);
@@ -60,7 +63,16 @@ export function prepareStaticSnapshot(html: string, page: string): { render: (im
         const data = path ? images.get(path) : undefined;
         const alt = attr(node, "alt").slice(0, 500);
         // Images are produced only by verifiedRasterDataURL, never from document attributes.
-        if (data && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(data)) return `<img${attributes} src="${data}" alt="${escaped(alt)}">`;
+        if (data && data.length <= Math.ceil(STATIC_IMAGE_MAX_BYTES / 3) * 4 + 32 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(data)) {
+          const payload = data.slice(data.indexOf(",") + 1);
+          const bytes = payload.length * 3 / 4 - (payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0);
+          // Count each embedded occurrence, not just unique paths. A hostile
+          // page can repeat a large image thousands of times within 512 KiB.
+          if (bytes <= STATIC_IMAGE_MAX_BYTES && embeddedImageBytes + bytes <= STATIC_IMAGES_TOTAL_MAX_BYTES) {
+            embeddedImageBytes += bytes;
+            return `<img${attributes} src="${data}" alt="${escaped(alt)}">`;
+          }
+        }
         omittedAssets++;
         return `<span${attributes}>[Image unavailable${alt ? `: ${escaped(alt)}` : ""}]</span>`;
       }
@@ -75,7 +87,7 @@ export function prepareStaticSnapshot(html: string, page: string): { render: (im
 }
 
 export function verifiedRasterDataURL(bytes: Buffer, contentType: string): string | null {
-  if (bytes.length > 256 * 1024 || bytes.length < 12) return null;
+  if (bytes.length > STATIC_IMAGE_MAX_BYTES || bytes.length < 12) return null;
   const mime = contentType.split(";")[0]!.trim().toLowerCase();
   const valid = mime === "image/png" ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
     : mime === "image/jpeg" ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255

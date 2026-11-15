@@ -20,6 +20,7 @@ type SchemaQuerier interface {
 // against the additive schema while a new release is rejected.
 func CheckSchema(ctx context.Context, db SchemaQuerier) error {
 	checks := []struct{ name, sql string }{
+		{"0027 image resources", `SELECT resource_kind FROM app.sites LIMIT 0`},
 		{"0019 room flag", `SELECT project_rooms_enabled FROM app.org_meta LIMIT 0`},
 		{"0019 API key resolver", `SELECT id,org_id,created_by,expires_at,revoked_at,org_status,api_keys_enabled,scopes,site_id FROM app.resolve_api_key('schema-check-not-a-key') LIMIT 0`},
 		{"0019 room tables", `SELECT r.id,m.user_id,s.site_id,t.id,a.id,p.id,v.version_id,st.user_id,act.id,c.id FROM app.project_rooms r,app.project_room_members m,app.project_room_sites s,app.review_threads t,app.review_anchor_revisions a,app.review_replies p,app.review_version_approvals v,app.review_read_state st,app.review_activity act,app.review_candidates c LIMIT 0`},
@@ -34,11 +35,11 @@ func CheckSchema(ctx context.Context, db SchemaQuerier) error {
 	for _, check := range checks {
 		rows, err := db.Query(ctx, check.sql)
 		if err != nil {
-			return fmt.Errorf("database schema preflight failed (%s): apply app migrations through 0025 with the migration role before deploying this API; runtime role must retain its grants", check.name)
+			return fmt.Errorf("database schema preflight failed (%s): apply app migrations through 0027 with the migration role before deploying this API; runtime role must retain its grants", check.name)
 		}
 		rows.Close()
 		if rows.Err() != nil {
-			return fmt.Errorf("database schema preflight could not complete (%s); verify database availability and migrations through 0025", check.name)
+			return fmt.Errorf("database schema preflight could not complete (%s); verify database availability and migrations through 0027", check.name)
 		}
 	}
 	rows, err := db.Query(ctx, `SELECT has_function_privilege(current_user,'app.resolve_api_key(text)','EXECUTE') AND has_function_privilege(current_user,'app.candidate_projection_org_ids()','EXECUTE') AND has_function_privilege(current_user,'app.discover_guest_projects(uuid,text,uuid)','EXECUTE')`)

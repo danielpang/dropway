@@ -423,16 +423,19 @@ func (q *Queries) CreateSeedSkill(ctx context.Context, arg CreateSeedSkillParams
 
 const createSite = `-- name: CreateSite :one
 
-INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode)
-VALUES ($1, $2, $3, $4)
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+INSERT INTO app.sites (org_id, slug, owner_user_id, access_mode, resource_kind, title, feed_visible)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 `
 
 type CreateSiteParams struct {
-	OrgID       string
-	Slug        string
-	OwnerUserID string
-	AccessMode  string
+	OrgID        string
+	Slug         string
+	OwnerUserID  string
+	AccessMode   string
+	ResourceKind string
+	Title        pgtype.Text
+	FeedVisible  bool
 }
 
 // ===========================================================================
@@ -444,6 +447,9 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 		arg.Slug,
 		arg.OwnerUserID,
 		arg.AccessMode,
+		arg.ResourceKind,
+		arg.Title,
+		arg.FeedVisible,
 	)
 	var i AppSite
 	err := row.Scan(
@@ -458,6 +464,7 @@ func (q *Queries) CreateSite(ctx context.Context, arg CreateSiteParams) (AppSite
 		&i.Description,
 		&i.CreatedAt,
 		&i.AllowMemberEdits,
+		&i.ResourceKind,
 	)
 	return i, err
 }
@@ -2045,7 +2052,7 @@ func (q *Queries) GetReviewThreadForMember(ctx context.Context, arg GetReviewThr
 }
 
 const getSite = `-- name: GetSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE id = $1 AND org_id = $2
 `
@@ -2070,6 +2077,7 @@ func (q *Queries) GetSite(ctx context.Context, arg GetSiteParams) (AppSite, erro
 		&i.Description,
 		&i.CreatedAt,
 		&i.AllowMemberEdits,
+		&i.ResourceKind,
 	)
 	return i, err
 }
@@ -3352,7 +3360,7 @@ func (q *Queries) ListDomainsForSite(ctx context.Context, arg ListDomainsForSite
 
 const listFeedSites = `-- name: ListFeedSites :many
 SELECT
-    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at, s.allow_member_edits,
+    s.id, s.org_id, s.slug, s.owner_user_id, s.access_mode, s.current_version_id, s.feed_visible, s.title, s.description, s.created_at, s.allow_member_edits, s.resource_kind,
     COALESCE((SELECT SUM(v.value) FROM app.post_votes v WHERE v.subject_type = 'site' AND v.subject_id = s.id), 0)::bigint AS score,
     COALESCE((SELECT mv.value FROM app.post_votes mv WHERE mv.subject_type = 'site' AND mv.subject_id = s.id AND mv.user_id = $1), 0)::int AS my_vote,
     COALESCE((SELECT COUNT(*) FROM app.post_comments c WHERE c.subject_type = 'site' AND c.subject_id = s.id), 0)::bigint AS comment_count
@@ -3400,6 +3408,7 @@ func (q *Queries) ListFeedSites(ctx context.Context, arg ListFeedSitesParams) ([
 			&i.AppSite.Description,
 			&i.AppSite.CreatedAt,
 			&i.AppSite.AllowMemberEdits,
+			&i.AppSite.ResourceKind,
 			&i.Score,
 			&i.MyVote,
 			&i.CommentCount,
@@ -4111,7 +4120,7 @@ func (q *Queries) ListProjectRoomsForMember(ctx context.Context, arg ListProject
 }
 
 const listPublicSitesForOrg = `-- name: ListPublicSitesForOrg :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE access_mode = 'public' AND org_id = $1
 ORDER BY created_at
@@ -4140,6 +4149,7 @@ func (q *Queries) ListPublicSitesForOrg(ctx context.Context, orgID string) ([]Ap
 			&i.Description,
 			&i.CreatedAt,
 			&i.AllowMemberEdits,
+			&i.ResourceKind,
 		); err != nil {
 			return nil, err
 		}
@@ -4551,7 +4561,7 @@ func (q *Queries) ListSiteVersions(ctx context.Context, arg ListSiteVersionsPara
 }
 
 const listSites = `-- name: ListSites :many
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE org_id = $1
 ORDER BY created_at DESC
@@ -4578,6 +4588,7 @@ func (q *Queries) ListSites(ctx context.Context, orgID string) ([]AppSite, error
 			&i.Description,
 			&i.CreatedAt,
 			&i.AllowMemberEdits,
+			&i.ResourceKind,
 		); err != nil {
 			return nil, err
 		}
@@ -4999,7 +5010,7 @@ func (q *Queries) LockReviewCandidateForMember(ctx context.Context, arg LockRevi
 }
 
 const lockSite = `-- name: LockSite :one
-SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+SELECT id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 FROM app.sites
 WHERE id = $1 AND org_id = $2
 FOR UPDATE
@@ -5027,6 +5038,7 @@ func (q *Queries) LockSite(ctx context.Context, arg LockSiteParams) (AppSite, er
 		&i.Description,
 		&i.CreatedAt,
 		&i.AllowMemberEdits,
+		&i.ResourceKind,
 	)
 	return i, err
 }
@@ -6246,7 +6258,7 @@ const setSiteAllowMemberEdits = `-- name: SetSiteAllowMemberEdits :one
 UPDATE app.sites
 SET allow_member_edits = $2
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 `
 
 type SetSiteAllowMemberEditsParams struct {
@@ -6273,6 +6285,7 @@ func (q *Queries) SetSiteAllowMemberEdits(ctx context.Context, arg SetSiteAllowM
 		&i.Description,
 		&i.CreatedAt,
 		&i.AllowMemberEdits,
+		&i.ResourceKind,
 	)
 	return i, err
 }
@@ -6282,7 +6295,7 @@ UPDATE app.sites
 SET title       = $2,
     description  = $3
 WHERE id = $1 AND org_id = $4
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 `
 
 type SetSiteFeedMetaParams struct {
@@ -6315,6 +6328,7 @@ func (q *Queries) SetSiteFeedMeta(ctx context.Context, arg SetSiteFeedMetaParams
 		&i.Description,
 		&i.CreatedAt,
 		&i.AllowMemberEdits,
+		&i.ResourceKind,
 	)
 	return i, err
 }
@@ -6323,7 +6337,7 @@ const setSiteFeedVisible = `-- name: SetSiteFeedVisible :one
 UPDATE app.sites
 SET feed_visible = $2
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits
+RETURNING id, org_id, slug, owner_user_id, access_mode, current_version_id, feed_visible, title, description, created_at, allow_member_edits, resource_kind
 `
 
 type SetSiteFeedVisibleParams struct {
@@ -6351,6 +6365,7 @@ func (q *Queries) SetSiteFeedVisible(ctx context.Context, arg SetSiteFeedVisible
 		&i.Description,
 		&i.CreatedAt,
 		&i.AllowMemberEdits,
+		&i.ResourceKind,
 	)
 	return i, err
 }

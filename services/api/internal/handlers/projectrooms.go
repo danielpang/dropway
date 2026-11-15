@@ -68,7 +68,18 @@ func humanSession(r *http.Request) bool {
 	return ok && class == middleware.CredentialHumanSession
 }
 
-// allowControlledSiteMutation fail-closes live source writes and publish on
+// allowProjectSiteContentMutation preserves ordinary deployment access for verified
+// human, CLI API-key, and MCP callers. Site edit rights and key grants are checked
+// separately; candidate publication still requires the approved Apply path.
+func (a *API) allowProjectSiteContentMutation(w http.ResponseWriter, r *http.Request, t store.Tenant, siteID string) bool {
+	class, ok := middleware.CredentialClassFromContext(r.Context())
+	if ok && (class == middleware.CredentialHumanSession || class == middleware.CredentialOrgAPIKey || class == middleware.CredentialMCPOAuth) {
+		return true
+	}
+	return a.allowControlledSiteMutation(w, r, t, siteID)
+}
+
+// allowControlledSiteMutation protects deletion, access changes, and source metadata on
 // sites that belong to an enabled project room. Org API keys and MCP OAuth
 // are not human sessions. Sites outside a room keep the existing CI path.
 func (a *API) allowControlledSiteMutation(w http.ResponseWriter, r *http.Request, t store.Tenant, siteID string) bool {
@@ -83,7 +94,7 @@ func (a *API) allowControlledSiteMutation(w http.ResponseWriter, r *http.Request
 	if humanSession(r) {
 		return true
 	}
-	httpx.WriteError(w, fmt.Errorf("%w: this site is under project review; publish, rollback, and source writes require an authenticated human session", httpx.ErrForbidden))
+	httpx.WriteError(w, fmt.Errorf("%w: this operation on a project site requires an authenticated human session", httpx.ErrForbidden))
 	return false
 }
 

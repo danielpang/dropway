@@ -53,10 +53,11 @@ type scrollPos struct {
 }
 
 type imagePoint struct {
-	IntrinsicWidth  int `json:"intrinsic_width"`
-	IntrinsicHeight int `json:"intrinsic_height"`
-	X               int `json:"x"`
-	Y               int `json:"y"`
+	StableID        string `json:"stable_id,omitempty"`
+	IntrinsicWidth  int    `json:"intrinsic_width"`
+	IntrinsicHeight int    `json:"intrinsic_height"`
+	X               int    `json:"x"`
+	Y               int    `json:"y"`
 }
 
 type textAnchor struct {
@@ -164,6 +165,9 @@ func ValidatePage(page string) (string, error) {
 }
 
 func validatePoint(p pointAnchor) error {
+	if p.Image != nil && (len(p.Image.StableID) > 256 || hasControl(p.Image.StableID)) {
+		return fmt.Errorf("%w: image stable_id", ErrInvalidAnchor)
+	}
 	if !unit(p.X) || !unit(p.Y) {
 		return fmt.Errorf("%w: normalized coordinates", ErrInvalidAnchor)
 	}

@@ -83,7 +83,7 @@ func (a *API) PrepareDeployment(w http.ResponseWriter, r *http.Request) {
 	if !a.requireSiteEditor(w, r, t, site) {
 		return
 	}
-	if !a.allowControlledSiteMutation(w, r, t, siteID) {
+	if !a.allowProjectSiteContentMutation(w, r, t, siteID) {
 		return
 	}
 	if !a.requireObjects(w) {
@@ -185,7 +185,7 @@ func (a *API) FinalizeDeployment(w http.ResponseWriter, r *http.Request) {
 	if !a.requireSiteEditor(w, r, t, site) {
 		return
 	}
-	if !a.allowControlledSiteMutation(w, r, t, siteID) {
+	if !a.allowProjectSiteContentMutation(w, r, t, siteID) {
 		return
 	}
 	if !a.requireObjects(w) {
@@ -370,7 +370,7 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 	if !a.requireSiteEditor(w, r, t, site) {
 		return
 	}
-	if !a.allowControlledSiteMutation(w, r, t, siteID) {
+	if !a.allowProjectSiteContentMutation(w, r, t, siteID) {
 		return
 	}
 

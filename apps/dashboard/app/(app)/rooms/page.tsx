@@ -54,6 +54,8 @@ function siteOption(site: Site, me: Me) {
     id: site.id,
     canEditContent: canEditRoomSite(site, me),
     slug: site.slug,
+    kind: site.resource_kind ?? "site",
+    label: site.title || site.slug,
     liveUrl: site.live_url ?? null,
     currentVersionId: site.current_version_id ?? null,
     currentContentHash: liveContentHash(site),
