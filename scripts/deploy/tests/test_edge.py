@@ -93,5 +93,19 @@ class EdgeDeployTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
 
 
+class EdgeWorkflowTests(unittest.TestCase):
+    def test_edge_deploys_only_after_hosted_services(self):
+        source = (ROOT / '.github/workflows/deploy-hosted.yml').read_text()
+        job = source.split('  deploy-edge:\n', 1)[1]
+        self.assertIn('    needs: [revision, deploy-production]\n', job)
+        # Inherit deploy-production's gating; an `if` on revision outputs can be
+        # silently false forever if those outputs change.
+        self.assertNotIn('\n    if:', job)
+        self.assertIn('    environment: production\n', job)
+        self.assertIn('ref: ${{ needs.revision.outputs.sha }}', job)
+        self.assertIn('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}', job)
+        self.assertIn('run: scripts/deploy/edge.sh', job)
+
+
 if __name__ == '__main__':
     unittest.main()

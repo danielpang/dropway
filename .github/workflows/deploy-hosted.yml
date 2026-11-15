@@ -117,8 +117,9 @@ jobs:
   # from. Before this job it was only ever deployed by hand, so merged edge fixes
   # (for example the rate-limit binding) could sit undeployed for weeks.
   deploy-edge:
+    # No `if`: runs only when deploy-production succeeded, so it inherits that
+    # job's gating rather than reading revision outputs that may be renamed.
     needs: [revision, deploy-production]
-    if: needs.revision.outputs.production == 'true'
     runs-on: ubuntu-latest
     environment: production
     steps:
