@@ -17,6 +17,7 @@ jobs:
   migrate:
     if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/migrate-environment.yml
+    secrets: inherit
     with:
       environment: ${{ inputs.environment }}
       source_sha: ${{ github.sha }}
