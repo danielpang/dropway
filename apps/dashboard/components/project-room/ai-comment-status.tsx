@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { Bot, LoaderCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { HostedJob } from "@/lib/project-room/hosted";
 const workingPhrases = [
   "Working on it…",
@@ -67,21 +68,23 @@ export function AICommentStatus({
             : aiStatusText(job, phrase)}
         </p>
         {ready ? (
-          <button
+          <Button
             type="button"
-            className="font-medium underline underline-offset-2"
+            variant="outline"
+            size="sm"
             onClick={onReview}
           >
             Review changes
-          </button>
+          </Button>
         ) : !working ? (
-          <button
+          <Button
             type="button"
-            className="underline underline-offset-2"
+            variant="outline"
+            size="sm"
             onClick={onActivity}
           >
             View activity
-          </button>
+          </Button>
         ) : null}
       </div>
       {working ? (

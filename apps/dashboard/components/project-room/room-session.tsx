@@ -527,11 +527,11 @@ export function RoomSession({
         });
       }}
       onReply={(roomId, threadId, body, execution) => {
-        void replyAction(roomId, threadId, body, execution).then((result) => {
-          if (loadedRoom.current !== roomId) return;
+        return replyAction(roomId, threadId, body, execution).then((result) => {
+          if (loadedRoom.current !== roomId) return false;
           if (!result.ok) {
             setNotice(result.message);
-            return;
+            return false;
           }
           setThreads((prev) =>
             prev.map((thread) =>
@@ -558,6 +558,11 @@ export function RoomSession({
               ? "Reply stored and revision queued. Review the proposed change before accepting or rejecting it."
               : "Reply stored.",
           );
+          return true;
+        }).catch(() => {
+          if (loadedRoom.current === roomId)
+            setNotice("The reply could not be posted. Your draft has been kept; refresh the thread before retrying.");
+          return false;
         });
       }}
       onSignoff={(roomId, siteId, versionId) => {

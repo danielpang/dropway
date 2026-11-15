@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowRight, Folder } from "lucide-react";
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/lib/session";
 import { api } from "@/lib/api";
@@ -26,12 +27,16 @@ export default async function SharedProjectsPage() {
             {projects.map((project) => (
               <li key={project.id}>
                 <Link
-                  className="underline"
+                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   href={`/shared-projects/${encodeURIComponent(project.id)}`}
                 >
-                  {project.name || "Shared project"}
-                </Link>{" "}
-                · {project.role}
+                  <Folder className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{project.name || "Shared project"}</span>
+                    <span className="mt-1 block text-xs capitalize text-muted-foreground">{project.role}</span>
+                  </span>
+                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                </Link>
               </li>
             ))}
           </ul>
