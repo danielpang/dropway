@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -105,6 +106,19 @@ class EdgeWorkflowTests(unittest.TestCase):
         self.assertIn('ref: ${{ needs.revision.outputs.sha }}', job)
         self.assertIn('CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}', job)
         self.assertIn('run: scripts/deploy/edge.sh', job)
+
+    def test_edge_job_node_satisfies_wrangler(self):
+        # The job once ran Node 20 while wrangler required >= 22, so the deploy
+        # failed in CI only. Read wrangler's requirement from the lockfile.
+        pkg = json.loads((ROOT / 'edge/serving-worker/package.json').read_text())
+        version = pkg['devDependencies']['wrangler']
+        lock = (ROOT / 'pnpm-lock.yaml').read_text()
+        entry = lock.split(f'\n  wrangler@{version}:\n', 1)[1].split('\n\n', 1)[0]
+        required = int(re.search(r"node: '>=(\d+)", entry)[1])
+        source = (ROOT / '.github/workflows/deploy-hosted.yml').read_text()
+        job = source.split('  deploy-edge:\n', 1)[1]
+        node = int(re.search(r'node-version: "(\d+)"', job)[1])
+        self.assertGreaterEqual(node, required)
 
 
 if __name__ == '__main__':
