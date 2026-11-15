@@ -17,6 +17,11 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    env:
+      DEV_APP_DSN: ${{ secrets.DEV_DATABASE_OWNER_URL }}
+      DEV_BILLING_DSN: ${{ secrets.DEV_BILLING_OWNER_URL }}
+      PROD_APP_DSN: ${{ secrets.PROD_DATABASE_OWNER_URL }}
+      PROD_BILLING_DSN: ${{ secrets.PROD_BILLING_OWNER_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +38,19 @@ jobs:
           FLY_WORKER_API_TOKEN: ${{ secrets.FLY_WORKER_API_TOKEN }}
         run: |
           set -euo pipefail
-          [[ "$TARGET" == development || "$TARGET" == production ]]
+          [[ "$TARGET" == development || "$TARGET" == production ]] || exit 1
+          # Validate database secrets even when service deployment is disabled.
+          # Do not print connection strings in diagnostics.
+          case "$TARGET" in
+            development)
+              : "${DEV_APP_DSN:?Set DEV_DATABASE_OWNER_URL on the development GitHub environment}"
+              : "${DEV_BILLING_DSN:?Set DEV_BILLING_OWNER_URL on the development GitHub environment}"
+              ;;
+            production)
+              : "${PROD_APP_DSN:?Set PROD_DATABASE_OWNER_URL on the production GitHub environment}"
+              : "${PROD_BILLING_DSN:?Set PROD_BILLING_OWNER_URL on the production GitHub environment}"
+              ;;
+          esac
           if [[ "$CHECK_DEPLOY" == true ]]; then
             : "${FLY_API_APP:?Set FLY_API_APP on the GitHub environment}"
             : "${FLY_MCP_APP:?Set FLY_MCP_APP on the GitHub environment}"
@@ -63,10 +80,6 @@ jobs:
       - name: Migrate app, billing, then identity
         env:
           TARGET: ${{ inputs.environment }}
-          DEV_APP_DSN: ${{ secrets.DEV_DATABASE_OWNER_URL }}
-          DEV_BILLING_DSN: ${{ secrets.DEV_BILLING_OWNER_URL }}
-          PROD_APP_DSN: ${{ secrets.PROD_DATABASE_OWNER_URL }}
-          PROD_BILLING_DSN: ${{ secrets.PROD_BILLING_OWNER_URL }}
         run: |
           set -euo pipefail
           case "$TARGET" in
