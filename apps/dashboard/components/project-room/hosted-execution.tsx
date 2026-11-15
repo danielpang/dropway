@@ -1,13 +1,12 @@
 "use client";
 import * as React from "react";
-import { ChevronDown, CheckCircle2, Trash2 } from "lucide-react";
-import { Tooltip } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cancelHostedJobAction, getHostedJobAction, hostedSetupAction, listHostedJobsAction, resumeHostedJobAction, revokeCredentialAction, runHostedJobAction, saveCredentialAction, validateCredentialAction } from "@/app/(app)/rooms/hosted-actions";
-import { HOSTED_MODELS, OPENAI_MODELS, hostedModels, hostedFailureMessage, type HostedEvent, type HostedJob, type HostedProvider, type ProviderCredential, type CredentialScope } from "@/lib/project-room/hosted";
+import { cancelHostedJobAction, getHostedJobAction, hostedSetupAction, listHostedJobsAction, resumeHostedJobAction, runHostedJobAction } from "@/app/(app)/rooms/hosted-actions";
+import { HOSTED_MODELS, OPENAI_MODELS, hostedModels, hostedFailureMessage, type HostedEvent, type HostedJob, type ProviderCredential } from "@/lib/project-room/hosted";
 
-export function HostedExecution({ roomId, siteId, versionId, canRun, threads, historicalThreadCount = 0, onCandidateReady }: {
+export function HostedExecution({ roomId, siteId, versionId, canRun, threads, historicalThreadCount = 0, onManageConnections, onCandidateReady }: {
+  onManageConnections: () => void;
   roomId: string; siteId: string; versionId: string; canRun: boolean;
   threads: { id: string; page: string }[]; historicalThreadCount?: number; onCandidateReady: () => void;
 }) {
@@ -16,10 +15,6 @@ export function HostedExecution({ roomId, siteId, versionId, canRun, threads, hi
   const [ready, setReady] = React.useState(false);
   const [credentials, setCredentials] = React.useState<ProviderCredential[]>([]);
   const [notice, setNotice] = React.useState("Checking hosted execution availability…");
-  const [provider, setProvider] = React.useState<HostedProvider>("anthropic");
-  const [scope, setScope] = React.useState<CredentialScope>("personal");
-  const [canManageTeam, setCanManageTeam] = React.useState(false);
-  const [replaceId, setReplaceId] = React.useState("");
   const [credentialId, setCredentialId] = React.useState("");
   const [model, setModel] = React.useState<string>(HOSTED_MODELS[0]);
   const [prompt, setPrompt] = React.useState("");
@@ -53,7 +48,7 @@ export function HostedExecution({ roomId, siteId, versionId, canRun, threads, hi
     void hostedSetupAction().then((result) => {
       if (!active) return;
       if (!result.ok) { setNotice(result.message); return; }
-      setReady(true); setCanManageTeam(result.canManageTeam); setUserId(result.userId); setCredentials(result.credentials); setNotice("The selected connection is used only for tasks you explicitly authorize.");
+      setReady(true); setUserId(result.userId); setCredentials(result.credentials); setNotice("The selected connection is used only for tasks you explicitly authorize.");
       setCredentialId(result.credentials.find((item) => !item.revokedAt)?.id ?? "");
       defaultsKey.current = `dropway-hosted-defaults-v1:${result.orgId}:${result.userId}`;
       try {
@@ -110,39 +105,17 @@ export function HostedExecution({ roomId, siteId, versionId, canRun, threads, hi
     try { await work(); } catch { setNotice("The request was interrupted. Refresh status before retrying; task retries reuse the same request identity."); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  async function reloadCredentials() {
-    const result = await hostedSetupAction();
-    if (result.ok) setCredentials(result.credentials); else { setReady(false); setCredentials([]); setNotice(result.message); }
-  }
+
 
   return <section className="space-y-4" aria-label="Hosted execution">
     <h2 className="text-sm font-medium">AI revisions</h2>
     <p role="status" className="text-sm text-muted-foreground">{notice}</p>
     {!ready ? <p className="text-sm text-muted-foreground">No provider key is collected until the encrypted credential store and hosted worker are available.</p> : <>
-      <details className="group/connections space-y-3 border-b border-border pb-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between py-2 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">AI connections<ChevronDown className="h-3.5 w-3.5 transition-transform group-open/connections:rotate-180" aria-hidden="true" /></summary>
-        <p className="text-sm text-muted-foreground">Connections can be reused across every project in this organization. Personal connections are usable only by their owner. Team connections are usable by authorized editors and managed by organization admins. Saved keys are never revealed.</p>
-        <ul className="space-y-2">{credentials.map((item) => <li key={item.id} className="flex flex-wrap items-center gap-2 text-sm">
-          <span>{item.label || item.provider} · {item.provider} · {item.scope === "team" ? "Team" : "Personal"} · ending {item.lastFour} · {item.revokedAt ? "Revoked" : item.validatedAt ? "Validated" : "Not validated"}</span>
-          <Tooltip label="Validate connection" align="end"><Button aria-label="Validate connection" type="button" size="sm" variant="outline" disabled={busy || !item.canManage || !!item.revokedAt} onClick={() => void mutate(async () => { const result = await validateCredentialAction(item.id); setNotice(result.ok ? "Credential validated." : result.message); await reloadCredentials(); })}><CheckCircle2 className="h-4 w-4" aria-hidden="true" /></Button></Tooltip>
-          <Tooltip label="Revoke connection" align="end"><Button aria-label="Revoke connection" type="button" size="sm" variant="outline" disabled={busy || !item.canManage || !!item.revokedAt} onClick={() => void mutate(async () => { const result = await revokeCredentialAction(item.id); setNotice(result.ok ? "Credential revoked. New model calls cannot use it." : result.message); await reloadCredentials(); })}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button></Tooltip>
-        </li>)}</ul>
-        <form className="grid gap-2" onSubmit={(event) => {
-          event.preventDefault(); if (busyRef.current) return;
-          const form = event.currentTarget; const data = new FormData(form); const key = String(data.get("api-key") ?? ""); const label = String(data.get("label") ?? "");
-          form.reset(); // Clear plaintext from the DOM before awaiting any network request.
-          void mutate(async () => { const result = await saveCredentialAction(provider, label, key, replaceId || undefined, scope);
-            if (!result.ok) { setNotice(result.message); return; } setNotice("Credential saved. Validate it before running a task."); setCredentialId(result.credential.id); await reloadCredentials(); });
-        }}>
-          <label className="text-sm">Connection<select aria-label="Connection to replace" value={replaceId} onChange={(event) => { setReplaceId(event.target.value); const existing = credentials.find((item) => item.id === event.target.value); if (existing) { setProvider(existing.provider); setScope(existing.scope); } }} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"><option value="">New connection</option>{credentials.filter((item) => item.canManage && !item.revokedAt).map((item) => <option key={item.id} value={item.id}>Replace {item.label || item.provider} · {item.scope} ({item.lastFour})</option>)}</select></label>
-          <label className="text-sm">Provider<select aria-label="Credential provider" value={provider} disabled={!!replaceId} onChange={(event) => setProvider(event.target.value as HostedProvider)} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option></select></label>
-          <label className="text-sm">Access<select aria-label="Connection access" disabled={!!replaceId} value={scope} onChange={(event) => setScope(event.target.value as CredentialScope)} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"><option value="personal">Personal · only me</option>{canManageTeam ? <option value="team">Team · all projects in this organization</option> : null}</select></label>
-          <Input name="label" aria-label="Connection label" maxLength={120} placeholder="Personal key" />
-          <Input name="api-key" aria-label="Provider API key" type="password" autoComplete="new-password" minLength={8} maxLength={4096} required />
-          <Button type="submit" disabled={busy}>{replaceId ? "Replace key" : "Save key"}</Button>
-        </form>
-      </details>
-      <form className="space-y-3" onSubmit={(event) => {
+      {credentials.every((item) => !!item.revokedAt) ? <div className="space-y-3 rounded-xl border border-border p-4">
+        <p className="text-sm">Add an AI provider key in Settings to request a revision.</p>
+        <Button type="button" onClick={onManageConnections}>Set up AI connection</Button>
+      </div> : <button type="button" className="text-sm text-muted-foreground underline" onClick={onManageConnections}>Manage AI connections in Settings</button>}
+      {credentials.some((item) => !item.revokedAt) ? <form className="space-y-3" onSubmit={(event) => {
         event.preventDefault(); if (!authorized || !canRun || !credential || busyRef.current) return;
         const key = runKey.current || (runKey.current = crypto.randomUUID());
         void mutate(async () => {
@@ -155,7 +128,7 @@ export function HostedExecution({ roomId, siteId, versionId, canRun, threads, hi
           try { localStorage.setItem(defaultsKey.current, JSON.stringify({ credentialId: credential.id, model, maxTokens, maxCalls })); } catch { /* optional preference */ }
         });
       }}>
-        <p className="text-sm">Source: existing uploaded files for site {siteId}, immutable version {versionId}. Preset: static-site-v1. Harness: Pi 1.5.0.</p>
+        <h3 className="text-sm font-semibold">Request a change</h3>
         <label className="block text-sm">Connection<select aria-label="Run credential" value={credentialId} onChange={(event) => setCredentialId(event.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"><option value="">Choose a connection</option>{credentials.filter((item) => !item.revokedAt).map((item) => <option key={item.id} value={item.id}>{item.label || item.provider} · {item.scope} ({item.lastFour})</option>)}</select></label>
         <label className="block text-sm">Model<select aria-label="Run model" value={model} onChange={(event) => setModel(event.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs">{hostedModels(credential?.provider ?? "anthropic").map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label className="block text-sm">Related thread<select aria-label="Run thread" value={threadId} onChange={(event) => setThreadId(event.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"><option value="">No thread</option>{threads.map((item) => <option key={item.id} value={item.id}>{item.page} · {item.id}</option>)}</select></label>
@@ -166,7 +139,7 @@ export function HostedExecution({ roomId, siteId, versionId, canRun, threads, hi
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={(event) => setAuthorized(event.target.checked)} />I authorize charges to the selected connection for this bounded request and its clarification resumes. Publishing still requires a separate human approval.</label>
         <Button type="submit" disabled={busy || !canRun || !credential?.validatedAt || !authorized || !prompt.trim() || !siteId || !versionId}>Run hosted revision</Button>
         {!canRun ? <p className="text-sm text-muted-foreground">An owner or editor also needs content-edit permission for this site.</p> : null}
-      </form>
+      </form> : null}
       <div className="space-y-2">
         <h3 className="text-sm font-medium">Tasks</h3>
         <ul className="space-y-1">{jobs.map((job) => <li key={job.id}><button type="button" className="text-left text-sm underline" aria-pressed={jobId === job.id} onClick={() => setJobId(job.id)}>{job.state} · {job.config.prompt.slice(0, 120)}</button></li>)}</ul>

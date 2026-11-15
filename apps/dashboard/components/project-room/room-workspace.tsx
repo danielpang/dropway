@@ -38,6 +38,7 @@ import {
   type MentionExecution,
 } from "@/lib/project-room/hosted";
 
+import { AIConnections } from "./ai-connections";
 import { HostedExecution } from "@/components/project-room/hosted-execution";
 import { StaticReview } from "@/components/collab/static-review";
 import { loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
@@ -239,6 +240,7 @@ export function RoomWorkspace({
   const [creating, setCreating] = React.useState(false);
   const [selectedSiteIds, setSelectedSiteIds] = React.useState<string[]>([]);
   const [showCreate, setShowCreate] = React.useState(rooms.length === 0);
+  const [settingsSection, setSettingsSection] = React.useState<"general" | "people" | "ai">("general");
   const [panel, setPanel] = React.useState<
     "review" | "changes" | "activity" | "settings"
   >("review");
@@ -645,6 +647,40 @@ export function RoomWorkspace({
       ) : null}
     </section>
   );
+  const attachedResourcesPanel = (<>
+        <div className="border-t border-border pt-6">
+          <h3 className="text-sm font-semibold">Sites & images</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Removing an item from this project does not delete it.
+          </p>
+        </div>
+        <ul className="divide-y divide-border/60 text-sm text-foreground">
+          {attachedSites.map((item) => (
+            <li key={item.siteId} className="flex items-center gap-3 py-3">
+              <a
+                className="min-w-0 flex-1 truncate underline underline-offset-4"
+                href={`/sites/${item.siteId}`}
+              >
+                {sites.find((site) => site.id === item.siteId)?.label ??
+                  sites.find((site) => site.id === item.siteId)?.slug ??
+                  item.siteId}
+              </a>
+              <Tooltip label="Remove from project" align="end">
+                <Button
+                  aria-label="Detach site"
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={role !== "owner" || !room}
+                  onClick={() => room && onDetachSite(room.ID, item.siteId)}
+                >
+                  <Unlink className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </Tooltip>
+            </li>
+          ))}
+        </ul>
+  </>);
   const settingsPanel = (
     <>
       <section className="space-y-6" aria-label="Project settings">
@@ -713,38 +749,6 @@ export function RoomWorkspace({
                   </Tooltip>
                 </>
               )}
-            </li>
-          ))}
-        </ul>
-        <div className="border-t border-border pt-6">
-          <h3 className="text-sm font-semibold">Sites & images</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Removing an item from this project does not delete it.
-          </p>
-        </div>
-        <ul className="divide-y divide-border/60 text-sm text-foreground">
-          {attachedSites.map((item) => (
-            <li key={item.siteId} className="flex items-center gap-3 py-3">
-              <a
-                className="min-w-0 flex-1 truncate underline underline-offset-4"
-                href={`/sites/${item.siteId}`}
-              >
-                {sites.find((site) => site.id === item.siteId)?.label ??
-                  sites.find((site) => site.id === item.siteId)?.slug ??
-                  item.siteId}
-              </a>
-              <Tooltip label="Remove from project" align="end">
-                <Button
-                  aria-label="Detach site"
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={role !== "owner" || !room}
-                  onClick={() => room && onDetachSite(room.ID, item.siteId)}
-                >
-                  <Unlink className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </Tooltip>
             </li>
           ))}
         </ul>
@@ -1348,6 +1352,7 @@ export function RoomWorkspace({
           roomId={room.ID}
           siteId={siteId}
           versionId={versionId}
+          onManageConnections={() => { setSettingsSection("ai"); setPanel("settings"); }}
           canRun={decideOk && versionId === site?.currentVersionId}
           threads={compatibleRunThreads.map((item) => ({
             id: item.ID,
@@ -1371,6 +1376,7 @@ export function RoomWorkspace({
             AI revisions are not configured for this workspace yet. You can
             still review sites and leave comments.
           </p>
+          <Button type="button" variant="outline" onClick={() => { setSettingsSection("ai"); setPanel("settings"); }}>Set up AI connection</Button>
         </section>
       )}
     </>
@@ -2039,23 +2045,24 @@ export function RoomWorkspace({
                     Settings & sharing
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Manage people and the sites or images in this project.
+                    Manage project resources, sharing, and reusable AI connections.
                   </p>
                 </header>
-                <div className="grid items-start gap-6 lg:grid-cols-2">
-                  <div className="space-y-6 rounded-xl border border-border bg-background p-5">
-                    {settingsPanel}
-                    <div className="border-t border-border pt-5">
-                      {addSitePanel}
-                    </div>
+                <div className="grid items-start gap-8 md:grid-cols-[200px_minmax(0,1fr)]">
+                  <nav aria-label="Project settings sections" className="flex gap-1 md:flex-col">
+                    {(["general", "people", "ai"] as const).map((section) => <button key={section} type="button"
+                      aria-current={settingsSection === section ? "page" : undefined}
+                      onClick={() => setSettingsSection(section)}
+                      className={`rounded-lg px-3 py-2.5 text-left text-sm ${settingsSection === section ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-secondary/50"}`}>
+                      {{ general: "Sites & images", people: "People & sharing", ai: "AI connections" }[section]}
+                    </button>)}
+                  </nav>
+                  <div className="min-w-0 max-w-3xl space-y-5">
+                    <h3 className="text-lg font-semibold">{{ general: "Sites & images", people: "People & sharing", ai: "AI connections" }[settingsSection]}</h3>
+                    {settingsSection === "general" ? <>{attachedResourcesPanel}{addSitePanel}</> : null}
+                    {settingsSection === "people" ? <>{settingsPanel}{role === "owner" ? <ProjectSharing key={room.ID} roomId={room.ID} /> : null}</> : null}
+                    {settingsSection === "ai" ? <AIConnections key={room.OrgID} /> : null}
                   </div>
-                  {role === "owner" ? (
-                    <ProjectSharing key={room.ID} roomId={room.ID} />
-                  ) : (
-                    <div className="rounded-xl border border-border bg-muted/10 p-5 text-sm text-muted-foreground">
-                      Only project owners can invite guests or manage access.
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
