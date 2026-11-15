@@ -101,6 +101,7 @@ export async function executeHostedClaim(client: HostedClient, claim: HostedClai
     clearInterval(heartbeat); await heartbeatWork;
     if (combined.aborted) throw new Error("Attempt cancelled or lease lost");
     // Short responses can finish before the periodic progress flush.
+    if (result.errorCode) await client.attempt(claim, "events", { kind: "diagnostic", message: `Execution stopped at ${result.phase ?? "worker"}: ${result.errorCode}` }, combined);
     if (progress) await client.attempt(claim, "events", { kind: "progress", message: progress.slice(0, 4000) }, combined);
     if (result.status === "completed" && artifact?.contentHash === source.source_content_hash) {
       result.status = "awaiting_clarification";
@@ -112,7 +113,7 @@ export async function executeHostedClaim(client: HostedClient, claim: HostedClai
     } else if (result.status === "completed" && payload) {
       await client.attempt(claim, "candidate", { files: payload, summary: (result.text || "Proposed site revision.").slice(0, 2000), idempotency_key: `candidate-${claim.attempt_id}` }, combined);
     } else {
-      await client.attempt(claim, "fail", { code: result.status }, combined);
+      await client.attempt(claim, "fail", { code: result.errorCode ?? result.status }, combined);
     }
     return result;
   } finally {

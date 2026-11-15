@@ -68,7 +68,7 @@ export async function runDaemon(env: NodeJS.ProcessEnv, signal: AbortSignal): Pr
         } });
         try {
           const result = await executeHostedClaim(client, claim, plane, signal);
-          console.info(JSON.stringify({ event: "attempt_finished", attempt_id: claim.attempt_id, status: result.status }));
+          console.info(JSON.stringify({ event: "attempt_finished", attempt_id: claim.attempt_id, status: result.status, error_code: result.errorCode, phase: result.phase }));
         } catch (error) {
           // Provider errors may contain credentials or user content. Never log them.
           const code = signal.aborted ? "worker_shutdown" : "worker_failed";

@@ -5,6 +5,7 @@ import { executeHostedClaim, type HostedPlane } from "../src/hosted-worker.js";
 import { HostedClient, type HostedClaim, type HostedSource } from "../src/hosted-client.js";
 import { artifactHash, type SpriteArtifactFile } from "../src/sprites-adapter.js";
 import type { SandboxHandle } from "../src/control-plane.js";
+import { RoomRuntimeError } from "../src/errors.js";
 import { FakePlane } from "./fake-plane.js";
 import { FakeGateway } from "./fake-gateway.js";
 
@@ -122,4 +123,9 @@ it("lets the model recover from a failed sandbox command without submitting an e
 it("does not treat an exceptional tool failure as a completed revision",async()=>{
  const s=await stack();s.plane.exec=async()=>{throw new Error("control plane failure");};s.gateway.steps=[{kind:"tool",name:"read",input:{path:"index.html"}}];
  expect((await s.run()).status).toBe("error");expect(s.calls.some(c=>c.operation==="candidate"||c.operation==="clarify")).toBe(false);
+});
+
+it("persists a safe provisioning failure code without raw errors",async()=>{
+ const s=await stack();s.plane.create=async()=>{throw new RoomRuntimeError("sprite_remote","private credential-bearing error");};
+ const result=await s.run();expect(result.status).toBe("error");expect(result.phase).toBe("provision");expect(s.calls.at(-1)?.body).toEqual({code:"sprite_remote"});expect(JSON.stringify(s.calls)).not.toContain("private credential");expect(s.calls.find(c=>c.operation==="events"&&c.body.kind==="diagnostic")?.body.message).toContain("provision: sprite_remote");
 });
