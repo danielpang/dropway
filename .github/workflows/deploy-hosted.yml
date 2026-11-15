@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Last environment to deploy (always starts with development)
+        description: Run development migrations only, or continue through production deployment
         type: choice
-        options: [development, production]
-        default: development
+        options: [development-migrations, production]
+        default: development-migrations
 permissions:
   contents: read
 concurrency:
@@ -62,9 +62,12 @@ jobs:
     with:
       environment: development
       source_sha: ${{ needs.revision.outputs.sha }}
-      check_deploy_config: true
+      # No development Fly services are provisioned yet. Keep testing migrations
+      # against development without requiring app names or deployment tokens.
+      check_deploy_config: false
   build:
     needs: [revision, migrate-development]
+    if: needs.revision.outputs.production == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,14 +96,8 @@ jobs:
             fly-images.tar.gz
             image-ids.json
           retention-days: 3
-  deploy-development:
-    needs: [revision, build]
-    uses: ./.github/workflows/deploy-fly-environment.yml
-    with:
-      environment: development
-      source_sha: ${{ needs.revision.outputs.sha }}
   migrate-production:
-    needs: [revision, deploy-development]
+    needs: [revision, build]
     if: needs.revision.outputs.production == 'true'
     uses: ./.github/workflows/migrate-environment.yml
     with:
