@@ -108,3 +108,18 @@ it("turns a text-only answer with unchanged files into clarification, never an e
  expect(s.calls.find(c=>c.operation==="clarify")?.body.question).toContain("Which heading");
  expect(s.calls.find(c=>c.operation==="events"&&c.body.message.includes("Which heading"))).toBeDefined();
 });
+it("executes the pinned Opus 5.5 model through the SDK without falling back",async()=>{
+ const s=await stack();s.claim.job.config.model_id="claude-opus-5-5";s.gateway.steps=[{kind:"tool",name:"read",input:{path:"index.html"}},{kind:"text",text:"Opus proposed change"}];
+ const result=await s.run();expect(result.status).toBe("completed");expect(result.text).toBe("Opus proposed change");expect(result.remoteOps).toContain("read");expect(s.gateway.requests).toHaveLength(2);
+});
+
+it("lets the model recover from a failed sandbox command without submitting an empty proposal",async()=>{
+ const s=await stack();const original=s.plane.exec.bind(s.plane);let first=true;
+ s.plane.exec=async(...args)=>{if(first){first=false;return {text:"rg: command not found",isError:true};}return original(...args);};
+ s.gateway.steps=[{kind:"tool",name:"bash",input:{command:"rg heading index.html"}},{kind:"tool",name:"read",input:{path:"index.html"}},{kind:"text",text:"Recovered proposal"}];
+ const result=await s.run();expect(result.status).toBe("completed");expect(result.text).toBe("Recovered proposal");expect(s.gateway.requests).toHaveLength(3);expect(s.gateway.requests[1]!.body).toContain("command not found");expect(s.calls.some(c=>c.operation==="candidate")).toBe(true);
+});
+it("does not treat an exceptional tool failure as a completed revision",async()=>{
+ const s=await stack();s.plane.exec=async()=>{throw new Error("control plane failure");};s.gateway.steps=[{kind:"tool",name:"read",input:{path:"index.html"}}];
+ expect((await s.run()).status).toBe("error");expect(s.calls.some(c=>c.operation==="candidate"||c.operation==="clarify")).toBe(false);
+});

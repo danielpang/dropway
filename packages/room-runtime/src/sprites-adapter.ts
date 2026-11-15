@@ -107,7 +107,7 @@ export class FlySpriteControlPlane implements SpriteControlPlane {
     validateOperation(op);
     return this.operation(handle, op.kind, signal, async () => {
       const result = await this.runRemote(handle, op.kind, op.input, signal, TOOL_MAX_BYTES);
-      if (result.exitCode !== 0) return { text: "Remote operation failed.", isError: true };
+      if (result.exitCode !== 0) return { text: (op.kind === "bash" || op.kind === "build") ? result.stdout + result.stderr || "Remote command failed." : "Remote operation failed. Check the relative workspace path and file contents.", isError: true };
       if (op.kind === "bash" || op.kind === "build") return { text: result.stdout + result.stderr };
       const output: unknown = JSON.parse(result.stdout);
       if (!output || typeof output !== "object" || typeof (output as { text?: unknown }).text !== "string") fail("sprite_output", "invalid remote tool output");
