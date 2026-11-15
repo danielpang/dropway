@@ -45,7 +45,7 @@ type ProjectRoomStore interface {
 	RemoveProjectRoomMember(ctx context.Context, t store.Tenant, roomID, userID string, rec store.AuditRecord) error
 	AddProjectRoomSite(ctx context.Context, t store.Tenant, roomID, siteID string, rec store.AuditRecord) error
 	RemoveProjectRoomSite(ctx context.Context, t store.Tenant, roomID, siteID string, rec store.AuditRecord) error
-	PageRoomThreads(ctx context.Context, t store.Tenant, roomID, cursor string, limit int) (store.ThreadPage, error)
+	PageRoomThreads(ctx context.Context, t store.Tenant, roomID, cursor string, limit int, filters ...projectroom.ThreadFilters) (store.ThreadPage, error)
 	PageRoomCandidates(ctx context.Context, t store.Tenant, roomID, cursor string, limit int) (store.CandidatePage, error)
 	GetRoomCandidate(ctx context.Context, t store.Tenant, roomID, candidateID string) (store.Candidate, error)
 	ResolveReviewThread(ctx context.Context, t store.Tenant, roomID, threadID string, rec store.AuditRecord) (store.ReviewThread, error)

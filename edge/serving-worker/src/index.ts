@@ -68,13 +68,11 @@ import { type GatedConfig, gatedConfig } from "./config";
 import type { FetchLike } from "./edgetoken";
 import { serveGated } from "./gated";
 import {
-  type CounterKVLike,
   DEFAULT_RATE_LIMIT,
   type RateLimitPolicy,
   type RateLimiterLike,
   type StatusKVLike,
   isBlockingStatus,
-  rateLimitDecision,
   rateLimitIdentity,
   rateLimitNative,
   readOrgStatus,
@@ -145,22 +143,18 @@ export interface Env {
    */
   APP_AUTHZ_URL?: string;
   /**
-   * PRIMARY edge rate limiter: Cloudflare's native, atomic Rate Limiting binding
-   * (declared as a `ratelimit` binding in wrangler.toml). Correctly counts a
-   * single-IP flood — unlike the KV counter, which can't (KV throttles writes to
-   * ~1/sec/key). When present it is preferred; absent → fall back to the LIMITS KV
-   * counter (best-effort only) or no-op.
+   * The ONLY edge rate limiter: Cloudflare's native Rate Limiting binding
+   * (`[[ratelimits]]` in wrangler.toml). Absent → rate limiting is a no-op (fail
+   * open) and a warning is logged. There is no KV fallback: it cost one KV write
+   * per request and exhausted the account's daily KV write quota.
    */
   RATE_LIMITER?: RateLimiterLike;
   /**
-   * OPTIONAL (Phase 4) KV for the FALLBACK rate-limiter counters AND the per-org
-   * suspension/over-limit status (`rl:*` and `org_status:*` keys). Read+write
-   * (counters), read (status). The `rl:*` counter is a best-effort fallback only
-   * (see RATE_LIMITER); the `org_status:*` read is authoritative-cache. Absent →
-   * fallback rate limiting is a no-op (fail open) and the org-status check is
-   * skipped; the Go API + billing remain authoritative.
+   * OPTIONAL (Phase 4) KV for the per-org suspension/over-limit status
+   * (`org_status:*` keys). READ-ONLY: the Worker never writes it. Absent → the
+   * org-status check is skipped; the Go API + billing remain authoritative.
    */
-  LIMITS?: CounterKVLike;
+  LIMITS?: StatusKVLike;
   /**
    * OPTIONAL (Phase 4) KV for the hard-revocation denylist (`revoked:user|site|
    * org:*` keys). When unset the Worker reuses the ROUTES namespace with the
@@ -310,6 +304,18 @@ function rateLimitPolicy(env: Env): RateLimitPolicy {
   };
 }
 
+let warnedRateLimiterMissing = false;
+
+/**
+ * Log (once per isolate) that the RATE_LIMITER binding is missing, so edge rate
+ * limiting is OFF. This is a deploy misconfiguration; make it visible.
+ */
+function warnRateLimiterMissing(): void {
+  if (warnedRateLimiterMissing) return;
+  warnedRateLimiterMissing = true;
+  console.warn("rate limit: RATE_LIMITER binding missing; edge rate limiting is disabled");
+}
+
 /** The KV backing the org-status read (the LIMITS namespace, when configured). */
 function statusKV(env: Env): StatusKVLike | undefined {
   return env.LIMITS;
@@ -407,18 +413,19 @@ async function dispatch(
 
   // 0. EDGE RATE LIMITING (denial-of-wallet). Keyed by client IP (else
   //    host), BEFORE the route lookup, so a flood is rejected without touching the
-  //    route projection or R2. PREFER the native Rate Limiting binding (atomic —
-  //    actually counts a single-IP flood); fall back to the KV counter (best-effort
-  //    only) when the native binding isn't configured. Fails OPEN (a missing binding
-  //    or limiter error never blocks a real request); authoritative spend caps live
-  //    in the Go API.
-  const policy = rateLimitPolicy(env);
-  const identity = rateLimitIdentity(request, url.host);
-  const rl = env.RATE_LIMITER
-    ? await rateLimitNative(env.RATE_LIMITER, identity, policy.windowSeconds)
-    : await rateLimitDecision(env.LIMITS, identity, nowDate.getTime(), policy);
-  if (!rl.allowed) {
-    return tooManyRequests(rl.retryAfterSeconds);
+  //    route projection or R2. Uses ONLY the native Rate Limiting binding, which
+  //    costs no KV operations. Fails OPEN: a missing binding or limiter error never
+  //    blocks a real request; authoritative spend caps live in the Go API. Never
+  //    write KV here: a per-request KV write exhausts the account's daily quota.
+  if (env.RATE_LIMITER) {
+    const policy = rateLimitPolicy(env);
+    const identity = rateLimitIdentity(request, url.host);
+    const rl = await rateLimitNative(env.RATE_LIMITER, identity, policy.windowSeconds);
+    if (!rl.allowed) {
+      return tooManyRequests(rl.retryAfterSeconds);
+    }
+  } else {
+    warnRateLimiterMissing();
   }
 
   // 1. Resolve the host → route value from KV. The Host header is the tenant

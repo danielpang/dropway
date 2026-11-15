@@ -27,7 +27,7 @@ export async function hostedSetupAction() {
 }
 export async function saveCredentialAction(provider: HostedProvider, label: string, key: string, id?: string, scope: CredentialScope = "personal") {
   if (!(await collaborationEnabled(true))) return closed();
-  if (typeof key !== "string" || typeof label !== "string" || (id !== undefined && typeof id !== "string") || !["personal", "team"].includes(scope) || !["anthropic", "openrouter", "openai"].includes(provider) || key.length < 8 || key.length > 4096 || label.length > 120) return { ok: false as const, message: "Enter a supported provider, label and valid API key." };
+  if (typeof key !== "string" || typeof label !== "string" || (id !== undefined && typeof id !== "string") || !["personal", "team"].includes(scope) || !["anthropic", "openrouter", "openai"].includes(provider) || key.length < 8 || key.length > 4096 || !label.trim() || label.length > 80) return { ok: false as const, message: "Enter a supported provider, label and valid API key." };
   try { const parsed = parseCredential(row(await api.saveProviderCredential({ provider, label, api_key: key, scope }, id)).credential);
     return parsed ? { ok: true as const, credential: parsed } : { ok: false as const, message: "The saved credential metadata was not usable." };
   } catch (error) { return failure(error); }
@@ -72,4 +72,13 @@ export async function resumeHostedJobAction(roomId: string, sessionId: string, a
   try { const job = parseHostedJob(row(await api.resumeHostedJob(roomId, sessionId, answer, idempotencyKey)).job);
     return job?.roomId === roomId ? { ok: true as const, job } : { ok: false as const, message: "The continuation receipt was not usable. Refresh before retrying." };
   } catch (error) { return failure(error); }
+}
+
+export async function getAIPreferencesAction(roomId?: string) {
+  if (!(await collaborationEnabled())) return closed();
+  try { return {ok: true as const, preferences: await api.getAIPreferences(roomId)}; } catch (error) { return failure(error); }
+}
+export async function saveAIPreferencesAction(input: import("@/lib/project-room/hosted").AIPreferences, roomId?: string) {
+  if (!(await collaborationEnabled())) return closed();
+  try { return {ok: true as const, preferences: await api.saveAIPreferences(input, roomId)}; } catch (error) { return failure(error); }
 }

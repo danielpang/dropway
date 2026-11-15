@@ -5349,18 +5349,29 @@ WHERE t.org_id = $2
   AND t.room_id = $3
   AND (t.created_at, t.id::text) > ($4::timestamptz, $5::text)
   AND t.created_at <= $6::timestamptz
+  AND (NULLIF($7::text, '')::uuid IS NULL OR t.version_id = NULLIF($7::text, '')::uuid)
+  AND (NULLIF($8::text, '')::timestamptz IS NULL OR t.created_at >= NULLIF($8::text, '')::timestamptz)
+  AND (NULLIF($9::text, '')::timestamptz IS NULL OR t.created_at < NULLIF($9::text, '')::timestamptz)
+  AND ($10::text = ''
+    OR ($10::text = 'image' AND t.anchor_kind = 'point' AND jsonb_typeof(t.anchor->'image') = 'object')
+    OR ($10::text = 'point' AND t.anchor_kind = 'point' AND NOT (t.anchor ? 'image'))
+    OR ($10::text IN ('text','component','page') AND t.anchor_kind = $10::text))
 ORDER BY t.created_at ASC, t.id::text ASC
-LIMIT $7
+LIMIT $11
 `
 
 type PageRoomThreadsParams struct {
-	UserID    string
-	OrgID     string
-	RoomID    string
-	CursorAt  time.Time
-	CursorID  string
-	Watermark time.Time
-	Lim       int32
+	UserID        string
+	OrgID         string
+	RoomID        string
+	CursorAt      time.Time
+	CursorID      string
+	Watermark     time.Time
+	FilterVersion string
+	FilterAfter   string
+	FilterBefore  string
+	FilterType    string
+	Lim           int32
 }
 
 func (q *Queries) PageRoomThreads(ctx context.Context, arg PageRoomThreadsParams) ([]AppReviewThread, error) {
@@ -5371,6 +5382,10 @@ func (q *Queries) PageRoomThreads(ctx context.Context, arg PageRoomThreadsParams
 		arg.CursorAt,
 		arg.CursorID,
 		arg.Watermark,
+		arg.FilterVersion,
+		arg.FilterAfter,
+		arg.FilterBefore,
+		arg.FilterType,
 		arg.Lim,
 	)
 	if err != nil {

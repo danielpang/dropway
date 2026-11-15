@@ -1279,7 +1279,7 @@ func Register(server *mcpsdk.Server, svc *Service) {
 	}, svc.getProjectRoomHandler)
 	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_room_threads",
-		Description: "Read one page of review threads in a room, including resolved and orphaned anchors. Pass next_cursor until it is empty. This tool cannot reply, resolve, or reanchor.",
+		Description: "Read project comments across all versions, including resolved and orphaned anchors. Filter by version_id, created_after (inclusive), created_before (exclusive), and type (text/component/image/point/page). Dates apply to thread creation. Keep filters unchanged when passing next_cursor. Use get_comment_thread for comment bodies, replies, and anchor history. This tool cannot reply, resolve, or reanchor.",
 	}, svc.listRoomThreadsHandler)
 	addTool(server, svc, &mcpsdk.Tool{
 		Name:        "list_room_candidates",

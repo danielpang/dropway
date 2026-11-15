@@ -2,41 +2,24 @@
 //
 // Edge rate limiting + denial-of-wallet guard ("[MEDIUM] Denial-of-wallet",
 // Phase-4 "edge rate limiting + denial-of-wallet caps"). Two independent
-// controls, both READ-ONLY-ish projections over KV so the
-// Worker stays a thin consumer:
+// controls:
 //
-//   1. A per-(host|IP) request RATE LIMITER. The PRIMARY limiter is Cloudflare's
-//      native Rate Limiting binding (`rateLimitNative`) — an ATOMIC, edge-local
-//      counter that correctly counts a single-IP flood. A KV fixed-window counter
-//      (`rateLimitDecision`) is kept ONLY as a best-effort fallback for self-host
-//      deployments without the native binding: KV throttles writes to ~1/sec/key
-//      and reads are eventually consistent, so it CANNOT count a real hot-key flood
-//      (it never trips) — never rely on it as the sole DoW control. Over the limit
-//      → 429 with a `Retry-After`.
+//   1. A per-(IP|host) request RATE LIMITER, backed ONLY by Cloudflare's native
+//      Rate Limiting binding (`rateLimitNative`): edge-local, no KV operations.
+//      Over the limit → 429 with a `Retry-After`. There is deliberately NO KV
+//      fallback: a KV-backed counter costs one KV write per request (assets and
+//      bot probes included), which exhausted the account-wide daily KV write quota
+//      and blocked every API route write until it reset. Without the binding,
+//      rate limiting is a no-op (fail OPEN) and the Worker logs a warning.
 //
-//   2. A per-ORG SUSPENSION / over-limit signal — `org_status:<org_id>` in KV,
+//   2. A per-ORG SUSPENSION / over-limit signal: `org_status:<org_id>` in KV,
 //      written by the Go API on billing suspension / quota over-limit. When set,
 //      the route's content is NOT served; a platform "account suspended / over
-//      limit" page is returned instead (so a runaway/abusive or unpaid org can't
-//      keep spending our edge budget).
+//      limit" page is returned instead. One KV read, never a write.
 //
-// Both controls keep the PUBLIC fast path cheap: org-status is a single KV get
-// keyed by the org we already resolved from the route, and the rate-limit window
-// counter is a single get + (best-effort) put. A missing limiter binding makes
-// rate limiting a no-op (fail OPEN — availability over a soft DoW control); the
-// org-suspension check, by contrast, fails OPEN too (a missing status === active)
-// because the AUTHORITATIVE block is the Go API + billing, and KV is a cache.
-
-/**
- * Minimal KV surface for the COUNTER store: a string get, a put with TTL, keyed
- * by the rate-limit window key. Separate from the route KV's json-get so the
- * limiter can run against the ROUTES KV (with a `rl:` prefix) or a dedicated
- * LIMITS binding. `put` is best-effort (a failed write just loosens the limit).
- */
-export interface CounterKVLike {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
-}
+// The Worker never writes KV on the request path. Both controls fail OPEN: a
+// missing binding or KV error never blocks a real request; the authoritative
+// spend caps and suspension live in the Go API + billing.
 
 /** Minimal KV surface for the org-status read (a single string get). */
 export interface StatusKVLike {
@@ -86,9 +69,6 @@ export interface RateLimitPolicy {
 
 /** Conservative default: 600 requests / 60s per identity (10 req/s sustained). */
 export const DEFAULT_RATE_LIMIT: RateLimitPolicy = { limit: 600, windowSeconds: 60 };
-
-/** The KV key prefix for fixed-window rate-limit counters (on the counter KV). */
-export const RATE_LIMIT_PREFIX = "rl:" as const;
 
 /** The KV key prefix for the per-org status signal (on the status KV). */
 export const ORG_STATUS_PREFIX = "org_status:" as const;
@@ -147,16 +127,6 @@ export function rateLimitIdentity(request: Request, host: string): string {
   return `host:${host}`;
 }
 
-/**
- * The KV counter key for an identity's CURRENT fixed window. Folding the window
- * index into the key means each window is a fresh counter that simply expires —
- * no read-modify-reset race, and a stale counter just lapses via its TTL.
- */
-export function windowKey(identity: string, nowMs: number, policy: RateLimitPolicy): string {
-  const windowIndex = Math.floor(nowMs / 1000 / policy.windowSeconds);
-  return `${RATE_LIMIT_PREFIX}${identity}:${windowIndex}`;
-}
-
 /** Outcome of a rate-limit check. */
 export interface RateLimitResult {
   /** True when the request is within the limit and may proceed. */
@@ -166,64 +136,3 @@ export interface RateLimitResult {
   /** Seconds the client should wait before retrying (set when !allowed). */
   retryAfterSeconds: number;
 }
-
-/**
- * PURE-ish fixed-window rate-limit decision over an injected counter KV + clock.
- *
- * Reads the current window's counter, increments it, and writes it back with a
- * TTL of one window (so the key self-expires). Returns `allowed=false` once the
- * post-increment count exceeds `policy.limit`, with `retryAfterSeconds` set to
- * the time remaining in the window.
- *
- * Failure mode: any KV error → fail OPEN (allowed:true). Rate limiting is a soft
- * denial-of-wallet control; a KV hiccup must not take the edge down. The
- * authoritative spend caps live in the Go API (per-org egress caps + 402).
- *
- * No binding (`kv === undefined`) is also a no-op allow, so the limiter is opt-in
- * per deployment.
- */
-export async function rateLimitDecision(
-  kv: CounterKVLike | undefined,
-  identity: string,
-  nowMs: number,
-  policy: RateLimitPolicy = DEFAULT_RATE_LIMIT,
-): Promise<RateLimitResult> {
-  const remainingInWindow =
-    policy.windowSeconds - (Math.floor(nowMs / 1000) % policy.windowSeconds);
-
-  if (!kv) {
-    return { allowed: true, count: 0, retryAfterSeconds: 0 };
-  }
-
-  try {
-    const key = windowKey(identity, nowMs, policy);
-    const prev = await kv.get(key);
-    const prevCount = prev === null ? 0 : parseCount(prev);
-    const count = prevCount + 1;
-
-    // Persist the new count. Cloudflare KV requires `expirationTtl >= 60s`, so we
-    // clamp to that floor; the window-indexed key means an over-long TTL is
-    // harmless (a new window is a new key, and the stale key just lingers a little
-    // longer before lapsing). Best-effort: a failed put simply means the next
-    // request re-reads the old value (looser, never tighter).
-    const ttl = Math.max(KV_MIN_TTL_SECONDS, remainingInWindow + 1);
-    await kv.put(key, String(count), { expirationTtl: ttl }).catch(() => {});
-
-    if (count > policy.limit) {
-      return { allowed: false, count, retryAfterSeconds: remainingInWindow };
-    }
-    return { allowed: true, count, retryAfterSeconds: 0 };
-  } catch {
-    // Fail open on any limiter error.
-    return { allowed: true, count: 0, retryAfterSeconds: 0 };
-  }
-}
-
-/** Parse a stored counter string defensively (a garbled value reads as 0). */
-function parseCount(raw: string): number {
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
-/** Cloudflare KV's minimum `expirationTtl` is 60s; clamp so short windows are valid. */
-export const KV_MIN_TTL_SECONDS = 60;

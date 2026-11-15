@@ -163,13 +163,14 @@ survive a takedown. Enforced on **both** the public and gated paths.
 
 ### 3. Edge rate limiting + denial-of-wallet
 
-- **Per-(IP|host) rate limit**: a fixed-window KV counter
-  (`rateLimitDecision()`, pure over an injected counter store + clock) checked
-  **before** the route lookup so a flood is rejected for one KV op. Over the
-  limit → **`429` with `Retry-After`**. Identity is `CF-Connecting-IP` (else the
-  host). Fails **open** (a missing `LIMITS` binding or KV error never blocks a
-  real request); the authoritative spend caps live in the Go API. Tunable via
-  `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` (default 600 req / 60 s).
+- **Per-(IP|host) rate limit**: Cloudflare's native Rate Limiting binding
+  (`RATE_LIMITER`, `rateLimitNative()`), checked **before** the route lookup.
+  Over the limit → **`429` with `Retry-After`**. Identity is `CF-Connecting-IP`
+  (else the host). It uses **no KV**: there is deliberately no KV-counter
+  fallback, because one KV write per request exhausted the account's daily KV
+  write quota. Without the binding, rate limiting is off (fails **open**) and a
+  warning is logged; CI refuses to deploy without it. The authoritative spend
+  caps live in the Go API. Default 600 req / 60 s per Cloudflare location.
 - **Per-org suspension / over-limit**: after the route is resolved, the Worker
   reads `org_status:<org_id>` from KV; `suspended` (billing/abuse) or
   `over_limit` (quota/egress cap) → a platform **`503` "account unavailable"
@@ -236,7 +237,8 @@ type-check and tests resolve it without a build step.
 | -------- | ---- | ---------------------------------------------------------------------------- |
 | `ROUTES` | KV   | `route:<host>` → `RouteValue` routing projection (read-only). Also the **default** denylist namespace (`revoked:*` keys) when `REVOKED` is unset. |
 | `BUCKET` | R2   | Single private bucket: `manifests/<org>/<site>/<version>.json` + `blobs/<org>/<sha256>`. |
-| `LIMITS` | KV   | **(Phase 4, optional)** rate-limiter counters (`rl:*`) + per-org status (`org_status:<org>`). Absent → rate limiting no-op + status check skipped. |
+| `LIMITS` | KV   | **(Phase 4, optional)** per-org status (`org_status:<org>`), read-only. Absent → status check skipped. |
+| `RATE_LIMITER` | Rate Limiting | Edge rate limiter (no KV). Absent → rate limiting off. |
 | `REVOKED`| KV   | **(Phase 4, optional)** hard-revocation denylist (`revoked:user\|site\|org:*`). Absent → reuse `ROUTES` with the `revoked:` prefix (revocation contract default). |
 
 ### Vars (`wrangler.toml [vars]`)
@@ -268,7 +270,7 @@ edge/serving-worker/
 │   ├── manifest.ts  # PURE manifest model + parse + path→entry resolution; manifest/blob R2 keys
 │   ├── http.ts      # PURE Content-Type + Cache-Control; re-exports content security headers
 │   ├── security.ts  # PURE content/platform CSP + COOP/CORP/nosniff/no-referrer/frame + service-worker-script block (Phase 4)
-│   ├── ratelimit.ts # PURE fixed-window KV-counter rate limiter + per-org status read (Phase 4)
+│   ├── ratelimit.ts # native rate-limit check + per-org status read (Phase 4)
 │   ├── revoke.ts    # PURE hard-revocation denylist (revoked:user|site|org → min_iat) check (Phase 4)
 │   ├── config.ts    # gated-path config (EDGE_JWKS_URL/APP_AUTHZ_URL), issuer + cookie name
 │   ├── edgetoken.ts # edge-token verification (jose): JWKS fetch+cache, alg/iss/aud/exp/site_id checks; surfaces iat

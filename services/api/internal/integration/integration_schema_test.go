@@ -52,7 +52,7 @@ func TestIntegration_SchemaPreflightRollingUpgrade(t *testing.T) {
 	if out, err := goose.CombinedOutput(); err != nil {
 		t.Fatalf("down-to18: %v %s", err, out)
 	}
-	if err := store.CheckSchema(ctx, pool); err == nil || !strings.Contains(err.Error(), "migrations through 0027") {
+	if err := store.CheckSchema(ctx, pool); err == nil || !strings.Contains(err.Error(), "migrations through 0028") {
 		t.Fatalf("old schema should fail with migration hint, got %v", err)
 	}
 	// Existing API's seven-column lookup remains valid before and after upgrade.

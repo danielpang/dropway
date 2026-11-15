@@ -173,6 +173,54 @@ func TestIntegration_HostedExecution(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("validate %d %s", status, body)
 	}
+
+	t.Run("AI preferences require a human, reuse one connection, and restrict project defaults", func(t *testing.T) {
+		pref := store.AIPreferences{Mode: "api", CredentialRef: credential.Credential.ID, Provider: "anthropic", Model: "claude-sonnet-4-5"}
+		path := "/v1/provider-credentials/preferences"
+		if code, out := request("PUT", path, "human", pref); code != 200 {
+			t.Fatalf("save preferences %d %s", code, out)
+		}
+		if code, out := request("GET", path, "human", nil); code != 200 || !bytes.Contains(out, []byte(credential.Credential.ID)) {
+			t.Fatalf("read preferences %d %s", code, out)
+		}
+		pref.Provider = "openai"
+		pref.Model = "gpt-4.1"
+		if code, _ := request("PUT", path, "human", pref); code != 403 {
+			t.Fatalf("mismatched credential provider accepted: %d", code)
+		}
+		projectPath := "/v1/project-rooms/" + room.ID + "/ai-settings"
+		pref = store.AIPreferences{Provider: "anthropic", Model: "claude-haiku-4-5"}
+		if code, out := request("PUT", projectPath, "human", pref); code != 200 {
+			t.Fatalf("owner model %d %s", code, out)
+		}
+		if code, out := request("GET", projectPath, "human", nil); code != 200 || !bytes.Contains(out, []byte("claude-haiku-4-5")) {
+			t.Fatalf("project model %d %s", code, out)
+		}
+		if err := st.SaveAIPreferences(store.WithHumanSession(ctx, false), tn, room.ID, pref); !errors.Is(err, hosted.ErrDenied) {
+			t.Fatalf("nonhuman settings accepted %v", err)
+		}
+
+		editor := "a0000000-0000-0000-0000-000000000099"
+		insertMember(t, org, editor, "member")
+		must(t, st.AddProjectRoomMember(ctx, tn, room.ID, editor, "editor", store.AuditRecord{}))
+		editorTenant := store.Tenant{OrgID: org, UserID: editor}
+		if err := st.SaveAIPreferences(ctx, editorTenant, room.ID, pref); !errors.Is(err, hosted.ErrDenied) {
+			t.Fatalf("editor changed project model: %v", err)
+		}
+		otherPrefs, err := st.GetAIPreferences(ctx, editorTenant, "")
+		if err != nil || otherPrefs.CredentialRef != "" {
+			t.Fatalf("personal preferences leaked: %+v %v", otherPrefs, err)
+		}
+		privateKey := store.AIPreferences{Mode: "api", CredentialRef: credential.Credential.ID, Provider: "anthropic", Model: "claude-sonnet-4-5"}
+		if err := st.SaveAIPreferences(ctx, editorTenant, "", privateKey); !errors.Is(err, hosted.ErrDenied) {
+			t.Fatalf("another user's private key accepted: %v", err)
+		}
+		api.Hosted = nil
+		if code, out := request("PUT", path, "human", store.AIPreferences{Mode: "local"}); code != 200 {
+			t.Fatalf("local setup needs no worker %d %s", code, out)
+		}
+		api.Hosted = runtime
+	})
 	config := hosted.Config{Provider: "anthropic", ModelID: "claude-sonnet-4-5", Prompt: "Change the title", Budget: hosted.Budget{MaxTokens: 20000, MaxCalls: 5, MaxSeconds: 300, MaxOutputBytes: 1 << 20}}
 
 	t.Run("mention replies queue exactly once and plain comments never run", func(t *testing.T) {

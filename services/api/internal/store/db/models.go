@@ -173,6 +173,15 @@ type AppOrgUsage struct {
 	UpdatedAt    time.Time
 }
 
+type AppPersonalAiPreference struct {
+	OrgID         string
+	UserID        string
+	Mode          string
+	CredentialRef *string
+	Provider      string
+	Model         string
+}
+
 type AppPostComment struct {
 	ID               string
 	OrgID            string
@@ -192,6 +201,13 @@ type AppPostVote struct {
 	Value       int16
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type AppProjectAiPreference struct {
+	OrgID    string
+	RoomID   string
+	Provider string
+	Model    string
 }
 
 type AppProjectRoom struct {
