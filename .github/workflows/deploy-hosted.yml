@@ -1,0 +1,115 @@
+name: Deploy hosted
+on:
+  workflow_run:
+    workflows: [ci]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Last environment to deploy (always starts with development)
+        type: choice
+        options: [development, production]
+        default: development
+permissions:
+  contents: read
+concurrency:
+  group: dropway-environment-rollout
+  cancel-in-progress: false
+jobs:
+  revision:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+      production: ${{ steps.revision.outputs.production }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - id: revision
+        env:
+          EVENT: ${{ github.event_name }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_SHA: ${{ github.sha }}
+          TARGET: ${{ inputs.target }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == workflow_run ]]; then
+            sha="$CI_SHA"
+            production=true
+            # Ignore delayed CI completions for a revision superseded on main.
+            [[ "$sha" == "$(git rev-parse HEAD)" ]] || exit 0
+          else
+            [[ "$REF" == refs/heads/main ]] || { echo 'Run deployments from main'; exit 1; }
+            sha="$MANUAL_SHA"
+            production=false
+            if [[ "$TARGET" == production ]]; then production=true; fi
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "production=$production" >> "$GITHUB_OUTPUT"
+  migrate-development:
+    needs: revision
+    if: needs.revision.outputs.sha != ''
+    uses: ./.github/workflows/migrate-environment.yml
+    with:
+      environment: development
+      source_sha: ${{ needs.revision.outputs.sha }}
+      check_deploy_config: true
+  build:
+    needs: [revision, migrate-development]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.revision.outputs.sha }}
+      - name: Build immutable release images once
+        env:
+          SOURCE_SHA: ${{ needs.revision.outputs.sha }}
+        run: |
+          set -euo pipefail
+          docker build --build-arg DROPWAY_BUILD_TAGS=cloud -f services/api/Dockerfile -t "dropway-api:$SOURCE_SHA" .
+          docker build -f services/mcp/Dockerfile -t "dropway-mcp:$SOURCE_SHA" .
+          docker build -f services/room-worker/Dockerfile -t "dropway-room-worker:$SOURCE_SHA" .
+          python3 - <<'PY'
+          import json, os, subprocess
+          sha = os.environ['SOURCE_SHA']
+          images = {service: subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', f'dropway-{service}:{sha}'], text=True).strip() for service in ('api', 'mcp', 'room-worker')}
+          with open('image-ids.json', 'w') as f:
+              json.dump(images, f)
+          PY
+          docker save "dropway-api:$SOURCE_SHA" "dropway-mcp:$SOURCE_SHA" "dropway-room-worker:$SOURCE_SHA" | gzip > fly-images.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fly-images-${{ needs.revision.outputs.sha }}
+          path: |
+            fly-images.tar.gz
+            image-ids.json
+          retention-days: 3
+  deploy-development:
+    needs: [revision, build]
+    uses: ./.github/workflows/deploy-fly-environment.yml
+    with:
+      environment: development
+      source_sha: ${{ needs.revision.outputs.sha }}
+  migrate-production:
+    needs: [revision, deploy-development]
+    if: needs.revision.outputs.production == 'true'
+    uses: ./.github/workflows/migrate-environment.yml
+    with:
+      environment: production
+      source_sha: ${{ needs.revision.outputs.sha }}
+      check_deploy_config: true
+  deploy-production:
+    needs: [revision, migrate-production]
+    uses: ./.github/workflows/deploy-fly-environment.yml
+    with:
+      environment: production
+      source_sha: ${{ needs.revision.outputs.sha }}

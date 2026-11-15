@@ -1,5 +1,5 @@
-# Development worker. Supply your dedicated app with fly deploy --app <dev-worker>.
-# No public service and no automatic deployment workflow.
+# Dedicated worker. CI supplies the environment-specific FLY_WORKER_APP.
+# No public service; deployment is skipped when that variable is unset.
 primary_region = "iad"
 kill_signal = "SIGTERM"
 kill_timeout = "60s"
