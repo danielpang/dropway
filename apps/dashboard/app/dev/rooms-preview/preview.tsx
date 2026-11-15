@@ -96,7 +96,7 @@ const initialThreads: ReviewThread[] = [
       {
         ID: "reply-1",
         AuthorID: "demo-reviewer",
-        Body: "Can we make the headline more specific? “Independent design for ambitious teams” says more about who this is for.",
+        Body: "@dropway Can we make the headline more specific? “Independent design for ambitious teams” says more about who this is for.",
         CreatedAt: "2026-11-14T18:00:00Z",
       },
     ],
@@ -246,7 +246,10 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
     [attachments, roomId],
   );
   return (
-    <RoomWorkspace demo
+    <RoomWorkspace demo jobs={empty ? [] : [{
+        id: "demo-job", initiatorUserId:"demo-owner", roomId:"project-launch",siteId:"site-launch",versionId:"version-3",contentHash:"hash-3",state:"running",sessionId:null,candidateId:null,failureCode:null,tokensUsed:0,callsUsed:0,
+        config:{provider:"anthropic",modelId:"claude-opus-5-5",harnessId:"pi",harnessVersion:"1.5.0",prompt:"Make the headline more specific",threadId:"thread-copy",budget:{max_tokens:20000,max_calls:10,max_seconds:300,max_output_bytes:2097152}}
+      }]}
       detailsRoomId={roomId}
       rooms={rooms}
       sites={sites}

@@ -86,6 +86,9 @@ func (s *Store) ListProviderCredentials(ctx context.Context, t Tenant) ([]Provid
 // creator never change; team replacements reuse the original creator in the AAD.
 func (s *Store) SaveProviderCredential(ctx context.Context, t Tenant, id, provider, label, secret string, vault *hosted.Vault, scopes ...string) (ProviderCredential, error) {
 	var out ProviderCredential
+	if detected := hosted.KeyProvider(secret); detected != "" && detected != provider {
+		return out, hosted.ErrInvalid
+	}
 	scope := "personal"
 	if len(scopes) > 0 && scopes[0] != "" {
 		scope = scopes[0]
@@ -176,6 +179,10 @@ func (s *Store) ProviderCredentialSecret(ctx context.Context, t Tenant, id strin
 			return err
 		}
 		secret, err = vault.Open(cipher, hosted.CredentialAAD(t.OrgID, c.OwnerUserID, id, provider))
+		if detected := hosted.KeyProvider(secret); err == nil && detected != "" && detected != provider {
+			secret = ""
+			return hosted.ErrInvalid
+		}
 		return err
 	})
 	return

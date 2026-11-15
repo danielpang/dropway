@@ -33,7 +33,7 @@ export function MentionTextarea({ value, onValueChange, options, onKeyDown, onSe
   React.useLayoutEffect(() => {
     if (!ref.current) return;
     ref.current.style.height = "auto";
-    ref.current.style.height = `${Math.min(160, ref.current.scrollHeight)}px`;
+    ref.current.style.height = `${Math.min(160, ref.current.scrollHeight + ref.current.offsetHeight - ref.current.clientHeight)}px`;
     if (pendingCaret.current !== null) {
       ref.current.focus();
       ref.current.setSelectionRange(pendingCaret.current, pendingCaret.current);
@@ -67,7 +67,7 @@ export function MentionTextarea({ value, onValueChange, options, onKeyDown, onSe
         </li>)}
       </ul>
     </div> : null}
-    <textarea {...props} ref={ref} value={value} aria-autocomplete="list" aria-controls={open ? id : undefined}
+    <textarea {...props} className={`block ${props.className ?? ""}`} ref={ref} value={value} aria-autocomplete="list" aria-controls={open ? id : undefined}
       aria-activedescendant={open ? `${id}-${index}` : undefined}
       onChange={(event) => { onValueChange(event.target.value); update(event.target); }}
       onSelect={(event) => { update(event.currentTarget); onSelect?.(event); }}

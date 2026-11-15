@@ -14,6 +14,7 @@ import {
   HOSTED_MODELS,
   OPENAI_MODELS,
   hostedModels,
+  providerModelId,
   hostedFailureMessage,
   type HostedEvent,
   type HostedJob,
@@ -321,9 +322,7 @@ export function HostedExecution({
                         credentialRef: credential.id,
                         provider: credential.provider,
                         modelId:
-                          credential.provider === "openrouter"
-                            ? `anthropic/${model}`
-                            : model,
+                          providerModelId(credential.provider,model),
                         prompt,
                         threadId: threadId || undefined,
                         idempotencyKey: key,

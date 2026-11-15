@@ -17,3 +17,12 @@ describe("AI setup", () => {
     expect(preferredModel(key,personal,{...EMPTY_AI_PREFERENCES,provider:"anthropic",model:"claude-sonnet-4-5"})).toBe("gpt-4.1-mini");
   });
 });
+
+describe("provider identities",()=>{
+ it("recognizes only unambiguous prefixes and maps current OpenRouter IDs",async()=>{
+  const {keyProvider,providerModelId,HOSTED_MODELS}=await import("@/lib/project-room/hosted");
+  expect(keyProvider("sk-ant-test")).toBe("anthropic");expect(keyProvider("sk-or-v1-test")).toBe("openrouter");expect(keyProvider("sk-proj-test")).toBe("openai");expect(keyProvider("sk-legacy")).toBe(null);
+  expect(HOSTED_MODELS).toContain("claude-opus-5-5");expect(HOSTED_MODELS).toContain("claude-fable-5-2");
+  expect(providerModelId("anthropic","claude-opus-5-5")).toBe("claude-opus-5-5");expect(providerModelId("openrouter","claude-fable-5-2")).toBe("anthropic/claude-fable-5.2");
+ });
+});

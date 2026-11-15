@@ -396,7 +396,7 @@ export function StaticReview({
             </div>
             <div
               ref={popoverContent}
-              className="min-h-0 overflow-y-auto px-2 pb-2"
+              className="min-h-0 overflow-y-auto px-2 pb-2 pt-1"
             >
               {popover.id === "pending-selection"
                 ? renderDraft?.()

@@ -52,6 +52,16 @@ ship() {
     curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 3 \
       --connect-timeout 10 --max-time 20 "https://${app}.fly.dev/healthz" >/dev/null
   fi
+  if [[ "$service" == room-worker ]]; then
+    # Fly preserves stopped Machines during deploy. Explicitly start every worker,
+    # then require a successful authenticated queue poll from this process.
+    local machines machine
+    machines=$(flyctl machine list --app "$app" --json | python3 -c 'import json,sys; rows=[m for m in json.load(sys.stdin) if m.get("state") != "destroyed"]; assert rows, "No worker machines"; print("\n".join(m["id"] for m in rows))')
+    for machine in $machines; do
+      flyctl machine start "$machine" --app "$app"
+      flyctl ssh console --app "$app" --machine "$machine" --command 'node /worker/dist/readiness.js'
+    done
+  fi
   printf '%s: %s\n' "$app" "$digest" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 }
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+import { RoomRuntimeError } from "./errors.js";
 import type { TranscriptMessage } from "./clarification.js";
 import type { ProviderId } from "./pin.js";
 
@@ -46,7 +47,7 @@ export class HostedClient {
   }
   validateGateway(claim: HostedClaim): void {
     const url = new URL(claim.gateway_base_url);
-    if (url.origin !== this.origin || url.pathname !== `/internal/room-gateway/${claim.attempt_id}` || url.search || url.hash || url.username || url.password) throw new Error("Gateway claim is outside the trusted API attempt");
+    if (url.origin !== this.origin || url.pathname !== `/internal/room-gateway/${claim.attempt_id}` || url.search || url.hash || url.username || url.password) throw new RoomRuntimeError("worker_gateway_origin", "Gateway claim is outside the trusted API attempt");
   }
   private async request<T>(method: string, path: string, token: string, body: unknown, signal: AbortSignal): Promise<T | null> {
     const response = await this.transport(`${this.origin}${path}`, {

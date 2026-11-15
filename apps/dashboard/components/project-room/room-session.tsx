@@ -6,6 +6,8 @@
 "use client";
 
 import * as React from "react";
+import { listHostedJobsAction } from "@/app/(app)/rooms/hosted-actions";
+import type { HostedJob } from "@/lib/project-room/hosted";
 
 import {
   RoomWorkspace,
@@ -65,6 +67,8 @@ export function RoomSession({
   parentOrigin: string;
   loadError?: string;
 }) {
+  const [jobs, setJobs] = React.useState<HostedJob[]>([]);
+  const [jobStatusUnavailable, setJobStatusUnavailable] = React.useState(false);
   const commentRetries = React.useRef(new Map<string, string>());
   const commentRequests = React.useRef(new Set<string>());
   const [activity, setActivity] = React.useState<RoomActivity[]>([]);
@@ -112,6 +116,32 @@ export function RoomSession({
     roomId: string;
     message: string;
   } | null>(null);
+
+  React.useEffect(() => {
+    setJobs([]);
+    setJobStatusUnavailable(false);
+    if (!detailsRoomId || !executionConfigured) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const result = await listHostedJobsAction(detailsRoomId!);
+        if (!active) return;
+        if (result.ok) {
+          setJobs(result.jobs);
+          setJobStatusUnavailable(false);
+        } else setJobStatusUnavailable(true);
+      } catch {
+        if (active) setJobStatusUnavailable(true);
+      }
+      if (active) timer = setTimeout(() => void poll(), 3000);
+    }
+    void poll();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [detailsRoomId, executionConfigured]);
 
   const applyRoom = React.useCallback((roomId: string) => {
     if (!roomId || loadedRoom.current === roomId) return;
@@ -249,6 +279,8 @@ export function RoomSession({
 
   return (
     <RoomWorkspace
+      jobs={jobs}
+      jobStatusUnavailable={jobStatusUnavailable}
       detailsRoomId={detailsRoomId}
       roomLoadError={roomLoadError}
       activity={activity}
@@ -426,6 +458,11 @@ export function RoomSession({
               const rest = prev.filter((item) => item.ID !== result.thread.ID);
               return [result.thread, ...rest];
             });
+            if (result.job)
+              setJobs((previous) => [
+                result.job!,
+                ...previous.filter((job) => job.id !== result.job!.id),
+              ]);
             setNotice(
               result.job
                 ? "Comment stored and revision queued. Review the proposed change before accepting or rejecting it."
@@ -511,6 +548,11 @@ export function RoomSession({
                 : thread,
             ),
           );
+          if (result.job)
+            setJobs((previous) => [
+              result.job!,
+              ...previous.filter((job) => job.id !== result.job!.id),
+            ]);
           setNotice(
             result.job
               ? "Reply stored and revision queued. Review the proposed change before accepting or rejecting it."

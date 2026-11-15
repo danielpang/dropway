@@ -68,3 +68,24 @@ func TestOpenAIPinnedModelsAndRedaction(t *testing.T) {
 		t.Fatal("OpenAI project secret not redacted")
 	}
 }
+
+func TestCurrentClaudeModelsAndKeyProviders(t *testing.T) {
+	for _, model := range []string{"claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5"} {
+		if !ModelAllowed("anthropic", model) {
+			t.Errorf("missing model %s", model)
+		}
+	}
+	for _, model := range []string{"anthropic/claude-opus-5.5", "anthropic/claude-fable-5.2"} {
+		if !ModelAllowed("openrouter", model) {
+			t.Errorf("missing router model %s", model)
+		}
+	}
+	for key, want := range map[string]string{"sk-ant-example": "anthropic", "sk-or-v1-example": "openrouter", "sk-proj-example": "openai", "sk-svcacct-example": "openai", "sk-ambiguous": ""} {
+		if got := KeyProvider(key); got != want {
+			t.Errorf("provider = %q, want %q", got, want)
+		}
+	}
+	if ModelAllowed("openai", "claude-opus-5-5") {
+		t.Fatal("provider mismatch accepted")
+	}
+}

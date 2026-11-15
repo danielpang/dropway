@@ -14,6 +14,10 @@ cmd = Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ['CALL_LOG'], 'a') as f:
     f.write(json.dumps([cmd, *args]) + '\n')
+if cmd == 'flyctl' and args[:2] == ['machine', 'list']:
+    print(json.dumps([] if os.environ.get('NO_WORKER') else [{'id':'worker-1','state':'stopped'}]))
+if cmd == 'flyctl' and args[:2] == ['ssh', 'console'] and os.environ.get('UNHEALTHY_WORKER'):
+    sys.exit(1)
 if cmd == 'docker' and args[:2] == ['image', 'inspect']:
     if args[3] == '{{.Id}}':
         print('wrong' if os.environ.get('BAD_IMAGE') and 'mcp' in args[-1] else 'sha256:test')
@@ -73,6 +77,22 @@ class DeployTests(unittest.TestCase):
         self.assertEqual([c[3] for c in deploys], ['dev-api', 'dev-mcp', 'dropway-worker-production'])
         worker_index = calls.index(deploys[-1])
         self.assertTrue(all(i < worker_index for i, c in enumerate(calls) if c[0] == 'curl'))
+
+    def test_worker_is_started_and_checked(self):
+        self.env.update(DEPLOY_ENVIRONMENT='production', FLY_WORKER_API_TOKEN='fake')
+        result, calls = self.run_script('fly.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(c[:3] == ['flyctl', 'machine', 'start'] for c in calls))
+        self.assertTrue(any('node /worker/dist/readiness.js' in c for c in calls))
+
+    def test_unhealthy_or_missing_worker_fails_release(self):
+        for failure in ('UNHEALTHY_WORKER', 'NO_WORKER'):
+            with self.subTest(failure=failure):
+                self.env.update(DEPLOY_ENVIRONMENT='production', FLY_WORKER_API_TOKEN='fake')
+                self.env[failure] = '1'
+                result, _ = self.run_script('fly.sh')
+                self.assertNotEqual(result.returncode, 0)
+                del self.env[failure]
 
     def test_production_requires_worker_token_before_any_release(self):
         self.env.update(DEPLOY_ENVIRONMENT='production', FLY_WORKER_API_TOKEN='')
