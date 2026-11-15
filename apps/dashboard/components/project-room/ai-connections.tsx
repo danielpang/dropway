@@ -24,6 +24,7 @@ import {
 } from "@/app/(app)/rooms/hosted-actions";
 import {
   EMPTY_AI_PREFERENCES,
+  currentHostedModel,
   keyProvider,
   hostedModels,
   type HostedProvider,
@@ -109,6 +110,7 @@ export function AIConnections({
         setReady(true);
       }
       if (personal.ok) {
+        personal.preferences = { ...personal.preferences, model: currentHostedModel(personal.preferences.provider, personal.preferences.model) };
         setPreferences(personal.preferences);
         setMode(personal.preferences.mode);
         if (
@@ -124,7 +126,7 @@ export function AIConnections({
         );
       if (project?.ok && project.preferences.model)
         setOverride(
-          `${project.preferences.provider}:${project.preferences.model}`,
+          `${project.preferences.provider}:${currentHostedModel(project.preferences.provider, project.preferences.model)}`,
         );
       setLoaded(personal.ok);
     }

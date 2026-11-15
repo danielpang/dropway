@@ -85,3 +85,11 @@ func TestOpenAIGatewayRejectsWrongPaths(t *testing.T) {
 		t.Fatal("Anthropic SDK beta query denied")
 	}
 }
+
+func TestProviderFailuresAreNotUsageFailures(t *testing.T) {
+	for status, want := range map[int]string{404: "provider_model_unavailable", 401: "provider_authentication", 403: "provider_authentication", 429: "provider_rate_limited", 400: "provider_rejected", 422: "provider_rejected", 500: "provider_unavailable", 200: "provider_response_invalid"} {
+		if got := providerFailureCode(status); got != want {
+			t.Fatalf("status %d: %s", status, got)
+		}
+	}
+}

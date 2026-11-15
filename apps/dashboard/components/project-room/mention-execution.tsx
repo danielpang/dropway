@@ -76,7 +76,7 @@ export function MentionExecutionControls({
             max_tokens: 20000,
             max_calls: 10,
             max_seconds: 300,
-            max_output_bytes: 2097152,
+            max_output_bytes: 10 * 1024 * 1024,
           },
         });
         setNotice("");

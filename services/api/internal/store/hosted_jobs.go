@@ -172,6 +172,10 @@ func (s *Store) queueExecutionTx(ctx context.Context, t Tenant, tx pgx.Tx, q *db
 		if err != nil {
 			return ErrNotFound
 		}
+		// Candidates contain the full site, including unchanged uploaded assets.
+		if version.SizeBytes > config.Budget.MaxOutputBytes {
+			return hosted.ErrBudget
+		}
 		var generation int
 		if err := tx.QueryRow(ctx, `SELECT generation FROM app.provider_credentials WHERE org_id=$1 AND id=$2 AND (owner_user_id=$3 OR scope='team') AND revoked_at IS NULL`, t.OrgID, credentialID, t.UserID).Scan(&generation); err != nil {
 			return hosted.ErrDenied

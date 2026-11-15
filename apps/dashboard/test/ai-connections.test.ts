@@ -26,3 +26,11 @@ describe("provider identities",()=>{
   expect(providerModelId("anthropic","claude-opus-5-5")).toBe("claude-opus-5-5");expect(providerModelId("openrouter","claude-fable-5-2")).toBe("anthropic/claude-fable-5.2");
  });
 });
+
+it("upgrades a retired saved Opus selection and preserves current project overrides",()=>{
+ const key:ProviderCredential={id:"key",provider:"anthropic",scope:"personal",canManage:true,ownerUserId:"user",label:"",lastFour:"1234",validatedAt:null,revokedAt:null,generation:1};
+ const old={...EMPTY_AI_PREFERENCES,provider:"anthropic",model:"claude-opus-4-1"};
+ expect(preferredModel(key,old)).toBe("claude-opus-5-5");
+ expect(preferredModel(key,{...old,model:"claude-sonnet-5-5"},old)).toBe("claude-opus-5-5");
+ expect(preferredModel(key,old,{...old,model:"claude-fable-5-2"})).toBe("claude-fable-5-2");
+});

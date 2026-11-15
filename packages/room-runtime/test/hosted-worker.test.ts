@@ -13,11 +13,13 @@ afterEach(async () => { await Promise.all(gateways.splice(0).map(g => g.stop()))
 class Plane extends FakePlane implements HostedPlane {
   staged: { sprite: string; files: SpriteArtifactFile[] }[] = [];
   exportFails = false;
+  unchanged = false;
   async stage(h: SandboxHandle, files: SpriteArtifactFile[]) { this.staged.push({ sprite: h.spriteName, files: structuredClone(files) }); }
   async exportArtifact(h: SandboxHandle) {
     expect(this.destroys.some(d => d.sprite === h.spriteName)).toBe(false);
     if (this.exportFails) throw new Error("export failed");
-    const files = this.staged.find(s => s.sprite === h.spriteName)!.files;
+    const files = structuredClone(this.staged.find(s => s.sprite === h.spriteName)!.files);
+    if (!this.unchanged) { const file=files[0]!; const data=Buffer.from("<h1>changed</h1>"); file.contentBase64=data.toString("base64");file.size=data.length;file.sha256=createHash("sha256").update(data).digest("hex"); }
     return { files, contentHash: artifactHash(files) };
   }
 }
@@ -53,18 +55,18 @@ it("stages verified immutable source and submits only after sandbox destruction"
   const modelRequest = JSON.parse(s.gateway.requests[0]!.body);
   expect(JSON.stringify(modelRequest.system)).toContain("summary in the human Accept/Reject request");
   expect(JSON.stringify(modelRequest.system)).toContain("affected files and visible behavior");
-  expect(s.calls.map(c => c.operation)).toEqual(["source", "events", "heartbeat", "candidate"]);
+  expect(s.calls.map(c => c.operation)).toEqual(["source", "events", "heartbeat", "events", "candidate"]);
   expect(s.calls.at(-1)?.body).toMatchObject({ summary: "Proposed change", idempotency_key: "candidate-attempt-1" });
   expect(s.source.files[0]?.content_base64).toBe(s.plane.staged[0]?.files[0]?.contentBase64);
 });
 it("persists clarification snapshot then resumes the transcript in a fresh sandbox", async () => {
-  const s = await stack(); s.gateway.steps = [{ kind: "tool", name: "ask_clarification", input: { question: "Which color?" } }, { kind: "text", text: "Blue proposal" }];
+  const s = await stack(); s.plane.unchanged=true; s.gateway.steps = [{ kind: "tool", name: "ask_clarification", input: { question: "Which color?" } }, { kind: "text", text: "Blue proposal" }];
   expect((await s.run()).status).toBe("awaiting_clarification");
   const saved = s.calls.find(c => c.operation === "clarify")!.body;
   expect(saved.question).toBe("Which color?"); expect(saved.files).toHaveLength(1);
   expect(s.calls.some(c => c.operation === "candidate")).toBe(false);
   s.claim.attempt_id = "attempt-2"; s.claim.gateway_base_url = `${s.gateway.origin}/internal/room-gateway/attempt-2`;
-  s.claim.transcript = saved.transcript; s.claim.answer = "Use blue"; s.source.files = saved.files;
+  s.claim.transcript = saved.transcript; s.claim.answer = "Use blue"; s.source.files = saved.files; s.source.source_content_hash=artifactHash(saved.files.map((f:any)=>({path:f.path,sha256:createHash("sha256").update(Buffer.from(f.content_base64,"base64")).digest("hex")}))); s.plane.unchanged=false;
   expect((await s.run()).status).toBe("completed");
   expect(s.plane.staged[0]?.sprite).not.toBe(s.plane.staged[1]?.sprite);
   expect(s.plane.staged[1]?.files).toEqual(s.plane.staged[0]?.files);
@@ -85,4 +87,24 @@ it("rejects source baseline, corrupted bytes and foreign gateway before provisio
   s.claim.gateway_base_url = "https://evil.example/internal/room-gateway/attempt-1";
   await expect(s.run()).rejects.toThrow("trusted API attempt");
   expect(s.plane.staged).toEqual([]); expect(s.gateway.requests).toEqual([]);
+});
+
+it("exports a full site larger than the old 2 MiB default, preserving unchanged assets", async () => {
+ const s=await stack();
+ const files=Array.from({length:4},(_,i)=>{const bytes=Buffer.alloc(1800000,i);return {path:`asset-${i}.bin`,content_base64:bytes.toString("base64"),size:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex"),content_type:"application/octet-stream"};});
+ s.source.files.push(...files);s.source.source_content_hash=artifactHash(s.source.files.map(f=>({path:f.path,sha256:f.sha256!})));
+ s.claim.job.config.budget.max_output_bytes=10*1024*1024;
+ s.gateway.steps=[{kind:"text",text:"Proposed change"}];
+ expect((await s.run()).status).toBe("completed");
+ const candidate=s.calls.find(c=>c.operation==="candidate");expect(candidate).toBeDefined();
+ expect(candidate!.body.files).toHaveLength(5);
+ expect(candidate!.body.files[1].content_base64).toBe(files[0]!.content_base64);
+});
+
+it("turns a text-only answer with unchanged files into clarification, never an empty candidate", async()=>{
+ const s=await stack();s.plane.unchanged=true;s.gateway.steps=[{kind:"text",text:"Which heading should I remove?"}];
+ expect((await s.run()).status).toBe("awaiting_clarification");
+ expect(s.calls.some(c=>c.operation==="candidate")).toBe(false);
+ expect(s.calls.find(c=>c.operation==="clarify")?.body.question).toContain("Which heading");
+ expect(s.calls.find(c=>c.operation==="events"&&c.body.message.includes("Which heading"))).toBeDefined();
 });

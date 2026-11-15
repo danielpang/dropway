@@ -66,6 +66,20 @@ func (s *Store) CheckGatewayCall(ctx context.Context, token string) error {
 	})
 }
 func (s *Store) SettleGatewayCall(ctx context.Context, token string, tokens int64, valid bool) error {
+	return s.settleGatewayCall(ctx, token, tokens, valid, "usage_unverified")
+}
+
+// FailGatewayCall preserves the conservative reservation but records the actual failure.
+func (s *Store) FailGatewayCall(ctx context.Context, token, code string) error {
+	switch code {
+	case "provider_unavailable", "provider_model_unavailable", "provider_authentication", "provider_rate_limited", "provider_rejected", "provider_response_invalid":
+	default:
+		return hosted.ErrInvalid
+	}
+	return s.settleGatewayCall(ctx, token, 0, false, code)
+}
+
+func (s *Store) settleGatewayCall(ctx context.Context, token string, tokens int64, valid bool, failureCode string) error {
 	return s.withExecutionAttempt(ctx, token, "gateway", func(tx pgx.Tx, _ *db.Queries, a *AttemptContext) error {
 		if !a.GatewayActive {
 			return hosted.ErrConflict
@@ -74,7 +88,7 @@ func (s *Store) SettleGatewayCall(ctx context.Context, token string, tokens int6
 			if _, err := tx.Exec(ctx, `UPDATE app.execution_attempts SET state='failed',gateway_active=false,finished_at=now() WHERE org_id=$1 AND id=$2`, a.Job.OrgID, a.AttemptID); err != nil {
 				return err
 			}
-			_, err := tx.Exec(ctx, `UPDATE app.execution_jobs SET state='failed',failure_code='usage_unverified',active_attempt_id=NULL,updated_at=now() WHERE org_id=$1 AND id=$2`, a.Job.OrgID, a.Job.ID)
+			_, err := tx.Exec(ctx, `UPDATE app.execution_jobs SET state='failed',failure_code=$3,active_attempt_id=NULL,updated_at=now() WHERE org_id=$1 AND id=$2`, a.Job.OrgID, a.Job.ID, failureCode)
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE app.execution_jobs SET tokens_used=tokens_used-$3+$4,updated_at=now() WHERE org_id=$1 AND id=$2`, a.Job.OrgID, a.Job.ID, a.Reserved, tokens); err != nil {
