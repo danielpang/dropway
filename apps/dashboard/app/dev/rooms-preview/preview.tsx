@@ -57,7 +57,7 @@ const initialRooms: ProjectRoom[] = [
     OrgID: "demo-org",
     Name: "Studio launch",
     OwnerUserID: "demo-owner",
-    Role: "editor",
+    Role: "owner",
     CreatedAt: "",
     UpdatedAt: "",
     Unread: 2,
@@ -67,7 +67,7 @@ const initialRooms: ProjectRoom[] = [
     OrgID: "demo-org",
     Name: "Brand refresh",
     OwnerUserID: "demo-owner",
-    Role: "editor",
+    Role: "owner",
     CreatedAt: "",
     UpdatedAt: "",
     Unread: 0,
@@ -246,7 +246,7 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
     [attachments, roomId],
   );
   return (
-    <RoomWorkspace
+    <RoomWorkspace demo
       detailsRoomId={roomId}
       rooms={rooms}
       sites={sites}

@@ -98,6 +98,7 @@ export function RoomWorkspace({
   notice,
   orgEnabled,
   executionConfigured = false,
+  demo = false,
   onEnableRooms,
   onCreateRoom,
   snapshotLoader = loadStaticSnapshotAction,
@@ -146,6 +147,7 @@ export function RoomWorkspace({
   parentOrigin: string;
   notice: string | null;
   orgEnabled: boolean;
+  demo?: boolean;
   executionConfigured?: boolean;
   onEnableRooms: () => void;
   onCreateRoom: (
@@ -240,10 +242,13 @@ export function RoomWorkspace({
   const [creating, setCreating] = React.useState(false);
   const [selectedSiteIds, setSelectedSiteIds] = React.useState<string[]>([]);
   const [showCreate, setShowCreate] = React.useState(rooms.length === 0);
-  const [settingsSection, setSettingsSection] = React.useState<"general" | "people" | "ai">("general");
+  const [onboarding, setOnboarding] = React.useState(false);
+  const [settingsSection, setSettingsSection] = React.useState<
+    "general" | "people" | "ai"
+  >(demo ? "ai" : "general");
   const [panel, setPanel] = React.useState<
     "review" | "changes" | "activity" | "settings"
-  >("review");
+  >(demo ? "settings" : "review");
   const [toast, setToast] = React.useState(notice);
   React.useEffect(() => {
     setToast(notice);
@@ -435,16 +440,6 @@ export function RoomWorkspace({
       : snapshot?.versionId === versionId && snapshot.siteId === siteId
         ? snapshot.contentHash
         : null;
-  const compatibleRunThreads = threads.filter(
-    (item) =>
-      item.RoomID === roomId &&
-      item.SiteID === siteId &&
-      item.VersionID === versionId &&
-      item.ContentHash === sourceContentHash,
-  );
-  const historicalThreadCount =
-    threads.filter((item) => item.RoomID === roomId && item.SiteID === siteId)
-      .length - compatibleRunThreads.length;
   const visibleThreads = threads.filter(
     (t) =>
       t.RoomID === roomId &&
@@ -647,40 +642,42 @@ export function RoomWorkspace({
       ) : null}
     </section>
   );
-  const attachedResourcesPanel = (<>
-        <div className="border-t border-border pt-6">
-          <h3 className="text-sm font-semibold">Sites & images</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Removing an item from this project does not delete it.
-          </p>
-        </div>
-        <ul className="divide-y divide-border/60 text-sm text-foreground">
-          {attachedSites.map((item) => (
-            <li key={item.siteId} className="flex items-center gap-3 py-3">
-              <a
-                className="min-w-0 flex-1 truncate underline underline-offset-4"
-                href={`/sites/${item.siteId}`}
+  const attachedResourcesPanel = (
+    <>
+      <div className="border-t border-border pt-6">
+        <h3 className="text-sm font-semibold">Sites & images</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Removing an item from this project does not delete it.
+        </p>
+      </div>
+      <ul className="divide-y divide-border/60 text-sm text-foreground">
+        {attachedSites.map((item) => (
+          <li key={item.siteId} className="flex items-center gap-3 py-3">
+            <a
+              className="min-w-0 flex-1 truncate underline underline-offset-4"
+              href={`/sites/${item.siteId}`}
+            >
+              {sites.find((site) => site.id === item.siteId)?.label ??
+                sites.find((site) => site.id === item.siteId)?.slug ??
+                item.siteId}
+            </a>
+            <Tooltip label="Remove from project" align="end">
+              <Button
+                aria-label="Detach site"
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={role !== "owner" || !room}
+                onClick={() => room && onDetachSite(room.ID, item.siteId)}
               >
-                {sites.find((site) => site.id === item.siteId)?.label ??
-                  sites.find((site) => site.id === item.siteId)?.slug ??
-                  item.siteId}
-              </a>
-              <Tooltip label="Remove from project" align="end">
-                <Button
-                  aria-label="Detach site"
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={role !== "owner" || !room}
-                  onClick={() => room && onDetachSite(room.ID, item.siteId)}
-                >
-                  <Unlink className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </Tooltip>
-            </li>
-          ))}
-        </ul>
-  </>);
+                <Unlink className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </Tooltip>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
   const settingsPanel = (
     <>
       <section className="space-y-6" aria-label="Project settings">
@@ -870,6 +867,7 @@ export function RoomWorkspace({
         {hasDropwayMention(body) ? (
           <div className="order-last col-span-2">
             <MentionExecutionControls
+              roomId={roomId}
               key={`${room?.ID}:${siteId}:${versionId}:${page}`}
               body={body}
               allowed={
@@ -921,22 +919,25 @@ export function RoomWorkspace({
           {siteComments.map((item) => (
             <li
               key={item.id}
-              className="space-y-1 rounded-md border border-border p-3 text-sm"
+              className="min-w-0 space-y-1 rounded-md border border-border p-3 text-sm [overflow-wrap:anywhere]"
             >
               <p className="text-xs text-muted-foreground">
                 {item.source}
                 {item.anchorKind ? ` · ${item.anchorKind}` : ""}
                 {item.page ? ` · ${item.page}` : ""}
                 {item.status ? ` · ${item.status}` : ""}
-                {item.versionId ? ` · version ${item.versionId}` : ""}
-                {item.contentHash ? ` · hash ${item.contentHash}` : ""}
-                {` · ${item.createdAt}`}
+                {item.versionId
+                  ? item.versionId === site?.currentVersionId
+                    ? " · Current revision"
+                    : " · Earlier revision"
+                  : ""}
+                {` · ${new Date(item.createdAt).toLocaleDateString()}`}
               </p>
               {item.body ? (
                 <ReplyText body={untrustedText(item.body)} />
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  This comment page item did not include a body.
+                  Open this thread in the comments panel to read the discussion.
                 </p>
               )}
             </li>
@@ -960,22 +961,26 @@ export function RoomWorkspace({
       key={thread.ID}
       className={`space-y-2 text-sm ${inline ? "px-1 pb-1" : `rounded-lg border p-2.5 ${activeThreadId === thread.ID ? "border-amber-400 bg-amber-500/5" : "border-border"}`}`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <button
-          type="button"
-          className="text-left font-medium text-foreground hover:underline"
-          onClick={() => {
-            setLinkedThreadId(thread.ID);
-            setActiveThreadId(thread.ID);
-          }}
-        >
-          {thread.AnchorKind === "page"
-            ? "Page comment"
-            : thread.AnchorKind === "point"
-              ? "Image pin"
-              : thread.AnchorKind}{" "}
-          on {thread.Page}
-        </button>{" "}
+      <div
+        className={`flex items-start gap-2 ${inline ? "justify-end" : "justify-between"}`}
+      >
+        {!inline ? (
+          <button
+            type="button"
+            className="text-left font-medium text-foreground hover:underline"
+            onClick={() => {
+              setLinkedThreadId(thread.ID);
+              setActiveThreadId(thread.ID);
+            }}
+          >
+            {thread.AnchorKind === "page"
+              ? "Page comment"
+              : thread.AnchorKind === "point"
+                ? "Image pin"
+                : thread.AnchorKind}{" "}
+            on {thread.Page}
+          </button>
+        ) : null}
         <Tooltip label="Resolve comment" align="end">
           <Button
             type="button"
@@ -1066,6 +1071,7 @@ export function RoomWorkspace({
           {hasDropwayMention(replyByThread[thread.ID] ?? "") ? (
             <div className="order-last col-span-2">
               <MentionExecutionControls
+                roomId={roomId}
                 body={replyByThread[thread.ID] ?? ""}
                 allowed={
                   !!executionConfigured &&
@@ -1344,43 +1350,6 @@ export function RoomWorkspace({
       </section>
     </>
   );
-  const executionPanel = (
-    <>
-      {room && executionConfigured ? (
-        <HostedExecution
-          key={`${room.ID}:${siteId}:${versionId}`}
-          roomId={room.ID}
-          siteId={siteId}
-          versionId={versionId}
-          onManageConnections={() => { setSettingsSection("ai"); setPanel("settings"); }}
-          canRun={decideOk && versionId === site?.currentVersionId}
-          threads={compatibleRunThreads.map((item) => ({
-            id: item.ID,
-            page: item.Page,
-          }))}
-          historicalThreadCount={historicalThreadCount}
-          onCandidateReady={() => onRefreshRoom?.(room.ID)}
-        />
-      ) : (
-        <section className="space-y-3" aria-label="Execution">
-          <div className="flex items-center gap-2">
-            <GitPullRequest
-              className="h-4 w-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <h2 className="text-sm font-semibold text-foreground">
-              AI revisions
-            </h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            AI revisions are not configured for this workspace yet. You can
-            still review sites and leave comments.
-          </p>
-          <Button type="button" variant="outline" onClick={() => { setSettingsSection("ai"); setPanel("settings"); }}>Set up AI connection</Button>
-        </section>
-      )}
-    </>
-  );
   return (
     <div
       className={
@@ -1482,7 +1451,9 @@ export function RoomWorkspace({
                     setName("");
                     setSelectedSiteIds([]);
                     setShowCreate(false);
-                    setPanel("review");
+                    setOnboarding(true);
+                    setSettingsSection("ai");
+                    setPanel("settings");
                   }
                 } finally {
                   setCreating(false);
@@ -1787,12 +1758,16 @@ export function RoomWorkspace({
                         </option>
                       ))}
                     </select>
-                    <Input
-                      aria-label="Page path"
-                      className="h-8 w-32 text-xs"
-                      value={page}
-                      onChange={(e) => setPage(e.target.value)}
-                    />
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      Page
+                      <Input
+                        aria-label="Page path"
+                        className="h-8 w-32 text-xs"
+                        value={page}
+                        onChange={(e) => setPage(e.target.value)}
+                      />
+                      {page === "/" ? <span>Home page</span> : null}
+                    </label>
                     <span className="hidden text-xs text-muted-foreground lg:inline">
                       {versionId === site.currentVersionId
                         ? "Safe review preview"
@@ -2020,13 +1995,8 @@ export function RoomWorkspace({
           ) : null}
           {detailsRoomId === roomId && panel === "changes" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto grid w-full max-w-7xl items-start gap-8 p-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
+              <div className="mx-auto w-full max-w-5xl p-6 lg:p-8">
                 <div className="min-w-0">{changesPanel}</div>
-                {site ? (
-                  <aside className="min-w-0 rounded-xl border border-border bg-muted/10 p-5">
-                    {executionPanel}
-                  </aside>
-                ) : null}
               </div>
             </div>
           ) : null}
@@ -2034,6 +2004,24 @@ export function RoomWorkspace({
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto max-w-4xl p-6 lg:p-8">
                 {activityPanel}
+                {executionConfigured && room ? (
+                  <div className="mt-8 border-t border-border pt-6">
+                    <HostedExecution
+                      key={room.ID}
+                      roomId={room.ID}
+                      siteId={siteId}
+                      versionId={versionId}
+                      canRun={decideOk && versionId === site?.currentVersionId}
+                      threads={[]}
+                      tasksOnly
+                      onManageConnections={() => {
+                        setSettingsSection("ai");
+                        setPanel("settings");
+                      }}
+                      onCandidateReady={() => onRefreshRoom?.(room.ID)}
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -2045,23 +2033,72 @@ export function RoomWorkspace({
                     Settings & sharing
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Manage project resources, sharing, and reusable AI connections.
+                    Manage project resources, sharing, and reusable AI
+                    connections.
                   </p>
                 </header>
                 <div className="grid items-start gap-8 md:grid-cols-[200px_minmax(0,1fr)]">
-                  <nav aria-label="Project settings sections" className="flex gap-1 md:flex-col">
-                    {(["general", "people", "ai"] as const).map((section) => <button key={section} type="button"
-                      aria-current={settingsSection === section ? "page" : undefined}
-                      onClick={() => setSettingsSection(section)}
-                      className={`rounded-lg px-3 py-2.5 text-left text-sm ${settingsSection === section ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-secondary/50"}`}>
-                      {{ general: "Sites & images", people: "People & sharing", ai: "AI connections" }[section]}
-                    </button>)}
+                  <nav
+                    aria-label="Project settings sections"
+                    className="flex gap-1 md:flex-col"
+                  >
+                    {(["general", "people", "ai"] as const).map((section) => (
+                      <button
+                        key={section}
+                        type="button"
+                        aria-current={
+                          settingsSection === section ? "page" : undefined
+                        }
+                        onClick={() => setSettingsSection(section)}
+                        className={`rounded-lg px-3 py-2.5 text-left text-sm ${settingsSection === section ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-secondary/50"}`}
+                      >
+                        {
+                          {
+                            general: "Sites & images",
+                            people: "People & sharing",
+                            ai: "AI connections",
+                          }[section]
+                        }
+                      </button>
+                    ))}
                   </nav>
                   <div className="min-w-0 max-w-3xl space-y-5">
-                    <h3 className="text-lg font-semibold">{{ general: "Sites & images", people: "People & sharing", ai: "AI connections" }[settingsSection]}</h3>
-                    {settingsSection === "general" ? <>{attachedResourcesPanel}{addSitePanel}</> : null}
-                    {settingsSection === "people" ? <>{settingsPanel}{role === "owner" ? <ProjectSharing key={room.ID} roomId={room.ID} /> : null}</> : null}
-                    {settingsSection === "ai" ? <AIConnections key={room.OrgID} /> : null}
+                    <h3 className="text-lg font-semibold">
+                      {
+                        {
+                          general: "Sites & images",
+                          people: "People & sharing",
+                          ai: "AI connections",
+                        }[settingsSection]
+                      }
+                    </h3>
+                    {settingsSection === "general" ? (
+                      <>
+                        {attachedResourcesPanel}
+                        {addSitePanel}
+                      </>
+                    ) : null}
+                    {settingsSection === "people" ? (
+                      <>
+                        {settingsPanel}
+                        {role === "owner" ? (
+                          <ProjectSharing key={room.ID} roomId={room.ID} />
+                        ) : null}
+                      </>
+                    ) : null}
+                    {settingsSection === "ai" ? (
+                      <AIConnections
+                        key={room.ID}
+                        roomId={room.ID}
+                        canManageProject={role === "owner"}
+                        onboarding={onboarding}
+                        onDone={() => {
+                          setOnboarding(false);
+                          setPanel("review");
+                        }}
+                        demo={demo}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>

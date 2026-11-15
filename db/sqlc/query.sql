@@ -1820,6 +1820,13 @@ WHERE t.org_id = sqlc.arg(org_id)
   AND t.room_id = sqlc.arg(room_id)
   AND (t.created_at, t.id::text) > (sqlc.arg(cursor_at)::timestamptz, sqlc.arg(cursor_id)::text)
   AND t.created_at <= sqlc.arg(watermark)::timestamptz
+  AND (NULLIF(sqlc.arg(filter_version)::text, '')::uuid IS NULL OR t.version_id = NULLIF(sqlc.arg(filter_version)::text, '')::uuid)
+  AND (NULLIF(sqlc.arg(filter_after)::text, '')::timestamptz IS NULL OR t.created_at >= NULLIF(sqlc.arg(filter_after)::text, '')::timestamptz)
+  AND (NULLIF(sqlc.arg(filter_before)::text, '')::timestamptz IS NULL OR t.created_at < NULLIF(sqlc.arg(filter_before)::text, '')::timestamptz)
+  AND (sqlc.arg(filter_type)::text = ''
+    OR (sqlc.arg(filter_type)::text = 'image' AND t.anchor_kind = 'point' AND jsonb_typeof(t.anchor->'image') = 'object')
+    OR (sqlc.arg(filter_type)::text = 'point' AND t.anchor_kind = 'point' AND NOT (t.anchor ? 'image'))
+    OR (sqlc.arg(filter_type)::text IN ('text','component','page') AND t.anchor_kind = sqlc.arg(filter_type)::text))
 ORDER BY t.created_at ASC, t.id::text ASC
 LIMIT sqlc.arg(lim);
 

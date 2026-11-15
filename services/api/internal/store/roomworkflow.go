@@ -15,8 +15,15 @@ import (
 
 // PageRoomThreads lists threads this member can still read, including resolved
 // and orphaned rows. A site removed from the room drops out on the next page.
-func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor string, limit int) (ThreadPage, error) {
-	page, err := s.beginReviewPage(t, "room-threads", roomID, cursor, false)
+func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor string, limit int, filters ...projectroom.ThreadFilters) (ThreadPage, error) {
+	var filter projectroom.ThreadFilters
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+	if err := filter.Validate(); err != nil {
+		return ThreadPage{}, err
+	}
+	page, err := s.beginReviewPage(t, "room-threads", filter.Binding(roomID), cursor, false)
 	at, id := page.At, page.ID
 	if err != nil {
 		return ThreadPage{}, err
@@ -33,6 +40,7 @@ func (s *Store) PageRoomThreads(ctx context.Context, t Tenant, roomID, cursor st
 		}
 		rows, err := q.PageRoomThreads(ctx, db.PageRoomThreadsParams{
 			UserID: t.UserID, OrgID: t.OrgID, RoomID: roomID,
+			FilterVersion: filter.VersionID, FilterAfter: filter.CreatedAfter, FilterBefore: filter.CreatedBefore, FilterType: filter.Type,
 			CursorAt: at, CursorID: id, Lim: int32(limit + 1), Watermark: page.Watermark,
 		})
 		if err != nil {

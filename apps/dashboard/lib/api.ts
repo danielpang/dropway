@@ -1622,6 +1622,8 @@ export const api = {
     return apiFetch(`/v1/sites/${encodeURIComponent(siteId)}/comment-pages?${pageQuery(cursor)}`);
   },
 
+  async getAIPreferences(roomId?: string): Promise<import("@/lib/project-room/hosted").AIPreferences> { return apiFetch(roomId ? `/v1/project-rooms/${encodeURIComponent(roomId)}/ai-settings` : "/v1/provider-credentials/preferences"); },
+  async saveAIPreferences(input: import("@/lib/project-room/hosted").AIPreferences, roomId?: string): Promise<import("@/lib/project-room/hosted").AIPreferences> { return apiFetch(roomId ? `/v1/project-rooms/${encodeURIComponent(roomId)}/ai-settings` : "/v1/provider-credentials/preferences", {method: "PUT", body: JSON.stringify(input)}); },
   async listProviderCredentials(): Promise<unknown> { return apiFetch("/v1/provider-credentials"); },
   async saveProviderCredential(input: { provider: string; label: string; api_key: string; scope?: "personal" | "team" }, id?: string): Promise<unknown> {
     return apiFetch(id ? `/v1/provider-credentials/${encodeURIComponent(id)}` : "/v1/provider-credentials", { method: id ? "PUT" : "POST", body: JSON.stringify(input) });

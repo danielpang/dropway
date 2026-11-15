@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/httpx"
+	"github.com/danielpang/dropway/services/api/internal/projectroom"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -92,7 +93,12 @@ func (a *API) ListRoomThreads(w http.ResponseWriter, r *http.Request) {
 	if !ok || !a.requireRooms(w) {
 		return
 	}
-	page, err := a.Rooms.PageRoomThreads(r.Context(), t, chi.URLParam(r, "roomID"), r.URL.Query().Get("cursor"), queryLimit(r))
+	filter := projectroom.ThreadFilters{VersionID: r.URL.Query().Get("version_id"), CreatedAfter: r.URL.Query().Get("created_after"), CreatedBefore: r.URL.Query().Get("created_before"), Type: r.URL.Query().Get("type")}
+	if err := filter.Validate(); err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.ErrorBody{Error: "invalid_filter", Message: err.Error()})
+		return
+	}
+	page, err := a.Rooms.PageRoomThreads(r.Context(), t, chi.URLParam(r, "roomID"), r.URL.Query().Get("cursor"), queryLimit(r), filter)
 	if err != nil {
 		writeStoreError(w, err)
 		return

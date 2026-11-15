@@ -1363,6 +1363,10 @@ paths:
         - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: version_id, in: query, schema: { type: string, format: uuid } }
+        - { name: created_after, in: query, description: Inclusive thread creation time, schema: { type: string, format: date-time } }
+        - { name: created_before, in: query, description: Exclusive thread creation time, schema: { type: string, format: date-time } }
+        - { name: type, in: query, schema: { type: string, enum: [text, component, image, point, page] } }
       responses:
         "200": { description: Thread page }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3055,6 +3059,61 @@ paths:
         "503":
           description: Organization membership store is unavailable
 
+  /v1/provider-credentials/preferences:
+    get:
+      operationId: getPersonalAISettings
+      summary: Read personal AI workflow and default connection
+      responses:
+        "200":
+          description: AI preferences (metadata only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIPreferences" }
+    put:
+      operationId: putPersonalAISettings
+      summary: Save personal AI workflow and default connection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIPreferences" }
+      responses:
+        "200":
+          description: AI preferences (metadata only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIPreferences" }
+
+  /v1/project-rooms/{roomID}/ai-settings:
+    parameters:
+      - name: roomID
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getProjectAISettings
+      summary: Read owner-managed project model override
+      responses:
+        "200":
+          description: AI preferences (metadata only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIPreferences" }
+    put:
+      operationId: putProjectAISettings
+      summary: Save owner-managed project model override
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AIPreferences" }
+      responses:
+        "200":
+          description: AI preferences (metadata only)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIPreferences" }
+
   /v1/provider-credentials:
     "get":
       "operationId": "listProviderCredentials"
@@ -3545,6 +3604,14 @@ components:
       description: app.chat_logs.id
 
   schemas:
+    AIPreferences:
+      type: object
+      required: [mode, credential_ref, provider, model]
+      properties:
+        mode: { type: string, enum: [local, api] }
+        credential_ref: { type: string }
+        provider: { type: string }
+        model: { type: string }
     ProjectGuestShare: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"email":{"type":"string","format":"email"},"role":{"type":"string","enum":["viewer","reviewer"]},"expires_at":{"type":"string","format":"date-time"},"accepted_at":{"type":["string","null"],"format":"date-time"},"revoked_at":{"type":["string","null"],"format":"date-time"}},"required":["id","email","role","expires_at"]}
     SharedProject: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"name":{"type":"string"},"role":{"type":"string","enum":["viewer","reviewer"]},"sites":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"slug":{"type":"string"},"title":{"type":"string"},"current_version_id":{"type":["string","null"],"format":"uuid"},"current_content_hash":{"type":"string"}}}}},"required":["id","name","role","sites"]}
     SharedProjectReply: {"type":"object","properties":{"id":{"type":"string","format":"uuid"},"author_id":{"type":"string","format":"uuid"},"body":{"type":"string"},"created_at":{"type":"string","format":"date-time"}},"required":["id","author_id","body","created_at"]}
