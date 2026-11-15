@@ -1896,6 +1896,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/provider-credentials/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read personal AI workflow and default connection */
+        get: operations["getPersonalAISettings"];
+        /** Save personal AI workflow and default connection */
+        put: operations["putPersonalAISettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/project-rooms/{roomID}/ai-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        /** Read owner-managed project model override */
+        get: operations["getProjectAISettings"];
+        /** Save owner-managed project model override */
+        put: operations["putProjectAISettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/provider-credentials": {
         parameters: {
             query?: never;
@@ -2093,6 +2131,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AIPreferences: {
+            /** @enum {string} */
+            mode: "local" | "api";
+            credential_ref: string;
+            provider: string;
+            model: string;
+        };
         ProjectGuestShare: {
             /** Format: uuid */
             id: string;
@@ -4683,6 +4728,12 @@ export interface operations {
             query?: {
                 cursor?: string;
                 limit?: number;
+                version_id?: string;
+                /** @description Inclusive thread creation time */
+                created_after?: string;
+                /** @description Exclusive thread creation time */
+                created_before?: string;
+                type?: "text" | "component" | "image" | "point" | "page";
             };
             header?: never;
             path: {
@@ -6715,6 +6766,98 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    getPersonalAISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI preferences (metadata only) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIPreferences"];
+                };
+            };
+        };
+    };
+    putPersonalAISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIPreferences"];
+            };
+        };
+        responses: {
+            /** @description AI preferences (metadata only) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIPreferences"];
+                };
+            };
+        };
+    };
+    getProjectAISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description AI preferences (metadata only) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIPreferences"];
+                };
+            };
+        };
+    };
+    putProjectAISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIPreferences"];
+            };
+        };
+        responses: {
+            /** @description AI preferences (metadata only) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIPreferences"];
+                };
             };
         };
     };

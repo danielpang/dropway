@@ -1,5 +1,6 @@
 "use server";
 
+import { loadActiveOrg } from "@/lib/org";
 import { createHash } from "node:crypto";
 import { prepareStaticSnapshot, verifiedRasterDataURL } from "@/lib/collab/static-renderer";
 import { snapshotPagePath } from "@/lib/collab/static-snapshot";
@@ -122,16 +123,23 @@ export async function signoffAction(roomId: string, siteId: string, versionId: s
 export async function loadRoomAction(roomId: string) {
   if (!(await collaborationEnabled())) return closed();
   try {
-    const [detailBody, threadBody, candidateBody] = await Promise.all([
+    const [detailBody, threadBody, candidateBody, org] = await Promise.all([
       api.getProjectRoom(roomId),
       api.listRoomThreads(roomId),
       api.listRoomCandidates(roomId),
+      loadActiveOrg().catch(() => null),
     ]);
     const detail = parseRoomDetail(detailBody);
     const threads = parseThreadPage(threadBody);
     const candidates = parseCandidatePage(candidateBody);
     if (!detail || !threads || !candidates) {
       return { ok: false as const, message: "The room read was not usable." };
+    }
+    // Resolve names only for the authorized room's members, never expand the
+    // picker to everyone in the organization. Identity lookup is best-effort.
+    if (org?.organizationId === detail.room.OrgID) {
+      const names = new Map(org.members.map((member) => [member.userId, member.name ?? member.email ?? member.userId]));
+      detail.members = detail.members.map((member) => ({ ...member, name: names.get(member.userId) }));
     }
     const withReplies = await hydrateThreads(threads.threads);
     const identified = await hydrateCandidates(roomId, candidates.candidates);

@@ -254,6 +254,7 @@ export function AccountMenu({
             </div>
           </div>
 
+          {collaborationEnabled ? <><Separator /><Link href="/settings/ai" role="menuitem" tabIndex={-1} className={itemClass} onClick={() => setOpen(false)}><Settings className="size-4" aria-hidden />Personal AI settings</Link></> : null}
           {/* Primary sections, only where the inline header nav is hidden. */}
           <div role="group" aria-label="Workspace" className="md:hidden">
             <Separator />

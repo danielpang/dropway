@@ -50,3 +50,10 @@ export function hostedFailureMessage(code: string | null): string {
   if (code === "lease_expired") return "The worker stopped responding before its lease expired. Start a new task after worker health is restored.";
   return "The hosted attempt stopped without applying a change. Check the provider connection and worker status before starting a new task.";
 }
+
+export interface AIPreferences { mode: "local" | "api"; credential_ref: string; provider: string; model: string }
+export const EMPTY_AI_PREFERENCES: AIPreferences = { mode: "local", credential_ref: "", provider: "", model: "" };
+export function preferredModel(credential: ProviderCredential, personal: AIPreferences, project?: AIPreferences): string {
+  const model = project?.provider === credential.provider && project.model ? project.model : personal.provider === credential.provider ? personal.model : "";
+  return hostedModels(credential.provider).includes(model) ? model : hostedModels(credential.provider)[0]!;
+}
