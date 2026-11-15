@@ -174,7 +174,7 @@ function Header({ host }: { host: string }) {
       <span className="mx-auto grid size-11 place-items-center rounded-xl bg-secondary text-secondary-foreground">
         <Lock className="size-5" aria-hidden />
       </span>
-      <h1 className="text-xl font-semibold tracking-tight">
+      <h1 className="text-xl font-medium">
         This site is password-protected
       </h1>
       <p className="text-sm text-muted-foreground">
@@ -196,7 +196,7 @@ function Outcome({
   description: string;
 }) {
   return (
-    <Card className="shadow-md">
+    <Card>
       <CardHeader className="space-y-1.5 text-center">
         <span className="mx-auto grid size-11 place-items-center rounded-xl bg-secondary text-secondary-foreground">
           <Icon className="size-5" aria-hidden />

@@ -26,8 +26,8 @@ export function Progress({
       )}
     >
       <div
-        className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-        style={{ width: `${pct}%` }}
+        className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-300 ease-out"
+        style={{ transform: `scaleX(${pct / 100})` }}
       />
     </div>
   );

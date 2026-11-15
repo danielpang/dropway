@@ -62,7 +62,7 @@ function Th({
     <th
       scope="col"
       className={cn(
-        "px-3 py-2.5 text-xs font-medium uppercase tracking-wide text-muted-foreground",
+        "px-3 py-3 text-xs font-medium text-muted-foreground",
         className,
       )}
     >
@@ -81,14 +81,14 @@ function AuditRow({ event }: { event: AuditEvent }) {
   return (
     <tr
       className={cn(
-        "border-b border-border/70 align-top last:border-b-0",
+        "border-b border-border/70 align-top transition-colors last:border-b-0",
         security ? "bg-amber-500/[0.06]" : "hover:bg-muted/30",
       )}
     >
-      <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
+      <td className="px-3 py-3 tabular-nums text-muted-foreground">
         <Timestamp iso={event.created_at} />
       </td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-3">
         <span className="block max-w-[12rem] truncate font-medium text-foreground" title={actor ?? undefined}>
           {actor ?? <span className="text-muted-foreground">system</span>}
         </span>
@@ -96,7 +96,7 @@ function AuditRow({ event }: { event: AuditEvent }) {
           <span className="text-xs text-muted-foreground">via token</span>
         )}
       </td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-3">
         <span className="inline-flex items-center gap-1.5">
           {security && (
             <ShieldAlert
@@ -122,12 +122,12 @@ function AuditRow({ event }: { event: AuditEvent }) {
           <MetadataDetails metadata={event.metadata} />
         )}
       </td>
-      <td className="px-3 py-2.5">
+      <td className="px-3 py-3">
         <span className="block max-w-[16rem] truncate text-foreground" title={event.target ?? undefined}>
           {event.target ?? <span className="text-muted-foreground">None</span>}
         </span>
       </td>
-      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+      <td className="px-3 py-3 font-mono text-xs text-muted-foreground">
         {event.ip ?? "None"}
       </td>
     </tr>

@@ -92,7 +92,7 @@ export default async function SkillDetailPage(props: {
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{skill.title || skill.slug}</h1>
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">{skill.title || skill.slug}</h1>
           <div className="flex flex-wrap items-center gap-2">
             <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
               {skill.slug}

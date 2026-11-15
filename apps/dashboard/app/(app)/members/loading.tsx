@@ -12,7 +12,7 @@ export default function MembersLoading() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Members</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Members</h1>
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
 

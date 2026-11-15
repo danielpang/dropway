@@ -26,7 +26,7 @@ export default function NotFound() {
           <p className="font-mono text-sm font-medium text-muted-foreground">
             404
           </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">
             This page slipped through
           </h1>
           <p className="text-sm text-muted-foreground">

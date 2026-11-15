@@ -583,7 +583,7 @@ export function RoomWorkspace({
     <section className="space-y-6" aria-label="Room activity">
       <header className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-xl font-medium">
             Project activity
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -1291,7 +1291,7 @@ export function RoomWorkspace({
     <>
       <section className="space-y-3" aria-label="Proposed changes">
         <header className="flex items-center gap-3">
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-xl font-medium">
             Proposed changes
           </h2>
           <span className="rounded-md bg-muted px-2 py-1 text-xs tabular-nums text-muted-foreground">
@@ -1416,10 +1416,10 @@ export function RoomWorkspace({
       {!room || showCreate ? (
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="mb-1 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            <p className="mb-1 text-xs font-medium text-muted-foreground">
               Project workspace
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight">Rooms</h1>
+            <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Rooms</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Bring sites and images together. Review feedback and approve
               changes in one place.
@@ -2084,7 +2084,7 @@ export function RoomWorkspace({
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto max-w-6xl space-y-7 p-6 lg:p-8">
                 <header>
-                  <h2 className="text-xl font-semibold tracking-tight">
+                  <h2 className="text-xl font-medium">
                     Settings & sharing
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">

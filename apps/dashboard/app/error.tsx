@@ -47,7 +47,7 @@ export default function GlobalRouteError({
           <BurstPipe />
         </div>
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">
             Something went wrong
           </h1>
           <p className="text-sm text-muted-foreground">

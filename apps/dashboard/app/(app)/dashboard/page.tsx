@@ -93,7 +93,7 @@ export default async function DashboardPage({
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Sites</h1>
           {/* Kept verbatim in loading.tsx so the heading block doesn't shift. */}
           <p className="text-muted-foreground">
             Every site in your org. Deploy a folder, get a live,
@@ -204,7 +204,7 @@ function SiteRow({ site, owner }: { site: Site; owner: string | null }) {
   return (
     <Link
       href={`/sites/${site.id}`}
-      className="group block rounded-lg border border-border bg-card p-5 shadow-sm transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="group block rounded-lg border border-border bg-card p-6 transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">

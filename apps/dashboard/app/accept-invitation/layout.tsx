@@ -12,7 +12,7 @@ export default function AcceptInvitationLayout({
       <header className="flex items-center justify-between px-6 py-5">
         <Link
           href="/"
-          className="flex items-center gap-2 text-sm font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-md"
+          className="flex items-center gap-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-md"
         >
           <BrandMark />
           Dropway

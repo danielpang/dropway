@@ -71,10 +71,10 @@ export function MainNav({ hasSharedProjects = false, collaborationEnabled = fals
             href={link.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              "inline-flex h-9 items-center rounded-md px-3 text-sm font-medium transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               active
-                ? "bg-secondary text-secondary-foreground"
+                ? "bg-secondary text-secondary-foreground ring-1 ring-inset ring-border"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >

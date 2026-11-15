@@ -40,7 +40,7 @@
     --input: 240 6% 90%;
     --ring: 240 6% 10%;
 
-    --radius: 0.625rem;
+    --radius: 0.75rem;
   }
 
   .dark {
@@ -80,6 +80,10 @@
     @apply border-border;
   }
 
+  .lucide {
+    stroke-width: 1.5;
+  }
+
   /*
    * Mobile guarantee: never scroll the page horizontally. `clip` (not `hidden`)
    * stops a stray wide child from forcing a horizontal scrollbar WITHOUT making
@@ -97,6 +101,7 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+    font-variant-numeric: tabular-nums;
     overflow-x: clip;
     max-width: 100%;
   }
@@ -129,25 +134,46 @@
   }
 }
 
-/*
- * Subtle, theme-aware background for first-impression surfaces (auth screens):
- * a faint dot grid plus a soft radial wash. Adapts per theme via the tokens.
- */
+/* Calm first-impression surfaces; the form is the focal point. */
 @layer components {
   .auth-backdrop {
-    background-color: hsl(var(--background));
-    background-image:
-      radial-gradient(
-        60rem 60rem at 50% -20%,
-        hsl(var(--muted) / 0.6),
-        transparent 60%
-      ),
-      radial-gradient(
-        hsl(var(--border) / 0.7) 1px,
-        transparent 1px
-      );
-    background-size: 100% 100%, 22px 22px;
-    background-position: center, center;
+    background-color: hsl(var(--muted) / 0.35);
+  }
+
+  /* A shared reading rhythm for organization and site configuration.
+   * Alerts without a header retain their own card treatment. */
+  .settings-page > [data-slot="card"]:has(> [data-slot="card-header"]) {
+    border-width: 1px 0 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding-top: 24px;
+  }
+
+  .settings-page > [data-slot="card"] > [data-slot="card-header"] {
+    padding: 0 0 16px;
+  }
+
+  .settings-page > [data-slot="card"]:has(> [data-slot="card-header"]) > [data-slot="card-content"] {
+    min-width: 0;
+    padding: 0;
+  }
+
+  .settings-page [data-slot="card-description"] {
+    max-width: 48ch;
+  }
+
+  @media (min-width: 1024px) {
+    .settings-page > [data-slot="card"]:has(> [data-slot="card-header"]) {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+      gap: 40px;
+      padding-top: 32px;
+    }
+
+    .settings-page > [data-slot="card"] > [data-slot="card-header"] {
+      padding: 0;
+    }
   }
 }
 

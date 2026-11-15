@@ -10,9 +10,9 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
  */
 export default function SettingsLoading() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="settings-page mx-auto max-w-5xl space-y-8">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">
           Organization settings
         </h1>
         <Skeleton className="h-4 w-64 max-w-full" />

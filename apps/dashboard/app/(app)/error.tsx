@@ -43,7 +43,7 @@ export default function AppError({
       <Card className="flex flex-col items-center gap-5 border-dashed p-10 text-center">
         <BurstPipe className="max-w-[240px]" />
         <div className="space-y-2">
-          <h2 className="text-lg font-semibold tracking-tight">
+          <h2 className="text-lg font-medium">
             Couldn&rsquo;t load this page
           </h2>
           <p className="text-sm text-muted-foreground">

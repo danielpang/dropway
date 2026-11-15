@@ -177,7 +177,7 @@ function PlanCard({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-base font-semibold tracking-tight">
+        <h3 className="text-base font-medium">
           {TIER_LABEL[tier]}
         </h3>
         {isCurrent && (
@@ -189,7 +189,7 @@ function PlanCard({
         {isPopular && <Badge variant="secondary">Most popular</Badge>}
       </div>
 
-      <p className="mt-3 text-2xl font-semibold tracking-tight">
+      <p className="mt-3 text-2xl font-medium tracking-tight sm:text-3xl">
         {priceOf(tier)}
       </p>
       <p className="mt-1 text-sm text-muted-foreground">{POSITIONING[tier]}</p>

@@ -19,7 +19,7 @@ export function DocHero({
 }) {
   return (
     <div className="space-y-3">
-      <p className="font-mono text-xs font-semibold uppercase tracking-wider text-primary">
+      <p className="font-mono text-xs font-medium text-primary">
         {eyebrow}
       </p>
       <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -48,13 +48,13 @@ export function Section({
 }) {
   return (
     <section id={id} className={cn("scroll-mt-20", className)}>
-      <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">
+      <h2 className="text-xl font-medium sm:text-2xl">
         {title}
       </h2>
       {lead ? (
         <p className="mt-2.5 leading-relaxed text-muted-foreground">{lead}</p>
       ) : null}
-      <div className="mt-5 space-y-4 text-[0.95rem] leading-relaxed text-muted-foreground">
+      <div className="mt-5 space-y-4 text-base leading-relaxed text-muted-foreground">
         {children}
       </div>
     </section>

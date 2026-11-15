@@ -17,7 +17,7 @@ const variantClasses: Record<Variant, string> = {
   // A subtle live/ready indicator that reads in both themes (token-driven, no
   // raw colors beyond the green dot the caller supplies).
   success:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    "border-transparent bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   // Dead / failed state (an expired invitation, for one), same token pair the
   // destructive alerts use so it reads in both themes.
   destructive: "border-destructive/30 bg-destructive/10 text-destructive",
@@ -28,12 +28,12 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: Variant;
 }
 
-/** Small token-driven status pill (access mode, version status, "live"). */
+/** Small token-driven status label (access mode, version status, "live"). */
 export function Badge({ className, variant = "secondary", ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-xs font-medium",
         variantClasses[variant],
         className,
       )}

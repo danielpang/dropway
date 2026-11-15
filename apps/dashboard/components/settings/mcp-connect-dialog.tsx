@@ -59,7 +59,7 @@ export function McpConnectDialog({
       <DialogBody className="space-y-4 pb-6">
         {/* The one value every tool needs. */}
         <div className="space-y-1.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="text-xs font-medium text-muted-foreground">
             MCP server URL
           </p>
           <CopyField value={connectorUrl} />

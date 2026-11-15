@@ -177,7 +177,7 @@ export default async function BillingPage({
           <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
             <div>
               <p className="text-xs text-muted-foreground">Plan</p>
-              <p className="text-2xl font-semibold tracking-tight">
+              <p className="text-2xl font-medium tracking-tight sm:text-3xl">
                 {TIER_LABEL[currentTier]}
               </p>
             </div>
@@ -251,7 +251,7 @@ export default async function BillingPage({
       {/* Plan/limits matrix */}
       <section className="space-y-3">
         <div className="space-y-1">
-          <h2 className="text-lg font-semibold tracking-tight">Plans &amp; limits</h2>
+          <h2 className="text-lg font-medium">Plans &amp; limits</h2>
           <p className="text-sm text-muted-foreground">
             Upgrading raises your limits automatically. Caps are enforced live
             against your current plan.
@@ -277,7 +277,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center gap-2">
         <CreditCard className="size-5 text-muted-foreground" aria-hidden />
-        <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Billing</h1>
       </div>
       {children}
     </div>

@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   if (!(await collaborationEnabled())) notFound();
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-3xl space-y-8">
       <header>
-        <h1 className="text-2xl font-semibold">Personal AI settings</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Personal AI settings</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Choose how you work across projects in this organization. Project
           model settings can override your personal default.

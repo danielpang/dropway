@@ -40,7 +40,7 @@ export default async function AcceptInvitationPage({
   }
 
   return (
-    <Card className="shadow-md">
+    <Card>
       <CardHeader className="space-y-1.5 text-center">
         <CardTitle className="text-lg">You&rsquo;ve been invited</CardTitle>
         <CardDescription>

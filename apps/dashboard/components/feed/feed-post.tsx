@@ -11,7 +11,7 @@ import {
   Loader2,
   MessageSquare,
   Pencil,
-  Sparkles,
+  BookOpen,
 } from "lucide-react";
 
 import {
@@ -306,7 +306,7 @@ function PostHeader({
         {isSkill ? (
           <>
             <Badge variant="muted">
-              <Sparkles className="size-3" aria-hidden />
+              <BookOpen className="size-3" aria-hidden />
               Skill
             </Badge>
             {isLive ? (

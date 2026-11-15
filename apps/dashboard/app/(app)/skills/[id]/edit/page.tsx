@@ -90,7 +90,7 @@ export default async function EditSkillPage(props: {
       </Link>
 
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Edit skill</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Edit skill</h1>
         <p className="text-sm text-muted-foreground">
           Update the SKILL.md and supporting files. Saving publishes a new version.
         </p>

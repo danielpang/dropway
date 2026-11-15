@@ -119,7 +119,7 @@ export function CreateOrgForm({
   }
 
   return (
-    <Card className="shadow-md">
+    <Card>
       <CardHeader className="space-y-1.5">
         <div className="mb-1 grid size-10 place-items-center rounded-lg bg-secondary text-secondary-foreground">
           <Building2 className="size-5" aria-hidden />

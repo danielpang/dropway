@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowLeft, Loader2, Mail, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Mail, Link2 } from "lucide-react";
 
 import { GoogleIcon } from "@/components/icons";
 import { TermsDialog } from "@/components/legal/terms-dialog";
@@ -152,7 +152,7 @@ export function AuthForm({
     reset();
     setTouched(true);
     if (!emailValid) {
-      setError("Enter a valid email to receive a magic link.");
+      setError("Enter a valid email to receive a sign-in link.");
       return;
     }
     if (isSignUp && !agreed) {
@@ -175,13 +175,13 @@ export function AuthForm({
   }
 
   return (
-    <Card className="shadow-md">
-      <CardHeader className="space-y-1.5 text-center">
-        <CardTitle>{isSignUp ? "Create your account" : "Welcome back"}</CardTitle>
+    <Card>
+      <CardHeader className="space-y-2 text-center">
+        <CardTitle>{isSignUp ? "Create your account" : "Sign in to Dropway"}</CardTitle>
         <CardDescription>
           {isSignUp
-            ? "Ship a folder to a live URL in one command."
-            : "Sign in to your Dropway dashboard."}
+            ? "Publish a folder to a live URL"
+            : "Manage your sites and workspace"}
         </CardDescription>
       </CardHeader>
 
@@ -212,7 +212,7 @@ export function AuthForm({
 
         <div className="flex items-center gap-3 py-1">
           <span className="h-px flex-1 bg-border" aria-hidden />
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             or
           </span>
           <span className="h-px flex-1 bg-border" aria-hidden />
@@ -336,9 +336,9 @@ export function AuthForm({
           {pending === "magic" ? (
             <Loader2 className="animate-spin" aria-hidden />
           ) : (
-            <Sparkles aria-hidden />
+            <Link2 aria-hidden />
           )}
-          Email me a magic link
+          Email a sign-in link
         </Button>
 
         {/* Status region: errors and notices, announced to screen readers. */}
