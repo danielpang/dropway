@@ -12,6 +12,10 @@
 # create a second Worker instead of updating the one serving traffic.
 name = "dropway-production"
 main = "src/index.ts"
+
+# Keep plain-text variables set only in the Cloudflare dashboard. Without this,
+# every `wrangler deploy` (now run by CI on each main push) deletes them.
+keep_vars = true
 compatibility_date = "2026-06-01"
 
 # Workers runtime flags. `nodejs_compat` is harmless here and eases any future
