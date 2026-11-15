@@ -120,7 +120,7 @@ export default function OAuthConsentPage() {
               <ShieldCheck className="size-6" aria-hidden />
             </span>
             <div className="space-y-1">
-              <h1 className="text-xl font-semibold tracking-tight">{heading}</h1>
+              <h1 className="text-xl font-medium">{heading}</h1>
               <p className="text-sm text-muted-foreground">{intro}</p>
             </div>
           </div>
@@ -209,7 +209,7 @@ function SuccessCard({
           <CheckCircle2 className="size-6" aria-hidden />
         </span>
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">
+          <h1 className="text-xl font-medium">
             Authorization successful
           </h1>
           <p className="text-sm text-muted-foreground">{body}</p>

@@ -93,11 +93,11 @@ export default async function AppLayout({
       {/* z-40 keeps the sticky header (and its account menu) above page
           content that uses relative z-10 for nested clickable regions, while
           staying below portaled dialogs/sheets at z-50. */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-border bg-background">
         <div className="container flex h-14 items-center justify-between">
           <Link
             href="/dashboard"
-            className="flex items-center gap-2 text-sm font-semibold tracking-tight rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="flex items-center gap-2 text-sm font-semibold rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <BrandMark />
             Dropway

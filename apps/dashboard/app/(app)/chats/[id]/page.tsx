@@ -90,7 +90,7 @@ export default async function ChatDetailPage(props: {
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">
             {chat.title || "Untitled session"}
           </h1>
           <div className="flex flex-wrap items-center gap-2">

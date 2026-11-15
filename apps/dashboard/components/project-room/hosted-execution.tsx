@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { TaskList, TaskSummary, TaskEvents } from "./task-activity";
 import { Input } from "@/components/ui/input";
 import {
   cancelHostedJobAction,
@@ -15,7 +16,6 @@ import {
   OPENAI_MODELS,
   hostedModels,
   providerModelId,
-  hostedFailureMessage,
   type HostedEvent,
   type HostedJob,
   type ProviderCredential,
@@ -69,6 +69,7 @@ export function HostedExecution({
     events: HostedEvent[];
     question: string | null;
   } | null>(null);
+  const [detailLoading, setDetailLoading] = React.useState(false);
   const [answer, setAnswer] = React.useState("");
   const refreshRef = React.useRef(onCandidateReady);
   refreshRef.current = onCandidateReady;
@@ -219,6 +220,7 @@ export function HostedExecution({
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     setDetail(null);
+    setDetailLoading(true);
     const refresh = async () => {
       try {
         const result = await getHostedJobAction(roomId, jobId);
@@ -239,6 +241,7 @@ export function HostedExecution({
       } catch {
         if (active) setNotice("Task details could not be refreshed.");
       } finally {
+        if (active) setDetailLoading(false);
         if (active) timer = setTimeout(() => void refresh(), 5000);
       }
     };
@@ -292,13 +295,9 @@ export function HostedExecution({
                   </Button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  className="text-sm text-muted-foreground underline"
-                  onClick={onManageConnections}
-                >
-                  Manage AI connections in Settings
-                </button>
+                <Button type="button" variant="outline" size="sm" onClick={onManageConnections}>
+                  Manage AI connections
+                </Button>
               )}
               {credentials.some((item) => !item.revokedAt) ? (
                 <form
@@ -504,48 +503,12 @@ export function HostedExecution({
           ) : null}
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Tasks</h3>
-            <ul className="space-y-1">
-              {jobs.map((job) => (
-                <li key={job.id}>
-                  <button
-                    type="button"
-                    className="text-left text-sm underline"
-                    aria-pressed={jobId === job.id}
-                    onClick={() => setJobId(job.id)}
-                  >
-                    {job.state} · {job.config.prompt.slice(0, 120)}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <TaskList jobs={jobs} selectedId={jobId} onSelect={setJobId} />
+            {jobId && !detail && detailLoading ? <p role="status" className="py-4 text-sm text-muted-foreground">Loading task details…</p> : null}
             {detail ? (
-              <div className="space-y-2 rounded border border-border p-3">
-                <p className="text-sm">
-                  {detail.job.state} · {detail.job.config.provider} /{" "}
-                  {detail.job.config.modelId} · {detail.job.config.harnessId}{" "}
-                  {detail.job.config.harnessVersion}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Accounted token budget: {detail.job.tokensUsed} /{" "}
-                  {detail.job.config.budget.max_tokens}. Model calls:{" "}
-                  {detail.job.callsUsed} / {detail.job.config.budget.max_calls}.
-                  In-flight calls reserve tokens until usage is verified.
-                </p>
-                {detail.job.state === "failed" ? (
-                  <p role="status" className="text-sm">
-                    {hostedFailureMessage(detail.job.failureCode)}
-                  </p>
-                ) : null}
-                <ul className="space-y-1 text-sm">
-                  {detail.events.map((item) => (
-                    <li key={item.id}>
-                      <span className="text-muted-foreground">
-                        {item.createdAt} · {item.kind}
-                      </span>
-                      <p className="whitespace-pre-wrap">{item.message}</p>
-                    </li>
-                  ))}
-                </ul>
+              <div className="space-y-4 rounded-lg border border-border bg-card p-4 sm:p-6">
+                <TaskSummary job={detail.job} />
+                <TaskEvents events={detail.events} />
                 {detail.question ? (
                   <p className="whitespace-pre-wrap text-sm">
                     {detail.question}

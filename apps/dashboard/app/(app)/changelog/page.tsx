@@ -39,7 +39,7 @@ export default function ChangelogPage() {
           Back to sites
         </Link>
         <div className="space-y-3">
-          <p className="font-mono text-xs font-semibold uppercase tracking-wider text-primary">
+          <p className="font-mono text-xs font-medium text-primary">
             Changelog
           </p>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -79,7 +79,7 @@ function Entry({ entry }: { entry: ChangelogEntry }) {
           <Permalink
             id={entry.id}
             as="h2"
-            headingClassName="text-2xl font-semibold tracking-tight"
+            headingClassName="text-2xl font-medium tracking-tight sm:text-3xl"
           >
             <span className="inline-flex items-center gap-2.5">
               {entry.title}
@@ -101,11 +101,11 @@ function Entry({ entry }: { entry: ChangelogEntry }) {
               <Permalink
                 id={change.id}
                 as="h3"
-                headingClassName="text-base font-semibold tracking-tight text-foreground"
+                headingClassName="text-base font-medium text-foreground"
               >
                 {change.title}
               </Permalink>
-              <p className="text-[0.95rem] leading-relaxed text-muted-foreground">
+              <p className="text-base leading-relaxed text-muted-foreground">
                 {change.body}
               </p>
             </div>

@@ -200,7 +200,7 @@ export function RoomWorkspace({
     threadId: string,
     body: string,
     execution?: MentionExecution,
-  ) => void;
+  ) => Promise<boolean> | void;
   onSignoff: (roomId: string, siteId: string, versionId: string) => void;
   onDecide: (
     roomId: string,
@@ -329,6 +329,8 @@ export function RoomWorkspace({
   const [replyByThread, setReplyByThread] = React.useState<
     Record<string, string>
   >({});
+  const replyRequests = React.useRef(new Set<string>());
+  const [pendingReplies, setPendingReplies] = React.useState<Set<string>>(new Set());
   const [memberId, setMemberId] = React.useState("");
   const [memberRole, setMemberRole] = React.useState<
     "editor" | "reviewer" | "viewer"
@@ -583,7 +585,7 @@ export function RoomWorkspace({
     <section className="space-y-6" aria-label="Room activity">
       <header className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-xl font-medium">
             Project activity
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -692,12 +694,18 @@ export function RoomWorkspace({
         {attachedSites.map((item) => (
           <li key={item.siteId} className="flex items-center gap-3 py-3">
             <a
-              className="min-w-0 flex-1 truncate underline underline-offset-4"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-md p-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               href={`/sites/${item.siteId}`}
             >
-              {sites.find((site) => site.id === item.siteId)?.label ??
-                sites.find((site) => site.id === item.siteId)?.slug ??
-                item.siteId}
+              <PanelsTopLeft className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">
+                  {sites.find((site) => site.id === item.siteId)?.label ??
+                    sites.find((site) => site.id === item.siteId)?.slug ?? item.siteId}
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">Open site settings</span>
+              </span>
+              <ArrowUpRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             </a>
             <Tooltip label="Remove from project" align="end">
               <Button
@@ -1089,17 +1097,34 @@ export function RoomWorkspace({
         ) : null}
         <form
           className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            const text = (replyByThread[thread.ID] ?? "").trim();
-            if (!room || !commentOk || text.length === 0) return;
-            if (hasDropwayMention(text) && !replyExecutions[thread.ID]) return;
-            onReply(
-              room.ID,
-              thread.ID,
-              text,
-              hasDropwayMention(text) ? replyExecutions[thread.ID] : undefined,
-            );
+            const draft = replyByThread[thread.ID] ?? "";
+            const text = draft.trim();
+            const execution = replyExecutions[thread.ID];
+            if (!room || !commentOk || !text || replyRequests.current.has(thread.ID)) return;
+            if (hasDropwayMention(text) && !execution) return;
+            replyRequests.current.add(thread.ID);
+            setPendingReplies(new Set(replyRequests.current));
+            try {
+              const saved = await onReply(
+                room.ID,
+                thread.ID,
+                text,
+                hasDropwayMention(text) ? execution : undefined,
+              );
+              if (saved) {
+                setReplyByThread((previous) => previous[thread.ID] === draft
+                  ? { ...previous, [thread.ID]: "" }
+                  : previous);
+                setReplyExecutions((previous) => previous[thread.ID] === execution
+                  ? { ...previous, [thread.ID]: undefined }
+                  : previous);
+              }
+            } finally {
+              replyRequests.current.delete(thread.ID);
+              setPendingReplies(new Set(replyRequests.current));
+            }
           }}
         >
           <MentionTextarea
@@ -1110,6 +1135,7 @@ export function RoomWorkspace({
               input.style.height = "auto";
               input.style.height = `${Math.min(160, input.scrollHeight)}px`;
             }}
+            disabled={pendingReplies.has(thread.ID)}
             aria-label={`Reply to ${thread.ID}`}
             placeholder="Write a reply…"
             className="min-h-10 min-w-0 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1152,8 +1178,10 @@ export function RoomWorkspace({
               type="submit"
               size="icon"
               aria-label="Send reply"
+              aria-busy={pendingReplies.has(thread.ID)}
               className="self-end"
               disabled={
+                pendingReplies.has(thread.ID) ||
                 !commentOk ||
                 (replyByThread[thread.ID] ?? "").trim().length === 0 ||
                 (hasDropwayMention(replyByThread[thread.ID] ?? "") &&
@@ -1291,7 +1319,7 @@ export function RoomWorkspace({
     <>
       <section className="space-y-3" aria-label="Proposed changes">
         <header className="flex items-center gap-3">
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="text-xl font-medium">
             Proposed changes
           </h2>
           <span className="rounded-md bg-muted px-2 py-1 text-xs tabular-nums text-muted-foreground">
@@ -1416,10 +1444,10 @@ export function RoomWorkspace({
       {!room || showCreate ? (
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="mb-1 text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            <p className="mb-1 text-xs font-medium text-muted-foreground">
               Project workspace
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight">Rooms</h1>
+            <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Rooms</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Bring sites and images together. Review feedback and approve
               changes in one place.
@@ -1568,7 +1596,7 @@ export function RoomWorkspace({
                           </span>
                         </span>
                         <a
-                          className="ml-auto shrink-0 text-xs text-muted-foreground underline"
+                          className="ml-auto inline-flex h-8 shrink-0 items-center rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           href={`/sites/${site.id}`}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -1848,7 +1876,7 @@ export function RoomWorkspace({
                           }
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-2 text-xs text-muted-foreground underline underline-offset-4"
+                          className="inline-flex size-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <ExternalLink
                             className="h-4 w-4"
@@ -1951,7 +1979,7 @@ export function RoomWorkspace({
                             "Upload your site files to see them here."}
                         </p>
                         <a
-                          className="mt-4 text-sm underline"
+                          className="mt-4 inline-flex h-9 items-center rounded-md border border-border px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           href={`/sites/${site.id}`}
                         >
                           Open site settings
@@ -2017,16 +2045,18 @@ export function RoomWorkspace({
                             <span className="line-clamp-3">
                               {staticSelection.label}
                             </span>
-                            <button
+                            <Button
                               type="button"
                               onClick={() => {
                                 setStaticSelection(null);
                                 setSelectionResetKey((key) => key + 1);
                               }}
-                              className="mt-1 underline"
+                              variant="outline"
+                              size="sm"
+                              className="mt-2"
                             >
                               Clear selection
-                            </button>
+                            </Button>
                           </div>
                         ) : null}
                         {commentComposer}
@@ -2084,7 +2114,7 @@ export function RoomWorkspace({
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto max-w-6xl space-y-7 p-6 lg:p-8">
                 <header>
-                  <h2 className="text-xl font-semibold tracking-tight">
+                  <h2 className="text-xl font-medium">
                     Settings & sharing
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">

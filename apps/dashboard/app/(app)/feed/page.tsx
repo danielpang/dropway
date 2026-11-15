@@ -58,7 +58,7 @@ export default async function FeedPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Feed</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Feed</h1>
         <p className="text-muted-foreground">
           Sites and skills shared across {orgName}. Vote, comment, and tag
           teammates. Make a post private from its settings to keep it off the feed.

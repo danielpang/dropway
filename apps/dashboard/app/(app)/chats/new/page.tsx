@@ -35,7 +35,7 @@ export default async function NewChatPage() {
       </Link>
 
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Share a conversation</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Share a conversation</h1>
         <p className="text-sm text-muted-foreground">
           Import a session from Claude Code, ChatGPT, or Cursor so your team can
           read how something was made — and optionally show it on the site it

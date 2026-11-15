@@ -34,7 +34,7 @@ export default async function NewSkillPage() {
       </Link>
 
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Write a skill</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Write a skill</h1>
         <p className="text-sm text-muted-foreground">
           Author a skill in Markdown and share it with your org. A skill is a
           <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">SKILL.md</code>

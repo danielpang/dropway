@@ -47,7 +47,7 @@ export function PasswordGate({ host, next }: { host: string; next: string }) {
   }
 
   return (
-    <Card className="shadow-md">
+    <Card>
       <CardContent className="pt-6">
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="space-y-2">

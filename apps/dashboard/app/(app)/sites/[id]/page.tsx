@@ -171,7 +171,7 @@ export default async function SiteDetailPage({
           <Globe className="size-5" aria-hidden />
         </span>
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{site.slug}</h1>
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">{site.slug}</h1>
           <div className="flex items-center gap-2">
             {isLive ? (
               <Badge variant="success">

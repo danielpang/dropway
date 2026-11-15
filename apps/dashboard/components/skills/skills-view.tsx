@@ -9,7 +9,7 @@ import {
   Loader2,
   Pencil,
   Search,
-  Sparkles,
+  Library,
   Trash2,
 } from "lucide-react";
 
@@ -161,7 +161,7 @@ export function SkillsView(props: {
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Skills</h1>
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Skills</h1>
           <p className="text-sm text-muted-foreground">
             Shared Claude skills for your whole org — upload yours, grab a teammate&apos;s, or
             start from the preset folders.
@@ -224,7 +224,7 @@ export function SkillsView(props: {
           onClick={() => navigate({ presets: !filters.presets })}
           title="Only admin-curated preset skills"
         >
-          <Sparkles className="mr-1 h-3.5 w-3.5" /> Presets
+          <Library className="mr-1 h-3.5 w-3.5" /> Presets
         </Button>
         {activeFolder ? (
           <Button
@@ -287,7 +287,7 @@ export function SkillsView(props: {
                     </code>
                     {(skill.folders ?? []).map((ref) => (
                       <Badge key={ref.id} variant={ref.is_preset ? "success" : "muted"}>
-                        {ref.is_preset ? <Sparkles className="h-3 w-3" /> : null}
+                        {ref.is_preset ? <Library className="h-3 w-3" /> : null}
                         {ref.slug}
                       </Badge>
                     ))}
@@ -495,7 +495,7 @@ function FolderAdminDialog(props: {
                               )
                             }
                           >
-                            <Sparkles className="mr-1 h-3.5 w-3.5" />
+                            <Library className="mr-1 h-3.5 w-3.5" />
                             {ref?.is_preset ? "Preset" : "Make preset"}
                           </Button>
                           <Button

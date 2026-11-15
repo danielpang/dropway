@@ -109,12 +109,9 @@ export function NewProjectSite({
           {busy ? "Loading site…" : "Use this site"}
         </Button>
         {site.id ? (
-          <Link
-            href={`/sites/${site.id}`}
-            className="text-sm text-muted-foreground underline underline-offset-4"
-          >
-            Open site settings
-          </Link>
+          <Button asChild variant="outline">
+            <Link href={`/sites/${site.id}`}>Open site settings</Link>
+          </Button>
         ) : null}
       </div>
     </section>

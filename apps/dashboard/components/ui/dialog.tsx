@@ -101,7 +101,7 @@ export function Dialog({
         aria-label={label}
         tabIndex={-1}
         className={cn(
-          "relative z-10 w-full max-w-md rounded-lg border border-border bg-popover text-popover-foreground shadow-lg",
+          "relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-xl border border-border bg-popover text-popover-foreground shadow-lg",
           "focus-visible:outline-none",
           "animate-fade-in",
           className,
@@ -111,7 +111,7 @@ export function Dialog({
           type="button"
           onClick={() => onOpenChange(false)}
           aria-label="Close"
-          className="absolute right-4 top-4 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="absolute right-3 top-3 grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           <X className="size-4" aria-hidden />
         </button>
@@ -130,7 +130,7 @@ export function DialogHeader({
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("flex flex-col space-y-1.5 p-6 pb-2", className)}
+      className={cn("flex flex-col space-y-2 p-6 pb-4", className)}
       {...props}
     />
   );
@@ -144,7 +144,7 @@ export function DialogTitle({
   return (
     <h2
       id={id}
-      className={cn("text-lg font-semibold tracking-tight", className)}
+      className={cn("text-lg font-medium", className)}
       {...props}
     />
   );
@@ -155,7 +155,7 @@ export function DialogDescription({
   ...props
 }: React.HTMLAttributes<HTMLParagraphElement>) {
   return (
-    <p className={cn("text-sm text-muted-foreground", className)} {...props} />
+    <p className={cn("text-sm leading-relaxed text-muted-foreground", className)} {...props} />
   );
 }
 

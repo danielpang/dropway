@@ -110,7 +110,7 @@ export default async function AuditPage({
 function Header() {
   return (
     <div className="space-y-1">
-      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+      <h1 className="flex items-center gap-2 text-2xl font-medium tracking-tight sm:text-3xl">
         <ScrollText className="size-5 text-muted-foreground" aria-hidden />
         Audit log
       </h1>

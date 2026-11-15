@@ -49,7 +49,7 @@ export default async function OnboardingPage({
   return (
     <div className="auth-backdrop flex min-h-dvh flex-col">
       <header className="flex h-14 items-center justify-between px-6">
-        <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+        <span className="flex items-center gap-2 text-sm font-semibold">
           <BrandMark />
           Dropway
         </span>

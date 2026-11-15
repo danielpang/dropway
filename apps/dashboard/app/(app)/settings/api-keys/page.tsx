@@ -66,7 +66,7 @@ export default async function ApiKeysPage() {
           </Link>
         </Button>
         <div className="space-y-1">
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <h1 className="flex items-center gap-2 text-2xl font-medium tracking-tight sm:text-3xl">
             <KeyRound className="size-5 text-muted-foreground" aria-hidden />
             API keys
           </h1>

@@ -134,7 +134,7 @@ export function SheetTitle({
   return (
     <h2
       id={id}
-      className={cn("text-lg font-semibold tracking-tight", className)}
+      className={cn("text-lg font-medium", className)}
       {...props}
     />
   );

@@ -1,15 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import {
-  Bot,
-  Brain,
-  CreditCard,
-  Globe2,
-  KeyRound,
-  MessageSquareText,
-  ShieldAlert,
-  Users,
-} from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 
 import { ChatLogsAccess } from "@/components/settings/chat-logs-access";
 import { ExternalSharingToggle } from "@/components/settings/external-sharing-toggle";
@@ -75,30 +66,28 @@ export default async function OrgSettingsPage() {
     .catch(() => true);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="settings-page mx-auto max-w-5xl space-y-8">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">
           Organization settings
         </h1>
         <p className="text-muted-foreground">
-          Settings for{" "}
+          Workspace policies for{" "}
           <span className="font-medium text-foreground">
             {org.name ?? "your organization"}
           </span>
-          .
+
         </p>
       </div>
 
       {/* External sharing policy */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Globe2 className="size-4 text-muted-foreground" aria-hidden />
+          <CardTitle className="text-base">
             External sharing
           </CardTitle>
           <CardDescription>
-            Whether sites can be shared publicly or with people outside your
-            verified domains.
+            Control sharing beyond your verified domains
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -121,9 +110,8 @@ export default async function OrgSettingsPage() {
       {/* LLM / MCP access */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Bot className="size-4 text-muted-foreground" aria-hidden />
-            LLM access (MCP)
+          <CardTitle className="text-base">
+            AI tool access
           </CardTitle>
           <CardDescription>
             Let AI tools reach your sites through the Dropway MCP server. Public
@@ -145,8 +133,7 @@ export default async function OrgSettingsPage() {
       {memorySettings && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Brain className="size-4 text-muted-foreground" aria-hidden />
+            <CardTitle className="text-base">
               Company memory
             </CardTitle>
             <CardDescription>
@@ -189,11 +176,7 @@ export default async function OrgSettingsPage() {
       {/* Shared chat logs */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <MessageSquareText
-              className="size-4 text-muted-foreground"
-              aria-hidden
-            />
+          <CardTitle className="text-base">
             Shared chat logs
           </CardTitle>
           <CardDescription>
@@ -209,12 +192,11 @@ export default async function OrgSettingsPage() {
       {/* API keys shortcut */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <KeyRound className="size-4 text-muted-foreground" aria-hidden />
+          <CardTitle className="text-base">
             API keys
           </CardTitle>
           <CardDescription>
-            Programmatic access for CI, scripts, the SDK, and the CLI.
+            Connect CI, scripts, the SDK, and the CLI
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -227,12 +209,11 @@ export default async function OrgSettingsPage() {
       {/* Members shortcut */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Users className="size-4 text-muted-foreground" aria-hidden />
+          <CardTitle className="text-base">
             Members
           </CardTitle>
           <CardDescription>
-            Invite teammates, change roles, and remove people.
+            Manage teammates, invitations, and roles
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -245,12 +226,11 @@ export default async function OrgSettingsPage() {
       {/* Billing shortcut */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <CreditCard className="size-4 text-muted-foreground" aria-hidden />
+          <CardTitle className="text-base">
             Billing &amp; plan
           </CardTitle>
           <CardDescription>
-            View your plan and limits, upgrade, or manage your subscription.
+            Manage your plan, usage limits, and subscription
           </CardDescription>
         </CardHeader>
         <CardContent>

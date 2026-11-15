@@ -79,7 +79,7 @@ export default async function SiteAccessSettingsPage({
   const liveUrl = site.live_url ?? `https://${site.slug}.dropwaycontent.com`;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="settings-page mx-auto max-w-5xl space-y-8">
       <Link
         href={`/sites/${id}`}
         className="inline-flex items-center gap-1.5 rounded-sm text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -89,7 +89,7 @@ export default async function SiteAccessSettingsPage({
       </Link>
 
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Access</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Access</h1>
         <p className="text-muted-foreground">
           Control who can view{" "}
           <span className="font-medium text-foreground">{site.slug}</span>.
@@ -109,7 +109,7 @@ export default async function SiteAccessSettingsPage({
             href={liveUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="inline-flex max-w-full items-center gap-2 break-all rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm text-foreground transition-colors hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             {liveUrl}
             <ExternalLink

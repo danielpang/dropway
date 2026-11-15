@@ -418,7 +418,7 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
         setNotice("Comment added.");
         return Promise.resolve(true);
       }}
-      onReply={(id, thread, body) =>
+      onReply={async (id, thread, body) => {
         setThreads((prev) =>
           prev.map((t) =>
             t.ID === thread
@@ -436,8 +436,9 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
                 }
               : t,
           ),
-        )
-      }
+        );
+        return true;
+      }}
       onResolve={(_, id) =>
         setThreads((prev) =>
           prev.map((t) => (t.ID === id ? { ...t, Status: "resolved" } : t)),

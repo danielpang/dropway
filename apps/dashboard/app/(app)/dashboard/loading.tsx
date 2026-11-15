@@ -16,7 +16,7 @@ export default function DashboardLoading() {
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
+          <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Sites</h1>
           <p className="text-muted-foreground">
             Every site in your org. Deploy a folder, get a live,
             access-controlled URL.

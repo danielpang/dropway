@@ -11,7 +11,7 @@ export default function AuditLoading() {
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Audit log</h1>
         <Skeleton className="h-4 w-80 max-w-full" />
       </div>
 

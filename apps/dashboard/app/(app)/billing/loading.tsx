@@ -11,7 +11,7 @@ export default function BillingLoading() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">Billing</h1>
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
 
