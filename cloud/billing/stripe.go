@@ -19,6 +19,7 @@ import (
 	billingportalsession "github.com/stripe/stripe-go/v84/billingportal/session"
 	checkoutsession "github.com/stripe/stripe-go/v84/checkout/session"
 	"github.com/stripe/stripe-go/v84/customer"
+	"github.com/stripe/stripe-go/v84/subscription"
 	"github.com/stripe/stripe-go/v84/webhook"
 )
 
@@ -337,6 +338,14 @@ type StripeClient interface {
 	CreateCheckoutSession(p CheckoutParams) (url string, err error)
 	// CreatePortalSession creates a Billing Portal session → its URL.
 	CreatePortalSession(customerID, returnURL string) (url string, err error)
+	// HasLiveSubscription reports whether Stripe already holds a paying
+	// (active / trialing / past_due) subscription for the customer. Stripe is ahead
+	// of our DB until the webhook lands, so this catches a Checkout that was paid
+	// a moment ago.
+	HasLiveSubscription(customerID string) (bool, error)
+	// ExpireOpenCheckoutSessions expires every still-open Checkout session for the
+	// customer and returns how many it expired, so only the newest link is payable.
+	ExpireOpenCheckoutSessions(customerID string) (int, error)
 }
 
 // realStripeClient is the production StripeClient over stripe-go's per-resource
@@ -344,9 +353,10 @@ type StripeClient interface {
 // single process can hold the cloud key without mutating the package-global
 // stripe.Key.
 type realStripeClient struct {
-	customers customer.Client
-	checkout  checkoutsession.Client
-	portal    billingportalsession.Client
+	customers     customer.Client
+	checkout      checkoutsession.Client
+	portal        billingportalsession.Client
+	subscriptions subscription.Client
 }
 
 // NewStripeClient builds the production client from the secret key
@@ -355,9 +365,10 @@ type realStripeClient struct {
 func NewStripeClient(secretKey string) StripeClient {
 	backend := stripe.GetBackend(stripe.APIBackend)
 	return &realStripeClient{
-		customers: customer.Client{B: backend, Key: secretKey},
-		checkout:  checkoutsession.Client{B: backend, Key: secretKey},
-		portal:    billingportalsession.Client{B: backend, Key: secretKey},
+		customers:     customer.Client{B: backend, Key: secretKey},
+		checkout:      checkoutsession.Client{B: backend, Key: secretKey},
+		portal:        billingportalsession.Client{B: backend, Key: secretKey},
+		subscriptions: subscription.Client{B: backend, Key: secretKey},
 	}
 }
 
@@ -435,4 +446,47 @@ func (c *realStripeClient) CreatePortalSession(customerID, returnURL string) (st
 		return "", fmt.Errorf("billing: create portal session: %w", err)
 	}
 	return sess.URL, nil
+}
+
+func (c *realStripeClient) HasLiveSubscription(customerID string) (bool, error) {
+	params := &stripe.SubscriptionListParams{
+		Customer: stripe.String(customerID),
+		Status:   stripe.String("all"),
+	}
+	it := c.subscriptions.List(params)
+	for it.Next() {
+		if isEntitledStatus(string(it.Subscription().Status)) {
+			return true, nil
+		}
+	}
+	if err := it.Err(); err != nil {
+		return false, fmt.Errorf("billing: list subscriptions for customer %s: %w", customerID, err)
+	}
+	return false, nil
+}
+
+func (c *realStripeClient) ExpireOpenCheckoutSessions(customerID string) (int, error) {
+	params := &stripe.CheckoutSessionListParams{
+		Customer: stripe.String(customerID),
+		Status:   stripe.String(string(stripe.CheckoutSessionStatusOpen)),
+	}
+	var open []string
+	it := c.checkout.List(params)
+	for it.Next() {
+		open = append(open, it.CheckoutSession().ID)
+	}
+	if err := it.Err(); err != nil {
+		return 0, fmt.Errorf("billing: list open checkout sessions for customer %s: %w", customerID, err)
+	}
+	expired := 0
+	for _, id := range open {
+		// An expire that fails (e.g. the session was paid between the list and
+		// now) is returned, so the caller creates no new session; a retry then
+		// sees the paid subscription via HasLiveSubscription.
+		if _, err := c.checkout.Expire(id, nil); err != nil {
+			return expired, fmt.Errorf("billing: expire checkout session %s: %w", id, err)
+		}
+		expired++
+	}
+	return expired, nil
 }

@@ -33,6 +33,12 @@ type fakeStripe struct {
 	createdFromExist string
 	checkoutParams   CheckoutParams
 	portalCustomer   string
+
+	liveSub      bool  // HasLiveSubscription answer (a paid sub whose webhook hasn't landed)
+	openSessions int   // open sessions ExpireOpenCheckoutSessions finds and expires
+	expireErr    error // ExpireOpenCheckoutSessions failure
+	liveChecked  bool
+	expired      int
 }
 
 func (f *fakeStripe) EnsureCustomer(existingID, orgID, email string) (string, error) {
@@ -52,6 +58,17 @@ func (f *fakeStripe) CreatePortalSession(customerID, returnURL string) (string, 
 	f.portalCustomer = customerID
 	return "https://portal.stripe.test/session", nil
 }
+func (f *fakeStripe) HasLiveSubscription(string) (bool, error) {
+	f.liveChecked = true
+	return f.liveSub, nil
+}
+func (f *fakeStripe) ExpireOpenCheckoutSessions(string) (int, error) {
+	if f.expireErr != nil {
+		return 0, f.expireErr
+	}
+	f.expired, f.openSessions = f.openSessions, 0
+	return f.expired, nil
+}
 
 // fakeCPStore implements CheckoutPortalStore in-memory.
 type fakeCPStore struct {
@@ -67,6 +84,9 @@ func (f *fakeCPStore) GetSubscription(_ context.Context, _ string) (Subscription
 func (f *fakeCPStore) SaveCustomerID(_ context.Context, _, cid string) error {
 	f.savedCID = cid
 	return nil
+}
+func (f *fakeCPStore) WithCheckoutLock(_ context.Context, _ string, fn func() error) error {
+	return fn()
 }
 func (f *fakeCPStore) ReadPlanTier(_ context.Context, _ string) (PlanTier, error) {
 	if f.tier == "" {

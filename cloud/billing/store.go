@@ -690,6 +690,29 @@ func (s *BillingStore) SaveCustomerID(ctx context.Context, orgID, customerID str
 	return nil
 }
 
+// WithCheckoutLock runs fn while holding a transaction-scoped advisory lock keyed
+// by the org, so concurrent Checkout requests for one org run one at a time (the
+// same per-org lock pattern as store.CreateSite). fn does its own reads/writes on
+// the pool; the lock tx only serializes. It is held across fn's Stripe calls,
+// which is fine for a rare, human-initiated request.
+func (s *BillingStore) WithCheckoutLock(ctx context.Context, orgID string, fn func() error) error {
+	if orgID == "" {
+		return errors.New("billing: WithCheckoutLock with empty OrgID")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("billing: begin checkout lock tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, orgID+":billing-checkout"); err != nil {
+		return fmt.Errorf("billing: take checkout lock %s: %w", orgID, err)
+	}
+	if err := fn(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // inOrgTx runs fn in a tx whose FIRST statement establishes the RLS tenant context
 // for orgID via set_config('app.current_org_id', orgID, true) — the transaction-
 // local GUC the org_meta policy reads. set_config (not bare SET LOCAL) is used so

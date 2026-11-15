@@ -31,6 +31,9 @@ type CheckoutPortalStore interface {
 	GetSubscription(ctx context.Context, orgID string) (Subscription, bool, error)
 	SaveCustomerID(ctx context.Context, orgID, customerID string) error
 	ReadPlanTier(ctx context.Context, orgID string) (PlanTier, error)
+	// WithCheckoutLock runs fn while holding a per-org lock, so two Checkout
+	// requests for the same org (two tabs, a double click) run one after the other.
+	WithCheckoutLock(ctx context.Context, orgID string, fn func() error) error
 }
 
 var _ CheckoutPortalStore = (*BillingStore)(nil)
@@ -155,57 +158,102 @@ func (h *Handlers) Checkout(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Resolve / create the org's Stripe customer (one Customer per org).
-	var existingCustomer string
-	if sub, found, err := h.store.GetSubscription(ctx, orgID); err != nil {
-		httpx.WriteError(w, err)
-		return
-	} else if found {
-		// One subscription per org: a paying org changes plan on its EXISTING
-		// subscription via the Billing Portal. A second Checkout would create a
-		// second subscription that keeps billing (and whose renewals used to flip
-		// the org's tier back and forth).
-		if (CurrentSubscription{ID: sub.StripeSubscriptionID, PlanTier: sub.PlanTier, Status: sub.Status}).live() {
-			httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorBody{
-				Error:   "subscription_exists",
-				Message: "This organization already has an active subscription. Change plans from Manage billing.",
-			})
-			return
-		}
-		existingCustomer = sub.StripeCustomerID
-	}
-	customerID, err := h.stripe.EnsureCustomer(existingCustomer, orgID, email)
-	if err != nil {
-		h.log.Error("ensure stripe customer failed", "org_id", orgID, "err", err)
-		httpx.WriteError(w, err)
-		return
-	}
-	if existingCustomer == "" {
-		// Persist the new customer id BEFORE Checkout so a later webhook can match it
-		// even if the browser never returns.
-		if err := h.store.SaveCustomerID(ctx, orgID, customerID); err != nil {
-			httpx.WriteError(w, err)
-			return
-		}
-	}
-
-	url, err := h.stripe.CreateCheckoutSession(CheckoutParams{
-		CustomerID:        customerID,
-		PriceID:           priceID,
-		Quantity:          seats,
-		ClientReferenceID: orgID,
-		Metadata:          map[string]string{"org_id": orgID, "target_tier": string(target)},
-		SuccessURL:        h.dashboardURL + "/billing?status=processing",
-		CancelURL:         h.dashboardURL + "/billing?status=canceled",
-		LocalCurrency:     req.LocalCurrency,
+	// Every step below runs under a per-org lock: two Checkout requests for the
+	// same org (two tabs, a double click) would otherwise both see "no
+	// subscription yet" and both hand out a payable Checkout link.
+	var url string
+	err := h.store.WithCheckoutLock(ctx, orgID, func() error {
+		var err error
+		url, err = h.startCheckout(ctx, orgID, email, CheckoutParams{
+			PriceID:           priceID,
+			Quantity:          seats,
+			ClientReferenceID: orgID,
+			Metadata:          map[string]string{"org_id": orgID, "target_tier": string(target)},
+			SuccessURL:        h.dashboardURL + "/billing?status=processing",
+			CancelURL:         h.dashboardURL + "/billing?status=canceled",
+			LocalCurrency:     req.LocalCurrency,
+		})
+		return err
 	})
+	if errors.Is(err, errSubscriptionExists) {
+		httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorBody{
+			Error:   "subscription_exists",
+			Message: "This organization already has an active subscription. Change plans from Manage billing.",
+		})
+		return
+	}
 	if err != nil {
-		h.log.Error("create checkout session failed", "org_id", orgID, "err", err)
 		httpx.WriteError(w, err)
 		return
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"checkout_url": url})
+}
+
+// errSubscriptionExists means the org already pays: plan changes go through the
+// Billing Portal on its existing subscription, never a second Checkout.
+var errSubscriptionExists = errors.New("billing: org already has a live subscription")
+
+// startCheckout resolves the org's Stripe customer and creates a Checkout session,
+// refusing when the org already has a live subscription. One subscription per org:
+// a second Checkout would create a second subscription that keeps billing (and
+// whose renewals used to flip the org's tier back and forth). The caller holds the
+// per-org checkout lock.
+func (h *Handlers) startCheckout(ctx context.Context, orgID, email string, p CheckoutParams) (string, error) {
+	var existingCustomer string
+	sub, found, err := h.store.GetSubscription(ctx, orgID)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		if (CurrentSubscription{ID: sub.StripeSubscriptionID, PlanTier: sub.PlanTier, Status: sub.Status}).live() {
+			return "", errSubscriptionExists
+		}
+		existingCustomer = sub.StripeCustomerID
+	}
+
+	customerID, err := h.stripe.EnsureCustomer(existingCustomer, orgID, email)
+	if err != nil {
+		h.log.Error("ensure stripe customer failed", "org_id", orgID, "err", err)
+		return "", err
+	}
+	if existingCustomer == "" {
+		// Persist the new customer id BEFORE Checkout so a later webhook can match it
+		// even if the browser never returns. A brand-new customer has no
+		// subscriptions or sessions yet, so the Stripe checks below are skipped.
+		if err := h.store.SaveCustomerID(ctx, orgID, customerID); err != nil {
+			return "", err
+		}
+	} else {
+		// Our row only changes when a webhook lands. A Checkout paid moments ago
+		// already has a live subscription in Stripe, so ask Stripe too.
+		live, err := h.stripe.HasLiveSubscription(customerID)
+		if err != nil {
+			h.log.Error("list stripe subscriptions failed", "org_id", orgID, "err", err)
+			return "", err
+		}
+		if live {
+			return "", errSubscriptionExists
+		}
+		// Only one Checkout link may be payable at a time: expire any the org
+		// opened earlier (another tab, a double click) before creating a new one.
+		n, err := h.stripe.ExpireOpenCheckoutSessions(customerID)
+		if err != nil {
+			h.log.Error("expire open checkout sessions failed", "org_id", orgID, "err", err)
+			return "", err
+		}
+		if n > 0 {
+			h.log.Info("expired earlier open checkout sessions", "org_id", orgID, "count", n)
+		}
+	}
+
+	p.CustomerID = customerID
+	url, err := h.stripe.CreateCheckoutSession(p)
+	if err != nil {
+		h.log.Error("create checkout session failed", "org_id", orgID, "err", err)
+		return "", err
+	}
+	return url, nil
 }
 
 // Portal opens a Stripe Billing Portal session for the org's customer and returns
