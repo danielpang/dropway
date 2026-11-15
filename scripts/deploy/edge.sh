@@ -6,7 +6,7 @@
 # which exhausts the account's daily KV write quota, so it blocks the deploy.
 set -euo pipefail
 : "${SOURCE_SHA:?Missing source revision}"
-: "${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN (Workers Scripts edit) on the production GitHub environment}"
+: "${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN (Edit Cloudflare Workers template, with the dropwaycontent.com zone) on the production GitHub environment}"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
 WORKER_DIR=edge/serving-worker
