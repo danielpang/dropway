@@ -46,8 +46,12 @@ func TestIntegration_ProjectRooms(t *testing.T) {
 	must(t, st.EnsureOrgProvisioned(ctx, tOwner))
 	must(t, st.EnsureOrgProvisioned(ctx, tOut))
 
+	if enabled, err := st.ProjectRoomsEnabled(ctx, tOwner); err != nil || !enabled {
+		t.Fatalf("rooms default on, enabled=%v err=%v", enabled, err)
+	}
+	must(t, st.SetProjectRoomsEnabled(ctx, tOwner, false, store.AuditRecord{}))
 	if _, err := st.CreateProjectRoom(ctx, tOwner, "Review", store.AuditRecord{}); !errors.Is(err, store.ErrProjectRoomsDisabled) {
-		t.Fatalf("flag default off, err=%v", err)
+		t.Fatalf("explicit organization disable must still apply, err=%v", err)
 	}
 	must(t, st.SetProjectRoomsEnabled(ctx, tOwner, true, store.AuditRecord{}))
 	must(t, st.SetProjectRoomsEnabled(ctx, tOut, true, store.AuditRecord{}))

@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { QuotaExceeded } from "@/lib/api";
+import type { QuotaExceeded, Site } from "@/lib/api";
 
 /**
  * A slug is a single DNS label: lowercase alphanumerics + hyphens. Used to
@@ -55,16 +55,22 @@ const useIsomorphicLayoutEffect =
 export function NewSiteDialog({
   readOnly = false,
   orgSlug = null,
+  onCreated,
+  triggerLabel = "New site",
 }: {
   readOnly?: boolean;
   /** The active org's slug, content hosts are `<org-slug>--<site-slug>.dropwaycontent.com`. */
   orgSlug?: string | null;
+  /** Keep creation in the caller's workflow instead of opening the site page. */
+  onCreated?: (site: Site) => void;
+  triggerLabel?: string;
 }) {
   const router = useRouter();
 
   const [open, setOpen] = React.useState(false);
   const [slug, setSlug] = React.useState("");
   const [pending, setPending] = React.useState(false);
+  const inFlight = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
   const [touched, setTouched] = React.useState(false);
 
@@ -106,18 +112,32 @@ export function NewSiteDialog({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (inFlight.current) return;
     setError(null);
     setTouched(true);
     if (!slugValid) return;
 
+    inFlight.current = true;
     setPending(true);
-    const result = await createSiteAction({ slug });
+    let result;
+    try {
+      result = await createSiteAction({ slug });
+    } catch {
+      setError("Could not create the site. Please try again.");
+      setPending(false);
+      return;
+    } finally {
+      inFlight.current = false;
+    }
 
     if (result.ok) {
       setOpen(false);
       reset();
-      router.push(`/sites/${result.site.id}`);
-      router.refresh();
+      if (onCreated) onCreated(result.site);
+      else {
+        router.push(`/sites/${result.site.id}`);
+        router.refresh();
+      }
       return;
     }
 
@@ -144,7 +164,7 @@ export function NewSiteDialog({
       >
         <Button disabled aria-disabled className="pointer-events-none">
           <Plus aria-hidden />
-          New site
+          {triggerLabel}
         </Button>
       </Tooltip>
     );
@@ -152,15 +172,16 @@ export function NewSiteDialog({
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>
+      <Button type="button" onClick={() => setOpen(true)}>
         <Plus aria-hidden />
-        New site
+        {triggerLabel}
       </Button>
 
       <Dialog
         className="max-w-xl"
         open={open}
         onOpenChange={(next) => {
+          if (inFlight.current) return;
           setOpen(next);
           if (!next) reset();
         }}
@@ -169,8 +190,8 @@ export function NewSiteDialog({
           <DialogTitle>Create a new site</DialogTitle>
           <DialogDescription>
             Pick a slug. Combined with your org slug, it becomes your
-            site&rsquo;s subdomain. You can deploy content from the CLI right
-            after.
+            site&rsquo;s subdomain. Upload a folder of HTML, CSS, and images
+            after creating it.
           </DialogDescription>
         </DialogHeader>
 

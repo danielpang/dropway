@@ -2361,6 +2361,11 @@ export interface components {
             created?: boolean;
         };
         Site: {
+            /**
+             * @default site
+             * @enum {string}
+             */
+            resource_kind: "site" | "image";
             /** Format: uuid */
             id?: string;
             /** Format: uuid */
@@ -3675,6 +3680,19 @@ export interface operations {
                      * @example my-docs
                      */
                     slug: string;
+                    /**
+                     * @description Image resources use private immutable version storage and require a flag-enabled human session.
+                     * @default site
+                     * @enum {string}
+                     */
+                    resource_kind?: "site" | "image";
+                    /** @description Filename label required for image resources. */
+                    title?: string;
+                    /**
+                     * @description Image resources always use org_only.
+                     * @enum {string}
+                     */
+                    access_mode?: "public" | "org_only";
                 };
             };
         };

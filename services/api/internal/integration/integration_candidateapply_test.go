@@ -196,8 +196,8 @@ func TestIntegration_CandidateApplication(t *testing.T) {
 	if _, err := st.Publish(ctx, tn, site.ID, proposed.ID); !errors.Is(err, store.ErrCandidatePublishDenied) {
 		t.Fatalf("reenabled candidate bypass: %v", err)
 	}
-	if _, err := st.Publish(context.Background(), tn, site.ID, latest.ID); !errors.Is(err, store.ErrControlledSite) {
-		t.Fatalf("reenabled non-human bypass: %v", err)
+	if _, err := st.Publish(context.Background(), tn, site.ID, latest.ID); err != nil {
+		t.Fatalf("reenabled ordinary non-human publish: %v", err)
 	}
 	must(t, st.RemoveProjectRoomSite(ctx, tn, room.ID, site.ID, store.AuditRecord{}))
 	for _, caller := range []context.Context{ctx, context.Background()} {

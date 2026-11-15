@@ -552,6 +552,9 @@ paths:
                   type: string
                   description: Subdomain label under dropwaycontent.com (unique per org).
                   example: my-docs
+                resource_kind: { type: string, enum: [site, image], default: site, description: Image resources use private immutable version storage and require a flag-enabled human session. }
+                title: { type: string, maxLength: 255, description: Filename label required for image resources. }
+                access_mode: { type: string, enum: [public, org_only], description: Image resources always use org_only. }
       responses:
         "201":
           description: Site created
@@ -3785,6 +3788,7 @@ components:
     Site:
       type: object
       properties:
+        resource_kind: { type: string, enum: [site, image], default: site }
         id: { type: string, format: uuid }
         org_id: { type: string, format: uuid }
         slug: { type: string }

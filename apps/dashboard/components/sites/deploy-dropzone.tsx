@@ -87,13 +87,18 @@ function phaseLabel(p: DeployProgress): string {
 export function DeployDropzone({
   siteId,
   isLive,
+  onDeployed,
 }: {
   siteId: string;
   isLive: boolean;
+  /** Notify an enclosing project workflow after the initial site is published. */
+  onDeployed?: () => void;
 }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = React.useState(false);
   const [state, setState] = React.useState<State>({ status: "idle" });
+  const onDeployedRef = React.useRef(onDeployed);
+  onDeployedRef.current = onDeployed;
 
   const working = state.status === "working";
 
@@ -129,6 +134,7 @@ export function DeployDropzone({
         // races that in-flight revalidation and Next can drop BOTH updates,
         // leaving the page stale (flaky "Live" e2e failure on slow runners).
         setState({ status: "done", liveUrl: outcome.liveUrl });
+        onDeployedRef.current?.();
       } else {
         setState({ status: "error", message: outcome.message });
       }

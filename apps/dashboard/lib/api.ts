@@ -674,7 +674,7 @@ export const api = {
   },
 
   /** Create a new site (subject to the cloud quota gate → may 402). */
-  createSite(input: { slug: string }): Promise<Site> {
+  createSite(input: { slug: string; resource_kind?: "site" | "image"; title?: string; access_mode?: "public" | "org_only" }): Promise<Site> {
     return apiFetch<Site>("/v1/sites", {
       method: "POST",
       body: JSON.stringify(input),
