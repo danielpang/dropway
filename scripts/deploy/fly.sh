@@ -8,6 +8,10 @@ set -euo pipefail
 : "${FLY_API_TOKEN:?Missing API deploy token}"
 : "${FLY_MCP_API_TOKEN:?Missing MCP deploy token}"
 [[ "$DEPLOY_ENVIRONMENT" == development || "$DEPLOY_ENVIRONMENT" == production ]]
+# Production always includes the worker; development may opt in separately.
+if [[ "$DEPLOY_ENVIRONMENT" == production ]]; then
+  FLY_WORKER_APP=dropway-worker-production
+fi
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$FLY_API_APP" != "$FLY_MCP_APP" ]]
 if [[ -n "${FLY_WORKER_APP:-}" ]]; then

@@ -27,7 +27,7 @@ jobs:
           CHECK_DEPLOY: ${{ inputs.check_deploy_config }}
           FLY_API_APP: ${{ vars.FLY_API_APP }}
           FLY_MCP_APP: ${{ vars.FLY_MCP_APP }}
-          FLY_WORKER_APP: ${{ vars.FLY_WORKER_APP }}
+          FLY_WORKER_APP: ${{ inputs.environment == 'production' && 'dropway-worker-production' || vars.FLY_WORKER_APP }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_MCP_API_TOKEN: ${{ secrets.FLY_MCP_API_TOKEN }}
           FLY_WORKER_API_TOKEN: ${{ secrets.FLY_WORKER_API_TOKEN }}

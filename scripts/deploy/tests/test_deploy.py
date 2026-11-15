@@ -19,6 +19,8 @@ if cmd == 'docker' and args[:2] == ['image', 'inspect']:
         print('wrong' if os.environ.get('BAD_IMAGE') and 'mcp' in args[-1] else 'sha256:test')
     else:
         print(json.dumps([args[-1].split(':')[0] + '@sha256:1234']))
+if cmd == 'flyctl' and args[:3] == ['deploy', '--app', 'dev-mcp'] and os.environ.get('FAIL_MCP'):
+    sys.exit(1)
 if cmd == os.environ.get('FAIL_COMMAND'):
     sys.exit(1)
 if cmd == 'flyctl' and args[0] == 'deploy' and os.environ.get('FAIL_API') and args[2] == 'dev-api':
@@ -62,6 +64,27 @@ class DeployTests(unittest.TestCase):
         for call in deploys:
             self.assertIn(f'registry.fly.io/{call[3]}@sha256:1234', call)
         self.assertEqual(len([c for c in calls if c[0] == 'curl']), 2)
+
+    def test_production_worker_runs_after_services_and_health_checks(self):
+        self.env.update(DEPLOY_ENVIRONMENT='production', FLY_WORKER_API_TOKEN='fake')
+        result, calls = self.run_script('fly.sh')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        deploys = [c for c in calls if c[:2] == ['flyctl', 'deploy']]
+        self.assertEqual([c[3] for c in deploys], ['dev-api', 'dev-mcp', 'dropway-worker-production'])
+        worker_index = calls.index(deploys[-1])
+        self.assertTrue(all(i < worker_index for i, c in enumerate(calls) if c[0] == 'curl'))
+
+    def test_production_requires_worker_token_before_any_release(self):
+        self.env.update(DEPLOY_ENVIRONMENT='production', FLY_WORKER_API_TOKEN='')
+        result, calls = self.run_script('fly.sh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [])
+
+    def test_failed_mcp_prevents_production_worker(self):
+        self.env.update(DEPLOY_ENVIRONMENT='production', FLY_WORKER_API_TOKEN='fake', FAIL_MCP='1')
+        result, calls = self.run_script('fly.sh')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([c[3] for c in calls if c[:2] == ['flyctl', 'deploy']], ['dev-api', 'dev-mcp'])
 
     def test_bad_image_stops_before_any_release(self):
         self.env['BAD_IMAGE'] = '1'

@@ -26,13 +26,13 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@98172f70657cb3e15db199af139be99bd3e61200
         with:
           version: '0.5.3'
-      - name: Publish images and deploy API, MCP, then optional worker
+      - name: Publish images and deploy API, MCP, then worker
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           FLY_API_APP: ${{ vars.FLY_API_APP }}
           FLY_MCP_APP: ${{ vars.FLY_MCP_APP }}
-          FLY_WORKER_APP: ${{ vars.FLY_WORKER_APP }}
+          FLY_WORKER_APP: ${{ inputs.environment == 'production' && 'dropway-worker-production' || vars.FLY_WORKER_APP }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           FLY_MCP_API_TOKEN: ${{ secrets.FLY_MCP_API_TOKEN }}
           FLY_WORKER_API_TOKEN: ${{ secrets.FLY_WORKER_API_TOKEN }}
