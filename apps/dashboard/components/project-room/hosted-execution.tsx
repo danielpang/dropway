@@ -55,8 +55,8 @@ export function HostedExecution({
   const [model, setModel] = React.useState<string>(HOSTED_MODELS[0]);
   const [prompt, setPrompt] = React.useState("");
   const [threadId, setThreadId] = React.useState("");
-  const [maxTokens, setMaxTokens] = React.useState(20000);
-  const [maxCalls, setMaxCalls] = React.useState(10);
+  const [maxTokens, setMaxTokens] = React.useState(100000);
+  const [maxCalls, setMaxCalls] = React.useState(20);
   const [authorized, setAuthorized] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false);

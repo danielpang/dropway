@@ -37,6 +37,7 @@ export class GatewayObserver {
   readonly requests: CapturedRequest[] = [];
   readonly turns: TurnObservation[] = [];
   blockFurtherModelCalls = false;
+  failure: "budget_exhausted" | "error" | undefined;
   private current: TurnObservation = blankTurn();
   private turnOpen = false;
 
@@ -177,6 +178,11 @@ export async function withGatewayFetch(
     const body = typeof init?.body === "string" ? init.body : init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : "";
     observer.requests.push({ url: parsed.pathname + parsed.search, headers, body });
     const response = await previous(input, { ...init, redirect: "error" });
+    if (!response.ok) {
+      const error = await response.clone().json().catch(() => null) as { error?: string } | null;
+      observer.failure = response.status === 409 && error?.error === "budget_exhausted" ? "budget_exhausted" : "error";
+      return response;
+    }
     return tapResponse(response, observer);
   }) as typeof fetch;
   try {

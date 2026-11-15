@@ -337,6 +337,7 @@ function draft(pin: RunPin, path: string, content: string): CandidateDraft {
 }
 
 function deriveStatus(observer: GatewayObserver, maxTotalTokens: number): RunStatus {
+  if (observer.failure) return observer.failure;
   if (observer.turns.length === 0) return "error";
   if (observer.turns.some((turn) => !turn.usagePresent)) return "usage_absent";
   if (observer.spent() > maxTotalTokens) return "budget_exhausted";
