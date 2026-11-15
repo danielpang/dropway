@@ -1532,13 +1532,10 @@ import {
   platformSecurityHeaders,
 } from "../src/security";
 import {
-  DEFAULT_RATE_LIMIT,
-  type CounterKVLike,
+  type StatusKVLike,
   isBlockingStatus,
-  rateLimitDecision,
   rateLimitIdentity,
   readOrgStatus,
-  windowKey,
 } from "../src/ratelimit";
 import {
   denylistKeys,
@@ -1547,17 +1544,25 @@ import {
   type RevokedKVLike,
 } from "../src/revoke";
 
-/** In-memory counter KV (get/put with TTL) for the rate limiter + org-status. */
-function mockCounterKV(seed: Record<string, string> = {}): CounterKVLike & {
+/**
+ * In-memory KV for org-status reads. It also records any put, so tests can prove
+ * the Worker never writes KV on the request path.
+ */
+function mockCounterKV(seed: Record<string, string> = {}): StatusKVLike & {
   store: Map<string, string>;
+  puts: string[];
+  put(key: string, value: string): Promise<void>;
 } {
   const store = new Map<string, string>(Object.entries(seed));
+  const puts: string[] = [];
   return {
     store,
+    puts,
     async get(key: string): Promise<string | null> {
       return store.has(key) ? store.get(key)! : null;
     },
     async put(key: string, value: string): Promise<void> {
+      puts.push(key);
       store.set(key, value);
     },
   };
@@ -1724,39 +1729,7 @@ describe("service-worker registration is blocked on content origins", () => {
 
 // --- edge rate limiting (pure) ----------------------------------------------
 
-describe("rateLimitDecision (fixed-window KV counter)", () => {
-  const NOW = 1_700_000_000_000; // fixed epoch-ms
-
-  it("allows requests under the limit, then 429s once over", async () => {
-    const kv = mockCounterKV();
-    const policy = { limit: 3, windowSeconds: 60 };
-    const id = "ip:1.2.3.4";
-    const results = [];
-    for (let i = 0; i < 4; i++) {
-      results.push(await rateLimitDecision(kv, id, NOW, policy));
-    }
-    expect(results.map((r) => r.allowed)).toEqual([true, true, true, false]);
-    expect(results[3]!.retryAfterSeconds).toBeGreaterThan(0);
-    expect(results[3]!.retryAfterSeconds).toBeLessThanOrEqual(60);
-  });
-
-  it("resets in the NEXT window (a later window is a fresh counter key)", async () => {
-    const kv = mockCounterKV();
-    const policy = { limit: 1, windowSeconds: 60 };
-    const id = "ip:9.9.9.9";
-    expect((await rateLimitDecision(kv, id, NOW, policy)).allowed).toBe(true);
-    expect((await rateLimitDecision(kv, id, NOW, policy)).allowed).toBe(false);
-    // Advance past the window → new key → allowed again.
-    const next = NOW + 61_000;
-    expect((await rateLimitDecision(kv, id, next, policy)).allowed).toBe(true);
-    expect(windowKey(id, NOW, policy)).not.toBe(windowKey(id, next, policy));
-  });
-
-  it("is a no-op (fail open) when no counter KV is bound", async () => {
-    const r = await rateLimitDecision(undefined, "ip:1.1.1.1", NOW, DEFAULT_RATE_LIMIT);
-    expect(r.allowed).toBe(true);
-  });
-
+describe("rateLimitIdentity", () => {
   it("derives the identity from CF-Connecting-IP, else falls back to host", () => {
     const withIp = new Request("https://h/", { headers: { "CF-Connecting-IP": "203.0.113.7" } });
     expect(rateLimitIdentity(withIp, "h")).toBe("ip:203.0.113.7");
@@ -1765,17 +1738,25 @@ describe("rateLimitDecision (fixed-window KV counter)", () => {
 });
 
 describe("serve() enforces the edge rate limit end-to-end", () => {
+  /** A counting stand-in for the native binding: allows `limit` calls per key. */
+  function countingLimiter(limit: number) {
+    const counts = new Map<string, number>();
+    return {
+      keys: counts,
+      async limit({ key }: { key: string }) {
+        const n = (counts.get(key) ?? 0) + 1;
+        counts.set(key, n);
+        return { success: n <= limit };
+      },
+    };
+  }
+
   it("serves under the limit, then returns 429 with Retry-After + platform CSP", async () => {
     const { objects } = deploy({
       "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
     });
-    const LIMITS = mockCounterKV();
-    const env: Env = {
-      ...envFor(PUBLIC_ROUTE, HOST, objects),
-      LIMITS,
-      RATE_LIMIT_MAX: "2",
-      RATE_LIMIT_WINDOW_SECONDS: "60",
-    };
+    const RATE_LIMITER = countingLimiter(2);
+    const env: Env = { ...envFor(PUBLIC_ROUTE, HOST, objects), RATE_LIMITER };
     const req = () =>
       new Request(`https://${HOST}/`, {
         method: "GET",
@@ -1788,6 +1769,7 @@ describe("serve() enforces the edge rate limit end-to-end", () => {
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
     expect(c.status).toBe(429);
+    expect([...RATE_LIMITER.keys.keys()]).toEqual(["ip:198.51.100.42"]);
     const retry = c.headers.get("Retry-After");
     expect(retry).not.toBeNull();
     expect(Number(retry)).toBeGreaterThan(0);
@@ -1795,11 +1777,38 @@ describe("serve() enforces the edge rate limit end-to-end", () => {
     expect(c.headers.get("Cache-Control")).toBe("no-store");
   });
 
-  it("does not rate-limit when no LIMITS binding is present (public fast path stays cheap)", async () => {
+  // Regression: a KV-backed fallback counter wrote KV on every request and
+  // exhausted the account's daily KV write quota. The Worker must never write KV.
+  it("never writes KV on the request path, with or without the native binding", async () => {
     const { objects } = deploy({
       "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
     });
-    const env = envFor(PUBLIC_ROUTE, HOST, objects); // no LIMITS
+    for (const RATE_LIMITER of [undefined, countingLimiter(1_000)]) {
+      const LIMITS = mockCounterKV();
+      const env: Env = { ...envFor(PUBLIC_ROUTE, HOST, objects), LIMITS, RATE_LIMITER };
+      for (let i = 0; i < 50; i++) {
+        const known = await serve(
+          new Request(`https://${HOST}/`, { headers: { "CF-Connecting-IP": "10.0.0.1" } }),
+          env,
+          { cache: null },
+        );
+        expect(known.status).toBe(200);
+        // An unknown-host probe (the scanner traffic that burned the quota).
+        await serve(
+          new Request(`https://jenkins.dropwaycontent.com/`, { headers: { "CF-Connecting-IP": "10.0.0.2" } }),
+          env,
+          { cache: null },
+        );
+      }
+      expect(LIMITS.puts).toEqual([]);
+    }
+  });
+
+  it("serves normally (fail open) when the RATE_LIMITER binding is missing", async () => {
+    const { objects } = deploy({
+      "index.html": { body: "<h1>home</h1>", content_type: "text/html" },
+    });
+    const env: Env = { ...envFor(PUBLIC_ROUTE, HOST, objects), LIMITS: mockCounterKV() };
     for (let i = 0; i < 50; i++) {
       const res = await serve(
         new Request(`https://${HOST}/`, { headers: { "CF-Connecting-IP": "10.0.0.1" } }),

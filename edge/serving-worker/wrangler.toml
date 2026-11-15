@@ -39,11 +39,9 @@ EDGE_JWKS_URL = "https://api.dropway.dev/.well-known/edge-jwks"
 APP_AUTHZ_URL = "https://app.dropway.dev/authz"
 
 # --- Phase 4 hardening (edge rate limiting / denial-of-wallet) ---------------
-# Rate limit applied per client IP (else host) BEFORE the route lookup. The
-# PRIMARY limiter is the native `ratelimit` binding below (atomic — it actually
-# counts a single-IP flood); these vars only tune the KV-counter FALLBACK
-# (src/ratelimit.ts, best-effort: KV can't count a hot-key flood). Defaults
-# 600 req / 60s.
+# Rate limit applied per client IP (else host) BEFORE the route lookup, by the
+# native `[[ratelimits]]` binding below. RATE_LIMIT_WINDOW_SECONDS sets the
+# Retry-After on a 429; keep both vars in sync with `simple` below.
 RATE_LIMIT_MAX = "600"
 RATE_LIMIT_WINDOW_SECONDS = "60"
 
@@ -68,14 +66,14 @@ ENVIRONMENT = "production"
 # it off, so self-hosted sites never carry the banner. See src/banner.ts.
 ATTRIBUTION_BANNER = "true"
 
-# Native, atomic Rate Limiting binding — the REAL denial-of-wallet control (it
-# correctly counts a single-IP flood the KV counter cannot). Keep `simple.limit`
-# /`period` in sync with the vars above; `namespace_id` is an arbitrary per-Worker
-# integer you choose. When this binding is present the Worker prefers it over the
-# KV counter (src/index.ts).
-# NOTE: the key is `[[ratelimits]]` with `name` — wrangler silently DROPS a
-# `[[ratelimit]]`/`binding` block (only a dry-run warning), which left production
-# on the KV-counter fallback.
+# Native Rate Limiting binding: the ONLY edge rate limiter, and it uses no KV.
+# There is deliberately no KV fallback: a KV counter wrote KV on every request
+# and exhausted the account's daily KV write quota. Without this binding rate
+# limiting is off, and CI's deploy (scripts/deploy/edge.sh) refuses to ship.
+# Keep `simple.limit`/`period` in sync with the vars above; `namespace_id` is an
+# arbitrary per-account integer.
+# NOTE: the key is `[[ratelimits]]` with `name`. Wrangler silently DROPS a
+# `[[ratelimit]]`/`binding` block (only a dry-run warning).
 [[ratelimits]]
 name = "RATE_LIMITER"
 namespace_id = "1001"
@@ -102,12 +100,10 @@ bucket_name = "dropway-content"
 preview_bucket_name = "dropway-content-development"
 
 # --- Phase 4 hardening bindings (OPTIONAL) -----------------------------------
-# LIMITS: KV for the edge rate-limiter counters (`rl:*`) AND the per-org
+# LIMITS: KV for the per-org
 # suspension/over-limit status (`org_status:<org_id>` → "suspended"|"over_limit",
-# written by the Go API on billing suspension / quota over-limit). Absent → rate
-# limiting is a no-op (fail open) and the org-status check is skipped. Uncomment
-# and fill the IDs to enable (a separate namespace from ROUTES is recommended so
-# high-churn counters don't contend with the route projection).
+# written by the Go API on billing suspension / quota over-limit). The Worker only
+# READS it, never writes. Absent → the org-status check is skipped.
 [[kv_namespaces]]
 binding = "LIMITS"
 id = "8fb5e7ec221e4386a40c9805e010cdbf"
