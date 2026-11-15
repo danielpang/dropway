@@ -30,6 +30,8 @@ import {
 import { UploadProjectImage } from "./upload-project-image";
 import { NewProjectSite } from "./new-project-site";
 import { ProjectSharing } from "./project-sharing";
+import { MentionTextarea } from "./mention-textarea";
+import { mentionOptions } from "@/lib/project-room/mentions";
 import { MentionExecutionControls } from "./mention-execution";
 import {
   hasDropwayMention,
@@ -134,7 +136,7 @@ export function RoomWorkspace({
   threads: ReviewThread[];
   candidates: ReviewCandidate[];
   diffs: Record<string, CandidateDiffView>;
-  members: { userId: string; role: string }[];
+  members: { userId: string; role: string; name?: string }[];
   attachedSites: { siteId: string; createdBy: string }[];
   siteComments: SiteCommentItem[];
   commentCursor: string | null;
@@ -846,7 +848,8 @@ export function RoomWorkspace({
           }
         }}
       >
-        <textarea
+        <MentionTextarea
+          options={mentionOptions(members)}
           rows={1}
           onInput={(event) => {
             const input = event.currentTarget;
@@ -857,7 +860,7 @@ export function RoomWorkspace({
           aria-label="Comment on this page"
           value={body}
           disabled={commentBusy}
-          onChange={(event) => setBody(event.target.value)}
+          onValueChange={setBody}
           className="block min-h-10 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         {hasDropwayMention(body) ? (
@@ -1037,7 +1040,8 @@ export function RoomWorkspace({
             );
           }}
         >
-          <textarea
+          <MentionTextarea
+            options={mentionOptions(members)}
             rows={1}
             onInput={(event) => {
               const input = event.currentTarget;
@@ -1048,10 +1052,10 @@ export function RoomWorkspace({
             placeholder="Write a reply…"
             className="min-h-10 min-w-0 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={replyByThread[thread.ID] ?? ""}
-            onChange={(event) =>
+            onValueChange={(value) =>
               setReplyByThread((prev) => ({
                 ...prev,
-                [thread.ID]: event.target.value,
+                [thread.ID]: value,
               }))
             }
           />

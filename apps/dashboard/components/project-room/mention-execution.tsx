@@ -35,7 +35,7 @@ export function MentionExecutionControls({ body, allowed, onChange }: { body: st
     } : undefined);
   }, [allowed, requestId, credential, model, tokens, calls]);
   React.useEffect(() => () => callback.current(undefined), []);
-  if (!allowed) return <p className="text-sm text-muted-foreground">@dropway needs hosted execution, an owner/editor with site-edit permission, and the current site version. Remove the mention to post an ordinary comment.</p>;
+  if (!allowed) return null;
   return <fieldset className="w-full space-y-2 rounded border border-border p-3">
     <legend className="text-sm font-medium">Authorize @dropway revision</legend>
     <p className="text-sm text-muted-foreground">{notice}</p>
