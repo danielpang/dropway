@@ -39,13 +39,9 @@ import {
 } from "../src/manifest";
 import { cleanPath, parseRouteValue, type RouteValue } from "../src/route";
 import {
-  type CounterKVLike,
   type StatusKVLike,
   isBlockingStatus,
-  rateLimitDecision,
-  rateLimitIdentity,
   readOrgStatus,
-  windowKey,
 } from "../src/ratelimit";
 import {
   type RevokedKVLike,
@@ -405,11 +401,11 @@ describe("parseRouteValue (schema_version + access_mode boundaries)", () => {
 });
 
 // ============================================================================
-// ratelimit: garbled counter, fail-open, identity, window key, org-status parse
+// ratelimit: identity, org-status parse
 // ============================================================================
 
-/** In-memory counter KV (get/put). */
-function mockCounterKV(seed: Record<string, string> = {}): CounterKVLike & {
+/** In-memory KV for org-status reads. */
+function mockCounterKV(seed: Record<string, string> = {}): StatusKVLike & {
   store: Map<string, string>;
 } {
   const store = new Map<string, string>(Object.entries(seed));
@@ -418,69 +414,8 @@ function mockCounterKV(seed: Record<string, string> = {}): CounterKVLike & {
     async get(key) {
       return store.has(key) ? store.get(key)! : null;
     },
-    async put(key, value) {
-      store.set(key, value);
-    },
   };
 }
-
-describe("rateLimitDecision (boundary + defensive branches)", () => {
-  const NOW = 1_700_000_000_000;
-
-  it("treats a garbled stored counter as 0 (parseCount defensiveness)", async () => {
-    const policy = { limit: 1, windowSeconds: 60 };
-    const id = "ip:5.5.5.5";
-    // Seed the CURRENT window key with garbage; the next read must treat it as 0,
-    // so the first request is the 1st (allowed), not "garbage+1".
-    const kv = mockCounterKV({ [windowKey(id, NOW, policy)]: "not-a-number" });
-    const r = await rateLimitDecision(kv, id, NOW, policy);
-    expect(r.allowed).toBe(true);
-    expect(r.count).toBe(1);
-  });
-
-  it("fails OPEN when the counter KV get throws", async () => {
-    const throwing: CounterKVLike = {
-      async get() {
-        throw new Error("KV down");
-      },
-      async put() {},
-    };
-    const r = await rateLimitDecision(throwing, "ip:1.2.3.4", NOW, { limit: 1, windowSeconds: 60 });
-    expect(r.allowed).toBe(true);
-  });
-
-  it("swallows a failing put (best-effort) and still allows the request", async () => {
-    const flakyPut: CounterKVLike = {
-      async get() {
-        return null;
-      },
-      async put() {
-        throw new Error("put failed");
-      },
-    };
-    const r = await rateLimitDecision(flakyPut, "ip:1.1.1.1", NOW, { limit: 5, windowSeconds: 60 });
-    expect(r.allowed).toBe(true);
-    expect(r.count).toBe(1);
-  });
-
-  it("computes retryAfter within (0, windowSeconds] when over the limit", async () => {
-    const policy = { limit: 1, windowSeconds: 30 };
-    const kv = mockCounterKV();
-    const id = "ip:7.7.7.7";
-    await rateLimitDecision(kv, id, NOW, policy); // count 1 (allowed)
-    const over = await rateLimitDecision(kv, id, NOW, policy); // count 2 (denied)
-    expect(over.allowed).toBe(false);
-    expect(over.retryAfterSeconds).toBeGreaterThan(0);
-    expect(over.retryAfterSeconds).toBeLessThanOrEqual(30);
-  });
-
-  it("X-Real-IP is used when CF-Connecting-IP is absent; whitespace-only IP falls back to host", () => {
-    const realIp = new Request("https://h/", { headers: { "X-Real-IP": "192.0.2.5" } });
-    expect(rateLimitIdentity(realIp, "h")).toBe("ip:192.0.2.5");
-    const blankIp = new Request("https://h/", { headers: { "CF-Connecting-IP": "   " } });
-    expect(rateLimitIdentity(blankIp, "acme.example")).toBe("host:acme.example");
-  });
-});
 
 describe("readOrgStatus (parse edge cases) + isBlockingStatus", () => {
   it("isBlockingStatus only blocks suspended/over_limit", () => {

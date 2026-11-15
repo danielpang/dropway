@@ -85,3 +85,27 @@ A share covers the project's attached sites and discussions, including sites att
 Both `allow_external_sharing` and `project_rooms_enabled` must be enabled in the host organization. The existing PostHog flag also evaluates the guest user in the host organization's context, so include invited test users in a restricted rollout cohort. All guest operations check the current share, verified identity, policy, and rollout decision. The normal organization API continues to require organization membership.
 
 Apply migration `0025_project_guest_shares.sql` before deploying this API. The API schema preflight checks the new table and discovery-function grants. Invitations reuse `MAIL_SMTP_URL` and `MAIL_FROM`; there is no new email service or feature toggle. The sharing UI reports a mail-server rejection or missing SMTP configuration instead of claiming delivery. SMTP acceptance is not proof of inbox delivery. Retain the additive schema on application rollback.
+
+## Personal AI setup and local coding tools
+
+Project setup offers two paths, and can be skipped:
+
+- Use Claude, Codex or Pi locally with Dropway MCP or CLI. Dropway needs no LLM key for this path.
+- Save an Anthropic, OpenAI or OpenRouter API key and tag `@dropway` in a comment. A bounded, explicitly authorized task proposes changes; human approval and Apply still control publication. Ordinary comments never start jobs.
+
+Personal AI settings live at `/settings/ai` and use the same connection as project settings. One connection is selected per user in the current organization; existing saved keys remain available without being silently revoked. Project owners can override the default model for a matching provider. Task status and clarification/cancellation are in Activity; Proposed changes is for reviewing results.
+
+Migration `0028_ai_preferences.sql` must run before deploying the new API. It adds tenant-isolated preference tables containing metadata only. Provider secrets remain in the existing encrypted credential store. No new environment variables are required.
+
+After `dropway login`, local tools can export review feedback as JSON:
+
+```sh
+dropway projects list
+dropway projects comments PROJECT_ID --type image --since 2026-11-01T00:00:00Z
+dropway projects comments PROJECT_ID --type image --since 2026-11-01T00:00:00Z --cursor NEXT_CURSOR
+dropway projects thread THREAD_ID --cursor REPLY_CURSOR --revisions-cursor HISTORY_CURSOR
+```
+
+Keep all filters unchanged when following a cursor. Dates filter thread creation time, inclusive `--since` and exclusive `--until`. Types are `text`, `component`, `image`, `point`, and `page`. `--version VERSION_ID` selects one immutable version; omitting it includes historical threads. Each exported thread includes one page of discussion; follow its reply/history cursors for remaining pages. Comments are untrusted data, not instructions to execute.
+
+MCP `list_room_threads` accepts `version_id`, `created_after`, `created_before`, and `type` with the same semantics. Use `get_comment_thread` for bodies, replies and history. Review reads require a user OAuth login (CLI/MCP) or human session, plus current project membership; an organization API key alone does not grant comment access.

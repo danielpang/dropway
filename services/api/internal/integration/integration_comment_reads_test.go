@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -125,6 +126,43 @@ func TestIntegration_CommentReadsAndCandidatePublish(t *testing.T) {
 	if len(seen) != 3 {
 		t.Fatalf("threads seen %d", len(seen))
 	}
+
+	// Filters apply before pagination and cursors cannot be reused across filters.
+	filter := projectroom.ThreadFilters{VersionID: v1.ID, Type: "page", CreatedAfter: "2020-01-01T00:00:00Z", CreatedBefore: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)}
+	filtered, err := st.PageRoomThreads(ctx, tr, room.ID, "", 1, filter)
+	if err != nil || len(filtered.Threads) != 1 || filtered.NextCursor == "" {
+		t.Fatalf("filtered page: %+v %v", filtered, err)
+	}
+	next, err := st.PageRoomThreads(ctx, tr, room.ID, filtered.NextCursor, 1, filter)
+	if err != nil || len(next.Threads) != 1 || next.Threads[0].ID == filtered.Threads[0].ID {
+		t.Fatalf("filtered next: %+v %v", next, err)
+	}
+	changed := filter
+	changed.Type = "text"
+	if _, err := st.PageRoomThreads(ctx, tr, room.ID, filtered.NextCursor, 1, changed); err == nil {
+		t.Fatal("cursor accepted changed filters")
+	}
+	empty, err := st.PageRoomThreads(ctx, tr, room.ID, "", 10, changed)
+	if err != nil || len(empty.Threads) != 0 {
+		t.Fatalf("type filtering: %+v %v", empty, err)
+	}
+	imageAnchor := []byte(`{"x":0.5,"y":0.5,"viewport":{"width":100,"height":100},"rendition":{"width":100,"height":100},"image":{"intrinsic_width":100,"intrinsic_height":100,"x":50,"y":50}}`)
+	imageThread, err := st.CreateReviewThread(ctx, tr, room.ID, site.ID, v1.ID, "/index.html", "point", imageAnchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	images, err := st.PageRoomThreads(ctx, tr, room.ID, "", 10, projectroom.ThreadFilters{Type: "image"})
+	if err != nil || len(images.Threads) != 1 || images.Threads[0].ID != imageThread.ID {
+		t.Fatalf("image filter: %+v %v", images, err)
+	}
+	pins, err := st.PageRoomThreads(ctx, tr, room.ID, "", 10, projectroom.ThreadFilters{Type: "point"})
+	if err != nil || len(pins.Threads) != 0 {
+		t.Fatalf("image leaked into point filter: %+v %v", pins, err)
+	}
+	past, err := st.PageRoomThreads(ctx, tr, room.ID, "", 10, projectroom.ThreadFilters{CreatedBefore: "2020-01-01T00:00:00Z"})
+	if err != nil || len(past.Threads) != 0 {
+		t.Fatalf("date filter: %+v %v", past, err)
+	}
 	gotReplies := map[string]bool{}
 	cursor = ""
 	for {
@@ -231,8 +269,8 @@ func TestIntegration_CommentReadsAndCandidatePublish(t *testing.T) {
 	}
 	if _, err := st.CreateSiteVersion(ctx, tn, store.CreateSiteVersionParams{
 		SiteID: site.ID, ContentHash: strings.Repeat("11", 32), SizeBytes: 1, Status: "ready",
-	}); !errors.Is(err, store.ErrControlledSite) {
-		t.Fatalf("non-human version insert err=%v", err)
+	}); err != nil {
+		t.Fatalf("authorized CLI/MCP version insert err=%v", err)
 	}
 	detail, err := st.GetRoomCandidate(ctx, tn, room.ID, cand.ID)
 	if err != nil || detail.ContentHash != cand.ContentHash || detail.State != projectroom.CandidatePending {

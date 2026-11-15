@@ -27,6 +27,27 @@ type roomReadIn struct {
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
 }
+type roomThreadsIn struct {
+	RoomID        string `json:"room_id"`
+	Cursor        string `json:"cursor,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	VersionID     string `json:"version_id,omitempty" jsonschema:"exact immutable version ID; omit for all versions"`
+	CreatedAfter  string `json:"created_after,omitempty" jsonschema:"inclusive thread creation time in RFC3339 format"`
+	CreatedBefore string `json:"created_before,omitempty" jsonschema:"exclusive thread creation time in RFC3339 format"`
+	Type          string `json:"type,omitempty" jsonschema:"text, component, image, point, or page; omit for all types"`
+}
+
+func roomThreadsPath(in roomThreadsIn) string {
+	values := url.Values{}
+	values.Set("limit", strconv.Itoa(in.Limit))
+	for k, v := range map[string]string{"cursor": in.Cursor, "version_id": in.VersionID, "created_after": in.CreatedAfter, "created_before": in.CreatedBefore, "type": in.Type} {
+		if v != "" {
+			values.Set(k, v)
+		}
+	}
+	return "/v1/project-rooms/" + url.PathEscape(in.RoomID) + "/threads?" + values.Encode()
+}
+
 type candidateReadIn struct {
 	RoomID      string `json:"room_id"`
 	CandidateID string `json:"candidate_id"`
@@ -97,12 +118,12 @@ func (svc *Service) getProjectRoomHandler(ctx context.Context, _ *mcpsdk.CallToo
 	return nil, out, err
 }
 
-func (svc *Service) listRoomThreadsHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in roomReadIn) (*mcpsdk.CallToolResult, roomReadOut, error) {
+func (svc *Service) listRoomThreadsHandler(ctx context.Context, _ *mcpsdk.CallToolRequest, in roomThreadsIn) (*mcpsdk.CallToolResult, roomReadOut, error) {
 	token, ok := mcpToken(ctx)
 	if !ok {
 		return nil, roomReadOut{}, ErrNoToken
 	}
-	out, err := svc.readJSON(ctx, token, pagePath("/v1/project-rooms/"+in.RoomID+"/threads", in.Cursor, in.Limit))
+	out, err := svc.readJSON(ctx, token, roomThreadsPath(in))
 	return nil, out, err
 }
 

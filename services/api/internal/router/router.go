@@ -105,6 +105,10 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 
 		r.Get("/me", api.Me)
 		r.Get("/project-collaboration/capabilities", api.GetCollaborationCapabilities)
+		r.Get("/provider-credentials/preferences", api.AIPreferences)
+		r.Put("/provider-credentials/preferences", api.AIPreferences)
+		r.Get("/project-rooms/{roomID}/ai-settings", api.AIPreferences)
+		r.Put("/project-rooms/{roomID}/ai-settings", api.AIPreferences)
 		r.Get("/provider-credentials", api.ListProviderCredentials)
 		r.Post("/provider-credentials", api.SaveProviderCredential)
 		r.Put("/provider-credentials/{credentialID}", api.SaveProviderCredential)

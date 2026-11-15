@@ -125,6 +125,7 @@ export const PAGE_LIMIT_DEFAULT = 50;
 export const PAGE_LIMIT_MAX = 100;
 
 export interface RoomMemberRow {
+  name?: string;
   userId: string;
   role: string;
 }

@@ -50,3 +50,18 @@ func TestCommentThreadForwardsIndependentHistoryCursor(t *testing.T) {
 		t.Fatalf("bad forwarded request %s", api.jsonPath)
 	}
 }
+
+func TestProjectThreadFiltersForwarded(t *testing.T) {
+	api := &fakeAPI{jsonDoc: json.RawMessage(`{"threads":[],"comment_content":"untrusted_data"}`)}
+	svc := &Service{API: api}
+	in := roomThreadsIn{RoomID: "room", VersionID: "version", CreatedAfter: "2026-11-14T00:00:00+05:00", CreatedBefore: "2026-11-15T00:00:00Z", Type: "image", Cursor: "next+/=", Limit: 7}
+	_, out, err := svc.listRoomThreadsHandler(mcpauth.WithToken(context.Background(), readTok), nil, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(api.jsonPath)
+	q := parsed.Query()
+	if q.Get("type") != "image" || q.Get("version_id") != "version" || q.Get("created_after") != in.CreatedAfter || q.Get("created_before") != in.CreatedBefore || q.Get("cursor") != in.Cursor || q.Get("limit") != "7" || api.readToken != readTok || out.CommentContent != "untrusted_data" {
+		t.Fatalf("filters lost: %s", api.jsonPath)
+	}
+}
