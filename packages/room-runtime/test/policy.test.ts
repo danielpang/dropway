@@ -148,3 +148,9 @@ async function sourceFiles(dir: string): Promise<string[]> {
   );
   return files.flat();
 }
+
+it("accepts current Claude models with provider-specific identifiers",()=>{
+ for(const modelId of ["claude-opus-5-5","claude-fable-5-2","claude-sonnet-5-5","claude-haiku-5-5"])expect(()=>validatePin(pin({provider:"anthropic",modelId}))).not.toThrow();
+ for(const modelId of ["anthropic/claude-opus-5.5","anthropic/claude-fable-5.2"])expect(()=>validatePin(pin({provider:"openrouter",modelId}))).not.toThrow();
+ expect(()=>validatePin(pin({provider:"openai",modelId:"claude-opus-5-5"}))).toThrow();
+});

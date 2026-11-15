@@ -43,6 +43,9 @@ func (s *Store) ReserveGatewayCall(ctx context.Context, token string, inputBytes
 		if err != nil {
 			return err
 		}
+		if detected := hosted.KeyProvider(secret); detected != "" && detected != j.Config.Provider {
+			return hosted.ErrDenied
+		}
 		if _, err := tx.Exec(ctx, `UPDATE app.execution_attempts SET gateway_active=true,reserved_tokens=$3 WHERE org_id=$1 AND id=$2`, j.OrgID, a.AttemptID, reserved); err != nil {
 			return err
 		}

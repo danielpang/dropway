@@ -32,6 +32,8 @@ import { NewProjectSite } from "./new-project-site";
 import { ProjectSharing } from "./project-sharing";
 import { MentionTextarea } from "./mention-textarea";
 import { mentionOptions } from "@/lib/project-room/mentions";
+import { AICommentStatus } from "./ai-comment-status";
+import type { HostedJob } from "@/lib/project-room/hosted";
 import { MentionExecutionControls } from "./mention-execution";
 import {
   hasDropwayMention,
@@ -41,7 +43,10 @@ import {
 import { AIConnections } from "./ai-connections";
 import { HostedExecution } from "@/components/project-room/hosted-execution";
 import { StaticReview } from "@/components/collab/static-review";
-import { loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
+import {
+  loadRevisionNumbersAction,
+  loadStaticSnapshotAction,
+} from "@/app/(app)/rooms/actions";
 import type {
   StaticSelection,
   StaticSnapshot,
@@ -98,6 +103,8 @@ export function RoomWorkspace({
   notice,
   orgEnabled,
   executionConfigured = false,
+  jobs = [],
+  jobStatusUnavailable = false,
   demo = false,
   onEnableRooms,
   onCreateRoom,
@@ -149,6 +156,8 @@ export function RoomWorkspace({
   orgEnabled: boolean;
   demo?: boolean;
   executionConfigured?: boolean;
+  jobs?: HostedJob[];
+  jobStatusUnavailable?: boolean;
   onEnableRooms: () => void;
   onCreateRoom: (
     name: string,
@@ -276,6 +285,37 @@ export function RoomWorkspace({
     sites.find((s) => s.id === attachedSites[0]?.siteId)?.currentVersionId ??
       "",
   );
+  const [revisionNumbers, setRevisionNumbers] = React.useState<
+    Record<string, number>
+  >({});
+  React.useEffect(() => {
+    let active = true;
+    setRevisionNumbers({});
+    if (demo) {
+      setRevisionNumbers({ "version-1": 1, "version-2": 2, "version-3": 3 });
+      return;
+    }
+    if (siteId)
+      void loadRevisionNumbersAction(siteId)
+        .then((result) => {
+          if (active && result.ok)
+            setRevisionNumbers(
+              Object.fromEntries(
+                result.versions.map((version) => [version.id, version.number]),
+              ),
+            );
+        })
+        .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [siteId, demo]);
+  const revisionLabel = (id: string) =>
+    revisionNumbers[id]
+      ? `Revision ${revisionNumbers[id]}`
+      : id === sites.find((item) => item.id === siteId)?.currentVersionId
+        ? "Current revision"
+        : "Earlier revision";
   const [page, setPage] = React.useState("/");
   const [body, setBody] = React.useState("");
   const latestDraft = React.useRef({ roomId, siteId, versionId, page, body });
@@ -611,9 +651,7 @@ export function RoomWorkspace({
                   {sites.find((site) => site.id === item.siteId)?.label ??
                     sites.find((site) => site.id === item.siteId)?.slug ??
                     "Project asset"}
-                  {item.versionId
-                    ? ` · Version ${item.versionId.slice(0, 8)}`
-                    : ""}
+                  {item.versionId ? ` · ${revisionLabel(item.versionId)}` : ""}
                 </p>
               ) : null}
             </div>
@@ -839,6 +877,7 @@ export function RoomWorkspace({
                   latestDraft.current[key as keyof typeof submitted] === value,
               )
             ) {
+              if (hasDropwayMention(body)) setCommentsVisible(true);
               setBody("");
               setStaticSelection(null);
               setSelectionResetKey((key) => key + 1);
@@ -926,11 +965,7 @@ export function RoomWorkspace({
                 {item.anchorKind ? ` · ${item.anchorKind}` : ""}
                 {item.page ? ` · ${item.page}` : ""}
                 {item.status ? ` · ${item.status}` : ""}
-                {item.versionId
-                  ? item.versionId === site?.currentVersionId
-                    ? " · Current revision"
-                    : " · Earlier revision"
-                  : ""}
+                {item.versionId ? ` · ${revisionLabel(item.versionId)}` : ""}
                 {` · ${new Date(item.createdAt).toLocaleDateString()}`}
               </p>
               {item.body ? (
@@ -996,7 +1031,7 @@ export function RoomWorkspace({
         </Tooltip>
       </div>
       <p className="text-xs text-muted-foreground">
-        Version {thread.VersionID.slice(0, 8)} · {thread.Status}{" "}
+        {revisionLabel(thread.VersionID)} · {thread.Status}{" "}
         <Tooltip label="Link to thread" align="end">
           <a
             href={`/rooms?room=${encodeURIComponent(thread.RoomID)}#thread-${encodeURIComponent(thread.ID)}`}
@@ -1010,6 +1045,24 @@ export function RoomWorkspace({
       {thread.Replies.slice(0, 1).map((item) => (
         <ReplyText key={item.ID} body={untrustedText(item.Body)} compact />
       ))}
+      {jobs
+        .filter(
+          (job) =>
+            job.roomId === thread.RoomID && job.config.threadId === thread.ID,
+        )
+        .slice(0, 1)
+        .map((job) => (
+          <AICommentStatus
+            key={job.id}
+            job={job}
+            stale={jobStatusUnavailable}
+            onReview={() => {
+              onRefreshRoom?.(thread.RoomID);
+              setPanel("changes");
+            }}
+            onActivity={() => setPanel("activity")}
+          />
+        ))}
       <div className="space-y-2 text-xs">
         <ul className="space-y-2 border-l border-border pl-2">
           {thread.Replies.slice(1).map((item) => (
@@ -1122,8 +1175,10 @@ export function RoomWorkspace({
           </summary>
           <div className="mt-2 space-y-2 rounded-md bg-muted/30 p-2.5">
             <p className="break-all text-xs text-muted-foreground">
-              Original version {thread.VersionID} · {thread.ContentHash} ·{" "}
-              {thread.AnchorState}. Revisions preserve the original location.
+              {revisionLabel(thread.VersionID)} ·{" "}
+              {thread.AnchorState === "anchored"
+                ? "Original location"
+                : "Location no longer matches"}
             </p>
             <ol className="space-y-2">
               {(thread.Revisions ?? []).map((revision) => (
@@ -1186,7 +1241,7 @@ export function RoomWorkspace({
               ),
             ).map((id) => (
               <option key={id} value={id}>
-                Version {id.slice(0, 8)}
+                {revisionLabel(id)}
               </option>
             ))}
           </select>
@@ -1754,7 +1809,7 @@ export function RoomWorkspace({
                         <option key={id} value={id}>
                           {id === site.currentVersionId
                             ? "Current version"
-                            : `Version ${id.slice(0, 8)}`}
+                            : revisionLabel(id)}
                         </option>
                       ))}
                     </select>

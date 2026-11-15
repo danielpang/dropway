@@ -1,7 +1,15 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
-import { Check, KeyRound, Pencil, Terminal, Trash2 } from "lucide-react";
+import {
+  Check,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Pencil,
+  Terminal,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -16,6 +24,7 @@ import {
 } from "@/app/(app)/rooms/hosted-actions";
 import {
   EMPTY_AI_PREFERENCES,
+  keyProvider,
   hostedModels,
   type HostedProvider,
   type ProviderCredential,
@@ -53,6 +62,7 @@ export function AIConnections({
   onDone?: () => void;
   demo?: boolean;
 }) {
+  const [showKey, setShowKey] = React.useState(false);
   const [ready, setReady] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
   const [credentials, setCredentials] = React.useState<ProviderCredential[]>(
@@ -412,27 +422,42 @@ export function AIConnections({
                 event.preventDefault();
                 if (!ready || busyRef.current) return;
                 const form = event.currentTarget;
-                const key = String(new FormData(form).get("api-key") || "");
+                const key = String(
+                  new FormData(form).get("api-key") || "",
+                ).trim();
+                const selectedProvider = keyProvider(key) ?? provider;
+                const selectedModel =
+                  selectedProvider === provider &&
+                  hostedModels(selectedProvider).includes(model)
+                    ? model
+                    : hostedModels(selectedProvider)[0]!;
+                setProvider(selectedProvider);
+                setModel(selectedModel);
+                setShowKey(false);
                 form.reset();
                 void mutate(async () => {
                   if (demo) {
-                    setProvider("openai");
-                    setModel("gpt-4.1");
-                    setCredentials([demoCredential]);
+                    const previewCredential: ProviderCredential = {
+                      ...demoCredential,
+                      provider: selectedProvider,
+                      label: `My ${providerNames[selectedProvider]} key`,
+                      lastFour: "DEMO",
+                    };
+                    setCredentials([previewCredential]);
                     await savePreferences({
                       mode: "api",
-                      credential_ref: demoCredential.id,
-                      provider: "openai",
-                      model: "gpt-4.1",
+                      credential_ref: previewCredential.id,
+                      provider: selectedProvider,
+                      model: selectedModel,
                     });
                     setEditing(false);
                     return;
                   }
                   const result = await saveCredentialAction(
-                    provider,
-                    `My ${providerNames[provider]} key`,
+                    selectedProvider,
+                    `My ${providerNames[selectedProvider]} key`,
                     key,
-                    current?.provider === provider &&
+                    current?.provider === selectedProvider &&
                       current.scope === "personal"
                       ? current.id
                       : undefined,
@@ -450,8 +475,8 @@ export function AIConnections({
                     !(await savePreferences({
                       mode: "api",
                       credential_ref: result.credential.id,
-                      provider,
-                      model,
+                      provider: result.credential.provider,
+                      model: selectedModel,
                     }))
                   )
                     return;
@@ -517,16 +542,40 @@ export function AIConnections({
                 </label>
                 <label className="space-y-2 text-sm sm:col-span-2">
                   <span>API key</span>
-                  <Input
-                    name="api-key"
-                    aria-label="Provider API key"
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={8}
-                    maxLength={4096}
-                    required
-                    placeholder="Paste your API key"
-                  />
+                  <div className="relative">
+                    <Input
+                      name="api-key"
+                      aria-label="Provider API key"
+                      type={showKey ? "text" : "password"}
+                      className="pr-11"
+                      onChange={(event) => {
+                        const detected = keyProvider(event.target.value);
+                        if (detected && detected !== provider) {
+                          setProvider(detected);
+                          setModel(hostedModels(detected)[0]!);
+                        }
+                      }}
+                      autoComplete="new-password"
+                      minLength={8}
+                      maxLength={4096}
+                      required
+                      placeholder="Paste your API key"
+                    />
+                    <button
+                      type="button"
+                      aria-label={showKey ? "Hide API key" : "Show API key"}
+                      aria-pressed={showKey}
+                      title={showKey ? "Hide API key" : "Show API key"}
+                      onClick={() => setShowKey((value) => !value)}
+                      className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {showKey ? (
+                        <EyeOff className="size-4" aria-hidden />
+                      ) : (
+                        <Eye className="size-4" aria-hidden />
+                      )}
+                    </button>
+                  </div>
                 </label>
                 <div className="flex gap-2 sm:col-span-2">
                   <Button type="submit">
@@ -590,9 +639,10 @@ export function AIConnections({
             </div>
           ) : null}
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Tag @dropway to request a revision and authorize the bounded task.
-            Ordinary comments do not trigger AI. Review the proposed changes,
-            accept or reject them, then apply approved changes to publish.
+            Tag @dropway in a comment to request a change using your saved
+            settings. Dropway manages task limits automatically. Ordinary
+            comments do not trigger AI. Review the proposed changes, accept or
+            reject them, then apply approved changes to publish.
           </p>
         </section>
       )}

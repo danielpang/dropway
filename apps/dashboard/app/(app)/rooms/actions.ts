@@ -468,3 +468,8 @@ export async function loadStaticSnapshotAction(roomId: string, siteId: string, v
     return { ok: false as const, message: "This immutable page could not be verified or is too large for static review. Page comments remain available." };
   }
 }
+
+export async function loadRevisionNumbersAction(siteId: string) {
+  if (!(await collaborationEnabled())) return {ok: false as const};
+  try { const versions=await api.listVersions(siteId); return {ok:true as const, versions:versions.flatMap(v=>v.id&&typeof v.version_no === "number"?[{id:v.id,number:v.version_no}]:[])}; } catch {return {ok:false as const};}
+}

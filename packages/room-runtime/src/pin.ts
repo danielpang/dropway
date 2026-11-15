@@ -20,8 +20,10 @@ export function assertSdkPin(): void {
 
 export const ALLOWED_MODELS = {
   openai: ["gpt-4.1", "gpt-4.1-mini"],
-  anthropic: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+  anthropic: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2", "claude-haiku-5-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
   openrouter: [
+    "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "anthropic/claude-fable-5.2", "anthropic/claude-haiku-5.5",
+    "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.1", "anthropic/claude-haiku-4.5",
     "anthropic/claude-sonnet-4-5",
     "anthropic/claude-opus-4-1",
     "anthropic/claude-haiku-4-5",

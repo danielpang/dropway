@@ -14,7 +14,7 @@ export interface HostedRunInput { roomId: string; siteId: string; versionId: str
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const string = (value: unknown): string => typeof value === "string" ? value : "";
 const optional = (value: unknown): string | null => typeof value === "string" && value ? value : null;
-export const HOSTED_MODELS = ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"] as const;
+export const HOSTED_MODELS = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2", "claude-haiku-5-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"] as const;
 export const OPENAI_MODELS = ["gpt-4.1", "gpt-4.1-mini"] as const;
 export function hostedModels(provider: HostedProvider): readonly string[] { return provider === "openai" ? OPENAI_MODELS : HOSTED_MODELS; }
 export function parseCredential(value: unknown): ProviderCredential | null {
@@ -36,7 +36,7 @@ export function parseHostedEvents(value: unknown): HostedEvent[] {
 export function validHostedRun(input: HostedRunInput): boolean {
   if (!input || typeof input !== "object" || !input.budget || typeof input.budget !== "object"
     || [input.roomId, input.siteId, input.versionId, input.credentialRef, input.idempotencyKey, input.prompt, input.provider, input.modelId].some((value) => typeof value !== "string")) return false;
-  const model = input.provider === "openrouter" ? input.modelId.replace(/^anthropic\//, "") : input.modelId;
+  const model = input.provider === "openrouter" ? input.modelId.replace(/^anthropic\//, "").replace(/\./g, "-") : input.modelId;
   return Boolean(input.roomId && input.siteId && input.versionId && input.credentialRef && input.idempotencyKey && input.prompt.trim())
     && (input.provider === "anthropic" || input.provider === "openrouter" || input.provider === "openai") && hostedModels(input.provider).includes(model)
     && input.prompt.length <= 16000
@@ -57,3 +57,13 @@ export function preferredModel(credential: ProviderCredential, personal: AIPrefe
   const model = project?.provider === credential.provider && project.model ? project.model : personal.provider === credential.provider ? personal.model : "";
   return hostedModels(credential.provider).includes(model) ? model : hostedModels(credential.provider)[0]!;
 }
+
+/** Only unambiguous provider prefixes are recognized. Never infer generic sk- keys. */
+export function keyProvider(key: string): HostedProvider | null {
+  if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("sk-or-v1-")) return "openrouter";
+  if (key.startsWith("sk-proj-") || key.startsWith("sk-svcacct-")) return "openai";
+  return null;
+}
+
+export function providerModelId(provider: HostedProvider, model: string): string { return provider === "openrouter" ? `anthropic/${model.replace(/-(\d+)-(\d+)$/, "-$1.$2")}` : model; }

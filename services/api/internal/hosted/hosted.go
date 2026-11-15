@@ -89,11 +89,11 @@ func ModelAllowed(provider, model string) bool {
 		if !strings.HasPrefix(model, "anthropic/") {
 			return false
 		}
-		model = strings.TrimPrefix(model, "anthropic/")
+		model = strings.ReplaceAll(strings.TrimPrefix(model, "anthropic/"), ".", "-")
 	} else if provider != "anthropic" {
 		return false
 	}
-	return model == "claude-sonnet-4-5" || model == "claude-opus-4-1" || model == "claude-haiku-4-5"
+	return model == "claude-sonnet-5-5" || model == "claude-opus-5-5" || model == "claude-fable-5-2" || model == "claude-haiku-5-5" || model == "claude-sonnet-4-5" || model == "claude-opus-4-1" || model == "claude-haiku-4-5"
 }
 
 type Vault struct{ aead cipher.AEAD }
@@ -172,3 +172,17 @@ type File struct {
 var secretPattern = regexp.MustCompile(`(?:sk-(?:ant-|or-)?[A-Za-z0-9_-]{8,}|dw_(?:gateway|attempt|live)_[A-Za-z0-9_.-]+)`)
 
 func Redact(value string) string { return secretPattern.ReplaceAllString(value, "[redacted]") }
+
+// KeyProvider recognizes only unambiguous key prefixes; generic sk- keys remain valid.
+func KeyProvider(key string) string {
+	switch {
+	case strings.HasPrefix(key, "sk-ant-"):
+		return "anthropic"
+	case strings.HasPrefix(key, "sk-or-v1-"):
+		return "openrouter"
+	case strings.HasPrefix(key, "sk-proj-"), strings.HasPrefix(key, "sk-svcacct-"):
+		return "openai"
+	default:
+		return ""
+	}
+}
