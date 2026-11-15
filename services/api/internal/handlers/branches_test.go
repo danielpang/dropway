@@ -5,7 +5,9 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +192,43 @@ func TestPublish_MissingVersionID_400(t *testing.T) {
 	rr := postJSON(h, "/v1/sites/s1/publish", `{}`)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (version_id required)", rr.Code)
+	}
+}
+
+// quotaProjection fails every route write with the Cloudflare daily KV quota
+// sentinel the production client returns for HTTP 429 / error 10048.
+type quotaProjection struct{}
+
+func (quotaProjection) PutRoute(context.Context, string, projection.RouteValue) error {
+	return fmt.Errorf("projection: put route h: %w: cloudflare returned 429", projection.ErrDailyQuota)
+}
+func (quotaProjection) DeleteRoute(context.Context, string) error { return nil }
+func (quotaProjection) RebuildFromDB(context.Context, map[string]projection.RouteValue) error {
+	return nil
+}
+
+func TestPublish_DailyKVQuota_503(t *testing.T) {
+	fs := newFakeStore()
+	fs.sites["s1"] = store.Site{ID: "s1", OrgID: "org_1", Slug: "wen-wen", AllowMemberEdits: true}
+	fs.p2().members["u"] = "owner"
+	fs.versions["v1"] = store.SiteVersion{ID: "v1", SiteID: "s1", OrgID: "org_1"}
+	a := NewFull(quota.Unlimited{}, fs, storage.NewFake(), quotaProjection{})
+	h := mountDeploy(a, claims("u", "org_1", "owner"))
+
+	rr := postJSON(h, "/v1/sites/s1/publish", `{"version_id":"v1"}`)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body %s", rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Fatal("missing Retry-After")
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "10048") || !strings.Contains(body, "saved") {
+		t.Fatalf("body = %s", body)
+	}
+	cur := fs.sites["s1"].CurrentVersionID
+	if cur == nil || *cur != "v1" {
+		t.Fatalf("version pointer = %v, want v1 saved despite the quota failure", cur)
 	}
 }
 
