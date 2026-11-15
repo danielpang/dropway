@@ -1,74 +1,53 @@
+# Migrations are owned by migrate.yml, never by this deployment workflow.
 name: Deploy hosted
 on:
   workflow_run:
-    workflows: [ci]
+    workflows: [migrate]
     branches: [main]
     types: [completed]
-  workflow_dispatch:
-    inputs:
-      target:
-        description: Run development migrations only, or continue through production deployment
-        type: choice
-        options: [development-migrations, production]
-        default: development-migrations
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: dropway-environment-rollout
   cancel-in-progress: false
 jobs:
   revision:
+    # Automatic migrate runs validate both environments after successful CI.
+    # Manual migration runs are recovery-only and must not trigger deployment.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_run' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.revision.outputs.sha }}
-      production: ${{ steps.revision.outputs.production }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
       - id: revision
         env:
-          EVENT: ${{ github.event_name }}
-          CI_SHA: ${{ github.event.workflow_run.head_sha }}
-          MANUAL_SHA: ${{ github.sha }}
-          TARGET: ${{ inputs.target }}
-          REF: ${{ github.ref }}
+          MIGRATED_SHA: ${{ github.event.workflow_run.head_sha }}
+          MIGRATION_RUN_ID: ${{ github.event.workflow_run.id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT" == workflow_run ]]; then
-            sha="$CI_SHA"
-            production=true
-            # Ignore delayed CI completions for a revision superseded on main.
-            [[ "$sha" == "$(git rev-parse HEAD)" ]] || exit 0
-          else
-            [[ "$REF" == refs/heads/main ]] || { echo 'Run deployments from main'; exit 1; }
-            sha="$MANUAL_SHA"
-            production=false
-            if [[ "$TARGET" == production ]]; then production=true; fi
-          fi
+          # A stale migrate run may succeed with both migration jobs skipped.
+          # Require actual successful execution of both jobs, not just run success.
+          migrated=$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$MIGRATION_RUN_ID/jobs" \
+            --jq '[.[].jobs[] | select(.name == "migrate-development" or .name == "migrate-production")] | length == 2 and all(.[]; .conclusion == "success")')
+          [[ "$migrated" == true ]] || exit 0
+          sha="$MIGRATED_SHA"
+          # Ignore migration completions for a revision superseded on main.
+          [[ "$sha" == "$(git rev-parse HEAD)" ]] || exit 0
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "production=$production" >> "$GITHUB_OUTPUT"
-  migrate-development:
+  build:
     needs: revision
     if: needs.revision.outputs.sha != ''
-    uses: ./.github/workflows/migrate-environment.yml
-    secrets: inherit
-    with:
-      environment: development
-      source_sha: ${{ needs.revision.outputs.sha }}
-      # No development Fly services are provisioned yet. Keep testing migrations
-      # against development without requiring app names or deployment tokens.
-      check_deploy_config: false
-  build:
-    needs: [revision, migrate-development]
-    if: needs.revision.outputs.production == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,17 +76,8 @@ jobs:
             fly-images.tar.gz
             image-ids.json
           retention-days: 3
-  migrate-production:
-    needs: [revision, build]
-    if: needs.revision.outputs.production == 'true'
-    uses: ./.github/workflows/migrate-environment.yml
-    secrets: inherit
-    with:
-      environment: production
-      source_sha: ${{ needs.revision.outputs.sha }}
-      check_deploy_config: true
   deploy-production:
-    needs: [revision, migrate-production]
+    needs: [revision, build]
     uses: ./.github/workflows/deploy-fly-environment.yml
     secrets: inherit
     with:

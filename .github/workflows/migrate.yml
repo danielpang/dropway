@@ -1,10 +1,14 @@
-# Recovery only. Normal migrations are owned by Deploy hosted.
+# The only owner of hosted database migrations.
 name: migrate
 on:
+  workflow_run:
+    workflows: [ci]
+    branches: [main]
+    types: [completed]
   workflow_dispatch:
     inputs:
       environment:
-        description: Environment to migrate without deploying services
+        description: Environment to migrate for recovery (does not deploy services)
         type: choice
         options: [development, production]
         default: development
@@ -14,10 +18,98 @@ concurrency:
   group: dropway-environment-rollout
   cancel-in-progress: false
 jobs:
-  migrate:
-    if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/migrate-environment.yml
-    secrets: inherit
-    with:
-      environment: ${{ inputs.environment }}
-      source_sha: ${{ github.sha }}
+  revision:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - id: revision
+        env:
+          EVENT: ${{ github.event_name }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sha="$RUN_SHA"
+          # A downstream workflow_run reports this run's head_sha, not CI_SHA.
+          # Only migrate when both identify the same tested revision.
+          if [[ "$EVENT" == workflow_run ]]; then
+            [[ "$CI_SHA" == "$sha" ]] || exit 0
+          fi
+          [[ "$sha" == "$(git rev-parse HEAD)" ]] || exit 0
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+  migrate-development:
+    needs: revision
+    if: needs.revision.outputs.sha != '' && (github.event_name == 'workflow_run' || inputs.environment == 'development')
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      APP_DSN: ${{ secrets.DEV_DATABASE_OWNER_URL }}
+      BILLING_DSN: ${{ secrets.DEV_BILLING_OWNER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.revision.outputs.sha }}
+      - name: Validate database secrets
+        run: |
+          set -euo pipefail
+          : "${APP_DSN:?Set DEV_DATABASE_OWNER_URL on the development GitHub environment}"
+          : "${BILLING_DSN:?Set DEV_BILLING_OWNER_URL on the development GitHub environment}"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install goose
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate app, billing, then identity
+        run: scripts/deploy/migrate.sh
+  migrate-production:
+    needs: [revision, migrate-development]
+    if: >-
+      !cancelled() && needs.revision.outputs.sha != '' &&
+      ((github.event_name == 'workflow_run' && needs.migrate-development.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.environment == 'production'))
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      APP_DSN: ${{ secrets.PROD_DATABASE_OWNER_URL }}
+      BILLING_DSN: ${{ secrets.PROD_BILLING_OWNER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.revision.outputs.sha }}
+      - name: Validate database secrets
+        run: |
+          set -euo pipefail
+          : "${APP_DSN:?Set PROD_DATABASE_OWNER_URL on the production GitHub environment}"
+          : "${BILLING_DSN:?Set PROD_BILLING_OWNER_URL on the production GitHub environment}"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install goose
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate app, billing, then identity
+        run: scripts/deploy/migrate.sh
