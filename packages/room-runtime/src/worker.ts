@@ -73,6 +73,8 @@ export interface RunResult {
   destroyedReason?: DestroyReason;
   transcript: TranscriptMessage[];
   error?: string;
+  errorCode?: string;
+  phase?: string;
 }
 
 export interface ClarifyInput {
@@ -144,6 +146,7 @@ export class RoomWorker {
     ac.signal.addEventListener("abort", onAbort);
 
     let result: RunResult = emptyResult();
+    let phase = "provision";
     try {
       if (options.signal?.aborted) {
         status = "cancelled";
@@ -151,6 +154,7 @@ export class RoomWorker {
         return result;
       }
       handle = await this.plane.create(specOf(pin), ATTEMPT_EGRESS_POLICY);
+      phase = "sandbox_policy";
       try {
         await assertHandleReady(this.plane, handle);
       } catch (error) {
@@ -158,6 +162,7 @@ export class RoomWorker {
         throw error;
       }
       if (ac.signal.aborted) throw new RoomRuntimeError("cancelled", "attempt cancelled during provisioning");
+      phase = "stage_source";
       await options.onPrepareSandbox?.(handle, ac.signal);
       const bound = bindAttemptExecutor(this.plane, handle);
       executor = {
@@ -177,6 +182,7 @@ export class RoomWorker {
         build: (input, signal) => tracked(bound.build(input, signal), "build", remoteOps),
         cancel: (reason) => bound.cancel(reason),
       };
+      phase = "open_session";
       const opened = await openLockedSession({
         dir,
         pin,
@@ -211,9 +217,12 @@ export class RoomWorker {
           options.onProgress?.(event.assistantMessageEvent.delta);
         }
       });
+      phase = "model_and_tools";
       await withGatewayFetch(gateway.href, observer, async () => {
         await opened.session.prompt(prompt);
       });
+      const terminal = opened.session.messages.filter(message => message.role === "assistant").at(-1);
+      if (terminal?.role === "assistant" && terminal.stopReason === "error" && !observer.failure) status ??= "error";
       status ??= deriveStatus(observer, pin.budget.maxTotalTokens);
       result = {
         ...baseResult(opened.session, observer, activeTools, remoteOps, drafts, deltas, status),
@@ -236,6 +245,8 @@ export class RoomWorker {
         deltas,
         transcript: session ? transcriptFrom(session.messages) : [],
         text: deltas.join(""),
+        errorCode: error instanceof RoomRuntimeError && /^[a-z_]{1,64}$/.test(error.code) ? error.code : "worker_error",
+        phase,
         error: error instanceof Error ? error.message : "run failed",
         question,
       };
@@ -337,6 +348,7 @@ function draft(pin: RunPin, path: string, content: string): CandidateDraft {
 }
 
 function deriveStatus(observer: GatewayObserver, maxTotalTokens: number): RunStatus {
+  if (observer.failure) return observer.failure;
   if (observer.turns.length === 0) return "error";
   if (observer.turns.some((turn) => !turn.usagePresent)) return "usage_absent";
   if (observer.spent() > maxTotalTokens) return "budget_exhausted";

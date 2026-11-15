@@ -55,8 +55,8 @@ export function HostedExecution({
   const [model, setModel] = React.useState<string>(HOSTED_MODELS[0]);
   const [prompt, setPrompt] = React.useState("");
   const [threadId, setThreadId] = React.useState("");
-  const [maxTokens, setMaxTokens] = React.useState(20000);
-  const [maxCalls, setMaxCalls] = React.useState(10);
+  const [maxTokens, setMaxTokens] = React.useState(100000);
+  const [maxCalls, setMaxCalls] = React.useState(20);
   const [authorized, setAuthorized] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false);
@@ -329,7 +329,7 @@ export function HostedExecution({
                           max_tokens: maxTokens,
                           max_calls: maxCalls,
                           max_seconds: 300,
-                          max_output_bytes: 2097152,
+                          max_output_bytes: 10 * 1024 * 1024,
                         },
                       });
                       if (!result.ok) {
@@ -462,7 +462,7 @@ export function HostedExecution({
                     </label>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    This task is limited to 5 minutes and 2 MiB of output. Your
+                    This task is limited to 5 minutes and 10 MiB of output. Your
                     provider charges for model usage; these are token and call
                     limits, not a dollar estimate. Clarification resumes retain
                     the task configuration.

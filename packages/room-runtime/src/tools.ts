@@ -60,11 +60,12 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
         content: [{ type: "text", text: output.text }],
         details: {},
         isError: output.isError === true,
-        terminate: output.isError === true,
+        // A command failure is feedback the model can recover from, not a completed turn.
+        terminate: false,
       };
     } catch (error) {
       const aborted = signal?.aborted === true || (error instanceof Error && error.message === "aborted");
-      if (aborted) guard.stop("cancelled");
+      guard.stop(aborted ? "cancelled" : "error");
       return {
         content: [{ type: "text", text: aborted ? "cancelled" : "remote tool failed" }],
         details: {},

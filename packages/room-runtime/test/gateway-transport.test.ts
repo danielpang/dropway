@@ -24,3 +24,9 @@ it("restores fetch and transport state after a failed attempt", async () => {
   expect(globalThis.fetch).toBe(transport);
   await withGatewayFetch("https://api.example/b", new GatewayObserver(), async () => { await fetch("https://api.example/b/v1/chat/completions"); });
 });
+
+it("preserves an API budget rejection without inventing missing provider usage",async()=>{
+ const observer=new GatewayObserver();vi.stubGlobal("fetch",vi.fn(async()=>Response.json({error:"budget_exhausted"},{status:409})));
+ await withGatewayFetch("https://api.example/internal/room-gateway/attempt",observer,async()=>{expect((await fetch("https://api.example/internal/room-gateway/attempt/v1/messages")).status).toBe(409);});
+ expect(observer.failure).toBe("budget_exhausted");expect(observer.turns).toHaveLength(0);
+});

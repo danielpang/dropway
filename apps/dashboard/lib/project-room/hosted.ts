@@ -14,7 +14,7 @@ export interface HostedRunInput { roomId: string; siteId: string; versionId: str
 const object = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const string = (value: unknown): string => typeof value === "string" ? value : "";
 const optional = (value: unknown): string | null => typeof value === "string" && value ? value : null;
-export const HOSTED_MODELS = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2", "claude-haiku-5-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"] as const;
+export const HOSTED_MODELS = ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2", "claude-haiku-5-5", "claude-sonnet-4-5", "claude-haiku-4-5"] as const;
 export const OPENAI_MODELS = ["gpt-4.1", "gpt-4.1-mini"] as const;
 export function hostedModels(provider: HostedProvider): readonly string[] { return provider === "openai" ? OPENAI_MODELS : HOSTED_MODELS; }
 export function parseCredential(value: unknown): ProviderCredential | null {
@@ -46,6 +46,11 @@ export function validHostedRun(input: HostedRunInput): boolean {
 export function hostedFailureMessage(code: string | null): string {
   if (code === "budget_exhausted" || code === "time_budget_exhausted") return "The authorized task limit was reached. Review its progress before authorizing another task.";
   if (code === "authorization_changed") return "Source access, membership, the live baseline or credential authorization changed. Refresh and verify them before starting another task.";
+  if (code === "provider_model_unavailable") return "This model is no longer available from your provider. Choose a current model in project AI settings.";
+  if (code === "provider_authentication") return "The provider rejected this API key or its permissions. Check your AI connection.";
+  if (code === "provider_rate_limited") return "The provider is temporarily limiting requests. Please try again shortly.";
+  if (code === "provider_rejected") return "The provider rejected the model request. No changes were applied.";
+  if (code === "provider_unavailable" || code === "provider_response_invalid") return "The model provider could not complete the request. No changes were applied.";
   if (code === "usage_unverified") return "Provider usage could not be verified. The task stopped without applying a change; check the provider connection before retrying.";
   if (code === "lease_expired") return "The worker stopped responding before its lease expired. Start a new task after worker health is restored.";
   return "The hosted attempt stopped without applying a change. Check the provider connection and worker status before starting a new task.";
@@ -53,8 +58,12 @@ export function hostedFailureMessage(code: string | null): string {
 
 export interface AIPreferences { mode: "local" | "api"; credential_ref: string; provider: string; model: string }
 export const EMPTY_AI_PREFERENCES: AIPreferences = { mode: "local", credential_ref: "", provider: "", model: "" };
+export function currentHostedModel(provider: string, model: string): string {
+  return (provider === "anthropic" || provider === "openrouter") && model === "claude-opus-4-1" ? "claude-opus-5-5" : model;
+}
 export function preferredModel(credential: ProviderCredential, personal: AIPreferences, project?: AIPreferences): string {
-  const model = project?.provider === credential.provider && project.model ? project.model : personal.provider === credential.provider ? personal.model : "";
+  const selected = project?.provider === credential.provider && project.model ? project.model : personal.provider === credential.provider ? personal.model : "";
+  const model = currentHostedModel(credential.provider, selected);
   return hostedModels(credential.provider).includes(model) ? model : hostedModels(credential.provider)[0]!;
 }
 

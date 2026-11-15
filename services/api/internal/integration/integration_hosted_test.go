@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +96,7 @@ func TestIntegration_HostedExecution(t *testing.T) {
 	}
 	var upstream atomic.Int32
 	var missingUsage atomic.Bool
+	var upstreamStatus atomic.Int32
 	runtime.HTTPClient = &http.Client{Transport: hostedTransport(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Host != "api.anthropic.com" {
 			t.Fatalf("unexpected upstream %s", req.URL.Host)
@@ -105,6 +107,9 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		body := `{}`
 		if req.Method == http.MethodPost {
 			upstream.Add(1)
+			if code := upstreamStatus.Load(); code != 0 {
+				return &http.Response{StatusCode: int(code), Body: io.NopCloser(strings.NewReader(`{"error":{"type":"not_found_error","message":"secret must never be reflected"}}`)), Header: http.Header{}}, nil
+			}
 			if missingUsage.Load() {
 				body = `{"content":[]}`
 			} else {
@@ -413,6 +418,23 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		t.Fatal("usage failure allowed tools")
 	}
 	missingUsage.Store(false)
+	// Provider rejection must retain its actual cause, not claim usage was absent.
+	for _, code := range []int{404, 401, 429, 500} {
+		_ = queue(fmt.Sprintf("provider-status-%d", code))
+		failed := claim()
+		upstreamStatus.Store(int32(code))
+		status, body = request("POST", "/internal/room-gateway/"+failed.AttemptID+"/v1/messages", failed.GatewayToken, map[string]any{"model": config.ModelID, "max_tokens": 100, "messages": []any{map[string]any{"role": "user", "content": "edit"}}})
+		want := map[int]string{404: "provider_model_unavailable", 401: "provider_authentication", 429: "provider_rate_limited", 500: "provider_unavailable"}[code]
+		if status != 502 || !bytes.Contains(body, []byte(want)) || bytes.Contains(body, []byte("secret")) {
+			t.Fatalf("wrong provider failure %d %s", status, body)
+		}
+		detail, err := st.GetExecutionJob(ctx, tn, room.ID, failed.Job.ID)
+		must(t, err)
+		if detail.Job.FailureCode == nil || *detail.Job.FailureCode != want {
+			t.Fatalf("persisted wrong failure %+v", detail.Job.FailureCode)
+		}
+	}
+	upstreamStatus.Store(0)
 
 	// Credential references are personal even within the same organization.
 	other := store.Tenant{OrgID: org, UserID: "a0000000-0000-0000-0000-000000000002"}
@@ -431,6 +453,11 @@ func TestIntegration_HostedExecution(t *testing.T) {
 	must(t, st.ValidateProviderCredential(ctx, other, own.ID, own.Generation))
 	if _, err := st.QueueExecution(ctx, other, room.ID, site.ID, ver.ID, own.ID, "reviewer-run", config); err == nil {
 		t.Fatal("reviewer ran execution")
+	}
+	tooSmall := config
+	tooSmall.Budget.MaxOutputBytes = int64(len(source)) - 1
+	if _, err := st.QueueExecution(ctx, tn, room.ID, site.ID, ver.ID, credential.Credential.ID, "source-output-cap", tooSmall); !errors.Is(err, hosted.ErrBudget) {
+		t.Fatalf("source larger than output cap accepted: %v", err)
 	}
 	small := config
 	small.Budget.MaxTokens = 1

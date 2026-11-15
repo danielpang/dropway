@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -96,15 +97,18 @@ func (a *API) HostedGateway(w http.ResponseWriter, r *http.Request) {
 	setProviderHeaders(req, provider, grant.Secret)
 	response, err := a.Hosted.HTTPClient.Do(req)
 	if err != nil {
-		_ = a.Hosted.Store.SettleGatewayCall(context.WithoutCancel(r.Context()), token, 0, false)
+		_ = a.Hosted.Store.FailGatewayCall(context.WithoutCancel(r.Context()), token, "provider_unavailable")
 		httpx.WriteJSON(w, http.StatusBadGateway, httpx.ErrorBody{Error: "provider_unavailable", Message: "model request failed"})
 		return
 	}
 	defer response.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if response.StatusCode != http.StatusOK || readErr != nil || len(body) > 4<<20 {
-		_ = a.Hosted.Store.SettleGatewayCall(context.WithoutCancel(r.Context()), token, 0, false)
-		httpx.WriteJSON(w, http.StatusBadGateway, httpx.ErrorBody{Error: "provider_failed", Message: "model request failed"})
+		code := providerFailureCode(response.StatusCode)
+		// Never log the response body: it can contain credentials or user content.
+		slog.Warn("hosted provider request failed", "provider", provider, "status", response.StatusCode, "code", code)
+		_ = a.Hosted.Store.FailGatewayCall(context.WithoutCancel(r.Context()), token, code)
+		httpx.WriteJSON(w, http.StatusBadGateway, httpx.ErrorBody{Error: code, Message: "model request failed"})
 		return
 	}
 	used, valid := gatewayUsage(body, provider, strings.Contains(response.Header.Get("Content-Type"), "text/event-stream"))
@@ -282,4 +286,21 @@ func gatewayUsage(body []byte, provider string, stream bool) (int64, bool) {
 		return 0, false
 	}
 	return total, haveInput && haveOutput
+}
+
+func providerFailureCode(status int) string {
+	switch status {
+	case 401, 403:
+		return "provider_authentication"
+	case 404:
+		return "provider_model_unavailable"
+	case 429:
+		return "provider_rate_limited"
+	case 400, 422:
+		return "provider_rejected"
+	case 200:
+		return "provider_response_invalid"
+	default:
+		return "provider_unavailable"
+	}
 }

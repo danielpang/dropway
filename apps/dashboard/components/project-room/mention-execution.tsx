@@ -73,10 +73,10 @@ export function MentionExecutionControls({
           provider: key.provider,
           model_id: providerModelId(key.provider, model),
           budget: {
-            max_tokens: 20000,
-            max_calls: 10,
+            max_tokens: 100000,
+            max_calls: 20,
             max_seconds: 300,
-            max_output_bytes: 2097152,
+            max_output_bytes: 10 * 1024 * 1024,
           },
         });
         setNotice("");
