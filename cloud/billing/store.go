@@ -211,7 +211,26 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 	// projection): emit a plan_upgraded / plan_downgraded event for a tier move. No-op
 	// when there was no tier change (seat/status refresh) or no emitter is wired.
 	s.emitPlanChange(ctx, sink.orgID, sink.result, ev.Type)
+
+	// A paid renewal (invoice.paid, subscription_cycle) is its own analytics event;
+	// it changes no entitlement, so nothing above fired for it.
+	if sink.renewal != nil {
+		s.emitRenewal(ctx, *sink.renewal)
+	}
 	return true, nil
+}
+
+// emitRenewal reports a paid renewal to PostHog after the commit. Best-effort,
+// like emitPlanChange.
+func (s *BillingStore) emitRenewal(ctx context.Context, r Renewal) {
+	if s.analytics == nil {
+		s.logger().Info("billing: renewal analytics not emitted (no emitter wired)",
+			"org_id", r.OrgID, "invoice_id", r.InvoiceID)
+		return
+	}
+	s.logger().Info("billing: emitting renewal analytics",
+		"org_id", r.OrgID, "plan_tier", r.PlanTier, "invoice_id", r.InvoiceID)
+	s.analytics.CaptureRenewal(ctx, r)
 }
 
 // emitPlanChange reports a tier upgrade/downgrade to PostHog after the commit. It is
@@ -314,6 +333,20 @@ type txSubsStore struct {
 
 	orgID  string      // org the apply touched (empty for an unhandled event)
 	result applyResult // org_status to project + tier movement to report
+
+	renewal *Renewal // a paid renewal to report after the commit (invoice.paid)
+}
+
+// OrgForSubscription finds the org whose row tracks subscriptionID ("" if none).
+// billing.subscriptions has no RLS, so this needs no tenant context.
+func (t *txSubsStore) OrgForSubscription(ctx context.Context, subscriptionID string) (string, error) {
+	return orgForSubscription(ctx, t.tx, subscriptionID)
+}
+
+// RecordRenewal captures the renewal for ProcessEvent to emit after the commit.
+func (t *txSubsStore) RecordRenewal(_ context.Context, r Renewal) error {
+	t.renewal = &r
+	return nil
 }
 
 var _ SubscriptionStore = (*txSubsStore)(nil)
@@ -611,6 +644,37 @@ func readPlanTierTx(ctx context.Context, tx pgx.Tx, orgID string) (PlanTier, err
 		tier = string(TierFree)
 	}
 	return PlanTier(tier), nil
+}
+
+// OrgForSubscription is the standalone counterpart of
+// txSubsStore.OrgForSubscription.
+func (s *BillingStore) OrgForSubscription(ctx context.Context, subscriptionID string) (string, error) {
+	return orgForSubscription(ctx, s.pool, subscriptionID)
+}
+
+// RecordRenewal on the standalone store emits the renewal straight away (there
+// is no surrounding transaction to wait for).
+func (s *BillingStore) RecordRenewal(ctx context.Context, r Renewal) error {
+	s.emitRenewal(ctx, r)
+	return nil
+}
+
+func orgForSubscription(ctx context.Context, q dbQuerier, subscriptionID string) (string, error) {
+	if subscriptionID == "" {
+		return "", nil
+	}
+	var orgID string
+	err := q.QueryRow(ctx,
+		`SELECT org_id::text FROM billing.subscriptions WHERE stripe_subscription_id = $1`,
+		subscriptionID,
+	).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("billing: find org for subscription %s: %w", subscriptionID, err)
+	}
+	return orgID, nil
 }
 
 // CurrentSubscription reads the org's tracked subscription (no lock); the

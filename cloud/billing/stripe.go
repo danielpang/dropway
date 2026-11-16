@@ -150,6 +150,8 @@ func (v RealSignatureVerifier) resolveData(ev stripe.Event) (EventData, error) {
 		"customer.subscription.updated",
 		"customer.subscription.deleted":
 		return v.fromSubscription(ev.Data.Raw)
+	case "invoice.paid":
+		return fromInvoice(ev.Data.Raw)
 	default:
 		// Other types (e.g. invoice.*) are acknowledged-and-ignored by the handler;
 		// we still parse a best-effort org id so dedupe/logging have context.
@@ -291,6 +293,55 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 		return d, errors.New("billing: subscription event missing org id (metadata.org_id)")
 	}
 	return d, nil
+}
+
+// invoiceRaw is the subset of an Invoice we read from invoice.paid. The
+// subscription id and its metadata moved from the top level (subscription,
+// subscription_details) to parent.subscription_details in Stripe API version
+// 2025-03-31; both shapes are read so an API-version change can't drop renewals.
+type invoiceRaw struct {
+	ID                  string   `json:"id"`
+	Customer            idObject `json:"customer"`
+	BillingReason       string   `json:"billing_reason"`
+	AmountPaid          int64    `json:"amount_paid"`
+	Currency            string   `json:"currency"`
+	Subscription        idObject `json:"subscription"`
+	SubscriptionDetails struct {
+		Metadata map[string]string `json:"metadata"`
+	} `json:"subscription_details"`
+	Parent struct {
+		SubscriptionDetails struct {
+			Subscription idObject          `json:"subscription"`
+			Metadata     map[string]string `json:"metadata"`
+		} `json:"subscription_details"`
+	} `json:"parent"`
+}
+
+// fromInvoice parses invoice.paid. The org id comes from the subscription's
+// org_id metadata (stamped at Checkout); when absent, applyEvent looks the org up
+// by subscription id. A missing org id is not an error here: most invoices are
+// acknowledged without any action.
+func fromInvoice(raw json.RawMessage) (EventData, error) {
+	var inv invoiceRaw
+	if err := json.Unmarshal(raw, &inv); err != nil {
+		return EventData{}, fmt.Errorf("billing: parse invoice: %w", err)
+	}
+	subID, meta := inv.Parent.SubscriptionDetails.Subscription.ID, inv.Parent.SubscriptionDetails.Metadata
+	if subID == "" {
+		subID = inv.Subscription.ID
+	}
+	if len(meta) == 0 {
+		meta = inv.SubscriptionDetails.Metadata
+	}
+	return EventData{
+		OrgID:                resolveOrgID("", meta),
+		StripeCustomerID:     inv.Customer.ID,
+		StripeSubscriptionID: subID,
+		InvoiceID:            inv.ID,
+		BillingReason:        inv.BillingReason,
+		AmountPaid:           inv.AmountPaid,
+		Currency:             inv.Currency,
+	}, nil
 }
 
 // resolveOrgID resolves the org id from a Checkout client_reference_id first, then

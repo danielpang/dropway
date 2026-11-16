@@ -163,11 +163,22 @@ func TestApplyEvent_UnknownPrice_RefusesWithoutTouchingEntitlement(t *testing.T)
 type statusRecorder struct {
 	canceledStatus string              // status setCanceledTx would compute for this org
 	current        CurrentSubscription // what CurrentSubscription returns
+	orgBySub       map[string]string   // what OrgForSubscription returns
+	renewals       []Renewal
 	org, status    string
 }
 
 func (r *statusRecorder) CurrentSubscription(_ context.Context, _ string) (CurrentSubscription, error) {
 	return r.current, nil
+}
+
+func (r *statusRecorder) OrgForSubscription(_ context.Context, subID string) (string, error) {
+	return r.orgBySub[subID], nil
+}
+
+func (r *statusRecorder) RecordRenewal(_ context.Context, rn Renewal) error {
+	r.renewals = append(r.renewals, rn)
+	return nil
 }
 
 func (r *statusRecorder) UpsertSubscription(_ context.Context, d EventData) error {

@@ -163,10 +163,17 @@ func TestCapturePlanChange_SkipsNoMoveAndEmptyOrg(t *testing.T) {
 }
 
 // fakePlanAnalytics records CapturePlanChange calls for the store gating test.
-type fakePlanAnalytics struct{ calls []PlanChange }
+type fakePlanAnalytics struct {
+	calls    []PlanChange
+	renewals []Renewal
+}
 
 func (f *fakePlanAnalytics) CapturePlanChange(_ context.Context, ev PlanChange) {
 	f.calls = append(f.calls, ev)
+}
+
+func (f *fakePlanAnalytics) CaptureRenewal(_ context.Context, r Renewal) {
+	f.renewals = append(f.renewals, r)
 }
 
 func TestEmitPlanChange_Gating(t *testing.T) {
