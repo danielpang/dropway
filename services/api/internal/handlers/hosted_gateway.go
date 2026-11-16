@@ -4,7 +4,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image/jpeg"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,7 +35,7 @@ func (a *API) HostedGateway(w http.ResponseWriter, r *http.Request) {
 		writeHostedError(w, hosted.ErrDenied)
 		return
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512<<10))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	if err != nil {
 		writeHostedError(w, hosted.ErrInvalid)
 		return
@@ -43,18 +45,27 @@ func (a *API) HostedGateway(w http.ResponseWriter, r *http.Request) {
 		writeHostedError(w, hosted.ErrInvalid)
 		return
 	}
-	// Only text/tool schemas cross this gateway. Provider-hosted tools, remote
-	// media URLs, files, arbitrary base URLs, and routing fallback are unavailable.
+	// Text, tool schemas and bounded inline JPEG previews cross this gateway.
+	// Remote media URLs and provider-hosted tools remain unavailable.
 	var generic any
 	if err := json.Unmarshal(raw, &generic); err != nil || hasRemoteModelInput(generic) {
 		writeHostedError(w, hosted.ErrInvalid)
 		return
 	}
+	imageBytes, imageCount := gatewayImageBytes(generic)
+	inputBytes := int64(len(raw) - imageBytes)
+	if imageCount > 8 || inputBytes > 512<<10 {
+		writeHostedError(w, hosted.ErrInvalid)
+		return
+	}
+	// Reserve for visual tokens, not base64 characters. Previews are <=512x512;
+	// actual provider usage is still verified and settled before releasing output.
+	inputBytes += int64(imageCount) * 8192
 	var model string
 	_ = json.Unmarshal(request["model"], &model)
 	var maxTokens int64
 	_ = json.Unmarshal(request["max_tokens"], &maxTokens)
-	grant, err := a.Hosted.Store.ReserveGatewayCall(r.Context(), token, int64(len(raw)), maxTokens, a.Hosted.Vault)
+	grant, err := a.Hosted.Store.ReserveGatewayCall(r.Context(), token, inputBytes, maxTokens, a.Hosted.Vault)
 	if err != nil {
 		writeHostedError(w, err)
 		return
@@ -192,13 +203,16 @@ func gatewayPayload(provider string, request map[string]json.RawMessage, maxOutp
 func hasRemoteModelInput(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:
+		if _, ok := inlineGatewayImage(v); ok {
+			return false
+		}
 		for key, child := range v {
 			switch key {
 			case "image_url", "audio_url", "file_id", "mcp_servers", "container", "context_management", "base_url":
 				return true
 			}
 			if key == "type" {
-				if kind, ok := child.(string); ok && (kind == "image" || kind == "document" || kind == "input_audio" || strings.HasPrefix(kind, "web_search") || strings.HasPrefix(kind, "computer")) {
+				if kind, ok := child.(string); ok && (kind == "image" || kind == "image_url" || kind == "document" || kind == "input_audio" || strings.HasPrefix(kind, "web_search") || strings.HasPrefix(kind, "computer")) {
 					return true
 				}
 			}
@@ -303,4 +317,71 @@ func providerFailureCode(status int) string {
 	default:
 		return "provider_unavailable"
 	}
+}
+
+// Accept exactly the provider encodings emitted by the pinned SDK. There is no
+// URL fetch, provider file ID, or arbitrary extension field in these objects.
+func inlineGatewayImage(v map[string]any) (int, bool) {
+	var encoded string
+	switch v["type"] {
+	case "image":
+		src, ok := v["source"].(map[string]any)
+		if !ok || len(v) != 2 || len(src) != 3 || src["type"] != "base64" || src["media_type"] != "image/jpeg" {
+			return 0, false
+		}
+		encoded, _ = src["data"].(string)
+	case "image_url":
+		src, ok := v["image_url"].(map[string]any)
+		if !ok || len(v) != 2 || len(src) < 1 || len(src) > 2 {
+			return 0, false
+		}
+		for key, value := range src {
+			if key != "url" && (key != "detail" || (value != "auto" && value != "low")) {
+				return 0, false
+			}
+		}
+		url, _ := src["url"].(string)
+		if !strings.HasPrefix(url, "data:image/jpeg;base64,") {
+			return 0, false
+		}
+		encoded = strings.TrimPrefix(url, "data:image/jpeg;base64,")
+	default:
+		return 0, false
+	}
+	if len(encoded) == 0 || len(encoded) > base64.StdEncoding.EncodedLen(64<<10) {
+		return 0, false
+	}
+	data, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(data) > 64<<10 {
+		return 0, false
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width < 1 || config.Height < 1 || config.Width > 512 || config.Height > 512 {
+		return 0, false
+	}
+	return len(encoded), true
+}
+func gatewayImageBytes(value any) (int, int) {
+	switch v := value.(type) {
+	case map[string]any:
+		if size, ok := inlineGatewayImage(v); ok {
+			return size, 1
+		}
+		bytes, count := 0, 0
+		for _, child := range v {
+			b, c := gatewayImageBytes(child)
+			bytes += b
+			count += c
+		}
+		return bytes, count
+	case []any:
+		bytes, count := 0, 0
+		for _, child := range v {
+			b, c := gatewayImageBytes(child)
+			bytes += b
+			count += c
+		}
+		return bytes, count
+	}
+	return 0, 0
 }

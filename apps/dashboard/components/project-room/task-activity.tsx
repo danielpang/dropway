@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ArrowRight, CheckCircle2, Circle, CircleAlert, Clock3, MessageCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -20,8 +21,8 @@ export function TaskList({ jobs, selectedId, onSelect }: {
   jobs: HostedJob[]; selectedId: string; onSelect: (id: string) => void;
 }) {
   if (!jobs.length) return <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">No AI tasks yet. Tasks you authorize will appear here with their progress and results.</div>;
-  return <ul className="grid gap-3 sm:grid-cols-2" aria-label="AI tasks">
-    {jobs.map((job) => {
+  return <ul className="flex flex-col gap-3" aria-label="AI tasks">
+    {[...jobs].sort((a, b) => (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0)).map((job) => {
       const status = states[job.state] ?? { label: job.state.replaceAll("_", " "), icon: Circle, tone: "text-muted-foreground" };
       const Icon = status.icon;
       const selected = selectedId === job.id;
@@ -29,6 +30,7 @@ export function TaskList({ jobs, selectedId, onSelect }: {
         <button type="button" aria-pressed={selected} onClick={() => onSelect(job.id)}
           className={cn("flex h-full w-full flex-col gap-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background", selected ? "border-foreground/30 bg-secondary/50" : "border-border bg-card hover:bg-muted/40")}>
           <span className={cn("flex items-center gap-2 text-xs font-medium", status.tone)}><Icon className="size-4 shrink-0" aria-hidden />{status.label}</span>
+          {job.createdAt ? <span className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>Requested <LocalEventTime value={job.createdAt} /></span>{["completed", "failed", "cancelled", "candidate_ready"].includes(job.state) && job.updatedAt ? <span>{job.state === "failed" ? "Failed" : job.state === "cancelled" ? "Cancelled" : job.state === "candidate_ready" ? "Ready" : "Finished"} <LocalEventTime value={job.updatedAt} /></span> : null}</span> : null}
           <span className="line-clamp-3 break-words text-sm font-medium leading-relaxed">{job.config.prompt}</span>
           <span className="mt-auto flex w-full items-end justify-between gap-3 border-t border-border pt-3">
             <span className="min-w-0 space-y-1 text-xs text-muted-foreground">
@@ -66,14 +68,24 @@ export function TaskEvents({ events }: { events: HostedEvent[] }) {
     <summary className="cursor-pointer rounded-sm text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Progress <span className="ml-1 font-normal text-muted-foreground">({events.length})</span></summary>
     {events.length ? <ol className="mt-4 space-y-4 border-l border-border pl-4">
       {events.map((event) => <li key={event.id} className="space-y-1">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="capitalize">{event.kind.replaceAll("_", " ")}</span><time dateTime={event.createdAt}>{eventTime(event.createdAt)}</time></div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="capitalize">{event.kind.replaceAll("_", " ")}</span><LocalEventTime value={event.createdAt} /></div>
         <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{event.message}</p>
       </li>)}
     </ol> : <p className="mt-3 text-sm text-muted-foreground">No progress updates yet</p>}
   </details>;
 }
 
-function eventTime(value: string) {
+function LocalEventTime({ value }: { value: string }) {
+  const [local, setLocal] = useState<string>();
+  useEffect(() => {
+    setLocal(formatLocalTaskTime(value));
+  }, [value]);
+  return <time dateTime={value}>{local ?? "…"}</time>;
+}
+
+export function formatLocalTaskTime(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : `${date.toISOString().slice(0, 10)} · ${date.toISOString().slice(11, 19)} UTC`;
+  return Number.isNaN(date.getTime()) ? "Time unavailable" : new Intl.DateTimeFormat(undefined, {
+    year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+  }).format(date);
 }

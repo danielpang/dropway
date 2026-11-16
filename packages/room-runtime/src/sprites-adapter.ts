@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
+import sharp from "sharp";
 import { createHash, randomUUID } from "node:crypto";
 import { SpritesClient, type Sprite, type SpriteCommand } from "@fly/sprites";
 import {
@@ -8,7 +9,7 @@ import {
 } from "./control-plane.js";
 import { fail, RoomRuntimeError } from "./errors.js";
 import { assertEgressPolicy, BUILD_EGRESS_POLICY, policyHash, type NetworkPolicy } from "./policy.js";
-import { SPRITE_GUEST_HELPER, SPRITE_WORKSPACE } from "./sprites-guest.js";
+import { SPRITE_GUEST_HELPER, SPRITE_WORKSPACE, SPRITE_LAUNCHER } from "./sprites-guest.js";
 
 export const SPRITES_SDK_VERSION = "0.2.4";
 export const ARTIFACT_MAX_BYTES = 10 << 20;
@@ -17,7 +18,6 @@ export const ARTIFACT_MAX_FILE_BYTES = 2 << 20;
 const TOOL_MAX_BYTES = 64 << 10;
 const EXPORT_MAX_BYTES = 16 << 20;
 const MANAGED_LABEL = "dropway-room-attempt-v1";
-const LAUNCHER = "import sys; n=int(sys.stdin.buffer.readline()); code=sys.stdin.buffer.read(n); exec(compile(code,'<dropway-remote>','exec'))";
 
 type SDKClient = Pick<SpritesClient, "createSprite" | "getSprite" | "listSprites" | "deleteSprite">;
 export type SpriteOperation = "create" | "read" | "write" | "edit" | "bash" | "build" | "stage" | "export";
@@ -84,7 +84,10 @@ export class FlySpriteControlPlane implements SpriteControlPlane {
       await this.safe(() => sprite.updateResourcesPolicy({ memory: { limitMB: 512, autoscale: false } }));
       await this.checkSecurity(handle);
       const initialized = await this.runRemote(handle, "init", {}, signal, TOOL_MAX_BYTES);
-      if (initialized.exitCode !== 0) fail("sprite_init", "remote workspace initialization failed");
+      if (initialized.exitCode !== 0) {
+        const reason = /workspace operation rejected: (permission|missing_path|not_directory|invalid_request|operation)\s*$/.exec(initialized.stderr)?.[1];
+        fail(reason ? `sprite_init_${reason}` : "sprite_init", "remote workspace initialization failed");
+      }
       return handle;
     } catch (error) {
       // Includes uncertain-create results: look up and delete only our exact labels.
@@ -106,11 +109,25 @@ export class FlySpriteControlPlane implements SpriteControlPlane {
     assertSameAttempt(handle, op);
     validateOperation(op);
     return this.operation(handle, op.kind, signal, async () => {
-      const result = await this.runRemote(handle, op.kind, op.input, signal, TOOL_MAX_BYTES);
+      const result = await this.runRemote(handle, op.kind, op.input, signal, op.kind === "read" ? EXPORT_MAX_BYTES : TOOL_MAX_BYTES);
       if (result.exitCode !== 0) return { text: (op.kind === "bash" || op.kind === "build") ? result.stdout + result.stderr || "Remote command failed." : "Remote operation failed. Check the relative workspace path and file contents.", isError: true };
       if (op.kind === "bash" || op.kind === "build") return { text: result.stdout + result.stderr };
       const output: unknown = JSON.parse(result.stdout);
       if (!output || typeof output !== "object" || typeof (output as { text?: unknown }).text !== "string") fail("sprite_output", "invalid remote tool output");
+      const imageBase64 = (output as { imageBase64?: unknown }).imageBase64;
+      if (op.kind === "read" && typeof imageBase64 === "string") {
+        try {
+          const input = Buffer.from(imageBase64, "base64");
+          if (input.length > ARTIFACT_MAX_FILE_BYTES || input.toString("base64") !== imageBase64) throw new Error("invalid image");
+          // Decode only scoped sandbox bytes; no host paths, metadata or network fetches.
+          const preview = await sharp(input, { limitInputPixels: 16_777_216, animated: false })
+            .rotate().resize(512, 512, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 55 }).timeout({ seconds: 5 }).toBuffer();
+          if (preview.length > 64 * 1024) throw new Error("preview too large");
+          return { text: "Image preview (up to 512 pixels). Edit the original workspace asset, not this preview.", image: { data: preview.toString("base64"), mimeType: "image/jpeg" } };
+        } catch {
+          return { text: "This image could not be decoded within the preview limits. Do not guess its contents or claim an image edit succeeded.", isError: true };
+        }
+      }
       return { text: (output as { text: string }).text };
     });
   }
@@ -226,7 +243,7 @@ export class FlySpriteControlPlane implements SpriteControlPlane {
       if (signal.aborted) { reject(new RoomRuntimeError("cancelled", "remote operation cancelled")); return; }
       const remainingLease = Date.parse(this.rows.get(handle.spriteName)?.destroyBy ?? "") - Date.now();
       if (!Number.isFinite(remainingLease) || remainingLease <= 0) { reject(new RoomRuntimeError("lease_expired", "Sprite attempt lease expired")); return; }
-      const command = sprite.spawn("/usr/bin/python3", ["-I", "-S", "-c", LAUNCHER], {
+      const command = sprite.spawn("/usr/bin/python3", ["-I", "-S", "-c", SPRITE_LAUNCHER], {
         env: {}, cwd: action === "init" ? "/home/sprite" : SPRITE_WORKSPACE, tty: false,
         detachable: false, maxRunAfterDisconnect: "2s",
       });

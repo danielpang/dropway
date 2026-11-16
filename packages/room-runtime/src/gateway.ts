@@ -106,7 +106,7 @@ export function pinnedModel(
     id: pin.modelId,
     name: pin.modelId,
     reasoning: false as const,
-    input: ["text"] as ("text" | "image")[],
+    input: ["text", "image"] as ("text" | "image")[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200_000,
     maxTokens: 8192,

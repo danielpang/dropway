@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/jpeg"
 	"net/http"
 	"strings"
 	"testing"
@@ -90,6 +94,39 @@ func TestProviderFailuresAreNotUsageFailures(t *testing.T) {
 	for status, want := range map[int]string{404: "provider_model_unavailable", 401: "provider_authentication", 403: "provider_authentication", 429: "provider_rate_limited", 400: "provider_rejected", 422: "provider_rejected", 500: "provider_unavailable", 200: "provider_response_invalid"} {
 		if got := providerFailureCode(status); got != want {
 			t.Fatalf("status %d: %s", status, got)
+		}
+	}
+}
+
+func TestGatewayAcceptsOnlyBoundedInlineImagePreviews(t *testing.T) {
+	var data bytes.Buffer
+	if err := jpeg.Encode(&data, image.NewRGBA(image.Rect(0, 0, 32, 24)), nil); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(data.Bytes())
+	anthropic := map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/jpeg", "data": encoded}}
+	openai := map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/jpeg;base64," + encoded}}
+	for _, content := range []map[string]any{anthropic, openai} {
+		if hasRemoteModelInput(content) {
+			t.Fatal("bounded inline preview rejected")
+		}
+		size, count := gatewayImageBytes(map[string]any{"messages": []any{content}})
+		if size != len(encoded) || count != 1 {
+			t.Fatalf("wrong visual accounting %d/%d", size, count)
+		}
+	}
+	cases := []map[string]any{
+		{"type": "image_url", "image_url": map[string]any{"url": "http://169.254.169.254/secret"}},
+		{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/jpeg", "data": "not an image"}},
+		{"type": "image", "source": anthropic["source"], "file_id": "secret"},
+		{"type": "image_url", "image_url": map[string]any{"url": "data:image/jpeg;base64," + encoded, "base_url": "http://private"}},
+	}
+	data.Reset()
+	_ = jpeg.Encode(&data, image.NewRGBA(image.Rect(0, 0, 513, 10)), nil)
+	cases = append(cases, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/jpeg", "data": base64.StdEncoding.EncodeToString(data.Bytes())}})
+	for _, content := range cases {
+		if !hasRemoteModelInput(content) {
+			t.Fatal("unsafe image accepted")
 		}
 	}
 }

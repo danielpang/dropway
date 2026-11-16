@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { SPRITE_GUEST_HELPER } from "../src/sprites-guest.js";
+import { SPRITE_GUEST_HELPER, SPRITE_LAUNCHER } from "../src/sprites-guest.js";
 import { artifactHash, verifySpriteArtifact, type SpriteArtifactFile } from "../src/sprites-adapter.js";
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -45,4 +45,25 @@ describe("remote workspace helper fixture", () => {
     expect(() => g.run("edit", { path: "index.html", oldText: "same", newText: "changed" })).toThrow();
     expect(() => g.run("stage", { files: [{ ...file("x", Buffer.from("data")), sha256: "a".repeat(64) }] })).toThrow();
   });
+});
+
+it("initializes a fresh workspace through the production length-prefixed launcher", () => {
+  const directory=mkdtempSync(join(tmpdir(), "dropway-init-fixture-")); paths.push(directory);
+  const root=join(directory,"workspace");
+  const helper=Buffer.from(SPRITE_GUEST_HELPER.replace("ROOT='/home/sprite/dropway-workspace'", `ROOT=${JSON.stringify(root)}`).replaceAll("'/tmp/dropway-home'",JSON.stringify(join(directory,"home"))));
+  const input=Buffer.concat([Buffer.from(`${helper.length}\n`),helper,Buffer.from(JSON.stringify({action:"init",input:{}}))]);
+  const output=execFileSync("python3",["-I","-S","-c",SPRITE_LAUNCHER],{input,encoding:"utf8"});
+  expect(JSON.parse(output)).toEqual({ok:true});
+});
+
+it("reads image bytes for visual tools and bounds large text without destroying the workspace", () => {
+  const g=guest();
+  const png=Buffer.from("89504e470d0a1a0a00000000","hex");
+  g.run("stage",{files:[file("photo.png",png),file("large.html",Buffer.from("x".repeat(100000)))]});
+  expect(g.run("read",{path:"photo.png"})).toMatchObject({imageBase64:png.toString("base64")});
+  const result=g.run("read",{path:"large.html"}) as {text:string};
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(64000);
+  expect(result.text).toContain("Excerpt only");
+  g.run("edit",{path:"large.html",oldText:"x".repeat(100000),newText:""});
+  expect(g.run("read",{path:"large.html"})).toEqual({text:""});
 });
