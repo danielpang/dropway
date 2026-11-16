@@ -2264,6 +2264,8 @@ export interface components {
             tokens_used: number;
             calls_used: number;
             credential_generation: number;
+            /** @description The comment that triggered this task, or null for a manually started task. */
+            trigger_reply_id?: string | null;
             candidate_id: string | null;
             session_id: string | null;
             failure_code: string | null;

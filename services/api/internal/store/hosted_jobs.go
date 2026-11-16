@@ -30,6 +30,7 @@ type ExecutionJob struct {
 	AttemptCount         int           `json:"attempt_count"`
 	TokensUsed           int64         `json:"tokens_used"`
 	CallsUsed            int           `json:"calls_used"`
+	TriggerReplyID       *string       `json:"trigger_reply_id"`
 	CandidateID          *string       `json:"candidate_id"`
 	SessionID            *string       `json:"session_id"`
 	FailureCode          *string       `json:"failure_code"`
@@ -58,12 +59,12 @@ type ExecutionDetail struct {
 	Question string           `json:"question,omitempty"`
 }
 
-const executionColumns = `id::text,org_id::text,room_id::text,site_id::text,version_id::text,content_hash,initiator_user_id::text,credential_id::text,credential_generation,config,state,attempt_count,tokens_used,calls_used,candidate_id::text,session_id::text,failure_code,created_at,updated_at`
+const executionColumns = `id::text,org_id::text,room_id::text,site_id::text,version_id::text,content_hash,initiator_user_id::text,credential_id::text,credential_generation,config,state,attempt_count,tokens_used,calls_used,candidate_id::text,session_id::text,failure_code,created_at,updated_at,trigger_reply_id::text`
 
 func scanExecution(row pgx.Row) (ExecutionJob, error) {
 	var j ExecutionJob
 	var raw []byte
-	err := row.Scan(&j.ID, &j.OrgID, &j.RoomID, &j.SiteID, &j.VersionID, &j.ContentHash, &j.InitiatorUserID, &j.CredentialRef, &j.CredentialGeneration, &raw, &j.State, &j.AttemptCount, &j.TokensUsed, &j.CallsUsed, &j.CandidateID, &j.SessionID, &j.FailureCode, &j.CreatedAt, &j.UpdatedAt)
+	err := row.Scan(&j.ID, &j.OrgID, &j.RoomID, &j.SiteID, &j.VersionID, &j.ContentHash, &j.InitiatorUserID, &j.CredentialRef, &j.CredentialGeneration, &raw, &j.State, &j.AttemptCount, &j.TokensUsed, &j.CallsUsed, &j.CandidateID, &j.SessionID, &j.FailureCode, &j.CreatedAt, &j.UpdatedAt, &j.TriggerReplyID)
 	if err == nil {
 		err = json.Unmarshal(raw, &j.Config)
 	}

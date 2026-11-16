@@ -3697,6 +3697,11 @@ components:
           "type": "integer"
         "credential_generation":
           "type": "integer"
+        "trigger_reply_id":
+          "description": "The comment that triggered this task, or null for a manually started task."
+          "type":
+            - "string"
+            - "null"
         "candidate_id":
           "type":
             - "string"

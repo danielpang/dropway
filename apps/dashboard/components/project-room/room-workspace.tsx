@@ -32,6 +32,7 @@ import { NewProjectSite } from "./new-project-site";
 import { ProjectSharing } from "./project-sharing";
 import { MentionTextarea } from "./mention-textarea";
 import { mentionOptions } from "@/lib/project-room/mentions";
+import { threadConversation } from "@/lib/project-room/thread-conversation";
 import { AICommentStatus } from "./ai-comment-status";
 import type { HostedJob } from "@/lib/project-room/hosted";
 import { MentionExecutionControls } from "./mention-execution";
@@ -1060,35 +1061,29 @@ export function RoomWorkspace({
           </a>
         </Tooltip>
       </p>
-      {thread.Replies.slice(0, 1).map((item) => (
-        <ReplyText key={item.ID} body={untrustedText(item.Body)} compact />
-      ))}
-      {jobs
-        .filter(
-          (job) =>
-            job.roomId === thread.RoomID && job.config.threadId === thread.ID,
-        )
-        .slice(0, 1)
-        .map((job) => (
-          <AICommentStatus
-            key={job.id}
-            job={job}
-            stale={jobStatusUnavailable}
-            onReview={() => {
-              onRefreshRoom?.(thread.RoomID);
-              setPanel("changes");
-            }}
-            onActivity={() => setPanel("activity")}
-          />
+      <ul className="space-y-2">
+        {threadConversation(thread, jobs).map((entry, index) => (
+          <li
+            key={entry.kind === "reply" ? `reply-${entry.reply.ID}` : `job-${entry.job.id}`}
+            className={entry.kind === "reply" && index > 0 ? "border-l border-border pl-2 text-xs" : undefined}
+          >
+            {entry.kind === "reply" ? (
+              <ReplyText body={untrustedText(entry.reply.Body)} compact />
+            ) : (
+              <AICommentStatus
+                job={entry.job}
+                stale={jobStatusUnavailable}
+                onReview={() => {
+                  onRefreshRoom?.(thread.RoomID);
+                  setPanel("changes");
+                }}
+                onActivity={() => setPanel("activity")}
+              />
+            )}
+          </li>
         ))}
+      </ul>
       <div className="space-y-2 text-xs">
-        <ul className="space-y-2 border-l border-border pl-2">
-          {thread.Replies.slice(1).map((item) => (
-            <li key={item.ID}>
-              <ReplyText body={untrustedText(item.Body)} compact />
-            </li>
-          ))}
-        </ul>
         {thread.NextReplyCursor ? (
           <Button
             type="button"
