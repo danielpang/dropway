@@ -170,3 +170,13 @@ it("converts scoped raster bytes to a bounded, metadata-free visual tool result"
   expect(metadata.exif).toBeUndefined(); expect(preview.length).toBeLessThan(65536);
   await h.plane.destroy(handle,"finish");
 });
+
+it("shows transparent images against the review canvas background", async () => {
+  const original=await sharp({create:{width:20,height:20,channels:4,background:{r:0,g:0,b:0,alpha:0}}}).png().toBuffer();
+  const h=harness({imageBase64:original.toString("base64")});
+  const handle=await h.plane.create(spec,ATTEMPT_EGRESS_POLICY);
+  const output=await h.plane.exec(handle,{kind:"read",attemptId:spec.attemptId,input:{path:"transparent.png"}},new AbortController().signal);
+  const pixels=await sharp(Buffer.from(output.image!.data,"base64")).raw().toBuffer();
+  expect([...pixels.subarray(0,3)]).toEqual([255,255,255]);
+  await h.plane.destroy(handle,"finish");
+});

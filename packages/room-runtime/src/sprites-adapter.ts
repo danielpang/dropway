@@ -120,8 +120,9 @@ export class FlySpriteControlPlane implements SpriteControlPlane {
           const input = Buffer.from(imageBase64, "base64");
           if (input.length > ARTIFACT_MAX_FILE_BYTES || input.toString("base64") !== imageBase64) throw new Error("invalid image");
           // Decode only scoped sandbox bytes; no host paths, metadata or network fetches.
-          const preview = await sharp(input, { limitInputPixels: 16_777_216, animated: false })
-            .rotate().resize(512, 512, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 55 }).timeout({ seconds: 5 }).toBuffer();
+          let preview = await sharp(input, { limitInputPixels: 16_777_216, animated: false })
+            .rotate().flatten({ background: "#ffffff" }).resize(512, 512, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 55 }).timeout({ seconds: 5 }).toBuffer();
+          if (preview.length > 64 * 1024) preview = await sharp(preview).resize(256, 256, { fit: "inside" }).jpeg({ quality: 55 }).timeout({ seconds: 5 }).toBuffer();
           if (preview.length > 64 * 1024) throw new Error("preview too large");
           return { text: "Image preview (up to 512 pixels). Edit the original workspace asset, not this preview.", image: { data: preview.toString("base64"), mimeType: "image/jpeg" } };
         } catch {
