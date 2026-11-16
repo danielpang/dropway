@@ -19,7 +19,7 @@ import {
   markRoomReadAction,
   loadThreadLinkAction,
   loadThreadRevisionsAction,
-  applyCandidateAction,
+  acceptAndApplyCandidateAction,
   loadRoomSitesAction,
   updateMemberAction,
   removeMemberAction,
@@ -76,6 +76,7 @@ export function RoomSession({
     null,
   );
   const [roomList, setRoomList] = React.useState(rooms);
+  const [publishedRevision,setPublishedRevision] = React.useState<{siteId:string;versionId:string}|null>(null);
   const [siteList, setSiteList] = React.useState(sites);
   const candidateRequests = React.useRef(new Set<string>());
   const [busyCandidates, setBusyCandidates] = React.useState<string[]>([]);
@@ -277,8 +278,61 @@ export function RoomSession({
     }
   }, [candidates]);
 
+  const publishCandidate = (roomId: string, candidate: ReviewCandidate) => {
+    if (!startCandidateRequest(candidate)) return;
+    void (async () => {
+      try {
+        const result = await acceptAndApplyCandidateAction(roomId, candidate).catch(
+          () => ({
+            ok: false as const,
+            message:
+              "The apply response was interrupted. Refreshing the room to check whether it was published.",
+          }),
+        );
+        if (loadedRoom.current !== roomId) return;
+        if (result.ok) {
+          setPublishedRevision({ siteId: candidate.SiteID, versionId: result.versionId });
+        }
+        setNotice(
+          result.ok
+            ? result.changed
+              ? "Approved change published."
+              : "This change was already applied. No new publication was made."
+            : result.message,
+        );
+        // Reload after ambiguous failures too: the server may have committed before a response was lost.
+        const refreshed = await loadRoomSitesAction();
+        if (loadedRoom.current !== roomId) return;
+        if (refreshed.ok) {
+          setSiteList(refreshed.sites);
+          const published = refreshed.sites.find(
+            site => site.id === candidate.SiteID && site.currentContentHash === candidate.ContentHash,
+          );
+          if (published?.currentVersionId) {
+            setPublishedRevision({ siteId: candidate.SiteID, versionId: published.currentVersionId });
+          }
+        } else
+          setSiteList((prev) =>
+            prev.map((item) =>
+              item.id === candidate.SiteID
+                ? {
+                    ...item,
+                    currentVersionId: null,
+                    currentContentHash: null,
+                  }
+                : item,
+            ),
+          );
+        loadedRoom.current = "";
+        applyRoom(roomId);
+      } finally {
+        finishCandidateRequest(candidate);
+      }
+    })();
+  };
   return (
     <RoomWorkspace
+      publishedRevision={publishedRevision}
       jobs={jobs}
       jobStatusUnavailable={jobStatusUnavailable}
       detailsRoomId={detailsRoomId}
@@ -706,49 +760,12 @@ export function RoomSession({
           setNotice("Candidate recorded. The site was not edited.");
         });
       }}
-      onApply={(roomId, candidate) => {
-        if (!startCandidateRequest(candidate)) return;
-        void (async () => {
-          try {
-            const result = await applyCandidateAction(roomId, candidate).catch(
-              () => ({
-                ok: false as const,
-                message:
-                  "The apply response was interrupted. Refreshing the room to check whether it was published.",
-              }),
-            );
-            if (loadedRoom.current !== roomId) return;
-            setNotice(
-              result.ok
-                ? result.changed
-                  ? "Approved change published."
-                  : "This change was already applied. No new publication was made."
-                : result.message,
-            );
-            // Reload after ambiguous failures too: the server may have committed before a response was lost.
-            const refreshed = await loadRoomSitesAction();
-            if (loadedRoom.current !== roomId) return;
-            if (refreshed.ok) setSiteList(refreshed.sites);
-            else
-              setSiteList((prev) =>
-                prev.map((item) =>
-                  item.id === candidate.SiteID
-                    ? {
-                        ...item,
-                        currentVersionId: null,
-                        currentContentHash: null,
-                      }
-                    : item,
-                ),
-              );
-            loadedRoom.current = "";
-            applyRoom(roomId);
-          } finally {
-            finishCandidateRequest(candidate);
-          }
-        })();
-      }}
+      onApply={publishCandidate}
       onDecide={(roomId, candidate, decision) => {
+        if (decision === "approve") {
+          publishCandidate(roomId, candidate);
+          return;
+        }
         if (!startCandidateRequest(candidate)) return;
         void decideAction(roomId, candidate, decision)
           .then((result) => {
@@ -771,7 +788,7 @@ export function RoomSession({
             );
             setNotice(
               result.changed
-                ? `Recorded ${result.decision}. The change was not applied.`
+                ? "Change rejected."
                 : "No new decision was recorded.",
             );
           })

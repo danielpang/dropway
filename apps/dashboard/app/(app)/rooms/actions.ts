@@ -473,3 +473,41 @@ export async function loadRevisionNumbersAction(siteId: string) {
   if (!(await collaborationEnabled())) return {ok: false as const};
   try { const versions=await api.listVersions(siteId); return {ok:true as const, versions:versions.flatMap(v=>v.id&&typeof v.version_no === "number"?[{id:v.id,number:v.version_no}]:[])}; } catch {return {ok:false as const};}
 }
+
+export async function acceptAndApplyCandidateAction(
+  roomId: string,
+  candidate: ReviewCandidate,
+) {
+  if (!(await collaborationEnabled())) return closed();
+  if (
+    candidate.RoomID !== roomId ||
+    !bindApproval(candidate) ||
+    !["pending", "approved"].includes(candidate.State)
+  )
+    return {
+      ok: false as const,
+      message: "This change can no longer be accepted.",
+    };
+  let approved = candidate;
+  if (candidate.State === "pending") {
+    const decision = await decideAction(roomId, candidate, "approve");
+    if (!decision.ok) return decision;
+    approved = decision.candidate;
+    if (
+      approved.ID !== candidate.ID ||
+      approved.RoomID !== roomId ||
+      approved.SiteID !== candidate.SiteID ||
+      approved.BaseVersionID !== candidate.BaseVersionID ||
+      approved.BaseContentHash !== candidate.BaseContentHash ||
+      approved.ContentHash !== candidate.ContentHash ||
+      approved.State !== "approved"
+    )
+      return {
+        ok: false as const,
+        message:
+          "The change could not be verified. Refresh before trying again.",
+      };
+  }
+  const result = await applyCandidateAction(roomId, approved);
+  return result.ok ? result : { ...result, candidate: approved };
+}
