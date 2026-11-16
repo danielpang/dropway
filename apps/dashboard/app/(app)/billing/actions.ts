@@ -25,8 +25,9 @@ export type CheckoutActionResult =
  *
  * An org has ONE subscription. If it already pays, the API refuses a second
  * Checkout (409 subscription_exists) and the plan change has to happen on the
- * existing subscription, so we hand back the Billing Portal URL instead. Callers
- * redirect to whichever URL comes back.
+ * existing subscription, so we hand back a Billing Portal URL instead, opened on
+ * the confirm screen for the target tier. Callers redirect to whichever URL comes
+ * back.
  */
 export async function createCheckoutAction(input: {
   targetTier: CheckoutTier;
@@ -46,7 +47,7 @@ export async function createCheckoutAction(input: {
     return { ok: true, checkoutUrl: checkout_url };
   } catch (err) {
     if (isSubscriptionExists(err)) {
-      const portal = await createPortalAction();
+      const portal = await createPortalAction({ targetTier: input.targetTier });
       if (portal.ok) return { ok: true, checkoutUrl: portal.portalUrl };
       return { ok: false, message: portal.message };
     }
@@ -70,11 +71,17 @@ export type PortalActionResult =
 /**
  * Open the Stripe Billing Portal for the org's existing Customer. A 409 means
  * the org has never checked out (no Stripe customer yet), the UI should route
- * the user to Checkout instead of the portal.
+ * the user to Checkout instead of the portal. With a targetTier above the org's
+ * current plan, the portal opens on the confirm screen for that upgrade (the API
+ * falls back to the portal home page when it can't).
  */
-export async function createPortalAction(): Promise<PortalActionResult> {
+export async function createPortalAction(input?: {
+  targetTier?: CheckoutTier;
+}): Promise<PortalActionResult> {
   try {
-    const { portal_url } = await api.createPortal();
+    const { portal_url } = await api.createPortal(
+      input?.targetTier ? { target_tier: input.targetTier } : undefined,
+    );
     if (!portal_url) {
       return { ok: false, kind: "error", message: "Stripe did not return a portal URL. Try again." };
     }

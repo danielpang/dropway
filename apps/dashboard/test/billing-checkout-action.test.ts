@@ -56,6 +56,8 @@ describe("createCheckoutAction", () => {
 
     expect(result).toEqual({ ok: true, checkoutUrl: "https://portal.stripe.test/s" });
     expect(createPortal).toHaveBeenCalledTimes(1);
+    // The portal opens on the confirm screen for the tier the owner picked.
+    expect(createPortal).toHaveBeenCalledWith({ target_tier: "business" });
   });
 
   it("reports a portal failure instead of starting a second Checkout", async () => {

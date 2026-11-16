@@ -39,6 +39,10 @@ type fakeStripe struct {
 	expireErr    error // ExpireOpenCheckoutSessions failure
 	liveChecked  bool
 	expired      int
+
+	planChangeErr   error  // CreatePlanChangePortalSession failure
+	planChangeSub   string // subscription the plan-change session was opened for
+	planChangePrice string // price it was opened for
 }
 
 func (f *fakeStripe) EnsureCustomer(existingID, orgID, email string) (string, error) {
@@ -57,6 +61,13 @@ func (f *fakeStripe) CreateCheckoutSession(p CheckoutParams) (string, error) {
 func (f *fakeStripe) CreatePortalSession(customerID, returnURL string) (string, error) {
 	f.portalCustomer = customerID
 	return "https://portal.stripe.test/session", nil
+}
+func (f *fakeStripe) CreatePlanChangePortalSession(customerID, subscriptionID, newPriceID, _ string, _ func(string) bool) (string, error) {
+	if f.planChangeErr != nil {
+		return "", f.planChangeErr
+	}
+	f.portalCustomer, f.planChangeSub, f.planChangePrice = customerID, subscriptionID, newPriceID
+	return "https://portal.stripe.test/plan-change", nil
 }
 func (f *fakeStripe) HasLiveSubscription(string) (bool, error) {
 	f.liveChecked = true
@@ -85,8 +96,8 @@ func (f *fakeCPStore) SaveCustomerID(_ context.Context, _, cid string) error {
 	f.savedCID = cid
 	return nil
 }
-func (f *fakeCPStore) WithCheckoutLock(_ context.Context, _ string, fn func() error) error {
-	return fn()
+func (f *fakeCPStore) WithCheckoutLock(_ context.Context, _ string, fn func(CheckoutStore) error) error {
+	return fn(f)
 }
 func (f *fakeCPStore) ReadPlanTier(_ context.Context, _ string) (PlanTier, error) {
 	if f.tier == "" {

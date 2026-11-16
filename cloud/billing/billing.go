@@ -139,17 +139,30 @@ func (c CurrentSubscription) live() bool {
 //   - Same subscription, or either id unknown → apply (the normal path).
 //   - A cancel / non-paying event for another subscription → ignore: the org's
 //     current subscription is unaffected by that one ending.
-//   - A paying event for another subscription → apply only if the current one is
-//     no longer live (a re-subscribe after a cancel); ignore while it is live.
-func ignoreForeignSubscription(cur CurrentSubscription, eventSubID string, cancel bool) bool {
+//   - A paying event for another subscription while the current one is no longer
+//     live → apply (a re-subscribe after a cancel).
+//   - A paying event for another subscription while the current one is live →
+//     apply only if it is on a HIGHER tier, so an org that already pays for two
+//     subscriptions settles on the higher one whichever event it tracked first;
+//     ignore it otherwise. An unmapped price ranks as Free, so it never wins.
+func ignoreForeignSubscription(cur CurrentSubscription, eventSubID string, eventTier PlanTier, cancel bool) bool {
 	if eventSubID == "" || cur.ID == "" || eventSubID == cur.ID {
 		return false
 	}
 	if cancel {
 		return true
 	}
-	return cur.live()
+	if !cur.live() {
+		return false
+	}
+	return tierRank(eventTier) <= tierRank(cur.PlanTier)
 }
+
+// errIgnoredEvent marks an event that was deliberately not applied because it
+// belongs to a subscription other than the org's current one. ProcessEvent still
+// records it in the dedupe ledger and the handler acknowledges it with a 200, but
+// reports it as ignored rather than applied.
+var errIgnoredEvent = errors.New("billing: event ignored (not the org's current subscription)")
 
 // Handler is the /webhooks/stripe HTTP handler.
 type Handler struct {
@@ -203,6 +216,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the entitlement change in the SAME transaction, so a failed apply leaves NO
 	// ledger row and Stripe's retry re-applies cleanly (the lost-update fix).
 	applied, err := h.processor.ProcessEvent(r.Context(), ev)
+	if errors.Is(err, errIgnoredEvent) {
+		// Recorded in the ledger but deliberately not applied (another
+		// subscription's event); details were logged when it was skipped.
+		h.log.Info("stripe event ignored (not the org's current subscription)",
+			"event_id", ev.ID, "type", ev.Type, "org_id", ev.Data.OrgID)
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
 	if err != nil {
 		// An unfulfillable event (e.g. a missing Stripe customer id with no row to
 		// COALESCE from) can never succeed on retry — acknowledge with a 400 so
@@ -270,18 +291,20 @@ func applyEvent(ctx context.Context, subs SubscriptionStore, log *slog.Logger, e
 	case "checkout.session.completed",
 		"customer.subscription.created",
 		"customer.subscription.updated":
-		// H6: an unrecognized price must not silently downgrade — refuse to change
-		// entitlement (retryable) so the price can be mapped and the retry applies.
-		if ev.Data.UnknownPrice {
-			return fmt.Errorf("%w: org %s", errUnknownPrice, ev.Data.OrgID)
-		}
 		// M6: entitlement follows the live PAYING status. A non-entitled status
 		// (unpaid / incomplete_expired / paused / canceled-via-update / …) must NOT
 		// grant the paid tier — downgrade to Free (read-only over-limit), exactly as
 		// a subscription.deleted does, never leave it active+paid.
 		cancel := !isEntitledStatus(ev.Data.Status)
-		if skip, err := skipForeignSubscription(ctx, subs, log, ev, cancel); err != nil || skip {
+		// Events from another subscription are dropped first, so a stray
+		// subscription can't trigger the retryable unknown-price error below.
+		if err := checkForeignSubscription(ctx, subs, log, ev, cancel); err != nil {
 			return err
+		}
+		// H6: an unrecognized price must not silently downgrade — refuse to change
+		// entitlement (retryable) so the price can be mapped and the retry applies.
+		if ev.Data.UnknownPrice {
+			return fmt.Errorf("%w: org %s", errUnknownPrice, ev.Data.OrgID)
 		}
 		if cancel {
 			return subs.SetCanceled(ctx, ev.Data.OrgID)
@@ -289,7 +312,7 @@ func applyEvent(ctx context.Context, subs SubscriptionStore, log *slog.Logger, e
 		return subs.UpsertSubscription(ctx, ev.Data)
 
 	case "customer.subscription.deleted":
-		if skip, err := skipForeignSubscription(ctx, subs, log, ev, true); err != nil || skip {
+		if err := checkForeignSubscription(ctx, subs, log, ev, true); err != nil {
 			return err
 		}
 		return subs.SetCanceled(ctx, ev.Data.OrgID)
@@ -304,26 +327,36 @@ func applyEvent(ctx context.Context, subs SubscriptionStore, log *slog.Logger, e
 	}
 }
 
-// skipForeignSubscription looks up the org's current subscription and reports
-// whether ev belongs to a different one that must not touch entitlement (see
-// ignoreForeignSubscription). A skipped event is acknowledged (200) and logged at
-// ERROR: a second live subscription means the customer is being double-billed and
-// the stray one needs canceling in Stripe.
-func skipForeignSubscription(ctx context.Context, subs SubscriptionStore, log *slog.Logger, ev Event, cancel bool) (bool, error) {
+// checkForeignSubscription looks up the org's current subscription and returns
+// errIgnoredEvent when ev belongs to a different one that must not touch
+// entitlement (see ignoreForeignSubscription). Either case where the org has two
+// live subscriptions is logged at ERROR: the customer is being double-billed and
+// the extra subscription needs canceling in Stripe.
+func checkForeignSubscription(ctx context.Context, subs SubscriptionStore, log *slog.Logger, ev Event, cancel bool) error {
 	if ev.Data.OrgID == "" || ev.Data.StripeSubscriptionID == "" {
-		return false, nil
+		return nil
 	}
 	cur, err := subs.CurrentSubscription(ctx, ev.Data.OrgID)
 	if err != nil {
-		return false, err
+		return err
 	}
-	if !ignoreForeignSubscription(cur, ev.Data.StripeSubscriptionID, cancel) {
-		return false, nil
-	}
-	log.Error("billing: ignoring event for a subscription that is not the org's current one (org has more than one Stripe subscription; cancel the extra one)",
+	foreign := cur.ID != "" && ev.Data.StripeSubscriptionID != cur.ID
+	attrs := []any{
 		"event_id", ev.ID, "type", ev.Type, "org_id", ev.Data.OrgID,
 		"event_subscription_id", ev.Data.StripeSubscriptionID, "event_tier", ev.Data.PlanTier,
 		"event_status", ev.Data.Status,
-		"current_subscription_id", cur.ID, "current_tier", cur.PlanTier, "current_status", cur.Status)
-	return true, nil
+		"current_subscription_id", cur.ID, "current_tier", cur.PlanTier, "current_status", cur.Status,
+	}
+	if ignoreForeignSubscription(cur, ev.Data.StripeSubscriptionID, ev.Data.PlanTier, cancel) {
+		if cur.live() && !cancel {
+			log.Error("billing: ignoring event from a second live subscription on a lower or equal tier (org is double-billed; cancel the event's subscription in Stripe)", attrs...)
+		} else {
+			log.Warn("billing: ignoring event for a subscription that is not the org's current one", attrs...)
+		}
+		return fmt.Errorf("%w: event %s, subscription %s", errIgnoredEvent, ev.ID, ev.Data.StripeSubscriptionID)
+	}
+	if foreign && cur.live() {
+		log.Error("billing: switching to a second live subscription on a higher tier (org is double-billed; cancel the previous subscription in Stripe)", attrs...)
+	}
+	return nil
 }

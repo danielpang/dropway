@@ -346,6 +346,13 @@ type StripeClient interface {
 	// ExpireOpenCheckoutSessions expires every still-open Checkout session for the
 	// customer and returns how many it expired, so only the newest link is payable.
 	ExpireOpenCheckoutSessions(customerID string) (int, error)
+	// CreatePlanChangePortalSession opens the Billing Portal directly on the
+	// confirm screen for moving the subscription's plan item to newPriceID
+	// (Stripe's subscription_update_confirm flow, with the prorated charge shown).
+	// isPlanPrice picks the plan item among the subscription's items; its quantity
+	// (seats) is kept. Stripe rejects it if newPriceID isn't offered in the
+	// portal's configuration, so callers fall back to CreatePortalSession.
+	CreatePlanChangePortalSession(customerID, subscriptionID, newPriceID, returnURL string, isPlanPrice func(priceID string) bool) (url string, err error)
 }
 
 // realStripeClient is the production StripeClient over stripe-go's per-resource
@@ -449,9 +456,10 @@ func (c *realStripeClient) CreatePortalSession(customerID, returnURL string) (st
 }
 
 func (c *realStripeClient) HasLiveSubscription(customerID string) (bool, error) {
+	// No Status filter: Stripe then returns every subscription that hasn't been
+	// canceled, so the customer's canceled history isn't paged through.
 	params := &stripe.SubscriptionListParams{
 		Customer: stripe.String(customerID),
-		Status:   stripe.String("all"),
 	}
 	it := c.subscriptions.List(params)
 	for it.Next() {
@@ -489,4 +497,53 @@ func (c *realStripeClient) ExpireOpenCheckoutSessions(customerID string) (int, e
 		expired++
 	}
 	return expired, nil
+}
+
+func (c *realStripeClient) CreatePlanChangePortalSession(customerID, subscriptionID, newPriceID, returnURL string, isPlanPrice func(string) bool) (string, error) {
+	sub, err := c.subscriptions.Get(subscriptionID, nil)
+	if err != nil {
+		return "", fmt.Errorf("billing: get subscription %s: %w", subscriptionID, err)
+	}
+	var item *stripe.SubscriptionItem
+	if sub.Items != nil {
+		for _, it := range sub.Items.Data {
+			if it.Price != nil && isPlanPrice(it.Price.ID) {
+				item = it
+				break
+			}
+		}
+	}
+	if item == nil {
+		return "", fmt.Errorf("billing: subscription %s has no plan item", subscriptionID)
+	}
+	quantity := item.Quantity
+	if quantity < 1 {
+		quantity = 1
+	}
+	params := &stripe.BillingPortalSessionParams{
+		Customer:  stripe.String(customerID),
+		ReturnURL: stripe.String(returnURL),
+		FlowData: &stripe.BillingPortalSessionFlowDataParams{
+			Type: stripe.String(string(stripe.BillingPortalSessionFlowTypeSubscriptionUpdateConfirm)),
+			SubscriptionUpdateConfirm: &stripe.BillingPortalSessionFlowDataSubscriptionUpdateConfirmParams{
+				Subscription: stripe.String(subscriptionID),
+				Items: []*stripe.BillingPortalSessionFlowDataSubscriptionUpdateConfirmItemParams{{
+					ID:       stripe.String(item.ID),
+					Price:    stripe.String(newPriceID),
+					Quantity: stripe.Int64(quantity),
+				}},
+			},
+			AfterCompletion: &stripe.BillingPortalSessionFlowDataAfterCompletionParams{
+				Type: stripe.String(string(stripe.BillingPortalSessionFlowAfterCompletionTypeRedirect)),
+				Redirect: &stripe.BillingPortalSessionFlowDataAfterCompletionRedirectParams{
+					ReturnURL: stripe.String(returnURL),
+				},
+			},
+		},
+	}
+	sess, err := c.portal.New(params)
+	if err != nil {
+		return "", fmt.Errorf("billing: create plan-change portal session: %w", err)
+	}
+	return sess.URL, nil
 }

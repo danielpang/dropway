@@ -43,8 +43,8 @@ func (s *errStore) SaveCustomerID(ctx context.Context, org, cid string) error {
 	}
 	return s.inner.SaveCustomerID(ctx, org, cid)
 }
-func (s *errStore) WithCheckoutLock(_ context.Context, _ string, fn func() error) error {
-	return fn()
+func (s *errStore) WithCheckoutLock(_ context.Context, _ string, fn func(CheckoutStore) error) error {
+	return fn(s)
 }
 func (s *errStore) ReadPlanTier(ctx context.Context, org string) (PlanTier, error) {
 	if s.readErr != nil {

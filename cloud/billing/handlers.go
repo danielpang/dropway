@@ -33,7 +33,16 @@ type CheckoutPortalStore interface {
 	ReadPlanTier(ctx context.Context, orgID string) (PlanTier, error)
 	// WithCheckoutLock runs fn while holding a per-org lock, so two Checkout
 	// requests for the same org (two tabs, a double click) run one after the other.
-	WithCheckoutLock(ctx context.Context, orgID string, fn func() error) error
+	// fn must do its reads and writes through the CheckoutStore it is given, which
+	// shares the lock's database connection.
+	WithCheckoutLock(ctx context.Context, orgID string, fn func(CheckoutStore) error) error
+}
+
+// CheckoutStore is what the Checkout path reads and writes while holding the
+// per-org checkout lock.
+type CheckoutStore interface {
+	GetSubscription(ctx context.Context, orgID string) (Subscription, bool, error)
+	SaveCustomerID(ctx context.Context, orgID, customerID string) error
 }
 
 var _ CheckoutPortalStore = (*BillingStore)(nil)
@@ -162,9 +171,9 @@ func (h *Handlers) Checkout(w http.ResponseWriter, r *http.Request) {
 	// same org (two tabs, a double click) would otherwise both see "no
 	// subscription yet" and both hand out a payable Checkout link.
 	var url string
-	err := h.store.WithCheckoutLock(ctx, orgID, func() error {
+	err := h.store.WithCheckoutLock(ctx, orgID, func(cs CheckoutStore) error {
 		var err error
-		url, err = h.startCheckout(ctx, orgID, email, CheckoutParams{
+		url, err = h.startCheckout(ctx, cs, orgID, email, CheckoutParams{
 			PriceID:           priceID,
 			Quantity:          seats,
 			ClientReferenceID: orgID,
@@ -178,7 +187,7 @@ func (h *Handlers) Checkout(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, errSubscriptionExists) {
 		httpx.WriteJSON(w, http.StatusConflict, httpx.ErrorBody{
 			Error:   "subscription_exists",
-			Message: "This organization already has an active subscription. Change plans from Manage billing.",
+			Message: "This organization already has an active subscription. Change plans from Manage billing. If you just cancelled it, try again in a minute.",
 		})
 		return
 	}
@@ -199,14 +208,17 @@ var errSubscriptionExists = errors.New("billing: org already has a live subscrip
 // a second Checkout would create a second subscription that keeps billing (and
 // whose renewals used to flip the org's tier back and forth). The caller holds the
 // per-org checkout lock.
-func (h *Handlers) startCheckout(ctx context.Context, orgID, email string, p CheckoutParams) (string, error) {
+func (h *Handlers) startCheckout(ctx context.Context, cs CheckoutStore, orgID, email string, p CheckoutParams) (string, error) {
 	var existingCustomer string
-	sub, found, err := h.store.GetSubscription(ctx, orgID)
+	sub, found, err := cs.GetSubscription(ctx, orgID)
 	if err != nil {
 		return "", err
 	}
 	if found {
-		if (CurrentSubscription{ID: sub.StripeSubscriptionID, PlanTier: sub.PlanTier, Status: sub.Status}).live() {
+		// A row still marked live after a cancellation whose webhook hasn't landed
+		// yet also refuses here. That is deliberate: only signed webhooks change
+		// plan_tier, and the 409 clears once Stripe delivers the cancellation.
+		if sub.current().live() {
 			return "", errSubscriptionExists
 		}
 		existingCustomer = sub.StripeCustomerID
@@ -221,7 +233,7 @@ func (h *Handlers) startCheckout(ctx context.Context, orgID, email string, p Che
 		// Persist the new customer id BEFORE Checkout so a later webhook can match it
 		// even if the browser never returns. A brand-new customer has no
 		// subscriptions or sessions yet, so the Stripe checks below are skipped.
-		if err := h.store.SaveCustomerID(ctx, orgID, customerID); err != nil {
+		if err := cs.SaveCustomerID(ctx, orgID, customerID); err != nil {
 			return "", err
 		}
 	} else {
@@ -264,6 +276,20 @@ func (h *Handlers) Portal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The body is optional: {"target_tier": "business"} asks for the plan-change
+	// screen when the org already pays on a lower tier.
+	var req portalRequest
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, errEmptyBody) {
+		httpx.WriteError(w, fmt.Errorf("%w: %s", httpx.ErrBadRequest, err))
+		return
+	}
+	target := PlanTier(req.TargetTier)
+	if target != "" {
+		if _, ok := h.prices.PriceFor(target); !ok {
+			httpx.WriteError(w, fmt.Errorf("%w: unknown or unconfigured target_tier %q", httpx.ErrBadRequest, req.TargetTier))
+			return
+		}
+	}
 	ctx := r.Context()
 
 	sub, found, err := h.store.GetSubscription(ctx, orgID)
@@ -276,13 +302,55 @@ func (h *Handlers) Portal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url, err := h.stripe.CreatePortalSession(sub.StripeCustomerID, h.dashboardURL+"/billing")
+	returnURL := h.dashboardURL + "/billing"
+	if url, ok := h.planChangePortal(orgID, sub, target, returnURL); ok {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"portal_url": url})
+		return
+	}
+	url, err := h.stripe.CreatePortalSession(sub.StripeCustomerID, returnURL)
 	if err != nil {
 		h.log.Error("create portal session failed", "org_id", orgID, "err", err)
 		httpx.WriteError(w, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"portal_url": url})
+}
+
+// portalRequest is the optional POST /v1/billing/portal body.
+type portalRequest struct {
+	// TargetTier, when set to a tier above the org's live subscription, opens the
+	// portal on the confirm screen for that upgrade instead of its home page.
+	TargetTier string `json:"target_tier,omitempty"`
+}
+
+// planChangePortal opens the portal on the confirm screen for upgrading the org's
+// live subscription to target. ok=false means "use the portal home page instead":
+// no target, not an upgrade, no live subscription, or Stripe refused the deep link
+// (e.g. the target price isn't offered in the portal's configuration).
+func (h *Handlers) planChangePortal(orgID string, sub Subscription, target PlanTier, returnURL string) (string, bool) {
+	if target == "" || !sub.current().live() || tierRank(target) <= tierRank(sub.PlanTier) {
+		return "", false
+	}
+	priceID, ok := h.prices.PriceFor(target)
+	if !ok {
+		return "", false
+	}
+	url, err := h.stripe.CreatePlanChangePortalSession(sub.StripeCustomerID, sub.StripeSubscriptionID, priceID, returnURL, h.isPlanPrice)
+	if err != nil {
+		h.log.Warn("plan-change portal link failed; opening the portal home page instead",
+			"org_id", orgID, "target_tier", target, "err", err)
+		return "", false
+	}
+	return url, true
+}
+
+// isPlanPrice reports whether priceID is one of the configured plan prices.
+func (h *Handlers) isPlanPrice(priceID string) bool {
+	if priceID == "" {
+		return false
+	}
+	_, known := h.prices.TierForChecked(priceID)
+	return known
 }
 
 // currentPlanResponse is the GET /v1/billing body.
@@ -322,12 +390,15 @@ func (h *Handlers) Current(w http.ResponseWriter, r *http.Request) {
 }
 
 // decodeJSON reads a small JSON body (capped) into v, rejecting unknown fields.
+// errEmptyBody is decodeJSON's error for a request with no body.
+var errEmptyBody = errors.New("empty request body")
+
 func decodeJSON(r *http.Request, v any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		if errors.Is(err, io.EOF) {
-			return errors.New("empty request body")
+			return errEmptyBody
 		}
 		return err
 	}
