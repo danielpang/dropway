@@ -1,6 +1,7 @@
 "use server";
 
-import { api, ApiError, type BillingPlan, type CheckoutTier } from "@/lib/api";
+import { api, ApiError, type BillingPlan, type CheckoutTier, type PlanTier } from "@/lib/api";
+import { upgradeRoute } from "@/lib/billing";
 
 /**
  * Billing server actions (CLOUD-ONLY surface). These call the
@@ -62,6 +63,41 @@ function isSubscriptionExists(err: unknown): boolean {
     err.status === 409 &&
     (err.body as { error?: string } | null)?.error === "subscription_exists"
   );
+}
+
+export type UpgradeActionResult =
+  | { ok: true; url: string }
+  | { ok: false; message: string };
+
+/**
+ * Start an upgrade to `targetTier` from the org's current plan and hand back the
+ * URL to redirect to. A Free org goes to Stripe Checkout; an org that already
+ * pays goes straight to the Billing Portal's plan-change screen for the target
+ * tier, so no second subscription is started. Used by every upgrade button and
+ * the 402 plan-limit modal.
+ *
+ * `currentTier` comes from the page and can be stale, so both paths recover:
+ * a paying org sent to Checkout gets the portal back (createCheckoutAction's
+ * 409 fallback), and an org the page thought was paying but that has no Stripe
+ * customer yet falls back to Checkout.
+ */
+export async function startUpgradeAction(input: {
+  targetTier: CheckoutTier;
+  currentTier: PlanTier | null | undefined;
+  localCurrency?: boolean;
+}): Promise<UpgradeActionResult> {
+  if (upgradeRoute(input.currentTier) === "portal") {
+    const portal = await createPortalAction({ targetTier: input.targetTier });
+    if (portal.ok) return { ok: true, url: portal.portalUrl };
+    if (portal.kind !== "no_customer") return { ok: false, message: portal.message };
+  }
+  const checkout = await createCheckoutAction({
+    targetTier: input.targetTier,
+    localCurrency: input.localCurrency,
+  });
+  return checkout.ok
+    ? { ok: true, url: checkout.checkoutUrl }
+    : { ok: false, message: checkout.message };
 }
 
 export type PortalActionResult =

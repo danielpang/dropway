@@ -27,7 +27,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { ApiError } from "@/lib/api";
-import { createCheckoutAction } from "@/app/(app)/billing/actions";
+import { createCheckoutAction, startUpgradeAction } from "@/app/(app)/billing/actions";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -81,5 +81,44 @@ describe("createCheckoutAction", () => {
 
     expect(result).toEqual({ ok: false, message: "Something else." });
     expect(createPortal).not.toHaveBeenCalled();
+  });
+});
+
+describe("startUpgradeAction", () => {
+  it("sends a Free org to Checkout", async () => {
+    createCheckout.mockResolvedValue({ checkout_url: "https://checkout.stripe.test/s" });
+
+    const result = await startUpgradeAction({ targetTier: "pro", currentTier: "free" });
+
+    expect(result).toEqual({ ok: true, url: "https://checkout.stripe.test/s" });
+    expect(createPortal).not.toHaveBeenCalled();
+  });
+
+  it("sends a paying org straight to the portal's plan-change screen", async () => {
+    createPortal.mockResolvedValue({ portal_url: "https://portal.stripe.test/plan" });
+
+    const result = await startUpgradeAction({ targetTier: "business", currentTier: "pro" });
+
+    expect(result).toEqual({ ok: true, url: "https://portal.stripe.test/plan" });
+    expect(createPortal).toHaveBeenCalledWith({ target_tier: "business" });
+    expect(createCheckout).not.toHaveBeenCalled();
+  });
+
+  it("falls back to Checkout when the page thought the org paid but it has no customer", async () => {
+    createPortal.mockRejectedValue(new ApiError(409, "conflict", { error: "conflict" }));
+    createCheckout.mockResolvedValue({ checkout_url: "https://checkout.stripe.test/s" });
+
+    const result = await startUpgradeAction({ targetTier: "business", currentTier: "pro" });
+
+    expect(result).toEqual({ ok: true, url: "https://checkout.stripe.test/s" });
+  });
+
+  it("reports a portal failure without starting Checkout for a paying org", async () => {
+    createPortal.mockRejectedValue(new ApiError(500, "boom", null));
+
+    const result = await startUpgradeAction({ targetTier: "business", currentTier: "pro" });
+
+    expect(result.ok).toBe(false);
+    expect(createCheckout).not.toHaveBeenCalled();
   });
 });

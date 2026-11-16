@@ -225,10 +225,10 @@ const TIER_ORDER: PlanTier[] = ["free", "pro", "business", "enterprise"];
 /**
  * What CTA a given tier offers relative to the org's CURRENT tier:
  *  - "current"   → the org is already on it (no action)
- *  - "upgrade"   → a higher self-serve tier (Pro/Business) → Stripe Checkout
- *                  for a Free org; an org that already pays is sent to the
- *                  Billing Portal (one subscription per org, see
- *                  createCheckoutAction)
+ *  - "upgrade"   → a higher self-serve tier (Pro/Business): Stripe Checkout for
+ *                  a Free org, the Billing Portal's plan-change screen for an
+ *                  org that already pays (one subscription per org; see
+ *                  upgradeRoute and startUpgradeAction)
  *  - "contact"   → a higher "Custom" tier (Enterprise) → Contact Sales
  *  - "downgrade" → a lower tier (handled via the Stripe Billing Portal)
  * Shared by the change-plan drawer cards and the plan-matrix CTA row so they
@@ -241,4 +241,18 @@ export function planAction(tier: PlanTier, current: PlanTier): PlanAction {
   const higher = TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(current);
   if (!higher) return "downgrade";
   return tier === "enterprise" ? "contact" : "upgrade";
+}
+
+/**
+ * Where an upgrade from `current` starts. An org has ONE Stripe subscription:
+ *  - "checkout" → Free (or unknown) orgs start their first subscription.
+ *  - "portal"   → an org on a paid tier changes the plan on its existing
+ *                 subscription, via the Billing Portal's plan-change screen.
+ * The API enforces the same rule (Checkout 409s for a paying org), so a stale
+ * page still ends up in the right place; this just skips that round trip.
+ */
+export function upgradeRoute(current: PlanTier | null | undefined): "checkout" | "portal" {
+  return current === "pro" || current === "business" || current === "enterprise"
+    ? "portal"
+    : "checkout";
 }

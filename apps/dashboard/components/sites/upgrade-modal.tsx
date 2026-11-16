@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ArrowUpRight, Loader2, Zap } from "lucide-react";
 
-import { createCheckoutAction } from "@/app/(app)/billing/actions";
+import { startUpgradeAction } from "@/app/(app)/billing/actions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { QuotaExceeded } from "@/lib/api";
+import type { PlanTier, QuotaExceeded } from "@/lib/api";
 import { isCheckoutTier, TIER_LABEL, type DisplayTier } from "@/lib/billing";
 
 /** Human label for each capped resource the API can report. */
@@ -34,9 +34,10 @@ function tierLabel(tier: string | undefined): string {
  * they hit, then routes them to the right next step:
  *
  *  - next_tier is a self-serve tier (business / enterprise) → "Upgrade to X"
- *    POSTs /v1/billing/checkout {target_tier} and redirects to the Stripe-hosted
- *    checkout_url. (The success redirect grants NOTHING, only the signed
- *    webhook flips plan_tier; the billing page polls for that.)
+ *    redirects a Free org to Stripe Checkout, and an org that already pays to
+ *    the Billing Portal's plan-change screen (startUpgradeAction). (Nothing is
+ *    granted on return; only the signed webhook flips plan_tier, and the
+ *    billing page polls for that.)
  *  - next_tier === 'contact_sales' (above Enterprise) → no checkout; show a
  *    Contact Sales CTA linking to the API-provided sales_url.
  *
@@ -70,15 +71,20 @@ export function UpgradeModal({
   const nextTier = quota.next_tier;
   const isContactSales = nextTier === "contact_sales";
   const checkoutTier = isCheckoutTier(nextTier) ? nextTier : null;
+  const currentTier = quota.plan_tier as PlanTier | undefined;
 
   async function onUpgrade() {
     if (!checkoutTier) return;
     setError(null);
     setPending(true);
-    const result = await createCheckoutAction({ targetTier: checkoutTier });
+    const result = await startUpgradeAction({
+      targetTier: checkoutTier,
+      currentTier,
+    });
     if (result.ok) {
-      // Full-page redirect to Stripe-hosted Checkout (leaves the SPA).
-      window.location.href = result.checkoutUrl;
+      // Full-page redirect to Stripe (Checkout, or the portal's plan-change
+      // screen for an org that already pays). Leaves the SPA.
+      window.location.href = result.url;
       return;
     }
     setError(result.message);
