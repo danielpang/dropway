@@ -83,6 +83,9 @@ func (s *Store) FlushCandidateProjection(ctx context.Context, t Tenant, candidat
 // RLS. Multiple API processes safely serialize delivery at the org/site lock.
 // At most 100 sites per org are delivered per pass. Successful sites are checked
 // again after five minutes to repair late stale writes from legacy handlers.
+// The check re-PUTs through the writer; CloudflareKV skips the write when the
+// stored route already matches, so the repair does not spend a KV write quota
+// unit on an unchanged host. A daily-quota rejection stops the pass.
 func (s *Store) DrainCandidateProjections(ctx context.Context, w projection.Writer) (int, error) {
 	orgs, err := s.listCandidateProjectionOrgIDs(ctx)
 	if err != nil {
@@ -124,6 +127,13 @@ func (s *Store) DrainCandidateProjections(ctx context.Context, w projection.Writ
 		for _, id := range ids {
 			if err := s.FlushCandidateProjection(ctx, tenant, id, w); err != nil {
 				failures = append(failures, err)
+				// The write quota is account-wide. Once Cloudflare rejects a
+				// route PUT with 429/10048, every later host in this pass fails
+				// the same way. Stop so the repair loop backs off instead of
+				// issuing more writes the free plan will reject.
+				if errors.Is(err, projection.ErrDailyQuota) {
+					return done, errors.Join(failures...)
+				}
 			} else {
 				done++
 			}

@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -395,6 +397,10 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 			// caller can retry, but log it loudly — the reconciler/rebuild backstops it.
 			logger(r).Error("projection write failed after publish",
 				"host", ru.Host, "site_id", siteID, "version_id", req.VersionID, "err", err)
+			if errors.Is(err, projection.ErrDailyQuota) {
+				writePublishQuota(w)
+				return
+			}
 			httpx.WriteError(w, err)
 			return
 		}
@@ -435,6 +441,26 @@ func (a *API) requireObjects(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+// writePublishQuota tells the caller the version pointer is already saved and
+// the edge route was not written because Cloudflare's daily KV write quota is
+// exhausted. Retry-After runs until the 00:00 UTC reset. Republishing the same
+// version_id writes the route; it does not create another version.
+func writePublishQuota(w http.ResponseWriter) {
+	wait := projection.QuotaRetryAfter(time.Now())
+	secs := int(wait.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	httpx.WriteJSON(w, http.StatusServiceUnavailable, httpx.ErrorBody{
+		Error: "projection_quota",
+		Message: "This version is saved, but its hostname is not routed yet. " +
+			"Cloudflare rejected the route write because the Workers Free plan daily KV write quota is exhausted (HTTP 429, error 10048). " +
+			"The quota resets at 00:00 UTC. Retry this publish after the reset; republishing the same version writes the route. " +
+			"Upgrading the Cloudflare Workers plan removes the 1,000 writes/day cap.",
+	})
 }
 
 func (a *API) requireProjection(w http.ResponseWriter) bool {

@@ -6,14 +6,48 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/danielpang/dropway/internal/edgerevoke"
 )
+
+// ErrDailyQuota is returned when Cloudflare rejects a KV read or write because
+// the Workers Free plan daily quota for that operation is exhausted. The API
+// responds with HTTP 429 and error code 10048 ("your account has reached the
+// free usage limit for this operation for today"). Writes are capped at 1,000
+// keys/day and the counter resets at 00:00 UTC.
+var ErrDailyQuota = errors.New("cloudflare daily kv quota exhausted")
+
+// QuotaBackoff is how long the background route repair waits after a daily-quota
+// rejection. It is shorter than the time until 00:00 UTC so a Workers plan
+// upgrade is picked up the same day, and long enough that an exhausted account
+// is not probed again on the 30s repair tick.
+const QuotaBackoff = 15 * time.Minute
+
+// nextDailyQuotaReset is the next 00:00 UTC, when Workers Free daily KV quotas
+// reset. now is read in UTC.
+func nextDailyQuotaReset(now time.Time) time.Time {
+	u := now.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day()+1, 0, 0, 0, 0, time.UTC)
+}
+
+// QuotaRetryAfter is the delay a caller should wait before retrying a publish
+// whose edge write was rejected for the daily quota. It runs until the next
+// 00:00 UTC reset, and at least one minute so a failure in the last seconds of
+// the UTC day is not retried before the counter resets.
+func QuotaRetryAfter(now time.Time) time.Duration {
+	wait := nextDailyQuotaReset(now).Sub(now.UTC())
+	if wait < time.Minute {
+		wait = time.Minute
+	}
+	return wait
+}
 
 // CloudflareKV is a Writer backed by the Cloudflare Workers KV REST API. It is
 // the production projection writer: the Go API PUTs/DELETEs the route value at
@@ -66,6 +100,17 @@ func (c *CloudflareKV) kvValueURL(key string) string {
 }
 
 // PutRoute writes the route value (PUT .../values/route:<host>).
+//
+// The write is skipped when the stored value already equals val. Workers KV's
+// free plan allows 1,000 key writes per day, and several callers re-PUT a host
+// whose route did not change: republishing the same version, and the candidate
+// projection repair, which re-delivers every outbox row every five minutes.
+// Those identical PUTs are what exhaust the quota (HTTP 429, error 10048) and
+// then fail a later publish that actually needs a new version_id. A read is
+// cheap by comparison (100,000/day). A missing key or a different value still
+// PUTs, so a stale edge route is repaired. A transient read error falls
+// through to the write; a daily-quota error on the read does not, because
+// spending a write cannot succeed once the account is limited.
 func (c *CloudflareKV) PutRoute(ctx context.Context, host string, val RouteValue) error {
 	if err := val.Validate(); err != nil {
 		return err
@@ -74,16 +119,59 @@ func (c *CloudflareKV) PutRoute(ctx context.Context, host string, val RouteValue
 	if err != nil {
 		return err
 	}
+	key := RouteKey(host)
+	stored, found, rerr := c.getRaw(ctx, key)
+	if rerr != nil {
+		if errors.Is(rerr, ErrDailyQuota) {
+			return rerr
+		}
+		// A transient read failure must not skip a needed write.
+	} else if found && sameRouteValue(stored, val) {
+		return nil
+	}
 	// The KV REST API stores the raw request body as the value; we send the
 	// canonical JSON the Worker parses with @dropway/contracts.parseKVRouteValue.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		c.kvValueURL(RouteKey(host)), bytes.NewReader(body))
+		c.kvValueURL(key), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.auth(req)
 	return c.do(req, "put route "+host)
+}
+
+// sameRouteValue reports whether stored is the same route as want. Comparison
+// is semantic (struct equality after JSON decode), so key order and whitespace
+// in the stored document do not count as a change.
+func sameRouteValue(stored []byte, want RouteValue) bool {
+	var got RouteValue
+	if err := json.Unmarshal(stored, &got); err != nil {
+		return false
+	}
+	return got == want
+}
+
+// getRaw GETs the raw KV value at key. A 404 is a clean miss (nil, false, nil).
+func (c *CloudflareKV) getRaw(ctx context.Context, key string) ([]byte, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.kvValueURL(key), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	c.auth(req)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, false, httpErr("get "+key, resp.StatusCode, body)
+	}
+	return body, true, nil
 }
 
 // DeleteRoute removes a host's route (DELETE .../values/route:<host>).
@@ -311,6 +399,9 @@ func (c *CloudflareKV) auth(req *http.Request) {
 }
 
 // do executes the request and maps a non-2xx to an error including the body.
+// HTTP 429 with Cloudflare error 10048 is ErrDailyQuota so callers can back
+// off instead of retrying a write the free plan will keep rejecting until
+// 00:00 UTC.
 func (c *CloudflareKV) do(req *http.Request, what string) error {
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
@@ -319,10 +410,44 @@ func (c *CloudflareKV) do(req *http.Request, what string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("projection: %s: cloudflare returned %d: %s",
-			what, resp.StatusCode, bytes.TrimSpace(b))
+		return httpErr(what, resp.StatusCode, b)
 	}
 	return nil
+}
+
+// httpErr formats a non-2xx Cloudflare response. Daily free-plan quota
+// rejections (HTTP 429, error 10048) wrap ErrDailyQuota. Other 429s, including
+// the account-wide REST API rate limit, stay ordinary errors so they are
+// retried on the short tick instead of the quota backoff.
+func httpErr(what string, status int, body []byte) error {
+	msg := bytes.TrimSpace(body)
+	if dailyQuota(status, body) {
+		return fmt.Errorf("projection: %s: %w: cloudflare returned %d: %s",
+			what, ErrDailyQuota, status, msg)
+	}
+	return fmt.Errorf("projection: %s: cloudflare returned %d: %s", what, status, msg)
+}
+
+func dailyQuota(status int, body []byte) bool {
+	if status != http.StatusTooManyRequests {
+		return false
+	}
+	var parsed struct {
+		Errors []struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil || len(parsed.Errors) == 0 {
+		low := bytes.ToLower(body)
+		return bytes.Contains(low, []byte("10048")) || bytes.Contains(low, []byte("free usage limit"))
+	}
+	for _, e := range parsed.Errors {
+		if e.Code == 10048 || strings.Contains(strings.ToLower(e.Message), "free usage limit") {
+			return true
+		}
+	}
+	return false
 }
 
 // Ensure CloudflareKV satisfies Writer, Revoker, and OrgStatusWriter.
