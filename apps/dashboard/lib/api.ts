@@ -1638,6 +1638,10 @@ export const api = {
     return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/sessions/${encodeURIComponent(sessionId)}/resume`, { method: "POST", body: JSON.stringify({ answer, idempotency_key: idempotencyKey }) });
   },
 
+  async getCandidatePreview(roomId: string, candidateId: string): Promise<unknown> {
+    return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/candidates/${encodeURIComponent(candidateId)}/preview`);
+  },
+
   async getRoomVersionFile(roomId: string, siteId: string, versionId: string, path: string): Promise<unknown> {
     return apiFetch(`/v1/project-rooms/${encodeURIComponent(roomId)}/sites/${encodeURIComponent(siteId)}/versions/${encodeURIComponent(versionId)}/files/content?path=${encodeURIComponent(path)}`);
   },

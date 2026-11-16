@@ -1070,6 +1070,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/project-rooms/{roomID}/candidates/{candidateID}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read verified artifacts for a visual comparison
+         * @description Private, hash-verified HTML, CSS, raster images and fonts from the candidate and its pinned base. Up to 10 MiB per version; uploaded content must be rendered in a scriptless sandbox.
+         */
+        get: operations["getCandidatePreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/project-rooms/{roomID}/candidates/{candidateID}/diff": {
         parameters: {
             query?: never;
@@ -2244,6 +2264,8 @@ export interface components {
             tokens_used: number;
             calls_used: number;
             credential_generation: number;
+            /** @description The comment that triggered this task, or null for a manually started task. */
+            trigger_reply_id?: string | null;
             candidate_id: string | null;
             session_id: string | null;
             failure_code: string | null;
@@ -4886,6 +4908,54 @@ export interface operations {
                 content?: never;
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getCandidatePreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roomID: string;
+                candidateID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified private artifacts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        candidate_id: string;
+                        base_content_hash: string;
+                        content_hash: string;
+                        before: {
+                            path: string;
+                            /** @description Base64 encoded file bytes */
+                            data: string;
+                            sha256: string;
+                        }[];
+                        after: {
+                            path: string;
+                            /** @description Base64 encoded file bytes */
+                            data: string;
+                            sha256: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Artifact verification failed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getCandidateDiff: {

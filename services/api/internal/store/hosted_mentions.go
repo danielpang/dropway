@@ -41,6 +41,7 @@ func (s *Store) AddMentionReply(ctx context.Context, t Tenant, roomID, threadID,
 		if err := tx.QueryRow(ctx, `SELECT trigger_reply_id::text FROM app.execution_jobs WHERE org_id=$1 AND id=$2`, t.OrgID, job.ID).Scan(&replyID); err != nil {
 			return err
 		}
+		job.TriggerReplyID = replyID
 		if replyID != nil {
 			if err := tx.QueryRow(ctx, `SELECT id::text,author_user_id::text,body,created_at FROM app.review_replies WHERE org_id=$1 AND id=$2 AND thread_id=$3`, t.OrgID, *replyID, threadID).Scan(&reply.ID, &reply.AuthorID, &reply.Body, &reply.CreatedAt); err != nil {
 				return err
@@ -58,6 +59,7 @@ func (s *Store) AddMentionReply(ctx context.Context, t Tenant, roomID, threadID,
 		if _, err := tx.Exec(ctx, `UPDATE app.execution_jobs SET trigger_reply_id=$3 WHERE org_id=$1 AND id=$2`, t.OrgID, job.ID, reply.ID); err != nil {
 			return err
 		}
+		job.TriggerReplyID = &reply.ID
 		return writeActivity(ctx, q, t, roomID, "reply_created", &threadID, &th.SiteID, &th.VersionID)
 	})
 	return reply, job, err

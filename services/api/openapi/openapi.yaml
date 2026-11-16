@@ -1451,6 +1451,41 @@ paths:
       responses:
         "200": { description: Candidate page }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/project-rooms/{roomID}/candidates/{candidateID}/preview:
+    get:
+      summary: Read verified artifacts for a visual comparison
+      operationId: getCandidatePreview
+      description: Private, hash-verified HTML, CSS, raster images and fonts from the candidate and its pinned base. Up to 10 MiB per version; uploaded content must be rendered in a scriptless sandbox.
+      parameters:
+        - { name: roomID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: candidateID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Verified private artifacts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [candidate_id, base_content_hash, content_hash, before, after]
+                properties:
+                  candidate_id: { type: string }
+                  base_content_hash: { type: string }
+                  content_hash: { type: string }
+                  before:
+                    type: array
+                    items: &PreviewArtifactFile
+                      type: object
+                      required: [path, data, sha256]
+                      properties:
+                        path: { type: string }
+                        data: { type: string, description: Base64 encoded file bytes }
+                        sha256: { type: string }
+                  after:
+                    type: array
+                    items: *PreviewArtifactFile
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Artifact verification failed }
   /v1/project-rooms/{roomID}/candidates/{candidateID}/diff:
     get:
       summary: Read a candidate diff against its pinned base
@@ -3662,6 +3697,11 @@ components:
           "type": "integer"
         "credential_generation":
           "type": "integer"
+        "trigger_reply_id":
+          "description": "The comment that triggered this task, or null for a manually started task."
+          "type":
+            - "string"
+            - "null"
         "candidate_id":
           "type":
             - "string"

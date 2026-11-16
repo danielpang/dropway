@@ -32,6 +32,7 @@ import { NewProjectSite } from "./new-project-site";
 import { ProjectSharing } from "./project-sharing";
 import { MentionTextarea } from "./mention-textarea";
 import { mentionOptions } from "@/lib/project-room/mentions";
+import { threadConversation } from "@/lib/project-room/thread-conversation";
 import { AICommentStatus } from "./ai-comment-status";
 import type { HostedJob } from "@/lib/project-room/hosted";
 import { MentionExecutionControls } from "./mention-execution";
@@ -53,6 +54,7 @@ import type {
 } from "@/lib/collab/static-snapshot";
 import { CandidateReview } from "@/components/project-room/candidate-review";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import {
   canComment,
@@ -125,6 +127,7 @@ export function RoomWorkspace({
   onSignoff,
   onDecide,
   onApply,
+  publishedRevision,
   busyCandidates = [],
   onSubmitCandidate,
   onAddMember,
@@ -208,6 +211,7 @@ export function RoomWorkspace({
     decision: "approve" | "reject",
   ) => void;
   onApply?: (roomId: string, candidate: ReviewCandidate) => void;
+  publishedRevision?: { siteId: string; versionId: string } | null;
   busyCandidates?: string[];
   onSubmitCandidate: (input: {
     roomId: string;
@@ -309,13 +313,20 @@ export function RoomWorkspace({
     return () => {
       active = false;
     };
-  }, [siteId, demo]);
+  }, [siteId, demo, publishedRevision]);
   const revisionLabel = (id: string) =>
     revisionNumbers[id]
       ? `Revision ${revisionNumbers[id]}`
       : id === sites.find((item) => item.id === siteId)?.currentVersionId
         ? "Current revision"
         : "Earlier revision";
+  React.useEffect(() => {
+    if (!publishedRevision) return;
+    setSiteId(publishedRevision.siteId);
+    setVersionId(publishedRevision.versionId);
+    setLinkedThreadId("");
+    setPanel("review");
+  }, [publishedRevision]);
   const [page, setPage] = React.useState("/");
   const [body, setBody] = React.useState("");
   const latestDraft = React.useRef({ roomId, siteId, versionId, page, body });
@@ -1050,35 +1061,29 @@ export function RoomWorkspace({
           </a>
         </Tooltip>
       </p>
-      {thread.Replies.slice(0, 1).map((item) => (
-        <ReplyText key={item.ID} body={untrustedText(item.Body)} compact />
-      ))}
-      {jobs
-        .filter(
-          (job) =>
-            job.roomId === thread.RoomID && job.config.threadId === thread.ID,
-        )
-        .slice(0, 1)
-        .map((job) => (
-          <AICommentStatus
-            key={job.id}
-            job={job}
-            stale={jobStatusUnavailable}
-            onReview={() => {
-              onRefreshRoom?.(thread.RoomID);
-              setPanel("changes");
-            }}
-            onActivity={() => setPanel("activity")}
-          />
+      <ul className="space-y-2">
+        {threadConversation(thread, jobs).map((entry, index) => (
+          <li
+            key={entry.kind === "reply" ? `reply-${entry.reply.ID}` : `job-${entry.job.id}`}
+            className={entry.kind === "reply" && index > 0 ? "border-l border-border pl-2 text-xs" : undefined}
+          >
+            {entry.kind === "reply" ? (
+              <ReplyText body={untrustedText(entry.reply.Body)} compact />
+            ) : (
+              <AICommentStatus
+                job={entry.job}
+                stale={jobStatusUnavailable}
+                onReview={() => {
+                  onRefreshRoom?.(thread.RoomID);
+                  setPanel("changes");
+                }}
+                onActivity={() => setPanel("activity")}
+              />
+            )}
+          </li>
         ))}
+      </ul>
       <div className="space-y-2 text-xs">
-        <ul className="space-y-2 border-l border-border pl-2">
-          {thread.Replies.slice(1).map((item) => (
-            <li key={item.ID}>
-              <ReplyText body={untrustedText(item.Body)} compact />
-            </li>
-          ))}
-        </ul>
         {thread.NextReplyCursor ? (
           <Button
             type="button"
@@ -1327,8 +1332,7 @@ export function RoomWorkspace({
           </span>
         </header>
         <p className="text-sm text-muted-foreground">
-          Review the summary and file changes, then accept or reject. Accepted
-          changes still require Apply to publish.
+          Compare the current version with the proposal. Accept change publishes it; reject keeps your current version.
         </p>
         {candidates.filter((item) => item.RoomID === roomId).length === 0 ? (
           <p className="rounded-lg bg-muted/40 p-5 text-sm text-muted-foreground">
@@ -1672,10 +1676,10 @@ export function RoomWorkspace({
         <div className="flex h-[calc(100dvh-3.5rem)] min-h-[32rem] flex-col bg-background">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <div className="relative inline-grid max-w-48 text-sm font-semibold">
+              <div className="relative inline-grid max-w-full rounded-md text-sm font-semibold focus-within:ring-2 focus-within:ring-ring">
                 <span
                   aria-hidden="true"
-                  className="invisible truncate pl-2 pr-7 py-1.5"
+                  className="pointer-events-none whitespace-normal break-words pl-2 pr-7 py-1.5"
                 >
                   {room.Name}
                 </span>
@@ -1688,7 +1692,7 @@ export function RoomWorkspace({
                     setLinkedThreadId("");
                     setCommentFilter("all");
                   }}
-                  className="absolute inset-0 w-full min-w-0 appearance-none truncate rounded-md bg-transparent pl-2 pr-7 py-1.5 text-sm font-semibold"
+                  className="absolute inset-0 w-full min-w-0 cursor-pointer opacity-0 rounded-md text-sm font-semibold"
                 >
                   {rooms.map((item) => (
                     <option key={item.ID} value={item.ID}>
@@ -1702,10 +1706,10 @@ export function RoomWorkspace({
                 />
               </div>
               <span className="text-border">/</span>
-              <div className="relative inline-grid max-w-48 text-sm">
+              <div className="relative inline-grid max-w-full rounded-md text-sm focus-within:ring-2 focus-within:ring-ring">
                 <span
                   aria-hidden="true"
-                  className="invisible truncate pl-2 pr-7 py-1.5"
+                  className="pointer-events-none whitespace-normal break-words pl-2 pr-7 py-1.5"
                 >
                   {site?.label ?? site?.slug ?? "Select a site or image"}
                 </span>
@@ -1713,7 +1717,7 @@ export function RoomWorkspace({
                   aria-label="Site or image"
                   value={siteId}
                   onChange={(e) => chooseSite(e.target.value)}
-                  className="absolute inset-0 w-full min-w-0 appearance-none truncate rounded-md bg-transparent pl-2 pr-7 py-1.5 text-sm"
+                  className="absolute inset-0 w-full min-w-0 cursor-pointer opacity-0 rounded-md text-sm"
                 >
                   <option value="" disabled>
                     Select a site or image
@@ -1815,19 +1819,21 @@ export function RoomWorkspace({
               <>
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <select
+                    <Select
                       aria-label="Viewing version"
                       value={versionId}
                       onChange={(e) => {
                         setLinkedThreadId("");
                         setVersionId(e.target.value);
                       }}
-                      className="max-w-44 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+                      className="h-9 min-w-48 text-sm"
                     >
                       {Array.from(
                         new Set(
                           [
                             site.currentVersionId,
+                            versionId,
+                            ...Object.keys(revisionNumbers).sort((a,b)=>revisionNumbers[b]!-revisionNumbers[a]!),
                             ...threads
                               .filter((t) => t.SiteID === siteId)
                               .map((t) => t.VersionID),
@@ -1836,26 +1842,22 @@ export function RoomWorkspace({
                       ).map((id) => (
                         <option key={id} value={id}>
                           {id === site.currentVersionId
-                            ? "Current version"
+                            ? `${revisionNumbers[id] ? `Revision ${revisionNumbers[id]} · ` : ""}Latest`
                             : revisionLabel(id)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">
                       Page
                       <Input
                         aria-label="Page path"
-                        className="h-8 w-32 text-xs"
-                        value={page}
-                        onChange={(e) => setPage(e.target.value)}
+                        className="h-9 w-48 text-sm"
+                        value={page === "/" ? "Home page" : page}
+                        onFocus={(e)=>{if(page === "/") e.target.select();}}
+                        onChange={(e) => setPage(e.target.value === "Home page" || !e.target.value ? "/" : e.target.value)}
                       />
-                      {page === "/" ? <span>Home page</span> : null}
                     </label>
-                    <span className="hidden text-xs text-muted-foreground lg:inline">
-                      {versionId === site.currentVersionId
-                        ? "Safe review preview"
-                        : "Historical version"}
-                    </span>
+
                   </div>
                   <div className="flex items-center gap-2">
                     {site.liveUrl ? (
@@ -2080,7 +2082,7 @@ export function RoomWorkspace({
           ) : null}
           {detailsRoomId === roomId && panel === "changes" ? (
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto w-full max-w-5xl p-6 lg:p-8">
+              <div className="mx-auto w-full max-w-[1600px] p-4 lg:p-6">
                 <div className="min-w-0">{changesPanel}</div>
               </div>
             </div>

@@ -9,7 +9,7 @@ vi.mock("@/lib/api", () => ({
   api: { addReviewReply: mocks.reply, createReviewThread: mocks.createThread, projectCollaborationCapabilities: mocks.capability, applyProjectRoomCandidate: mocks.apply, decideProjectRoomCandidate: mocks.decide, updateProjectRoomMember: mocks.member, getReviewThread: mocks.thread, getRoomVersionFile: mocks.file },
 }));
 import { ApiError } from "@/lib/api";
-import { replyAction, createThreadAction, applyCandidateAction, decideAction, loadThreadRevisionsAction, loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
+import { replyAction, createThreadAction, applyCandidateAction, acceptAndApplyCandidateAction, decideAction, loadThreadRevisionsAction, loadStaticSnapshotAction } from "@/app/(app)/rooms/actions";
 import type { ReviewCandidate } from "@/lib/project-room/contract";
 
 const candidate: ReviewCandidate = {
@@ -107,4 +107,26 @@ describe("explicit mention execution", () => {
     mocks.reply.mockRejectedValue(new Error("lost response"));
     expect(await createThreadAction({ roomId: "room", siteId: "site", versionId: "version", page: "/", kind: "page", anchor: {}, body: "@dropway revise", execution })).toMatchObject({ ok: false, retryThreadId: "thread" });
   });
+});
+
+describe("one-click accept and publish",()=>{
+ it("approves then applies the exact returned binding",async()=>{
+  mocks.decide.mockResolvedValue({candidate,changed:true,decision:"approve_change"});
+  mocks.apply.mockResolvedValue({candidate:{...candidate,AppliedVersionID:"next"},applied:true,changed:true,version_id:"next"});
+  expect(await acceptAndApplyCandidateAction("room",{...candidate,State:"pending"})).toMatchObject({ok:true,versionId:"next"});
+  expect(mocks.decide.mock.invocationCallOrder[0]).toBeLessThan(mocks.apply.mock.invocationCallOrder[0]!);
+ });
+ it("does not publish when approval fails or returns another proposal",async()=>{
+  mocks.decide.mockRejectedValueOnce(new Error("denied"));
+  expect(await acceptAndApplyCandidateAction("room",{...candidate,State:"pending"})).toMatchObject({ok:false});
+  expect(mocks.apply).not.toHaveBeenCalled();
+  mocks.decide.mockResolvedValue({candidate:{...candidate,ContentHash:"other"},changed:true,decision:"approve_change"});
+  expect(await acceptAndApplyCandidateAction("room",{...candidate,State:"pending"})).toMatchObject({ok:false});
+  expect(mocks.apply).not.toHaveBeenCalled();
+ });
+ it("preserves approved state on publishing failure and retries without a second approval",async()=>{
+  mocks.apply.mockRejectedValueOnce(new Error("offline"));
+  expect(await acceptAndApplyCandidateAction("room",candidate)).toMatchObject({ok:false,candidate:{State:"approved"}});
+  expect(mocks.decide).not.toHaveBeenCalled();
+ });
 });

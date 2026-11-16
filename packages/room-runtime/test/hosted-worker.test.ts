@@ -60,7 +60,7 @@ it("stages verified immutable source and submits only after sandbox destruction"
   expect(s.gateway.requests[0]?.body).toContain("Untrusted review context");
   const modelRequest = JSON.parse(s.gateway.requests[0]!.body);
   expect(JSON.stringify(modelRequest.system)).toContain("summary in the human Accept/Reject request");
-  expect(JSON.stringify(modelRequest.system)).toContain("affected files and visible behavior");
+  expect(JSON.stringify(modelRequest.system)).toContain("plain language for a non-technical reviewer");
   expect(s.calls.map(c => c.operation)).toEqual(["source", "events", "heartbeat", "events", "candidate"]);
   expect(s.calls.at(-1)?.body).toMatchObject({ summary: "Proposed change", idempotency_key: "candidate-attempt-1" });
   expect(s.source.files[0]?.content_base64).toBe(s.plane.staged[0]?.files[0]?.contentBase64);

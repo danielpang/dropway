@@ -264,6 +264,14 @@ func TestIntegration_HostedExecution(t *testing.T) {
 		if first.Job.ID == "" || first.Job.ID != second.Job.ID || first.Reply.ID != second.Reply.ID {
 			t.Fatal("retry duplicated mention")
 		}
+		if first.Job.TriggerReplyID == nil || *first.Job.TriggerReplyID != first.Reply.ID || second.Job.TriggerReplyID == nil || *second.Job.TriggerReplyID != first.Reply.ID {
+			t.Fatal("mention responses must identify their triggering comment")
+		}
+		listed, err := st.ListExecutionJobs(ctx, tn, room.ID)
+		must(t, err)
+		if len(listed) != 1 || listed[0].TriggerReplyID == nil || *listed[0].TriggerReplyID != first.Reply.ID {
+			t.Fatal("refreshed task lost its triggering comment")
+		}
 		payload["body"] = "@dropway other request"
 		if code, _ := request("POST", path, "human", payload); code != 409 {
 			t.Fatalf("changed retry %d", code)

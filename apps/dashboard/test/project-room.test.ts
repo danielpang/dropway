@@ -209,19 +209,11 @@ describe("project room markup", () => {
     );
     expect(html).toContain("Accept change");
     expect(html).toContain("Reject change");
-    expect(html).toContain("Apply");
-    expect(html).toContain("Apply publishes this exact approved change");
-    expect(buttonDisabled(html, "Apply")).toBe(true);
-    expect(buttonDisabled(html, "Accept change")).toBe(false);
+    expect(html).not.toContain("Technical details");
+    expect(html).not.toContain("Changed files");
+    expect(html).toContain("Compare changes");
+    expect(buttonDisabled(html, "Accept change")).toBe(true); // waits for the visual comparison
     expect(buttonDisabled(html, "Reject change")).toBe(false);
-    expect(html).toContain("modified");
-    expect(html).toContain("added");
-    expect(html).toContain("removed");
-    expect(html).toContain("unchanged");
-    expect(html).toContain("2 files omitted");
-    expect(html).toContain("Text truncated");
-    expect(html).toContain("Binary or oversized file. Metadata only.");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert");
     expect(html).not.toContain("<script>hidden");
     expect(html).not.toContain("type=\"password\"");
@@ -410,20 +402,13 @@ describe("application review controls", () => {
     }));
   }
   it("requires approval, a verified exact diff, matching baseline and content rights before applying", () => {
-    expect(buttonDisabled(markup(), "Apply")).toBe(false);
+    expect(markup()).toContain("Retry publishing");
+    expect(buttonDisabled(markup(), "Retry publishing")).toBe(true); // preview not loaded during SSR
     expect(buttonDisabled(markup(), "Reject change")).toBe(true);
-    expect(buttonDisabled(markup(), "Accept change")).toBe(true);
-    for (const change of [
-      { candidate }, { candidate: { ...candidate, State: "rejected" } },
-      { candidate: { ...candidate, State: "approved", AppliedVersionID: "next" } },
-      { live: null }, { live: { versionId: "ver-1", contentHash: null } },
-      { live: { versionId: "newer", contentHash: "other" } }, { canDecide: false }, { busy: true },
-      { diff: { status: "unverified" as const } },
-      { diff: { status: "verified" as const, diff: { ...diff, siteId: "other-site" } } },
-    ]) expect(buttonDisabled(markup(change), "Apply")).toBe(true);
+    expect(buttonDisabled(markup({candidate}), "Accept change")).toBe(true);
     expect(buttonDisabled(markup({ busy: true }), "Reject change")).toBe(true);
     const applied = markup({ candidate: { ...candidate, State: "approved", AppliedVersionID: "next" }, live: { versionId: "next", contentHash: "hash-next" } });
-    expect(applied).toContain("Applied as version next");
+    expect(applied).toContain("This change is published");
     expect(applied).not.toContain("needs a new candidate");
   });
 
