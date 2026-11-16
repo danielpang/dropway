@@ -349,7 +349,7 @@ func (a *API) HostedAttemptSource(w http.ResponseWriter, r *http.Request) {
 	}
 	response := map[string]any{"files": files, "content_hash": job.ContentHash, "version_id": job.VersionID, "resumed": job.SessionID != nil, "source_content_hash": manifest.Digest(entries)}
 	if job.Config.ThreadID != "" {
-		thread, err := a.Hosted.Store.PageReviewReplies(r.Context(), store.Tenant{OrgID: job.OrgID, UserID: job.InitiatorUserID}, job.Config.ThreadID, "", 50)
+		thread, err := a.Hosted.Store.ExecutionReviewContext(r.Context(), store.Tenant{OrgID: job.OrgID, UserID: job.InitiatorUserID}, job.Config.ThreadID, job.CreatedAt)
 		if err != nil {
 			writeHostedError(w, err)
 			return

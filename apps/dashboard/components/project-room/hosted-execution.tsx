@@ -514,7 +514,7 @@ export function HostedExecution({
                     {detail.question}
                   </p>
                 ) : null}
-                {detail.question && detail.job.sessionId && canContinue ? (
+                {detail.job.state === "clarification" && detail.question && detail.job.sessionId && canContinue ? (
                   <form
                     className="space-y-2"
                     onSubmit={(event) => {

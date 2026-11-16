@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/danielpang/dropway/internal/auth"
 	"github.com/danielpang/dropway/internal/manifest"
@@ -287,6 +288,30 @@ func TestIntegration_HostedExecution(t *testing.T) {
 			t.Fatalf("failed request left reply: %d", count)
 		}
 		must(t, st.CancelExecutionJob(ctx, tn, room.ID, first.Job.ID))
+	})
+	t.Run("execution context retains original and recent discussion at queue time", func(t *testing.T) {
+		th, err := st.CreateReviewThread(ctx, tn, room.ID, site.ID, ver.ID, "/index.html", "text", []byte(`{"quote":"Selected title","start_offset":0,"end_offset":14}`))
+		must(t, err)
+		var last store.ReviewReply
+		for i := 0; i < 60; i++ {
+			last, err = st.AddReviewReply(ctx, tn, room.ID, th.ID, fmt.Sprintf("discussion-%d", i))
+			must(t, err)
+		}
+		cutoff := last.CreatedAt
+		time.Sleep(time.Millisecond)
+		_, err = st.AddReviewReply(ctx, tn, room.ID, th.ID, "later unrelated instruction")
+		must(t, err)
+		context, err := st.ExecutionReviewContext(ctx, tn, th.ID, cutoff)
+		must(t, err)
+		if len(context.Replies) != 9 || context.Replies[0].Body != "discussion-0" || context.Replies[8].Body != "discussion-59" {
+			t.Fatalf("wrong bounded context: %+v", context.Replies)
+		}
+		if context.AnchorKind != "text" || !strings.Contains(string(context.Anchor), "Selected title") {
+			t.Fatal("selection context lost")
+		}
+		if _, err := st.ExecutionReviewContext(ctx, store.Tenant{OrgID: org, UserID: "00000000-0000-0000-0000-000000000001"}, th.ID, cutoff); err == nil {
+			t.Fatal("context leaked to nonmember")
+		}
 	})
 	queue := func(key string) store.ExecutionJob {
 		t.Helper()

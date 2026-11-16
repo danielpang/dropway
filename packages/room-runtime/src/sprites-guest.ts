@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 
 /** Executed only by /usr/bin/python3 inside a disposable Sprite. Never eval locally. */
+export const SPRITE_LAUNCHER = "import sys; n=int(sys.stdin.buffer.readline()); code=sys.stdin.buffer.read(n); exec(compile(code,'<dropway-remote>','exec'))";
 export const SPRITE_WORKSPACE = "/home/sprite/dropway-workspace";
 export const SPRITE_GUEST_HELPER = String.raw`
 import base64, hashlib, json, os, stat, subprocess, sys
@@ -87,7 +88,15 @@ def main():
             write(path,blob)
         print(json.dumps({'ok':True})); return
     if action=='read':
-        print(json.dumps({'text':read(data['path']).decode('utf-8')})); return
+        blob=read(data['path'])
+        if blob.startswith(b'\x89PNG\r\n\x1a\n') or blob.startswith(b'\xff\xd8\xff') or (blob[:4]==b'RIFF' and blob[8:12]==b'WEBP'):
+            print(json.dumps({'text':'Image from the sandbox workspace.', 'imageBase64':base64.b64encode(blob).decode()})); return
+        text=blob.decode('utf-8')
+        # Bound encoded JSON, not characters; large reads must not kill the workspace.
+        while len(json.dumps({'text':text}).encode())>60000:
+            text=text[:len(text)//2]
+        if len(text)<len(blob.decode('utf-8')): text+='\n[Excerpt only. Use a bounded shell command to read further sections.]'
+        print(json.dumps({'text':text})); return
     if action=='write':
         write(data['path'],data['content'].encode('utf-8'))
         print(json.dumps({'text':'Draft file written.'})); return
@@ -128,8 +137,12 @@ def main():
     reject()
 try:
     main()
-except Exception:
-    # Never echo injected payloads or environment in error diagnostics.
-    print('workspace operation rejected',file=sys.stderr)
+except Exception as error:
+    # Only stable categories, never paths, payloads, keys or environment.
+    code = ('permission' if isinstance(error, PermissionError) else
+            'missing_path' if isinstance(error, FileNotFoundError) else
+            'not_directory' if isinstance(error, NotADirectoryError) else
+            'invalid_request' if isinstance(error, (ValueError, KeyError)) else 'operation')
+    print('workspace operation rejected: '+code,file=sys.stderr)
     sys.exit(2)
 `;

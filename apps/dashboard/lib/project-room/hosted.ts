@@ -5,6 +5,7 @@ export const hasDropwayMention = (body: string): boolean => /(^|[\s(])@dropway($
 export interface ProviderCredential { scope: CredentialScope; canManage: boolean; ownerUserId: string; id: string; provider: HostedProvider; label: string; lastFour: string; validatedAt: string | null; revokedAt: string | null; generation: number }
 export interface HostedBudget { max_tokens: number; max_calls: number; max_seconds: number; max_output_bytes: number }
 export interface HostedJob {
+  createdAt?: string; updatedAt?: string;
   id: string; initiatorUserId: string; roomId: string; siteId: string; versionId: string; contentHash: string; state: string;
   sessionId: string | null; candidateId: string | null; failureCode: string | null; tokensUsed: number; callsUsed: number;
   config: { provider: string; modelId: string; harnessId: string; harnessVersion: string; prompt: string; threadId: string | null; budget: HostedBudget };
@@ -26,7 +27,7 @@ export function parseCredential(value: unknown): ProviderCredential | null {
 export function parseHostedJob(value: unknown): HostedJob | null {
   const row = object(value); const config = object(row?.config); const budget = object(config?.budget);
   if (!row || !config || !string(row.id) || !string(row.room_id) || !string(row.site_id) || !string(row.version_id) || !string(row.state)) return null;
-  return { id: string(row.id), initiatorUserId: string(row.initiator_user_id), roomId: string(row.room_id), siteId: string(row.site_id), versionId: string(row.version_id), contentHash: string(row.content_hash), state: string(row.state),
+  return { createdAt: string(row.created_at) || undefined, updatedAt: string(row.updated_at) || undefined, id: string(row.id), initiatorUserId: string(row.initiator_user_id), roomId: string(row.room_id), siteId: string(row.site_id), versionId: string(row.version_id), contentHash: string(row.content_hash), state: string(row.state),
     sessionId: optional(row.session_id), candidateId: optional(row.candidate_id), failureCode: optional(row.failure_code), tokensUsed: Number(row.tokens_used) || 0, callsUsed: Number(row.calls_used) || 0, config: { provider: string(config.provider), modelId: string(config.model_id), harnessId: string(config.harness_id), harnessVersion: string(config.harness_version), prompt: string(config.prompt), threadId: optional(config.thread_id),
       budget: { max_tokens: Number(budget?.max_tokens) || 0, max_calls: Number(budget?.max_calls) || 0, max_seconds: Number(budget?.max_seconds) || 0, max_output_bytes: Number(budget?.max_output_bytes) || 0 } } };
 }
@@ -44,6 +45,8 @@ export function validHostedRun(input: HostedRunInput): boolean {
 }
 
 export function hostedFailureMessage(code: string | null): string {
+  if (code === "no_changes") return "Dropway did not make the requested change. Nothing was applied. See the task’s progress for details.";
+  if (code === "sprite_init" || code?.startsWith("sprite_init_")) return "Dropway could not initialize the editing workspace. The model was not called and no changes were applied.";
   if (code === "budget_exhausted" || code === "time_budget_exhausted") return "The authorized task limit was reached. Review its progress before authorizing another task.";
   if (code === "authorization_changed") return "Source access, membership, the live baseline or credential authorization changed. Refresh and verify them before starting another task.";
   if (code === "provider_model_unavailable") return "This model is no longer available from your provider. Choose a current model in project AI settings.";

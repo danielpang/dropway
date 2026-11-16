@@ -4,7 +4,7 @@ import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import type { AttemptExecutor } from "./control-plane.js";
+import type { AttemptExecutor, ToolOutput } from "./control-plane.js";
 import type { GatewayObserver } from "./gateway.js";
 import type { RunStatus } from "./status.js";
 
@@ -41,7 +41,7 @@ export interface ToolGuard {
 export function remoteTools(guard: ToolGuard): ToolDefinition[] {
   const run = async (
     signal: AbortSignal | undefined,
-    op: () => Promise<{ text: string; isError?: boolean }>,
+    op: () => Promise<ToolOutput>,
   ): Promise<AgentToolResult> => {
     const decision = decisionFor(guard);
     if (decision) {
@@ -57,7 +57,7 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
     try {
       const output = await op();
       return {
-        content: [{ type: "text", text: output.text }],
+        content: [{ type: "text", text: output.text }, ...(output.image ? [{ type: "image" as const, ...output.image }] : [])],
         details: {},
         isError: output.isError === true,
         // A command failure is feedback the model can recover from, not a completed turn.
@@ -79,7 +79,7 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
     defineTool({
       name: "read",
       label: "Read",
-      description: "Read a file in the attempt sandbox.",
+      description: "Read text or view a raster image in the attempt sandbox. Large text files return an excerpt; use bounded bash reads for further sections.",
       parameters: Type.Object({ path: Type.String() }),
       prepareArguments: (args) => checkedArguments<{ path: string }>(args, ["path"]),
       execute: (_id, params, signal) =>
@@ -90,7 +90,7 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
       label: "Write",
       description: "Write a file in the attempt sandbox. The result is a candidate draft, not a publish.",
       parameters: Type.Object({ path: Type.String(), content: Type.String() }),
-      prepareArguments: (args) => checkedArguments<{ path: string; content: string }>(args, ["path", "content"]),
+      prepareArguments: (args) => checkedArguments<{ path: string; content: string }>(args, ["path", "content"], ["content"]),
       execute: (_id, params, signal) =>
         run(signal, () =>
           guard.executor.write({ path: params.path, content: params.content }, liveSignal(signal)),
@@ -106,7 +106,7 @@ export function remoteTools(guard: ToolGuard): ToolDefinition[] {
         newText: Type.String(),
       }),
       prepareArguments: (args) =>
-        checkedArguments<{ path: string; oldText: string; newText: string }>(args, ["path", "oldText", "newText"]),
+        checkedArguments<{ path: string; oldText: string; newText: string }>(args, ["path", "oldText", "newText"], ["newText"]),
       execute: (_id, params, signal) =>
         run(signal, () =>
           guard.executor.edit(
@@ -165,7 +165,7 @@ function liveSignal(signal: AbortSignal | undefined): AbortSignal {
   return signal ?? new AbortController().signal;
 }
 
-function checkedArguments<T>(args: unknown, fields: string[]): T {
+function checkedArguments<T>(args: unknown, fields: string[], allowEmpty: string[] = []): T {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     throw new Error("malformed tool arguments");
   }
@@ -176,7 +176,7 @@ function checkedArguments<T>(args: unknown, fields: string[]): T {
   const out: Record<string, string> = {};
   for (const field of fields) {
     const value = record[field];
-    if (typeof value !== "string" || value.length === 0) throw new Error(`malformed tool argument ${field}`);
+    if (typeof value !== "string" || (value.length === 0 && !allowEmpty.includes(field))) throw new Error(`malformed tool argument ${field}`);
     out[field] = value;
   }
   return out as T;

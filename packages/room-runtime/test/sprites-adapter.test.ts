@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
+import sharp from "sharp";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { createHash } from "node:crypto";
@@ -11,7 +12,7 @@ import type { AttemptSpec } from "../src/control-plane.js";
 const spec: AttemptSpec = { orgId: "org1", roomId: "room1", siteId: "site1", versionId: "version1", attemptId: "attempt1", sessionId: "session1", initiatorUserId: "user1", taskId: "task1" };
 const file = (path = "index.html", content = "hello"): SpriteArtifactFile => ({ path, contentBase64: Buffer.from(content).toString("base64"), sha256: createHash("sha256").update(content).digest("hex"), size: Buffer.byteLength(content) });
 
-function harness(options: { organization?: string; denyAuthorize?: string; holdAction?: string; output?: string; drift?: boolean; timeout?: number } = {}) {
+function harness(options: { organization?: string; denyAuthorize?: string; holdAction?: string; output?: string; drift?: boolean; timeout?: number; imageBase64?: string } = {}) {
   const requests: { path: string; method: string; body: unknown }[] = [];
   const rows = new Map<string, Record<string, unknown>>();
   const commands: { command: EventEmitter; path: string; args: string[]; options: SpawnOptions; action?: string; input?: unknown; killed: boolean; closed: boolean }[] = [];
@@ -62,7 +63,7 @@ function harness(options: { organization?: string; denyAuthorize?: string; holdA
       queueMicrotask(() => {
         if (row.closed) return;
         const output = request.action === "export" ? JSON.stringify({ files: [file()], contentHash: artifactHash([file()]) }) :
-          request.action === "read" || request.action === "write" || request.action === "edit" ? JSON.stringify({ text: "remote result" }) : request.action === "bash" || request.action === "build" ? options.output ?? "remote shell result" : JSON.stringify({ ok: true });
+          request.action === "read" || request.action === "write" || request.action === "edit" ? JSON.stringify({ text: "remote result", ...(options.imageBase64 && request.action === "read" ? { imageBase64: options.imageBase64 } : {}) }) : request.action === "bash" || request.action === "build" ? options.output ?? "remote shell result" : JSON.stringify({ ok: true });
         command.stdout.emit("data", Buffer.from(output)); command.emit("exit", 0);
       });
     } });
@@ -156,4 +157,26 @@ describe("untrusted artifact export", () => {
     expect(() => verifySpriteArtifact({ ...original, contentHash: "a".repeat(64) })).toThrow(/manifest/);
     expect(() => verifySpriteArtifact({ ...original, files: [file("../escape")] })).toThrow(/workspace/);
   });
+});
+it("converts scoped raster bytes to a bounded, metadata-free visual tool result", async () => {
+  const original=await sharp({create:{width:1200,height:900,channels:3,background:"red"}}).png().toBuffer();
+  const h=harness({imageBase64:original.toString("base64")});
+  const handle=await h.plane.create(spec,ATTEMPT_EGRESS_POLICY);
+  const output=await h.plane.exec(handle,{kind:"read",attemptId:spec.attemptId,input:{path:"photo.png"}},new AbortController().signal);
+  expect(output.image?.mimeType).toBe("image/jpeg");
+  const preview=Buffer.from(output.image!.data,"base64");
+  const metadata=await sharp(preview).metadata();
+  expect(metadata.width).toBe(512); expect(metadata.height).toBe(384);
+  expect(metadata.exif).toBeUndefined(); expect(preview.length).toBeLessThan(65536);
+  await h.plane.destroy(handle,"finish");
+});
+
+it("shows transparent images against the review canvas background", async () => {
+  const original=await sharp({create:{width:20,height:20,channels:4,background:{r:0,g:0,b:0,alpha:0}}}).png().toBuffer();
+  const h=harness({imageBase64:original.toString("base64")});
+  const handle=await h.plane.create(spec,ATTEMPT_EGRESS_POLICY);
+  const output=await h.plane.exec(handle,{kind:"read",attemptId:spec.attemptId,input:{path:"transparent.png"}},new AbortController().signal);
+  const pixels=await sharp(Buffer.from(output.image!.data,"base64")).raw().toBuffer();
+  expect([...pixels.subarray(0,3)]).toEqual([255,255,255]);
+  await h.plane.destroy(handle,"finish");
 });

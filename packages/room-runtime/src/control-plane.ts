@@ -45,6 +45,7 @@ export interface CandidateDraft {
 
 export interface ToolOutput {
   text: string;
+  image?: { data: string; mimeType: "image/jpeg" };
   isError?: boolean;
   candidate?: CandidateDraft;
 }

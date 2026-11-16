@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-Apache-2.0
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { SPRITE_GUEST_HELPER } from "../src/sprites-guest.js";
 import { afterEach, expect, it } from "vitest";
 import { executeHostedClaim, type HostedPlane } from "../src/hosted-worker.js";
 import { HostedClient, type HostedClaim, type HostedSource } from "../src/hosted-client.js";
@@ -48,7 +53,7 @@ async function stack() {
   return { gateway, plane, source, claim, calls, client, run: () => executeHostedClaim(client, claim, plane, new AbortController().signal) };
 }
 it("stages verified immutable source and submits only after sandbox destruction", async () => {
-  const s = await stack(); s.source.thread = { original_anchor: { quote: "review reference sentinel" } }; s.gateway.steps = [{ kind: "text", text: "Proposed change" }];
+  const s = await stack(); s.source.thread = { Anchor: { quote: "review reference sentinel" } }; s.gateway.steps = [{ kind: "text", text: "Proposed change" }];
   expect((await s.run()).status).toBe("completed");
   expect(s.plane.staged[0]?.files[0]?.sha256).toBe(s.source.files[0]?.sha256);
   expect(s.gateway.requests[0]?.body).toContain("review reference sentinel");
@@ -102,11 +107,11 @@ it("exports a full site larger than the old 2 MiB default, preserving unchanged 
  expect(candidate!.body.files[1].content_base64).toBe(files[0]!.content_base64);
 });
 
-it("turns a text-only answer with unchanged files into clarification, never an empty candidate", async()=>{
+it("does not invent a clarification when a run changes no files", async()=>{
  const s=await stack();s.plane.unchanged=true;s.gateway.steps=[{kind:"text",text:"Which heading should I remove?"}];
- expect((await s.run()).status).toBe("awaiting_clarification");
- expect(s.calls.some(c=>c.operation==="candidate")).toBe(false);
- expect(s.calls.find(c=>c.operation==="clarify")?.body.question).toContain("Which heading");
+ expect((await s.run()).status).toBe("error");
+ expect(s.calls.some(c=>c.operation==="candidate"||c.operation==="clarify")).toBe(false);
+ expect(s.calls.at(-1)?.body).toEqual({code:"no_changes"});
  expect(s.calls.find(c=>c.operation==="events"&&c.body.message.includes("Which heading"))).toBeDefined();
 });
 it("executes the pinned Opus 5.5 model through the SDK without falling back",async()=>{
@@ -128,4 +133,46 @@ it("does not treat an exceptional tool failure as a completed revision",async()=
 it("persists a safe provisioning failure code without raw errors",async()=>{
  const s=await stack();s.plane.create=async()=>{throw new RoomRuntimeError("sprite_remote","private credential-bearing error");};
  const result=await s.run();expect(result.status).toBe("error");expect(result.phase).toBe("provision");expect(s.calls.at(-1)?.body).toEqual({code:"sprite_remote"});expect(JSON.stringify(s.calls)).not.toContain("private credential");expect(s.calls.find(c=>c.operation==="events"&&c.body.kind==="diagnostic")?.body.message).toContain("provision: sprite_remote");
+});
+
+it("deletes the selected text through real guest edits and exports a proposal without publishing", async () => {
+  const s=await stack();
+  const directory=mkdtempSync(join(tmpdir(),"dropway-selected-edit-"));
+  const helper=SPRITE_GUEST_HELPER.replace("ROOT='/home/sprite/dropway-workspace'",`ROOT=${JSON.stringify(directory)}`);
+  const guest=(action:string,input:unknown)=>JSON.parse(execFileSync("python3",["-I","-S","-c",helper],{input:JSON.stringify({action,input}),encoding:"utf8"}));
+  const original='<main><h1>Keep heading</h1><p>Remove this line</p><p>Keep footer</p></main>';
+  const bytes=Buffer.from(original);
+  s.source.files=[{path:"index.html",content_type:"text/html",content_base64:bytes.toString("base64"),size:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex")}];
+  s.source.source_content_hash=artifactHash(s.source.files.map(f=>({path:f.path,sha256:f.sha256!})));
+  s.source.thread={Page:"/",AnchorKind:"text",Anchor:{quote:"Remove this line",block_id:"static-v1:node-3",start_offset:0,end_offset:16}};
+  s.claim.job.config.prompt="@dropway remove this";
+  s.plane.stage=async (handle,files)=>{s.plane.staged.push({sprite:handle.spriteName,files});guest("stage",{files});};
+  s.plane.exec=async (_handle,op)=>guest(op.kind,op.input);
+  s.plane.exportArtifact=async ()=>guest("export",{directory:"."});
+  s.gateway.steps=[
+    {kind:"tool",name:"read",input:{path:"index.html"}},
+    {kind:"tool",name:"edit",input:{path:"index.html",oldText:"<p>Remove this line</p>",newText:""}},
+    {kind:"text",text:"Proposed removing the selected line; heading and footer are unchanged. Awaiting approval."},
+  ];
+  try {
+    expect((await s.run()).status).toBe("completed");
+    const request=s.gateway.requests[0]!.body;
+    expect(request).toContain("Remove this line");
+    expect(request).toContain("selectedHTML");
+    const candidate=s.calls.find(c=>c.operation==="candidate")!.body;
+    expect(Buffer.from(candidate.files[0].content_base64,"base64").toString()).toBe('<main><h1>Keep heading</h1><p>Keep footer</p></main>');
+    expect(s.calls.some(c=>["clarify","fail","publish"].includes(c.operation))).toBe(false);
+    expect(s.plane.destroys).toHaveLength(1);
+  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+it.each(["anthropic", "openai", "openrouter"] as const)("passes image pixels through the pinned %s model session", async (provider) => {
+  const s=await stack();
+  s.claim.job.config.provider=provider;
+  s.claim.job.config.model_id=provider==="anthropic"?"claude-opus-5-5":provider==="openrouter"?"anthropic/claude-opus-5.5":"gpt-4.1";
+  s.plane.exec=async ()=>({text:"Selected image preview",image:{mimeType:"image/jpeg" as const,data:"/9j/fixture"}});
+  s.gateway.steps=[{kind:"tool",name:"read",input:{path:"photo.jpg"}},{kind:"text",text:"Proposed image update for review."}];
+  expect((await s.run()).status).toBe("completed");
+  const second=s.gateway.requests[1]!.body;
+  expect(second).toContain("/9j/fixture");
+  expect(second).toContain(provider==="anthropic"?'"type":"image"':'"type":"image_url"');
 });
