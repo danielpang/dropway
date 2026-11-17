@@ -11,5 +11,10 @@ export async function GET(request: Request) {
     return Response.json({ ok: false, message: "Choose a project, site and revision." }, { status: 400 });
   }
   const result = await loadStaticSnapshotAction(roomId, siteId, versionId, query.get("page") ?? "/");
-  return Response.json(result, { headers: { "Cache-Control": "private, no-store" } });
+  const headers: Record<string, string> = { "Cache-Control": "private, no-store" };
+  if (result.ok) {
+    headers["Server-Timing"] = Object.entries(result.timings).map(([name, ms]) => `${name};dur=${ms.toFixed(1)}`).join(", ");
+    return Response.json({ ok: true, snapshot: result.snapshot }, { headers });
+  }
+  return Response.json(result, { headers });
 }

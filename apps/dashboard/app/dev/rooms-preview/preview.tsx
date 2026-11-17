@@ -1,9 +1,12 @@
 "use client";
 import * as React from "react";
+import { useRoomNavigation } from "@/lib/project-room/use-room-navigation";
 import {
   RoomWorkspace,
   type RoomSiteOption,
 } from "@/components/project-room/room-workspace";
+import { useSearchParams } from "next/navigation";
+import { RoomSession } from "@/components/project-room/room-session";
 import { MainNav } from "@/components/main-nav";
 import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
@@ -200,6 +203,7 @@ const loadSnapshot = async (
   return { ok: true as const, snapshot };
 };
 export function RoomsPreview() {
+  const query = useSearchParams();
   const [empty, setEmpty] = React.useState(false);
   return (
     <>
@@ -209,7 +213,7 @@ export function RoomsPreview() {
             <BrandMark />
             Dropway
           </span>
-          <MainNav collaborationEnabled />
+          <div className="hidden md:block"><MainNav collaborationEnabled /></div>
           <span className="text-xs text-muted-foreground">Studio team</span>
         </div>
       </header>
@@ -222,7 +226,9 @@ export function RoomsPreview() {
             {empty ? "Show populated workspace" : "Show first-project setup"}
           </Button>
         </div>
-        <DemoWorkspace key={String(empty)} empty={empty} />
+        {query.get("session") === "1" ? (
+          <RoomSession orgEnabled rooms={initialRooms} sites={initialSites} parentOrigin="http://localhost:3200" />
+        ) : <DemoWorkspace key={String(empty)} empty={empty} />}
       </main>
     </>
   );
@@ -230,6 +236,7 @@ export function RoomsPreview() {
 function DemoWorkspace({ empty }: { empty: boolean }) {
   const [rooms, setRooms] = React.useState(empty ? [] : initialRooms);
   const [sites, setSites] = React.useState(initialSites);
+  const { location, navigate } = useRoomNavigation();
   const [roomId, setRoomId] = React.useState("project-launch");
   const [attachments, setAttachments] = React.useState<
     Record<string, string[]>
@@ -252,7 +259,7 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
     [attachments, roomId],
   );
   return (
-    <RoomWorkspace demo jobs={empty ? [] : [{
+    <RoomWorkspace navigation={location} onNavigate={navigate} demo jobs={empty ? [] : [{
         id: "demo-job", triggerReplyId: "reply-followup", initiatorUserId:"demo-owner", roomId:"project-launch",siteId:"site-launch",versionId:"version-3",contentHash:"hash-3",state:"running",sessionId:null,candidateId:null,failureCode:null,tokensUsed:0,callsUsed:0,
         config:{provider:"anthropic",modelId:"claude-opus-5-5",harnessId:"pi",harnessVersion:"1.5.0",prompt:"Make the headline more specific",threadId:"thread-copy",budget:{max_tokens:20000,max_calls:10,max_seconds:300,max_output_bytes:2097152}}
       }]}
@@ -325,8 +332,6 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
           },
         },
       }}
-      siteComments={[]}
-      commentCursor={null}
       threadCursor={null}
       candidateCursor={null}
       parentOrigin="http://localhost:3100"
@@ -335,7 +340,6 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
       executionConfigured={false}
       snapshotLoader={loadSnapshot}
       onSelectRoom={onSelectRoom}
-      onSelectSite={noop}
       onEnableRooms={noop}
       onRefreshRoom={() => setNotice("Project is up to date.")}
       onSiteCreated={(site) => setSites((prev) => [...prev, site])}
@@ -465,8 +469,6 @@ function DemoWorkspace({ empty }: { empty: boolean }) {
       onApply={() =>
         setNotice("Sample change applied. Production is untouched.")
       }
-      onSignoff={() => setNotice("Version reviewed.")}
-      onLoadMoreComments={noop}
       onLoadMoreThreads={noop}
       onLoadMoreCandidates={noop}
       onSubmitCandidate={noop}
