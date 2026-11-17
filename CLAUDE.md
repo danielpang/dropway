@@ -104,5 +104,9 @@ work. The project skills in `.claude/skills/` hold the procedures:
 | `verify-api-contract` | The diff touches `openapi.yaml`, `db/sqlc/`, or either generated output. |
 | `ship` | Before opening a pull request. Chains review, cleanup and the checks above. |
 
+[`REVIEW.md`](REVIEW.md) holds the rules for pull-request reviews: what counts as Important,
+what to skip, and what to check on every change. It is read from `main`, so a change to it
+takes effect only after it merges.
+
 When you report, say what you ran and what you saw. If a check could not run (no Docker, no
 credentials), say so plainly; do not describe unrun checks as passing.

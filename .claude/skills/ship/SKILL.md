@@ -14,6 +14,10 @@ that changes code means the earlier static checks run again at the end.
 Invoke `/code-review` on the current branch. Fix the findings you agree with. For any you
 reject, keep a one-line reason for the final report.
 
+The local `/code-review` command does not read `REVIEW.md`, which holds the rules the
+pull-request reviewer applies. Read `REVIEW.md` yourself and check the diff against its
+"Always check" list, so the branch meets the same bar before it is pushed.
+
 ## 2. Simplify
 
 Invoke `/simplify` on the diff and keep the cleanups that do not change behavior.
