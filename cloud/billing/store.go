@@ -32,6 +32,7 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/danielpang/dropway/internal/projection"
@@ -177,6 +178,15 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 	// the commit (the DB is authoritative; the KV flag is a best-effort projection).
 	sink := &txSubsStore{tx: tx}
 	if err := applyEvent(ctx, sink, s.log, ev); err != nil {
+		if !errors.Is(err, errIgnoredEvent) {
+			return false, err
+		}
+		// Deliberately not applied (another subscription's event): keep the ledger
+		// row so a replay is short-circuited, and report it as ignored. Nothing
+		// changed, so there is nothing to project.
+		if cerr := tx.Commit(ctx); cerr != nil {
+			return false, fmt.Errorf("billing: commit: %w", cerr)
+		}
 		return false, err
 	}
 
@@ -201,7 +211,26 @@ func (s *BillingStore) ProcessEvent(ctx context.Context, ev Event) (applied bool
 	// projection): emit a plan_upgraded / plan_downgraded event for a tier move. No-op
 	// when there was no tier change (seat/status refresh) or no emitter is wired.
 	s.emitPlanChange(ctx, sink.orgID, sink.result, ev.Type)
+
+	// A paid renewal (invoice.paid, subscription_cycle) is its own analytics event;
+	// it changes no entitlement, so nothing above fired for it.
+	if sink.renewal != nil {
+		s.emitRenewal(ctx, *sink.renewal)
+	}
 	return true, nil
+}
+
+// emitRenewal reports a paid renewal to PostHog after the commit. Best-effort,
+// like emitPlanChange.
+func (s *BillingStore) emitRenewal(ctx context.Context, r Renewal) {
+	if s.analytics == nil {
+		s.logger().Info("billing: renewal analytics not emitted (no emitter wired)",
+			"org_id", r.OrgID, "invoice_id", r.InvoiceID)
+		return
+	}
+	s.logger().Info("billing: emitting renewal analytics",
+		"org_id", r.OrgID, "plan_tier", r.PlanTier, "invoice_id", r.InvoiceID)
+	s.analytics.CaptureRenewal(ctx, r)
 }
 
 // emitPlanChange reports a tier upgrade/downgrade to PostHog after the commit. It is
@@ -304,9 +333,36 @@ type txSubsStore struct {
 
 	orgID  string      // org the apply touched (empty for an unhandled event)
 	result applyResult // org_status to project + tier movement to report
+
+	renewal *Renewal // a paid renewal to report after the commit (invoice.paid)
+}
+
+// OrgForSubscription finds the org whose row tracks subscriptionID ("" if none).
+// billing.subscriptions has no RLS, so this needs no tenant context.
+func (t *txSubsStore) OrgForSubscription(ctx context.Context, subscriptionID string) (string, error) {
+	return orgForSubscription(ctx, t.tx, subscriptionID)
+}
+
+// RecordRenewal captures the renewal for ProcessEvent to emit after the commit.
+func (t *txSubsStore) RecordRenewal(_ context.Context, r Renewal) error {
+	t.renewal = &r
+	return nil
 }
 
 var _ SubscriptionStore = (*txSubsStore)(nil)
+
+// CurrentSubscription reads the org's tracked subscription inside the webhook tx,
+// after taking a per-org advisory lock held until the tx ends. Two concurrent
+// webhooks for the same org therefore run one after the other, so the second sees
+// the first one's write before deciding whether its subscription is the current
+// one. (A row lock would not do: an org can have no row yet.)
+func (t *txSubsStore) CurrentSubscription(ctx context.Context, orgID string) (CurrentSubscription, error) {
+	if _, err := t.tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, orgID+":billing-webhook"); err != nil {
+		return CurrentSubscription{}, fmt.Errorf("billing: take webhook lock %s: %w", orgID, err)
+	}
+	sub, _, err := getSubscription(ctx, t.tx, orgID)
+	return sub.current(), err
+}
 
 func (t *txSubsStore) UpsertSubscription(ctx context.Context, d EventData) error {
 	if d.OrgID == "" {
@@ -590,31 +646,87 @@ func readPlanTierTx(ctx context.Context, tx pgx.Tx, orgID string) (PlanTier, err
 	return PlanTier(tier), nil
 }
 
+// OrgForSubscription is the standalone counterpart of
+// txSubsStore.OrgForSubscription.
+func (s *BillingStore) OrgForSubscription(ctx context.Context, subscriptionID string) (string, error) {
+	return orgForSubscription(ctx, s.pool, subscriptionID)
+}
+
+// RecordRenewal on the standalone store emits the renewal straight away (there
+// is no surrounding transaction to wait for).
+func (s *BillingStore) RecordRenewal(ctx context.Context, r Renewal) error {
+	s.emitRenewal(ctx, r)
+	return nil
+}
+
+func orgForSubscription(ctx context.Context, q dbQuerier, subscriptionID string) (string, error) {
+	if subscriptionID == "" {
+		return "", nil
+	}
+	var orgID string
+	err := q.QueryRow(ctx,
+		`SELECT org_id::text FROM billing.subscriptions WHERE stripe_subscription_id = $1`,
+		subscriptionID,
+	).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("billing: find org for subscription %s: %w", subscriptionID, err)
+	}
+	return orgID, nil
+}
+
+// CurrentSubscription reads the org's tracked subscription (no lock); the
+// standalone counterpart of txSubsStore.CurrentSubscription.
+func (s *BillingStore) CurrentSubscription(ctx context.Context, orgID string) (CurrentSubscription, error) {
+	sub, _, err := getSubscription(ctx, s.pool, orgID)
+	return sub.current(), err
+}
+
+// dbQuerier is the read/write surface shared by pgx.Tx and *pgxpool.Pool, so the
+// same query helpers run on the pool or inside a lock/webhook transaction.
+type dbQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 // Subscription is the billing-page view of an org's current subscription row.
 type Subscription struct {
-	OrgID             string
-	StripeCustomerID  string
-	PlanTier          PlanTier
-	Seats             int64
-	Status            string
-	OrgStatus         string
-	CancelAtPeriodEnd bool
+	OrgID                string
+	StripeCustomerID     string
+	StripeSubscriptionID string // "" until a subscription event has been applied
+	PlanTier             PlanTier
+	Seats                int64
+	Status               string
+	OrgStatus            string
+	CancelAtPeriodEnd    bool
+}
+
+// current is the subset of the row the one-subscription rules look at.
+func (s Subscription) current() CurrentSubscription {
+	return CurrentSubscription{ID: s.StripeSubscriptionID, PlanTier: s.PlanTier, Status: s.Status}
 }
 
 // GetSubscription returns the org's subscription row (for the billing page and to
 // resolve the existing Stripe customer in Checkout/Portal). ok=false when the org
 // has never had a subscription row (it's still implicitly Free).
-func (s *BillingStore) GetSubscription(ctx context.Context, orgID string) (sub Subscription, ok bool, err error) {
+func (s *BillingStore) GetSubscription(ctx context.Context, orgID string) (Subscription, bool, error) {
+	return getSubscription(ctx, s.pool, orgID)
+}
+
+// getSubscription reads the org's billing.subscriptions row on q (the pool or a
+// transaction). billing.subscriptions has no RLS; a plain read scoped by the
+// org_id PK is safe and needs no GUC. ok=false (zero Subscription) when no row.
+func getSubscription(ctx context.Context, q dbQuerier, orgID string) (sub Subscription, ok bool, err error) {
 	if orgID == "" {
 		return Subscription{}, false, errors.New("billing: GetSubscription with empty OrgID")
 	}
-	// billing.subscriptions has no RLS; a plain read scoped by the org_id PK is
-	// safe and needs no GUC.
-	row := s.pool.QueryRow(ctx,
-		`SELECT org_id, stripe_customer_id, plan_tier, seats, status, org_status, cancel_at_period_end
+	row := q.QueryRow(ctx,
+		`SELECT org_id, stripe_customer_id, COALESCE(stripe_subscription_id, ''), plan_tier, seats, status, org_status, cancel_at_period_end
 		   FROM billing.subscriptions WHERE org_id = $1`, orgID)
 	var tier, status, orgStatus string
-	err = row.Scan(&sub.OrgID, &sub.StripeCustomerID, &tier, &sub.Seats, &status, &orgStatus, &sub.CancelAtPeriodEnd)
+	err = row.Scan(&sub.OrgID, &sub.StripeCustomerID, &sub.StripeSubscriptionID, &tier, &sub.Seats, &status, &orgStatus, &sub.CancelAtPeriodEnd)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Subscription{}, false, nil
 	}
@@ -631,10 +743,14 @@ func (s *BillingStore) GetSubscription(ctx context.Context, orgID string) (sub S
 // RLS-irrelevant (billing.subscriptions has no RLS) but we still write nothing to
 // org_meta here — plan_tier only flips via the signed webhook.
 func (s *BillingStore) SaveCustomerID(ctx context.Context, orgID, customerID string) error {
+	return saveCustomerID(ctx, s.pool, orgID, customerID)
+}
+
+func saveCustomerID(ctx context.Context, q dbQuerier, orgID, customerID string) error {
 	if orgID == "" || customerID == "" {
 		return errors.New("billing: SaveCustomerID requires orgID and customerID")
 	}
-	_, err := s.pool.Exec(ctx,
+	_, err := q.Exec(ctx,
 		`INSERT INTO billing.subscriptions (org_id, stripe_customer_id, plan_tier, status, org_status)
 		 VALUES ($1, $2, 'free', 'active', 'active')
 		 ON CONFLICT (org_id) DO UPDATE SET
@@ -646,6 +762,52 @@ func (s *BillingStore) SaveCustomerID(ctx context.Context, orgID, customerID str
 		return fmt.Errorf("billing: save customer id %s: %w", orgID, err)
 	}
 	return nil
+}
+
+// txCheckoutStore runs the Checkout path's reads and writes on the lock's own
+// transaction, so a Checkout uses ONE pool connection. Borrowing a second
+// connection while holding the lock could exhaust the pool (each lock-holder
+// waiting for a connection another lock-holder holds).
+type txCheckoutStore struct{ tx pgx.Tx }
+
+func (t txCheckoutStore) GetSubscription(ctx context.Context, orgID string) (Subscription, bool, error) {
+	return getSubscription(ctx, t.tx, orgID)
+}
+
+func (t txCheckoutStore) SaveCustomerID(ctx context.Context, orgID, customerID string) error {
+	return saveCustomerID(ctx, t.tx, orgID, customerID)
+}
+
+// WithCheckoutLock runs fn while holding a transaction-scoped advisory lock keyed
+// by the org, so concurrent Checkout requests for one org run one at a time (the
+// same per-org lock pattern as store.CreateSite). fn's queries run on that same
+// transaction. It is held across fn's Stripe calls, which is fine for a rare,
+// human-initiated request.
+//
+// The transaction is committed even when fn fails: it holds only the lock and,
+// for a first-time customer, the saved Stripe customer id, which must persist even
+// if a later Stripe call failed (otherwise the next attempt mints another
+// customer). A commit failure after fn succeeded is logged, not returned: fn has
+// already created a payable Checkout session, and the webhook for it carries the
+// customer id anyway.
+func (s *BillingStore) WithCheckoutLock(ctx context.Context, orgID string, fn func(CheckoutStore) error) error {
+	if orgID == "" {
+		return errors.New("billing: WithCheckoutLock with empty OrgID")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("billing: begin checkout lock tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, orgID+":billing-checkout"); err != nil {
+		return fmt.Errorf("billing: take checkout lock %s: %w", orgID, err)
+	}
+	fnErr := fn(txCheckoutStore{tx: tx})
+	if err := tx.Commit(ctx); err != nil && fnErr == nil {
+		s.logger().Error("billing: checkout lock commit failed after the session was created",
+			"org_id", orgID, "err", err)
+	}
+	return fnErr
 }
 
 // inOrgTx runs fn in a tx whose FIRST statement establishes the RLS tenant context

@@ -3,20 +3,22 @@
 import * as React from "react";
 import { ArrowUpRight, Loader2 } from "lucide-react";
 
-import { createCheckoutAction } from "@/app/(app)/billing/actions";
+import { startUpgradeAction } from "@/app/(app)/billing/actions";
 import { Button } from "@/components/ui/button";
-import type { CheckoutTier } from "@/lib/api";
+import type { CheckoutTier, PlanTier } from "@/lib/api";
 import { TIER_LABEL } from "@/lib/billing";
 import { cn } from "@/lib/utils";
 
 /**
- * Billing-page upgrade button: starts Checkout for a self-serve tier and
- * redirects to the Stripe-hosted URL. Same path as the 402 modal's CTA, the
- * success redirect grants nothing; the webhook flips plan_tier and the page's
- * poller (FinalizingState) picks it up.
+ * Billing-page upgrade button: starts an upgrade to a self-serve tier and
+ * redirects to the Stripe-hosted page. A Free org goes to Checkout; an org that
+ * already pays goes to the Billing Portal's plan-change screen (one subscription
+ * per org). Same path as the 402 modal's CTA. Nothing is granted on return; the
+ * webhook flips plan_tier and the page's poller (FinalizingState) picks it up.
  */
 export function UpgradeButton({
   targetTier,
+  currentTier,
   className,
   block,
   label,
@@ -24,6 +26,8 @@ export function UpgradeButton({
   localCurrency,
 }: {
   targetTier: CheckoutTier;
+  /** The org's plan as this page knows it; decides Checkout vs the portal. */
+  currentTier: PlanTier;
   className?: string;
   /** Stretch the button to fill its container (cards, table cells). */
   block?: boolean;
@@ -39,9 +43,9 @@ export function UpgradeButton({
   async function onClick() {
     setError(null);
     setPending(true);
-    const result = await createCheckoutAction({ targetTier, localCurrency });
+    const result = await startUpgradeAction({ targetTier, currentTier, localCurrency });
     if (result.ok) {
-      window.location.href = result.checkoutUrl;
+      window.location.href = result.url;
       return;
     }
     setError(result.message);

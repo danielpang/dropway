@@ -957,10 +957,14 @@ export const api = {
   /**
    * Open the Stripe Billing Portal for the org's existing Customer (owner/admin
    * → 403). Returns portal_url; 409 if the org has no Stripe customer yet (the
-   * caller should run Checkout first).
+   * caller should run Checkout first). With target_tier above the org's live
+   * plan, the URL opens on the confirm screen for that upgrade.
    */
-  createPortal(): Promise<PortalResult> {
-    return apiFetch<PortalResult>("/v1/billing/portal", { method: "POST" });
+  createPortal(input?: { target_tier?: CheckoutTier }): Promise<PortalResult> {
+    return apiFetch<PortalResult>("/v1/billing/portal", {
+      method: "POST",
+      ...(input?.target_tier ? { body: JSON.stringify({ target_tier: input.target_tier }) } : {}),
+    });
   },
 
   // ---- Phase 4: audit log + hard revocation --------------------------------

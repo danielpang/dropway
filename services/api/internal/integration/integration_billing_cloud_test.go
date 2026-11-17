@@ -234,6 +234,40 @@ func TestIntegration_CloudBilling(t *testing.T) {
 	t.Log("PASS: H7 — a seats=0 checkout event did not zero the billed seat count")
 
 	// -----------------------------------------------------------------------
+	// 2c. ONE SUBSCRIPTION PER ORG: events from a second (stray) subscription on
+	// the same org — its renewal and its deletion — must not change the tier the
+	// org's current subscription (sub_business_1) grants.
+	// -----------------------------------------------------------------------
+	for _, stray := range []struct{ id, typ, status string }{
+		{"evt_stray_pro_renewal", "customer.subscription.updated", "active"},
+		{"evt_stray_pro_deleted", "customer.subscription.deleted", "canceled"},
+	} {
+		payload := []byte(`{
+			"id":"` + stray.id + `",
+			"object":"event",
+			"type":"` + stray.typ + `",
+			"data":{"object":{
+				"object":"subscription",
+				"id":"sub_pro_stray",
+				"customer":"cus_business_1",
+				"status":"` + stray.status + `",
+				"metadata":{"org_id":"` + orgID + `"},
+				"items":{"data":[{"quantity":1,"price":{"id":"` + cbPricePro + `"}}]}
+			}}
+		}`)
+		if rr := cbPostWebhook(t, webhookHandler, payload, cbSign(payload, cbWhSecret)); rr.Code != http.StatusOK {
+			t.Fatalf("stray %s status=%d body=%s", stray.typ, rr.Code, rr.Body.String())
+		}
+		if got, err := bstore.ReadPlanTier(ctx, orgID); err != nil || got != cloudbilling.TierBusiness {
+			t.Fatalf("stray %s changed org_meta.plan_tier to %q (err=%v), want business", stray.typ, got, err)
+		}
+		if got := cbScanText(t, pool, "SELECT stripe_subscription_id FROM billing.subscriptions WHERE org_id=$1", orgID); got != "sub_business_1" {
+			t.Fatalf("stray %s replaced the tracked subscription with %q, want sub_business_1", stray.typ, got)
+		}
+	}
+	t.Log("PASS: a second subscription's renewal and deletion leave the org on its current subscription")
+
+	// -----------------------------------------------------------------------
 	// 3. PAYING RAISED THE CAP: the SAME user can now create the 11th..100th site.
 	// -----------------------------------------------------------------------
 	for i := 11; i <= 100; i++ {

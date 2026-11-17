@@ -5,7 +5,9 @@ package billing
 // analytics.go is the PROPRIETARY, cloud-only billing-analytics LOGIC: it decides
 // WHAT to emit when a signature-verified Stripe webhook moves an org between tiers
 // (free→pro upgrade, business→pro or →free downgrade, cancel→free) and maps it to a
-// `plan_upgraded` / `plan_downgraded` product-analytics event.
+// `plan_upgraded` / `plan_downgraded` product-analytics event. A paid renewal on
+// the same plan is its own `subscription_renewed` event, never an upgrade or a
+// downgrade.
 //
 // The TRANSPORT is the vendor-neutral, open-source internal/analytics.Emitter (a
 // PostHog client by default) — so this file owns only the billing semantics, and
@@ -15,6 +17,7 @@ package billing
 
 import (
 	"context"
+	"strings"
 
 	"github.com/danielpang/dropway/internal/analytics"
 )
@@ -42,6 +45,19 @@ type PlanChange struct {
 // best-effort: CapturePlanChange never returns an error and must not panic.
 type PlanAnalytics interface {
 	CapturePlanChange(ctx context.Context, ev PlanChange)
+	CaptureRenewal(ctx context.Context, r Renewal)
+}
+
+// Renewal is a paid recurring charge on the org's current subscription: a new
+// billing period on the SAME plan. It is reported as its own event,
+// subscription_renewed, never as a plan upgrade or downgrade.
+type Renewal struct {
+	OrgID          string
+	SubscriptionID string
+	InvoiceID      string
+	PlanTier       PlanTier
+	AmountPaid     int64  // minor units (cents), as Stripe sends it
+	Currency       string // ISO code, lowercase as Stripe sends it
 }
 
 // tierRank orders the tiers so a change can be classified as an upgrade or a
@@ -171,4 +187,52 @@ func (a emitterPlanAnalytics) CapturePlanChange(ctx context.Context, ev PlanChan
 		Properties: props,
 		Groups:     map[string]string{"organization": ev.OrgID},
 	})
+}
+
+// renewalEventName is the PostHog event for a paid subscription renewal.
+const renewalEventName = "subscription_renewed"
+
+// CaptureRenewal emits subscription_renewed for a paid renewal, tied to the org
+// the same way as plan changes. amount_paid is in the currency's major units
+// (Adaptive Pricing can bill in local currency, so currency is always included);
+// mrr_usd is the plan's list price, for a USD trend that ignores currency, and is
+// omitted for custom-priced tiers.
+func (a emitterPlanAnalytics) CaptureRenewal(ctx context.Context, r Renewal) {
+	if r.OrgID == "" {
+		return
+	}
+	props := map[string]any{
+		"plan_tier":               string(r.PlanTier),
+		"subscription_id":         r.SubscriptionID,
+		"invoice_id":              r.InvoiceID,
+		"amount_paid":             majorUnits(r.AmountPaid, r.Currency),
+		"currency":                strings.ToUpper(r.Currency),
+		"organization":            r.OrgID,
+		"$process_person_profile": false,
+	}
+	if usd, ok := tierMRRUSD(r.PlanTier); ok {
+		props["mrr_usd"] = usd
+	}
+	a.em.Capture(ctx, analytics.Event{
+		DistinctID: r.OrgID,
+		Event:      renewalEventName,
+		Properties: props,
+		Groups:     map[string]string{"organization": r.OrgID},
+	})
+}
+
+// zeroDecimalCurrencies are the currencies Stripe charges in whole units (no
+// cents), from Stripe's currency documentation.
+var zeroDecimalCurrencies = map[string]bool{
+	"bif": true, "clp": true, "djf": true, "gnf": true, "jpy": true, "kmf": true,
+	"krw": true, "mga": true, "pyg": true, "rwf": true, "ugx": true, "vnd": true,
+	"vuv": true, "xaf": true, "xof": true, "xpf": true,
+}
+
+// majorUnits converts a Stripe minor-unit amount to the currency's major units.
+func majorUnits(amount int64, currency string) float64 {
+	if zeroDecimalCurrencies[strings.ToLower(currency)] {
+		return float64(amount)
+	}
+	return float64(amount) / 100
 }

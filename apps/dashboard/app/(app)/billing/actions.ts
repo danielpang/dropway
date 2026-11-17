@@ -1,6 +1,7 @@
 "use server";
 
-import { api, ApiError, type BillingPlan, type CheckoutTier } from "@/lib/api";
+import { api, ApiError, type BillingPlan, type CheckoutTier, type PlanTier } from "@/lib/api";
+import { upgradeRoute } from "@/lib/billing";
 
 /**
  * Billing server actions (CLOUD-ONLY surface). These call the
@@ -22,6 +23,12 @@ export type CheckoutActionResult =
  * Start a Stripe Checkout session for a paid tier and hand back the hosted URL
  * for the client to redirect to. Used by the 402 upgrade modal and the billing
  * page's upgrade buttons.
+ *
+ * An org has ONE subscription. If it already pays, the API refuses a second
+ * Checkout (409 subscription_exists) and the plan change has to happen on the
+ * existing subscription, so we hand back a Billing Portal URL instead, opened on
+ * the confirm screen for the target tier. Callers redirect to whichever URL comes
+ * back.
  */
 export async function createCheckoutAction(input: {
   targetTier: CheckoutTier;
@@ -40,8 +47,57 @@ export async function createCheckoutAction(input: {
     }
     return { ok: true, checkoutUrl: checkout_url };
   } catch (err) {
+    if (isSubscriptionExists(err)) {
+      const portal = await createPortalAction({ targetTier: input.targetTier });
+      if (portal.ok) return { ok: true, checkoutUrl: portal.portalUrl };
+      return { ok: false, message: portal.message };
+    }
     return { ok: false, message: checkoutErrorMessage(err) };
   }
+}
+
+/** The API's 409 for "this org already has a live subscription". */
+function isSubscriptionExists(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 409 &&
+    (err.body as { error?: string } | null)?.error === "subscription_exists"
+  );
+}
+
+export type UpgradeActionResult =
+  | { ok: true; url: string }
+  | { ok: false; message: string };
+
+/**
+ * Start an upgrade to `targetTier` from the org's current plan and hand back the
+ * URL to redirect to. A Free org goes to Stripe Checkout; an org that already
+ * pays goes straight to the Billing Portal's plan-change screen for the target
+ * tier, so no second subscription is started. Used by every upgrade button and
+ * the 402 plan-limit modal.
+ *
+ * `currentTier` comes from the page and can be stale, so both paths recover:
+ * a paying org sent to Checkout gets the portal back (createCheckoutAction's
+ * 409 fallback), and an org the page thought was paying but that has no Stripe
+ * customer yet falls back to Checkout.
+ */
+export async function startUpgradeAction(input: {
+  targetTier: CheckoutTier;
+  currentTier: PlanTier | null | undefined;
+  localCurrency?: boolean;
+}): Promise<UpgradeActionResult> {
+  if (upgradeRoute(input.currentTier) === "portal") {
+    const portal = await createPortalAction({ targetTier: input.targetTier });
+    if (portal.ok) return { ok: true, url: portal.portalUrl };
+    if (portal.kind !== "no_customer") return { ok: false, message: portal.message };
+  }
+  const checkout = await createCheckoutAction({
+    targetTier: input.targetTier,
+    localCurrency: input.localCurrency,
+  });
+  return checkout.ok
+    ? { ok: true, url: checkout.checkoutUrl }
+    : { ok: false, message: checkout.message };
 }
 
 export type PortalActionResult =
@@ -51,11 +107,17 @@ export type PortalActionResult =
 /**
  * Open the Stripe Billing Portal for the org's existing Customer. A 409 means
  * the org has never checked out (no Stripe customer yet), the UI should route
- * the user to Checkout instead of the portal.
+ * the user to Checkout instead of the portal. With a targetTier above the org's
+ * current plan, the portal opens on the confirm screen for that upgrade (the API
+ * falls back to the portal home page when it can't).
  */
-export async function createPortalAction(): Promise<PortalActionResult> {
+export async function createPortalAction(input?: {
+  targetTier?: CheckoutTier;
+}): Promise<PortalActionResult> {
   try {
-    const { portal_url } = await api.createPortal();
+    const { portal_url } = await api.createPortal(
+      input?.targetTier ? { target_tier: input.targetTier } : undefined,
+    );
     if (!portal_url) {
       return { ok: false, kind: "error", message: "Stripe did not return a portal URL. Try again." };
     }

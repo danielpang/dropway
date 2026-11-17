@@ -35,9 +35,9 @@ func TestResolveData_EmptyAndUnhandled(t *testing.T) {
 	if d, err := v.resolveData(stripe.Event{Type: "checkout.session.completed", Data: &stripe.EventData{Raw: json.RawMessage{}}}); err != nil || d != (EventData{}) {
 		t.Errorf("empty raw: got %+v err=%v, want empty/nil", d, err)
 	}
-	// An unhandled type (invoice.paid) is acknowledged with an empty EventData.
+	// An unhandled type (invoice.created) is acknowledged with an empty EventData.
 	raw := json.RawMessage(`{"id":"in_1","object":"invoice"}`)
-	if d, err := v.resolveData(stripe.Event{Type: "invoice.paid", Data: &stripe.EventData{Raw: raw}}); err != nil || d != (EventData{}) {
+	if d, err := v.resolveData(stripe.Event{Type: "invoice.created", Data: &stripe.EventData{Raw: raw}}); err != nil || d != (EventData{}) {
 		t.Errorf("unhandled type: got %+v err=%v, want empty/nil", d, err)
 	}
 }

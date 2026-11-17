@@ -1913,7 +1913,10 @@ paths:
         Session for {target_tier} with client_reference_id=org_id and
         metadata{org_id,target_tier} so the signed webhook can resolve + entitle the
         org. Returns the Stripe-hosted checkout_url. The success redirect grants
-        NOTHING — only the webhook flips plan_tier.
+        NOTHING — only the webhook flips plan_tier. An org has ONE subscription:
+        if it already has a live paid subscription this returns 409
+        {error: subscription_exists} and the plan change goes through the
+        Billing Portal (POST /v1/billing/portal) instead.
       operationId: createCheckout
       tags: [billing-cloud]
       requestBody:
@@ -1939,6 +1942,11 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The org already has a live subscription (error=subscription_exists); change plans via the Billing Portal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /v1/billing/portal:
     post:
@@ -1947,9 +1955,20 @@ paths:
         Owner/admin only. Creates a Stripe Billing Portal session for the org's
         existing Stripe Customer (self-serve seat/plan/payment-method/cancel) and
         returns the portal_url. 409 if the org has no Stripe customer yet (run
-        Checkout first).
+        Checkout first). With an optional target_tier above the org's live paid
+        plan, the URL opens directly on the confirm screen for that upgrade
+        (prorated); if Stripe can't open that screen, the portal home page is
+        returned instead.
       operationId: createPortal
       tags: [billing-cloud]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_tier: { type: string, enum: [pro, business, enterprise] }
       responses:
         "200":
           description: A Stripe Billing Portal URL to redirect the user to.
@@ -1959,6 +1978,7 @@ paths:
                 type: object
                 properties:
                   portal_url: { type: string, format: uri }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }

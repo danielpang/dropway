@@ -13,6 +13,7 @@ import {
   TIER_LABEL,
   isCheckoutTier,
   nextTier,
+  upgradeRoute,
 } from "@/lib/billing";
 import { isRestricted } from "@/lib/billing-server";
 
@@ -105,5 +106,19 @@ describe("isRestricted (billing-derived read-only gate)", () => {
   it("allows actions for an active org (and unknown non-blocking states)", () => {
     expect(isRestricted("active")).toBe(false);
     expect(isRestricted("trialing" as unknown as "active")).toBe(false);
+  });
+});
+
+describe("upgradeRoute (one subscription per org)", () => {
+  it("starts Free and unknown orgs at Checkout", () => {
+    expect(upgradeRoute("free")).toBe("checkout");
+    expect(upgradeRoute(undefined)).toBe("checkout");
+    expect(upgradeRoute(null)).toBe("checkout");
+  });
+
+  it("sends orgs on a paid tier to the Billing Portal", () => {
+    expect(upgradeRoute("pro")).toBe("portal");
+    expect(upgradeRoute("business")).toBe("portal");
+    expect(upgradeRoute("enterprise")).toBe("portal");
   });
 });

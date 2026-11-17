@@ -1345,7 +1345,7 @@ export interface paths {
         put?: never;
         /**
          * [CLOUD-ONLY] Start a Stripe Checkout session (owner/admin)
-         * @description Owner/admin only. Ensures a Stripe Customer for the org (one per org, persisting stripe_customer_id), then creates a subscription-mode Checkout Session for {target_tier} with client_reference_id=org_id and metadata{org_id,target_tier} so the signed webhook can resolve + entitle the org. Returns the Stripe-hosted checkout_url. The success redirect grants NOTHING — only the webhook flips plan_tier.
+         * @description Owner/admin only. Ensures a Stripe Customer for the org (one per org, persisting stripe_customer_id), then creates a subscription-mode Checkout Session for {target_tier} with client_reference_id=org_id and metadata{org_id,target_tier} so the signed webhook can resolve + entitle the org. Returns the Stripe-hosted checkout_url. The success redirect grants NOTHING — only the webhook flips plan_tier. An org has ONE subscription: if it already has a live paid subscription this returns 409 {error: subscription_exists} and the plan change goes through the Billing Portal (POST /v1/billing/portal) instead.
          */
         post: operations["createCheckout"];
         delete?: never;
@@ -1365,7 +1365,7 @@ export interface paths {
         put?: never;
         /**
          * [CLOUD-ONLY] Open the Stripe Billing Portal (owner/admin)
-         * @description Owner/admin only. Creates a Stripe Billing Portal session for the org's existing Stripe Customer (self-serve seat/plan/payment-method/cancel) and returns the portal_url. 409 if the org has no Stripe customer yet (run Checkout first).
+         * @description Owner/admin only. Creates a Stripe Billing Portal session for the org's existing Stripe Customer (self-serve seat/plan/payment-method/cancel) and returns the portal_url. 409 if the org has no Stripe customer yet (run Checkout first). With an optional target_tier above the org's live paid plan, the URL opens directly on the confirm screen for that upgrade (prorated); if Stripe can't open that screen, the portal home page is returned instead.
          */
         post: operations["createPortal"];
         delete?: never;
@@ -5521,6 +5521,15 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description The org already has a live subscription (error=subscription_exists); change plans via the Billing Portal. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     createPortal: {
@@ -5530,7 +5539,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    target_tier?: "pro" | "business" | "enterprise";
+                };
+            };
+        };
         responses: {
             /** @description A Stripe Billing Portal URL to redirect the user to. */
             200: {
@@ -5544,6 +5560,7 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];

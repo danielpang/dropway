@@ -133,7 +133,7 @@ function MatrixCta({
         </span>
       );
     case "upgrade":
-      return <UpgradeButton targetTier={tier as CheckoutTier} block />;
+      return <UpgradeButton targetTier={tier as CheckoutTier} currentTier={currentTier} block />;
     case "contact":
       return <ContactSalesButton salesUrl={SALES_URL} block />;
     case "downgrade":

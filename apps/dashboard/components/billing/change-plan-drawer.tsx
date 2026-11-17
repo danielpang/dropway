@@ -195,7 +195,12 @@ function PlanCard({
       <p className="mt-1 text-sm text-muted-foreground">{POSITIONING[tier]}</p>
 
       <div className="mt-4">
-        <PlanCta tier={tier} action={action} localCurrency={localCurrency} />
+        <PlanCta
+          tier={tier}
+          currentTier={currentTier}
+          action={action}
+          localCurrency={localCurrency}
+        />
       </div>
 
       <ul className="mt-5 space-y-2 text-sm">
@@ -212,10 +217,12 @@ function PlanCard({
 
 function PlanCta({
   tier,
+  currentTier,
   action,
   localCurrency,
 }: {
   tier: PlanTier;
+  currentTier: PlanTier;
   action: ReturnType<typeof planAction>;
   localCurrency: boolean;
 }) {
@@ -230,6 +237,7 @@ function PlanCta({
       return (
         <UpgradeButton
           targetTier={tier as CheckoutTier}
+          currentTier={currentTier}
           block
           localCurrency={localCurrency}
         />

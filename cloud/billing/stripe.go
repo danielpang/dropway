@@ -19,6 +19,7 @@ import (
 	billingportalsession "github.com/stripe/stripe-go/v84/billingportal/session"
 	checkoutsession "github.com/stripe/stripe-go/v84/checkout/session"
 	"github.com/stripe/stripe-go/v84/customer"
+	"github.com/stripe/stripe-go/v84/subscription"
 	"github.com/stripe/stripe-go/v84/webhook"
 )
 
@@ -149,6 +150,8 @@ func (v RealSignatureVerifier) resolveData(ev stripe.Event) (EventData, error) {
 		"customer.subscription.updated",
 		"customer.subscription.deleted":
 		return v.fromSubscription(ev.Data.Raw)
+	case "invoice.paid":
+		return fromInvoice(ev.Data.Raw)
 	default:
 		// Other types (e.g. invoice.*) are acknowledged-and-ignored by the handler;
 		// we still parse a best-effort org id so dedupe/logging have context.
@@ -292,6 +295,55 @@ func (v RealSignatureVerifier) fromSubscription(raw json.RawMessage) (EventData,
 	return d, nil
 }
 
+// invoiceRaw is the subset of an Invoice we read from invoice.paid. The
+// subscription id and its metadata moved from the top level (subscription,
+// subscription_details) to parent.subscription_details in Stripe API version
+// 2025-03-31; both shapes are read so an API-version change can't drop renewals.
+type invoiceRaw struct {
+	ID                  string   `json:"id"`
+	Customer            idObject `json:"customer"`
+	BillingReason       string   `json:"billing_reason"`
+	AmountPaid          int64    `json:"amount_paid"`
+	Currency            string   `json:"currency"`
+	Subscription        idObject `json:"subscription"`
+	SubscriptionDetails struct {
+		Metadata map[string]string `json:"metadata"`
+	} `json:"subscription_details"`
+	Parent struct {
+		SubscriptionDetails struct {
+			Subscription idObject          `json:"subscription"`
+			Metadata     map[string]string `json:"metadata"`
+		} `json:"subscription_details"`
+	} `json:"parent"`
+}
+
+// fromInvoice parses invoice.paid. The org id comes from the subscription's
+// org_id metadata (stamped at Checkout); when absent, applyEvent looks the org up
+// by subscription id. A missing org id is not an error here: most invoices are
+// acknowledged without any action.
+func fromInvoice(raw json.RawMessage) (EventData, error) {
+	var inv invoiceRaw
+	if err := json.Unmarshal(raw, &inv); err != nil {
+		return EventData{}, fmt.Errorf("billing: parse invoice: %w", err)
+	}
+	subID, meta := inv.Parent.SubscriptionDetails.Subscription.ID, inv.Parent.SubscriptionDetails.Metadata
+	if subID == "" {
+		subID = inv.Subscription.ID
+	}
+	if len(meta) == 0 {
+		meta = inv.SubscriptionDetails.Metadata
+	}
+	return EventData{
+		OrgID:                resolveOrgID("", meta),
+		StripeCustomerID:     inv.Customer.ID,
+		StripeSubscriptionID: subID,
+		InvoiceID:            inv.ID,
+		BillingReason:        inv.BillingReason,
+		AmountPaid:           inv.AmountPaid,
+		Currency:             inv.Currency,
+	}, nil
+}
+
 // resolveOrgID resolves the org id from a Checkout client_reference_id first, then
 // metadata.org_id. (Resolving via the customer id is a DB lookup the webhook does
 // not need here because we always stamp org_id on creation; left as the documented
@@ -337,6 +389,21 @@ type StripeClient interface {
 	CreateCheckoutSession(p CheckoutParams) (url string, err error)
 	// CreatePortalSession creates a Billing Portal session → its URL.
 	CreatePortalSession(customerID, returnURL string) (url string, err error)
+	// HasLiveSubscription reports whether Stripe already holds a paying
+	// (active / trialing / past_due) subscription for the customer. Stripe is ahead
+	// of our DB until the webhook lands, so this catches a Checkout that was paid
+	// a moment ago.
+	HasLiveSubscription(customerID string) (bool, error)
+	// ExpireOpenCheckoutSessions expires every still-open Checkout session for the
+	// customer and returns how many it expired, so only the newest link is payable.
+	ExpireOpenCheckoutSessions(customerID string) (int, error)
+	// CreatePlanChangePortalSession opens the Billing Portal directly on the
+	// confirm screen for moving the subscription's plan item to newPriceID
+	// (Stripe's subscription_update_confirm flow, with the prorated charge shown).
+	// isPlanPrice picks the plan item among the subscription's items; its quantity
+	// (seats) is kept. Stripe rejects it if newPriceID isn't offered in the
+	// portal's configuration, so callers fall back to CreatePortalSession.
+	CreatePlanChangePortalSession(customerID, subscriptionID, newPriceID, returnURL string, isPlanPrice func(priceID string) bool) (url string, err error)
 }
 
 // realStripeClient is the production StripeClient over stripe-go's per-resource
@@ -344,9 +411,10 @@ type StripeClient interface {
 // single process can hold the cloud key without mutating the package-global
 // stripe.Key.
 type realStripeClient struct {
-	customers customer.Client
-	checkout  checkoutsession.Client
-	portal    billingportalsession.Client
+	customers     customer.Client
+	checkout      checkoutsession.Client
+	portal        billingportalsession.Client
+	subscriptions subscription.Client
 }
 
 // NewStripeClient builds the production client from the secret key
@@ -355,9 +423,10 @@ type realStripeClient struct {
 func NewStripeClient(secretKey string) StripeClient {
 	backend := stripe.GetBackend(stripe.APIBackend)
 	return &realStripeClient{
-		customers: customer.Client{B: backend, Key: secretKey},
-		checkout:  checkoutsession.Client{B: backend, Key: secretKey},
-		portal:    billingportalsession.Client{B: backend, Key: secretKey},
+		customers:     customer.Client{B: backend, Key: secretKey},
+		checkout:      checkoutsession.Client{B: backend, Key: secretKey},
+		portal:        billingportalsession.Client{B: backend, Key: secretKey},
+		subscriptions: subscription.Client{B: backend, Key: secretKey},
 	}
 }
 
@@ -433,6 +502,99 @@ func (c *realStripeClient) CreatePortalSession(customerID, returnURL string) (st
 	sess, err := c.portal.New(params)
 	if err != nil {
 		return "", fmt.Errorf("billing: create portal session: %w", err)
+	}
+	return sess.URL, nil
+}
+
+func (c *realStripeClient) HasLiveSubscription(customerID string) (bool, error) {
+	// No Status filter: Stripe then returns every subscription that hasn't been
+	// canceled, so the customer's canceled history isn't paged through.
+	params := &stripe.SubscriptionListParams{
+		Customer: stripe.String(customerID),
+	}
+	it := c.subscriptions.List(params)
+	for it.Next() {
+		if isEntitledStatus(string(it.Subscription().Status)) {
+			return true, nil
+		}
+	}
+	if err := it.Err(); err != nil {
+		return false, fmt.Errorf("billing: list subscriptions for customer %s: %w", customerID, err)
+	}
+	return false, nil
+}
+
+func (c *realStripeClient) ExpireOpenCheckoutSessions(customerID string) (int, error) {
+	params := &stripe.CheckoutSessionListParams{
+		Customer: stripe.String(customerID),
+		Status:   stripe.String(string(stripe.CheckoutSessionStatusOpen)),
+	}
+	var open []string
+	it := c.checkout.List(params)
+	for it.Next() {
+		open = append(open, it.CheckoutSession().ID)
+	}
+	if err := it.Err(); err != nil {
+		return 0, fmt.Errorf("billing: list open checkout sessions for customer %s: %w", customerID, err)
+	}
+	expired := 0
+	for _, id := range open {
+		// An expire that fails (e.g. the session was paid between the list and
+		// now) is returned, so the caller creates no new session; a retry then
+		// sees the paid subscription via HasLiveSubscription.
+		if _, err := c.checkout.Expire(id, nil); err != nil {
+			return expired, fmt.Errorf("billing: expire checkout session %s: %w", id, err)
+		}
+		expired++
+	}
+	return expired, nil
+}
+
+func (c *realStripeClient) CreatePlanChangePortalSession(customerID, subscriptionID, newPriceID, returnURL string, isPlanPrice func(string) bool) (string, error) {
+	sub, err := c.subscriptions.Get(subscriptionID, nil)
+	if err != nil {
+		return "", fmt.Errorf("billing: get subscription %s: %w", subscriptionID, err)
+	}
+	var item *stripe.SubscriptionItem
+	if sub.Items != nil {
+		for _, it := range sub.Items.Data {
+			if it.Price != nil && isPlanPrice(it.Price.ID) {
+				item = it
+				break
+			}
+		}
+	}
+	if item == nil {
+		return "", fmt.Errorf("billing: subscription %s has no plan item", subscriptionID)
+	}
+	quantity := item.Quantity
+	if quantity < 1 {
+		quantity = 1
+	}
+	params := &stripe.BillingPortalSessionParams{
+		Customer:  stripe.String(customerID),
+		ReturnURL: stripe.String(returnURL),
+		FlowData: &stripe.BillingPortalSessionFlowDataParams{
+			Type: stripe.String(string(stripe.BillingPortalSessionFlowTypeSubscriptionUpdateConfirm)),
+			SubscriptionUpdateConfirm: &stripe.BillingPortalSessionFlowDataSubscriptionUpdateConfirmParams{
+				Subscription: stripe.String(subscriptionID),
+				Items: []*stripe.BillingPortalSessionFlowDataSubscriptionUpdateConfirmItemParams{{
+					ID:       stripe.String(item.ID),
+					Price:    stripe.String(newPriceID),
+					Quantity: stripe.Int64(quantity),
+				}},
+			},
+			AfterCompletion: &stripe.BillingPortalSessionFlowDataAfterCompletionParams{
+				Type: stripe.String(string(stripe.BillingPortalSessionFlowAfterCompletionTypeRedirect)),
+				Redirect: &stripe.BillingPortalSessionFlowDataAfterCompletionRedirectParams{
+					ReturnURL: stripe.String(returnURL),
+				},
+			},
+		},
+	}
+	sess, err := c.portal.New(params)
+	if err != nil {
+		return "", fmt.Errorf("billing: create plan-change portal session: %w", err)
 	}
 	return sess.URL, nil
 }
