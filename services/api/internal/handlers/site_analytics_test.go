@@ -3,6 +3,9 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,9 +14,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/danielpang/dropway/internal/analytics"
+	"github.com/danielpang/dropway/internal/manifest"
 	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/quota"
+	"github.com/danielpang/dropway/internal/storage"
+	"github.com/danielpang/dropway/services/api/internal/projectroom"
 	"github.com/danielpang/dropway/services/api/internal/store"
 )
 
@@ -69,7 +75,7 @@ func TestPublish_EmitsSitePublished(t *testing.T) {
 	}{
 		{"first publish", nil, "v1", "first_publish", 1},
 		{"update to a new version", &v1, "v2", "update", 2},
-		{"rollback to an older version", &v2, "v1", "update", 1},
+		{"rollback to an older version", &v2, "v1", "rollback", 1},
 		{"same version again", &v1, "v1", "republish", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,7 +104,8 @@ func TestPublish_EmitsSitePublished(t *testing.T) {
 	}
 }
 
-// The source property names the caller's credential class.
+// The source property names the caller's credential class. An org API key is
+// "api_key": the CLI, SDK, CI jobs and scripts all use one and can't be told apart.
 func TestPublish_SitePublishedSource(t *testing.T) {
 	c := claims("user_1", "org_1", "member")
 	for _, tc := range []struct {
@@ -109,7 +116,7 @@ func TestPublish_SitePublishedSource(t *testing.T) {
 	}{
 		{"dashboard session", middleware.Auth(humanVerifier{claims: c}), "human-session", "dashboard"},
 		{"MCP client", middleware.Auth(mcpVerifier{claims: c}), "mcp-token", "mcp"},
-		{"CLI or SDK API key", middleware.AuthWithKeys(fakeVerifier{claims: c}, keyAuthFunc(func() *middleware.KeyPrincipal {
+		{"org API key", middleware.AuthWithKeys(fakeVerifier{claims: c}, keyAuthFunc(func() *middleware.KeyPrincipal {
 			return &middleware.KeyPrincipal{Claims: c, KeyID: "key_1", Scopes: []string{"sites:*"}}
 		})), "dw_live_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG", "api_key"},
 	} {
@@ -120,6 +127,80 @@ func TestPublish_SitePublishedSource(t *testing.T) {
 			}
 			if got := onlyEvent(t, spy, "site_published").Properties["source"]; got != tc.want {
 				t.Errorf("source = %v, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// changedApplyRooms is a proposal application that put a new version live.
+type changedApplyRooms struct{ applyRooms }
+
+func (s *changedApplyRooms) ApplyCandidate(ctx context.Context, t store.Tenant, room string, req projectroom.ApprovalRequest) (store.CandidateApplication, error) {
+	res, err := s.applyRooms.ApplyCandidate(ctx, t, room, req)
+	if err != nil {
+		return res, err
+	}
+	proposed, base := "proposed", "base"
+	res.Changed = true
+	res.Publish.Site = store.Site{ID: "site", OrgID: "org_1", Slug: "site", CurrentVersionID: &proposed}
+	res.Publish.VersionNo, res.Publish.PreviousVersionID, res.Publish.PreviousVersionNo = 3, &base, 2
+	return res, nil
+}
+
+// Applying a proposal puts a version live, so it emits site_published with
+// source "proposal". Re-applying an already-applied one changes nothing and
+// emits nothing.
+func TestApplyCandidate_EmitsSitePublished(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rooms    ProjectRoomStore
+		wantEmit bool
+	}{
+		{"new version applied", &changedApplyRooms{}, true},
+		{"already applied", &applyRooms{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := storage.NewFake()
+			digest := manifest.Digest(nil)
+			raw, _ := json.Marshal(manifest.Stored{SchemaVersion: manifest.SchemaVersion, Files: map[string]manifest.Target{}})
+			for _, id := range []string{"base", "proposed"} {
+				if err := obj.PutManifest(context.Background(), "org_1", "site", id, raw); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fs := newFakeStore()
+			fs.p2().members["user_1"] = store.RoleMember
+			st := &applyStore{SiteStore: fs,
+				candidate: store.Candidate{ID: "cand", SiteID: "site", State: "approved", ContentHash: digest, BaseVersionID: "base", BaseContentHash: digest},
+				base:      store.SiteVersion{ID: "base", ContentHash: digest}, proposed: store.SiteVersion{ID: "proposed", ContentHash: digest}}
+			spy := &spyEmitter{}
+			a := NewFull(quota.Unlimited{}, st, obj, projection.NewLocal())
+			a.Rooms = tc.rooms
+			a.Analytics = spy
+			r := chi.NewRouter()
+			r.Use(middleware.Auth(humanVerifier{claims: claims("user_1", "org_1", "member")}))
+			r.Post("/rooms/{roomID}/candidates/{candidateID}/apply", a.ApplyCandidate)
+			req := httptest.NewRequest(http.MethodPost, "/rooms/room/candidates/cand/apply",
+				strings.NewReader(fmt.Sprintf(`{"content_hash":%q,"base_version_id":"base","base_content_hash":%q}`, digest, digest)))
+			req.Header.Set("Authorization", "Bearer test")
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", rr.Code, rr.Body.String())
+			}
+			if !tc.wantEmit {
+				if len(spy.events) != 0 {
+					t.Fatalf("events = %+v, want none", spy.events)
+				}
+				return
+			}
+			ev := onlyEvent(t, spy, "site_published")
+			want := map[string]any{"org_id": "org_1", "site_id": "site", "version_id": "proposed",
+				"version_no": int32(3), "kind": "update", "source": "proposal"}
+			for k, v := range want {
+				if ev.Properties[k] != v {
+					t.Errorf("%s = %v (%T), want %v (%T)", k, ev.Properties[k], ev.Properties[k], v, v)
+				}
 			}
 		})
 	}

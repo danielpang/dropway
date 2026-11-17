@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
@@ -235,14 +234,7 @@ func (a *API) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		"slug":    skill.Slug,
 		"folders": folderSlugs(skill),
 	})
-	if a.Analytics != nil {
-		a.Analytics.Capture(r.Context(), analytics.Event{
-			DistinctID: t.UserID,
-			Event:      "skill_created",
-			Properties: map[string]any{"org_id": t.OrgID, "skill_id": skill.ID, "slug": skill.Slug},
-			Groups:     map[string]string{"organization": t.OrgID},
-		})
-	}
+	a.captureOrgEvent(r, t, "skill_created", map[string]any{"skill_id": skill.ID, "slug": skill.Slug})
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"skill": toSkillResponse(skill)})
 }
 

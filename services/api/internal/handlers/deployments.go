@@ -15,7 +15,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
@@ -426,54 +425,56 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		"host":       res.Host,
 	})
 	a.indexSiteVersionAsync(r, t, siteID, req.VersionID)
-	a.emitSitePublished(r, t, site, req.VersionID, res.Host)
+	a.emitSitePublished(r, t, res, publishSource(r))
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
 		LiveURL:   a.ContentURL(res.Host),
 		VersionID: req.VersionID,
 	})
 }
 
-// emitSitePublished records a successful publish (or rollback) as a
-// `site_published` product-analytics event, so the dashboard can rank sites and
-// orgs by how often they are updated alongside `site_visit`. It runs only after
-// the edge route was written, so it counts publishes that actually went live.
-// `site` is the row read BEFORE the publish: a nil CurrentVersionID means this
-// was the site's first publish. Best-effort: a nil emitter is a no-op and the
-// version lookup failing only drops version_no.
-func (a *API) emitSitePublished(r *http.Request, t store.Tenant, site store.Site, versionID, host string) {
-	if a.Analytics == nil {
-		return
-	}
-	kind := "update"
-	switch {
-	case site.CurrentVersionID == nil:
-		kind = "first_publish"
-	case *site.CurrentVersionID == versionID:
-		kind = "republish"
-	}
+// emitSitePublished records a publish that went live as a `site_published`
+// event, so the dashboard can rank sites and orgs by how often they are updated
+// alongside `site_visit`. Callers invoke it only after the edge route write
+// succeeded. Everything comes from the store's PublishResult, whose previous
+// version was read under the site lock, so concurrent publishes are classified
+// correctly and no extra query runs on the request path. source names where the
+// publish came from (see publishSource, or "proposal" for an applied proposal).
+func (a *API) emitSitePublished(r *http.Request, t store.Tenant, res store.PublishResult, source string) {
 	props := map[string]any{
-		"org_id":     t.OrgID,
-		"site_id":    site.ID,
-		"slug":       site.Slug,
-		"$host":      host,
-		"version_id": versionID,
-		"kind":       kind,
-		"source":     publishSource(r),
+		"site_id":    res.Site.ID,
+		"slug":       res.Site.Slug,
+		"$host":      res.Host,
+		"version_no": res.VersionNo,
+		"kind":       publishKind(res),
+		"source":     source,
 	}
-	if ver, err := a.Store.GetSiteVersion(r.Context(), t, versionID); err == nil {
-		props["version_no"] = ver.VersionNo
+	if res.Site.CurrentVersionID != nil {
+		props["version_id"] = *res.Site.CurrentVersionID
 	}
-	a.Analytics.Capture(r.Context(), analytics.Event{
-		DistinctID: t.UserID,
-		Event:      "site_published",
-		Properties: props,
-		Groups:     map[string]string{"organization": t.OrgID},
-	})
+	a.captureOrgEvent(r, t, "site_published", props)
 }
 
-// publishSource names where a publish came from, from the caller's verified
-// credential class: the dashboard (human session), the CLI/SDK (org API key) or
-// an MCP client. Anything else is "other".
+// publishKind classifies a publish from the version that was live before it:
+// first_publish (none), republish (the same version), rollback (an older
+// version) or update (a newer version).
+func publishKind(res store.PublishResult) string {
+	switch {
+	case res.PreviousVersionID == nil:
+		return "first_publish"
+	case res.Site.CurrentVersionID != nil && *res.PreviousVersionID == *res.Site.CurrentVersionID:
+		return "republish"
+	case res.PreviousVersionNo > res.VersionNo:
+		return "rollback"
+	default:
+		return "update"
+	}
+}
+
+// publishSource names the caller's verified credential class: "dashboard" for a
+// human browser session, "mcp" for an MCP client, and "api_key" for an org API
+// key. An org key is used by the CLI and SDK but also by CI jobs and custom
+// scripts, which send nothing that tells them apart, so "api_key" is not a
+// measure of CLI use. Anything else is "other".
 func publishSource(r *http.Request) string {
 	class, ok := middleware.CredentialClassFromContext(r.Context())
 	if !ok {
