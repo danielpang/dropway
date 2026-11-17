@@ -140,6 +140,20 @@ const orgCache = new Map<string, { orgId: string; expiresAt: number }>();
  * MCP resource server can scope RLS straight from the token. Best-effort: returns
  * undefined on a lookup error or a user with no membership.
  */
+/** The org's display name from identity.organization, for naming its PostHog
+ * group. undefined on a miss or a lookup error (analytics is best-effort). */
+async function orgName(orgId: string): Promise<string | undefined> {
+  try {
+    const res = await authPool.query<{ name: string }>(
+      `SELECT name FROM identity.organization WHERE id = $1`,
+      [orgId],
+    );
+    return res.rows[0]?.name || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function firstOrgId(userId: string): Promise<string | undefined> {
   const hit = orgCache.get(userId);
   if (hit) {
@@ -276,11 +290,21 @@ export const auth = betterAuth({
         after: async (session) => {
           try {
             const s = session as { userId: string; activeOrganizationId?: string | null };
-            const { captureSignInSucceeded } = await import("@/lib/analytics-server");
+            const { captureSignInSucceeded, identifyOrganization } = await import(
+              "@/lib/analytics-server"
+            );
             await captureSignInSucceeded({
               userId: s.userId,
               organization: s.activeOrganizationId ?? null,
             });
+            // (Re)name the org's PostHog group on sign-in, so orgs created before
+            // group naming existed pick up their name without a backfill.
+            if (s.activeOrganizationId) {
+              await identifyOrganization({
+                orgId: s.activeOrganizationId,
+                name: await orgName(s.activeOrganizationId),
+              });
+            }
           } catch {
             // Analytics must never block authentication.
           }
@@ -720,6 +744,16 @@ export const auth = betterAuth({
             });
           } catch {
             // Analytics must never block org creation.
+          }
+        },
+        // Keep the org's PostHog group name in step with a rename.
+        afterUpdateOrganization: async ({ organization }) => {
+          if (!organization) return;
+          try {
+            const { identifyOrganization } = await import("@/lib/analytics-server");
+            await identifyOrganization({ orgId: organization.id, name: organization.name });
+          } catch {
+            // Analytics must never block an org update.
           }
         },
       },

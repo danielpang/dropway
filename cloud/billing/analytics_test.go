@@ -109,8 +109,15 @@ func TestCapturePlanChange_ShapesEvent(t *testing.T) {
 	if ev.Properties["reason"] != "subscription_updated" {
 		t.Errorf("reason = %v", ev.Properties["reason"])
 	}
-	if ev.Properties["$process_person_profile"] != false {
-		t.Errorf("$process_person_profile = %v, want false", ev.Properties["$process_person_profile"])
+	// Person processing stays on: PostHog drops the group from personless events.
+	if _, set := ev.Properties["$process_person_profile"]; set {
+		t.Errorf("$process_person_profile must not be set (it detaches the org group)")
+	}
+	if ev.Properties["org_id"] != "org_123" {
+		t.Errorf("org_id = %v, want org_123", ev.Properties["org_id"])
+	}
+	if _, set := ev.Properties["organization"]; set {
+		t.Error("organization property must not be sent; org_id carries the org")
 	}
 	if ev.Groups["organization"] != "org_123" {
 		t.Errorf("group organization = %v, want org_123", ev.Groups["organization"])
