@@ -18,6 +18,7 @@ import (
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
+	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store"
@@ -424,10 +425,71 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		"host":       res.Host,
 	})
 	a.indexSiteVersionAsync(r, t, siteID, req.VersionID)
+	a.emitSitePublished(r, t, res, publishSource(r))
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
 		LiveURL:   a.ContentURL(res.Host),
 		VersionID: req.VersionID,
 	})
+}
+
+// emitSitePublished records a publish that went live as a `site_published`
+// event, so the dashboard can rank sites and orgs by how often they are updated
+// alongside `site_visit`. Callers invoke it only after the edge route write
+// succeeded. Everything comes from the store's PublishResult, whose previous
+// version was read under the site lock, so concurrent publishes are classified
+// correctly and no extra query runs on the request path. source names where the
+// publish came from (see publishSource, or "proposal" for an applied proposal).
+func (a *API) emitSitePublished(r *http.Request, t store.Tenant, res store.PublishResult, source string) {
+	props := map[string]any{
+		"site_id":    res.Site.ID,
+		"slug":       res.Site.Slug,
+		"$host":      res.Host,
+		"version_no": res.VersionNo,
+		"kind":       publishKind(res),
+		"source":     source,
+	}
+	if res.Site.CurrentVersionID != nil {
+		props["version_id"] = *res.Site.CurrentVersionID
+	}
+	a.captureOrgEvent(r, t, "site_published", props)
+}
+
+// publishKind classifies a publish from the version that was live before it:
+// first_publish (none), republish (the same version), rollback (an older
+// version) or update (a newer version).
+func publishKind(res store.PublishResult) string {
+	switch {
+	case res.PreviousVersionID == nil:
+		return "first_publish"
+	case res.Site.CurrentVersionID != nil && *res.PreviousVersionID == *res.Site.CurrentVersionID:
+		return "republish"
+	case res.PreviousVersionNo > res.VersionNo:
+		return "rollback"
+	default:
+		return "update"
+	}
+}
+
+// publishSource names the caller's verified credential class: "dashboard" for a
+// human browser session, "mcp" for an MCP client, and "api_key" for an org API
+// key. An org key is used by the CLI and SDK but also by CI jobs and custom
+// scripts, which send nothing that tells them apart, so "api_key" is not a
+// measure of CLI use. Anything else is "other".
+func publishSource(r *http.Request) string {
+	class, ok := middleware.CredentialClassFromContext(r.Context())
+	if !ok {
+		return "other"
+	}
+	switch class {
+	case middleware.CredentialHumanSession:
+		return "dashboard"
+	case middleware.CredentialOrgAPIKey:
+		return "api_key"
+	case middleware.CredentialMCPOAuth:
+		return "mcp"
+	default:
+		return "other"
+	}
 }
 
 // ---------------------------------------------------------------------------

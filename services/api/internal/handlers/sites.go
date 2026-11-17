@@ -13,7 +13,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/middleware"
@@ -188,19 +187,11 @@ func (a *API) CreateSite(w http.ResponseWriter, r *http.Request) {
 	// org_id property, so the "new sites created" dashboard can break down by org.
 	// Capture is non-blocking and never errors; a nil emitter (tests / no key) is a
 	// no-op.
-	if a.Analytics != nil {
-		a.Analytics.Capture(r.Context(), analytics.Event{
-			DistinctID: t.UserID,
-			Event:      "site_created",
-			Properties: map[string]any{
-				"org_id":      t.OrgID,
-				"site_id":     site.ID,
-				"slug":        site.Slug,
-				"access_mode": site.AccessMode,
-			},
-			Groups: map[string]string{"organization": t.OrgID},
-		})
-	}
+	a.captureOrgEvent(r, t, "site_created", map[string]any{
+		"site_id":     site.ID,
+		"slug":        site.Slug,
+		"access_mode": site.AccessMode,
+	})
 	// A just-created site has no live version yet → 0 logical bytes.
 	httpx.WriteJSON(w, http.StatusCreated, a.toSiteResponse(site, orgSlug, 0, ""))
 }
@@ -329,6 +320,12 @@ func (a *API) DeleteSite(w http.ResponseWriter, r *http.Request) {
 	logger(r).Info("site deleted", "site_id", id, "hosts", len(hosts), "org_id", t.OrgID)
 	a.recordAudit(r, t, audit.ActionSiteDelete, "site:"+id, map[string]any{
 		"slug": site.Slug,
+	})
+	// Best-effort analytics: pairs with site_created so the dashboard can count
+	// each org's live sites (created minus deleted).
+	a.captureOrgEvent(r, t, "site_deleted", map[string]any{
+		"site_id": id,
+		"slug":    site.Slug,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

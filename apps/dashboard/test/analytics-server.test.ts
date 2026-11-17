@@ -50,13 +50,13 @@ afterEach(() => {
 });
 
 describe("analytics-server captures (serverless-safe)", () => {
-  it("captureSiteCreated sends via captureImmediate, not capture()+flush()", async () => {
-    const { captureSiteCreated } = await import("@/lib/analytics-server");
-    await captureSiteCreated({
+  it("captureDomainAdded sends via captureImmediate, not capture()+flush()", async () => {
+    const { captureDomainAdded } = await import("@/lib/analytics-server");
+    await captureDomainAdded({
       userId: "user_1",
       organization: "org_1",
       siteId: "site_1",
-      slug: "docs",
+      hostname: "docs.example.com",
     });
 
     expect(captureImmediate).toHaveBeenCalledTimes(1);
@@ -66,14 +66,14 @@ describe("analytics-server captures (serverless-safe)", () => {
     const sent = captureImmediate.mock.calls[0]![0];
     expect(sent).toMatchObject({
       distinctId: "user_1",
-      event: "site_created",
+      event: "domain_added",
       groups: { organization: "org_1" },
     });
     expect(sent.properties).toMatchObject({
       environment: "production",
       organization: "org_1",
       site_id: "site_1",
-      site_slug: "docs",
+      hostname: "docs.example.com",
     });
   });
 

@@ -499,6 +499,9 @@ func (a *API) ApplyCandidate(w http.ResponseWriter, r *http.Request) {
 	}
 	if res.Changed {
 		a.indexSiteVersionAsync(r, t, cand.SiteID, res.VersionID)
+		// An applied proposal is a publish: it is live once the projection above
+		// succeeded. Re-applying an already-applied proposal changes nothing.
+		a.emitSitePublished(r, t, res.Publish, "proposal")
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"candidate": res.Candidate, "applied": true, "changed": res.Changed, "version_id": res.VersionID, "live_url": a.ContentURL(res.Publish.Host)})
 }

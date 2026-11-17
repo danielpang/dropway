@@ -326,6 +326,14 @@ type PublishResult struct {
 	// published, removed in the publish tx ("publishing deletes the preview").
 	// The handler must also delete their route:<host> KV keys.
 	DeletedPreviewHosts []string
+	// VersionNo is the number of the version now live. PreviousVersionID and
+	// PreviousVersionNo describe the version that was live just before, read
+	// under the site lock so concurrent publishes see a consistent previous
+	// state. PreviousVersionID is nil for a site's first publish;
+	// PreviousVersionNo is 0 when there was no previous version.
+	VersionNo         int32
+	PreviousVersionID *string
+	PreviousVersionNo int32
 }
 
 // Publish flips a site's current_version_id to versionID (publish OR rollback —
@@ -394,6 +402,22 @@ func (s *Store) publishLocked(ctx context.Context, tx pgx.Tx, q *db.Queries, t T
 	}
 	if hr.SiteID != siteID || hr.OrgID != t.OrgID {
 		return res, ErrHostTaken
+	}
+
+	// Record what was live before this call, from the row read under the lock,
+	// so callers can classify the publish (first / update / rollback / republish)
+	// without a racy pre-lock read.
+	res.VersionNo = ver.VersionNo
+	if site.CurrentVersionID != nil {
+		prev := *site.CurrentVersionID
+		res.PreviousVersionID = &prev
+		if prev == versionID {
+			res.PreviousVersionNo = ver.VersionNo
+		} else if pv, err := q.GetSiteVersion(ctx, db.GetSiteVersionParams{ID: prev, OrgID: t.OrgID}); err == nil {
+			res.PreviousVersionNo = pv.VersionNo
+		} else if !isNoRows(err) {
+			return res, err
+		}
 	}
 
 	vid := versionID

@@ -128,6 +128,10 @@ func TestIntegration_Phase1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish v1: %v", err)
 	}
+	// The first publish has no previous live version (site_published kind).
+	if resV1.PreviousVersionID != nil || resV1.VersionNo != 1 || resV1.PreviousVersionNo != 0 {
+		t.Fatalf("first publish: prev=%v no=%d prevNo=%d", resV1.PreviousVersionID, resV1.VersionNo, resV1.PreviousVersionNo)
+	}
 	must(t, proj.PutRoute(ctx, resV1.Host, resV1.Route))
 
 	// The projection RouteValue was written and matches the contract.
@@ -161,7 +165,14 @@ func TestIntegration_Phase1(t *testing.T) {
 	v2 := deployVersion(t, ctx, st, obj, tA, siteA.ID, map[string][]byte{
 		"index.html": []byte("<h1>v2</h1>"),
 	})
-	resV2, _ := st.Publish(ctx, tA, siteA.ID, v2)
+	resV2, err := st.Publish(ctx, tA, siteA.ID, v2)
+	if err != nil {
+		t.Fatalf("publish v2: %v", err)
+	}
+	// The previous version is read under the site lock: v1 (no. 1) → v2 (no. 2).
+	if resV2.PreviousVersionID == nil || *resV2.PreviousVersionID != v1 || resV2.VersionNo != 2 || resV2.PreviousVersionNo != 1 {
+		t.Fatalf("update: prev=%v no=%d prevNo=%d", resV2.PreviousVersionID, resV2.VersionNo, resV2.PreviousVersionNo)
+	}
 	must(t, proj.PutRoute(ctx, resV2.Host, resV2.Route))
 	if rv, _ := proj.Get(host); rv.VersionID != v2 {
 		t.Fatalf("expected v2 live after publish, got %s", rv.VersionID)
@@ -171,6 +182,10 @@ func TestIntegration_Phase1(t *testing.T) {
 	resRollback, err := st.Publish(ctx, tA, siteA.ID, v1)
 	if err != nil {
 		t.Fatalf("rollback publish v1: %v", err)
+	}
+	// A rollback goes from a newer version number to an older one.
+	if resRollback.PreviousVersionNo != 2 || resRollback.VersionNo != 1 {
+		t.Fatalf("rollback: no=%d prevNo=%d", resRollback.VersionNo, resRollback.PreviousVersionNo)
 	}
 	must(t, proj.PutRoute(ctx, resRollback.Host, resRollback.Route))
 	if rv, _ := proj.Get(host); rv.VersionID != v1 {

@@ -174,21 +174,6 @@ export function captureOrganizationCreated(input: {
   });
 }
 
-/** A site was created in the active org. */
-export function captureSiteCreated(input: {
-  userId: string;
-  organization: string;
-  siteId?: string;
-  slug?: string;
-}): Promise<void> {
-  return captureServerEvent({
-    event: "site_created",
-    distinctId: input.userId,
-    organization: input.organization,
-    properties: { site_id: input.siteId, site_slug: input.slug },
-  });
-}
-
 /** A custom domain was added to a site in the active org. */
 export function captureDomainAdded(input: {
   userId: string;

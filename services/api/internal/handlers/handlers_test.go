@@ -327,13 +327,24 @@ func (f *fakeStore) Publish(_ context.Context, t store.Tenant, siteID, versionID
 	if !ok || v.SiteID != siteID {
 		return store.PublishResult{}, store.ErrVersionMismatch
 	}
+	// Mirror the real store: report the live and previous versions.
+	var prevID *string
+	var prevNo int32
+	if s.CurrentVersionID != nil {
+		p := *s.CurrentVersionID
+		prevID = &p
+		prevNo = f.versions[p].VersionNo
+	}
 	s.CurrentVersionID = &versionID
 	f.sites[siteID] = s
 	host := projection.HostForSite("org", s.Slug)
 	return store.PublishResult{
-		Host:  host,
-		Site:  s,
-		Route: routeValueFor(t.OrgID, siteID, versionID, s.AccessMode),
+		Host:              host,
+		Site:              s,
+		Route:             routeValueFor(t.OrgID, siteID, versionID, s.AccessMode),
+		VersionNo:         v.VersionNo,
+		PreviousVersionID: prevID,
+		PreviousVersionNo: prevNo,
 	}, nil
 }
 
