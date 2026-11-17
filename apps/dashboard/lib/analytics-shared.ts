@@ -6,9 +6,10 @@
 
 /** The fixed properties every Dropway event carries, plus any event-specific
  * extras. `environment` is always present; `org_id` is present whenever the
- * event belongs to an org. The org's display name is NOT sent on events: it is
- * set once on the org's PostHog group (see identifyOrganization), so it shows
- * wherever events are broken down by organization and follows renames. */
+ * event belongs to an org. The org's display name is not part of this shared
+ * shape: it is set on the org's PostHog group (see identifyOrganization), so it
+ * shows wherever events are broken down by organization and follows renames.
+ * (organization_created alone also sends it, as organization_name.) */
 export interface EventPropertyInput {
   environment: string;
   /** Active org id, or null/undefined when not known (e.g. a fresh signup). */

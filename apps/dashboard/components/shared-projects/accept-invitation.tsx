@@ -10,6 +10,7 @@ import {
 } from "@/app/shared-projects/actions";
 import { invitationToken, type ProjectInvitation } from "@/lib/project-room/sharing";
 import { InvitationSignIn } from "./invitation-sign-in";
+import { resetAnalytics } from "@/components/analytics/posthog-provider";
 
 export function AcceptProjectInvitation({ email, verified, pendingInvitation, invitation: initialInvitation = null }: {
   email: string | null;
@@ -47,6 +48,7 @@ export function AcceptProjectInvitation({ email, verified, pendingInvitation, in
     try {
       const result = await authClient.signOut();
       if (result.error) throw result.error;
+      resetAnalytics();
       // Stay on the invitation, including its HTTP-only cookie and intended email.
       window.location.assign("/shared-projects/accept");
     } catch { setNotice("Could not sign out. Please try again."); setBusy(false); }

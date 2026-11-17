@@ -11,7 +11,8 @@ import { appEnvironment, posthogHost, posthogServerKey } from "@/lib/env";
  * These originate in server actions / Better Auth hooks, so a client SDK can't
  * see them. Every event is stamped with `environment` and, when the org is known,
  * `org_id` (via buildEventProperties), and associated to the org's PostHog group.
- * The org's name lives on that group (identifyOrganization), not on events.
+ * The org's name lives on that group (identifyOrganization); the only event that
+ * also carries it is organization_created (as organization_name).
  *
  * Disabled cleanly when no key is configured (self-host without PostHog) — the
  * capture helpers become no-ops. Analytics NEVER throws into a user action: all
@@ -167,14 +168,16 @@ export async function captureOrganizationCreated(input: {
   organization: string;
   organizationName?: string | null;
 }): Promise<void> {
-  await identifyOrganization({ orgId: input.organization, name: input.organizationName });
-  await captureServerEvent({
-    event: "organization_created",
-    distinctId: input.userId,
-    organization: input.organization,
-    // Also kept on the event itself, so the name is readable in the event list.
-    properties: { organization_name: input.organizationName ?? undefined },
-  });
+  await Promise.all([
+    identifyOrganization({ orgId: input.organization, name: input.organizationName }),
+    captureServerEvent({
+      event: "organization_created",
+      distinctId: input.userId,
+      organization: input.organization,
+      // Also kept on this one event, so the name is readable in the event list.
+      properties: { organization_name: input.organizationName ?? undefined },
+    }),
+  ]);
 }
 
 /**

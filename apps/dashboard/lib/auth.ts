@@ -134,12 +134,6 @@ const ORG_CACHE_TTL_MS = 60_000;
 const ORG_CACHE_MAX = 10_000;
 const orgCache = new Map<string, { orgId: string; expiresAt: number }>();
 
-/**
- * The user's first organization id, the default "active org" for a new session AND
- * the org stamped into MCP OAuth access tokens (customAccessTokenClaims below), so the
- * MCP resource server can scope RLS straight from the token. Best-effort: returns
- * undefined on a lookup error or a user with no membership.
- */
 /** The org's display name from identity.organization, for naming its PostHog
  * group. undefined on a miss or a lookup error (analytics is best-effort). */
 async function orgName(orgId: string): Promise<string | undefined> {
@@ -154,6 +148,12 @@ async function orgName(orgId: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * The user's first organization id, the default "active org" for a new session AND
+ * the org stamped into MCP OAuth access tokens (customAccessTokenClaims below), so the
+ * MCP resource server can scope RLS straight from the token. Best-effort: returns
+ * undefined on a lookup error or a user with no membership.
+ */
 async function firstOrgId(userId: string): Promise<string | undefined> {
   const hit = orgCache.get(userId);
   if (hit) {
@@ -293,18 +293,17 @@ export const auth = betterAuth({
             const { captureSignInSucceeded, identifyOrganization } = await import(
               "@/lib/analytics-server"
             );
-            await captureSignInSucceeded({
-              userId: s.userId,
-              organization: s.activeOrganizationId ?? null,
-            });
-            // (Re)name the org's PostHog group on sign-in, so orgs created before
-            // group naming existed pick up their name without a backfill.
-            if (s.activeOrganizationId) {
-              await identifyOrganization({
-                orgId: s.activeOrganizationId,
-                name: await orgName(s.activeOrganizationId),
-              });
-            }
+            const orgId = s.activeOrganizationId ?? null;
+            // Sent concurrently so sign-in waits for one round trip, not three.
+            // The group naming ((re)naming the org's PostHog group, so orgs
+            // created before group naming existed pick up their name without a
+            // backfill) is skipped when there is no active org.
+            await Promise.all([
+              captureSignInSucceeded({ userId: s.userId, organization: orgId }),
+              orgId
+                ? orgName(orgId).then((name) => identifyOrganization({ orgId, name }))
+                : undefined,
+            ]);
           } catch {
             // Analytics must never block authentication.
           }

@@ -25,6 +25,7 @@ import (
 	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/contenttype"
 	"github.com/danielpang/dropway/internal/manifest"
+	"github.com/danielpang/dropway/services/mcp/internal/auth"
 )
 
 // Client calls the Go API over HTTP.
@@ -558,9 +559,11 @@ func (c *Client) do(ctx context.Context, method, path, token string, body, out a
 		// double-report it under the wrong step here.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) &&
 			path != "/v1/me" {
+			// The tool call's tenant, when the request came through the MCP auth gate.
+			t, _ := auth.TenantFromContext(ctx)
 			analytics.CaptureAuthRejected(ctx, c.emitter, analytics.AuthRejection{
 				Surface: "mcp", Kind: "forwarded", Step: "forwarded_write",
-				Reason: apiErr.Error(), Method: method, Path: path,
+				Reason: apiErr.Error(), Method: method, Path: path, OrgID: t.OrgID,
 			})
 		}
 		return apiErr

@@ -4,6 +4,7 @@ import * as React from "react";
 import { LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
+import { resetAnalytics } from "@/components/analytics/posthog-provider";
 
 export function SignOutButton() {
   const [busy, setBusy] = React.useState(false);
@@ -17,6 +18,7 @@ export function SignOutButton() {
         try {
           const result = await authClient.signOut();
           if (result.error) throw result.error;
+          resetAnalytics();
           window.location.assign("/sign-in");
         } catch { setError(true); setBusy(false); }
       }}>

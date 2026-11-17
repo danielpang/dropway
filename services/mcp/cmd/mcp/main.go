@@ -254,7 +254,7 @@ func requireMCPEnabled(st *store.Store, emitter analytics.Emitter, next http.Han
 				"err", err.Error(), "org_id", t.OrgID, "user_id", t.UserID, "path", r.URL.Path)
 			analytics.CaptureAuthRejected(r.Context(), emitter, analytics.AuthRejection{
 				Surface: "mcp", Kind: "authz", Step: "org_lookup",
-				Reason: err.Error(), Method: r.Method, Path: r.URL.Path,
+				Reason: err.Error(), Method: r.Method, Path: r.URL.Path, OrgID: t.OrgID,
 			})
 			http.Error(w, "403 Forbidden: could not resolve organization access.",
 				http.StatusForbidden)
@@ -266,6 +266,7 @@ func requireMCPEnabled(st *store.Store, emitter analytics.Emitter, next http.Han
 			analytics.CaptureAuthRejected(r.Context(), emitter, analytics.AuthRejection{
 				Surface: "mcp", Kind: "authz", Step: "mcp_disabled",
 				Reason: "org kill switch: mcp_enabled=false", Method: r.Method, Path: r.URL.Path,
+				OrgID: t.OrgID,
 			})
 			http.Error(w, "403 Forbidden: MCP access is disabled for this organization.",
 				http.StatusForbidden)
