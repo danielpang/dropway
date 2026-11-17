@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 
 import { BrandMark } from "@/components/brand-mark";
 import { CreateOrgForm } from "@/components/onboarding/create-org-form";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { auth } from "@/lib/auth";
 import { safeNextPath } from "@/lib/authz-host";
@@ -53,7 +54,11 @@ export default async function OnboardingPage({
           <BrandMark />
           Dropway
         </span>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <span className="hidden max-w-48 truncate text-xs text-muted-foreground sm:block">{user.email}</span>
+          <SignOutButton />
+          <ThemeToggle />
+        </div>
       </header>
 
       <main className="flex flex-1 items-center justify-center p-4">

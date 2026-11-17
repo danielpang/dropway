@@ -164,6 +164,7 @@ export function AuthForm({
       const { error: err } = await authClient.signIn.magicLink({
         email,
         callbackURL: callbackURL,
+        newUserCallbackURL: callbackURL,
       });
       if (err) throw err;
       setNotice(`We sent a sign-in link to ${email}. Check your inbox.`);

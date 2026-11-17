@@ -46,21 +46,27 @@ func TestIntegration_SchemaPreflightRollingUpgrade(t *testing.T) {
 	if err := store.CheckSchema(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	// Prior app schema still serves old binaries, but cannot accept this release.
-	goose := exec.CommandContext(ctx, "go", "run", "github.com/pressly/goose/v3/cmd/goose@v3.22.0", "-dir", root+"/db/migrations/app", "postgres", ownerDSN, "down-to", "18")
-	goose.Dir = root
-	if out, err := goose.CombinedOutput(); err != nil {
-		t.Fatalf("down-to18: %v %s", err, out)
+	// Both the immediately preceding schema and the pre-room schema still serve
+	// old binaries, but cannot accept this release without invitation lookup.
+	for _, version := range []string{"28", "18"} {
+		goose := exec.CommandContext(ctx, "go", "run", "github.com/pressly/goose/v3/cmd/goose@v3.22.0", "-dir", root+"/db/migrations/app", "postgres", ownerDSN, "down-to", version)
+		goose.Dir = root
+		if out, err := goose.CombinedOutput(); err != nil {
+			t.Fatalf("down-to%s: %v %s", version, err, out)
+		}
+		if err := store.CheckSchema(ctx, pool); err == nil || !strings.Contains(err.Error(), "migrations through 0029") {
+			t.Fatalf("schema %s should fail with migration hint, got %v", version, err)
+		}
+		// The existing API's seven-column lookup remains valid during rollback.
+		rows, err := pool.Query(ctx, `SELECT id,org_id,created_by,expires_at,revoked_at,org_status,api_keys_enabled FROM app.resolve_api_key('no-key')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := store.CheckSchema(ctx, pool); err == nil || !strings.Contains(err.Error(), "migrations through 0028") {
-		t.Fatalf("old schema should fail with migration hint, got %v", err)
-	}
-	// Existing API's seven-column lookup remains valid before and after upgrade.
-	rows, err := pool.Query(ctx, `SELECT id,org_id,created_by,expires_at,revoked_at,org_status,api_keys_enabled FROM app.resolve_api_key('no-key')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows.Close()
 	applyMigrations(t, root)
 	if err := store.CheckSchema(ctx, pool); err != nil {
 		t.Fatal(err)

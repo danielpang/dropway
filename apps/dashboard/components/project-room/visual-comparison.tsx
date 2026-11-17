@@ -62,6 +62,7 @@ export function VisualComparison({
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Page or image
             <Select
+              aria-label="Preview page"
               className="max-w-72"
               value={preview.path}
               onChange={(e) => setPath(e.target.value)}

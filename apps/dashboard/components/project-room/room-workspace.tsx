@@ -44,10 +44,8 @@ import {
 import { AIConnections } from "./ai-connections";
 import { HostedExecution } from "@/components/project-room/hosted-execution";
 import { StaticReview } from "@/components/collab/static-review";
-import {
-  loadRevisionNumbersAction,
-  loadStaticSnapshotAction,
-} from "@/app/(app)/rooms/actions";
+import { loadRoomPreview, loadRoomRevisions } from "@/lib/project-room/preview-client";
+import { createPreviewCache, type SnapshotLoader } from "@/lib/project-room/preview-cache";
 import type {
   StaticSelection,
   StaticSnapshot,
@@ -110,7 +108,7 @@ export function RoomWorkspace({
   demo = false,
   onEnableRooms,
   onCreateRoom,
-  snapshotLoader = loadStaticSnapshotAction,
+  snapshotLoader = loadRoomPreview,
   onSiteCreated,
   renderNewSite,
   renderImageUpload,
@@ -166,7 +164,7 @@ export function RoomWorkspace({
     name: string,
     siteIds?: string[],
   ) => Promise<string | void> | void;
-  snapshotLoader?: typeof loadStaticSnapshotAction;
+  snapshotLoader?: SnapshotLoader;
   onSiteCreated?: (site: RoomSiteOption) => void;
   renderNewSite?: (onReady: (site: RoomSiteOption) => void) => React.ReactNode;
   renderImageUpload?: (
@@ -292,28 +290,33 @@ export function RoomWorkspace({
   const [revisionNumbers, setRevisionNumbers] = React.useState<
     Record<string, number>
   >({});
+  const revisionCache = React.useRef(new Map<string, Record<string, number>>());
+  const currentSiteVersion = sites.find((item) => item.id === siteId)?.currentVersionId;
   React.useEffect(() => {
     let active = true;
-    setRevisionNumbers({});
+    const controller = new AbortController();
+    const key = JSON.stringify([siteId, currentSiteVersion, publishedRevision?.versionId]);
+    setRevisionNumbers(revisionCache.current.get(key) ?? {});
     if (demo) {
       setRevisionNumbers({ "version-1": 1, "version-2": 2, "version-3": 3 });
       return;
     }
     if (siteId)
-      void loadRevisionNumbersAction(siteId)
+      void loadRoomRevisions(siteId, controller.signal)
         .then((result) => {
-          if (active && result.ok)
-            setRevisionNumbers(
-              Object.fromEntries(
-                result.versions.map((version) => [version.id, version.number]),
-              ),
-            );
+          if (active && result.ok) {
+            const numbers = Object.fromEntries(result.versions.map((version) => [version.id, version.number]));
+            revisionCache.current.set(key, numbers);
+            if (revisionCache.current.size > 16) revisionCache.current.delete(revisionCache.current.keys().next().value!);
+            setRevisionNumbers(numbers);
+          }
         })
         .catch(() => {});
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [siteId, demo, publishedRevision]);
+  }, [siteId, currentSiteVersion, demo, publishedRevision]);
   const revisionLabel = (id: string) =>
     revisionNumbers[id]
       ? `Revision ${revisionNumbers[id]}`
@@ -374,6 +377,8 @@ export function RoomWorkspace({
     setPanel("review");
     setCommentFilter("all");
   }, [linkedSiteId, linkedVersionId, linkedPage]);
+  const previewCache = React.useMemo(() => createPreviewCache(snapshotLoader), [snapshotLoader, roomId]);
+  const siteAttached = attachedSites.some((item) => item.siteId === siteId);
   React.useEffect(() => {
     const request = ++snapshotRequest.current;
     let active = true;
@@ -385,13 +390,19 @@ export function RoomWorkspace({
       !roomId ||
       !siteId ||
       !versionId ||
-      !attachedSites.some((item) => item.siteId === siteId)
+      !siteAttached
     ) {
       setSnapshotLoading(false);
       return;
     }
+    const cached = previewCache.peek(roomId, siteId, versionId, page);
+    if (cached && (!linkedContentHash || cached.contentHash === linkedContentHash)) {
+      setSnapshot(cached);
+      setSnapshotLoading(false);
+      return;
+    }
     setSnapshotLoading(true);
-    void snapshotLoader(roomId, siteId, versionId, page)
+    void previewCache.load(roomId, siteId, versionId, page)
       .then((result) => {
         if (!active || request !== snapshotRequest.current) return;
         setSnapshotLoading(false);
@@ -425,8 +436,8 @@ export function RoomWorkspace({
     versionId,
     page,
     linkedContentHash,
-    attachedSites,
-    snapshotLoader,
+    siteAttached,
+    previewCache,
     detailsRoomId,
   ]);
   const room = rooms.find((item) => item.ID === roomId) ?? null;
@@ -547,7 +558,7 @@ export function RoomWorkspace({
               />
             </summary>
             <div className="mt-3 space-y-3">
-              <select
+              <Select
                 aria-label="Site to add"
                 value={attachId}
                 onChange={(e) => setAttachId(e.target.value)}
@@ -559,7 +570,7 @@ export function RoomWorkspace({
                     {item.label ?? item.slug}
                   </option>
                 ))}
-              </select>
+              </Select>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 AI-proposed changes require review. Users with site write access
                 can continue publishing through the CLI or MCP.
@@ -759,9 +770,9 @@ export function RoomWorkspace({
               </span>
               <span
                 className="min-w-0 flex-1 truncate text-xs"
-                title={member.userId}
+                title={member.name || member.userId}
               >
-                {member.userId}
+                {member.name || member.userId}
               </span>
               {member.role === "owner" ? (
                 <span className="rounded-md bg-muted px-2 py-1 text-xs">
@@ -769,8 +780,8 @@ export function RoomWorkspace({
                 </span>
               ) : (
                 <>
-                  <select
-                    aria-label={`Role for ${member.userId}`}
+                  <Select
+                    aria-label={`Role for ${member.name || member.userId}`}
                     value={member.role}
                     disabled={role !== "owner" || !onUpdateMember}
                     onChange={(event) =>
@@ -781,12 +792,12 @@ export function RoomWorkspace({
                         event.target.value as "editor" | "reviewer" | "viewer",
                       )
                     }
-                    className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+                    className="h-8 w-auto rounded-md border border-border bg-background px-2 py-1 text-sm"
                   >
                     <option value="editor">editor</option>
                     <option value="reviewer">reviewer</option>
                     <option value="viewer">viewer</option>
-                  </select>
+                  </Select>
                   <Tooltip label="Remove project member" align="end">
                     <Button
                       aria-label="Remove project member"
@@ -830,7 +841,7 @@ export function RoomWorkspace({
               value={memberId}
               onChange={(event) => setMemberId(event.target.value)}
             />
-            <select
+            <Select
               aria-label="Member role"
               value={memberRole}
               onChange={(event) =>
@@ -838,12 +849,12 @@ export function RoomWorkspace({
                   event.target.value as "editor" | "reviewer" | "viewer",
                 )
               }
-              className="rounded-md border border-border bg-background px-2 py-1 text-sm"
+              className="h-8 w-auto rounded-md border border-border bg-background px-2 py-1 text-sm"
             >
               <option value="editor">editor</option>
               <option value="reviewer">reviewer</option>
               <option value="viewer">viewer</option>
-            </select>
+            </Select>
             <Button
               type="submit"
               disabled={role !== "owner" || memberId.trim().length === 0}
@@ -1258,11 +1269,12 @@ export function RoomWorkspace({
       <section className="space-y-3" aria-label="Comments">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold">Comments</h2>
-          <select
+          <Select
             aria-label="Comment version filter"
+            align="end"
             value={commentFilter}
             onChange={(e) => setCommentFilter(e.target.value)}
-            className="max-w-44 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+            className="h-8 w-auto max-w-44 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
           >
             <option value="all">All versions</option>
             <option value="current">Viewing version</option>
@@ -1277,7 +1289,7 @@ export function RoomWorkspace({
                 {revisionLabel(id)}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         {visibleThreads.length === 0 ? (
           <p className="rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground">
@@ -1676,63 +1688,31 @@ export function RoomWorkspace({
         <div className="flex h-[calc(100dvh-3.5rem)] min-h-[32rem] flex-col bg-background">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <div className="relative inline-grid max-w-full rounded-md text-sm font-semibold focus-within:ring-2 focus-within:ring-ring">
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none whitespace-normal break-words pl-2 pr-7 py-1.5"
-                >
-                  {room.Name}
-                </span>
-                <select
-                  aria-label="Project"
-                  value={roomId}
-                  onChange={(e) => {
-                    setRoomId(e.target.value);
-                    setPanel("review");
-                    setLinkedThreadId("");
-                    setCommentFilter("all");
-                  }}
-                  className="absolute inset-0 w-full min-w-0 cursor-pointer opacity-0 rounded-md text-sm font-semibold"
-                >
-                  {rooms.map((item) => (
-                    <option key={item.ID} value={item.ID}>
-                      {item.Name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-                  aria-hidden="true"
-                />
-              </div>
+              <Select
+                aria-label="Project"
+                value={roomId}
+                variant="ghost"
+                className="h-9 w-auto font-semibold"
+                onChange={(event) => {
+                  setRoomId(event.target.value);
+                  setPanel("review");
+                  setLinkedThreadId("");
+                  setCommentFilter("all");
+                }}
+              >
+                {rooms.map((item) => <option key={item.ID} value={item.ID}>{item.Name}</option>)}
+              </Select>
               <span className="text-border">/</span>
-              <div className="relative inline-grid max-w-full rounded-md text-sm focus-within:ring-2 focus-within:ring-ring">
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none whitespace-normal break-words pl-2 pr-7 py-1.5"
-                >
-                  {site?.label ?? site?.slug ?? "Select a site or image"}
-                </span>
-                <select
-                  aria-label="Site or image"
-                  value={siteId}
-                  onChange={(e) => chooseSite(e.target.value)}
-                  className="absolute inset-0 w-full min-w-0 cursor-pointer opacity-0 rounded-md text-sm"
-                >
-                  <option value="" disabled>
-                    Select a site or image
-                  </option>
-                  {projectSites.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label ?? item.slug}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-                  aria-hidden="true"
-                />
-              </div>
+              <Select
+                aria-label="Site or image"
+                value={siteId}
+                variant="ghost"
+                className="h-9 w-auto"
+                onChange={(event) => chooseSite(event.target.value)}
+              >
+                <option value="" disabled>Select a site or image</option>
+                {projectSites.map((item) => <option key={item.id} value={item.id}>{item.label ?? item.slug}</option>)}
+              </Select>
               <Tooltip label="Create a new project" align="end">
                 <Button
                   size="sm"
@@ -1821,12 +1801,16 @@ export function RoomWorkspace({
                   <div className="flex flex-wrap items-center gap-2">
                     <Select
                       aria-label="Viewing version"
+                      onValuePreview={(id) => {
+                        if (detailsRoomId === roomId && siteAttached && id !== versionId)
+                          void previewCache.load(roomId, siteId, id, page).catch(() => {});
+                      }}
                       value={versionId}
                       onChange={(e) => {
                         setLinkedThreadId("");
                         setVersionId(e.target.value);
                       }}
-                      className="h-9 min-w-48 text-sm"
+                      className="h-9 w-auto min-w-48 text-sm"
                     >
                       {Array.from(
                         new Set(

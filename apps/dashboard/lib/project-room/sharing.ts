@@ -1,3 +1,8 @@
+export interface ProjectInvitation {
+  email: string;
+  projectName: string;
+  hasAccount: boolean;
+}
 export type GuestRole = "viewer" | "reviewer";
 export interface ProjectShare {
   id: string;

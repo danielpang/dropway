@@ -17,7 +17,7 @@ export function SharedProjectSignOut() {
           .signOut()
           .finally(() =>
             window.location.assign(
-              `/sign-in?callbackURL=${encodeURIComponent(pathname?.startsWith("/shared-projects") ? pathname : "/shared-projects")}`,
+              pathname === "/shared-projects/accept" ? pathname : `/sign-in?callbackURL=${encodeURIComponent(pathname?.startsWith("/shared-projects") ? pathname : "/shared-projects")}`,
             ),
           );
       }}

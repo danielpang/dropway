@@ -59,6 +59,34 @@ paths:
       summary: "Revoke a project guest invitation or accepted grant"
       parameters: [{"name":"roomID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"shareID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
       responses: {"204":{"description":"Access revoked"},"401":{"$ref":"#/components/responses/Unauthorized"},"403":{"$ref":"#/components/responses/Forbidden"}}
+  /v1/project-invitations/inspect:
+    post:
+      operationId: inspectProjectInvitation
+      summary: Read sign-in details for a bearer project invitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, minLength: 43, maxLength: 43}
+      responses:
+        "200":
+          description: Invitation recipient and authentication path; does not grant access
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email, project_name, has_account]
+                properties:
+                  email: {type: string, format: email}
+                  project_name: {type: string}
+                  has_account: {type: boolean}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "429": {description: Too many invitation requests}
   /v1/shared-projects:
     get:
       operationId: "listSharedProjects"

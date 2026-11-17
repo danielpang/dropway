@@ -1505,6 +1505,9 @@ export const api = {
     });
   },
 
+  async inspectProjectInvitation(token: string): Promise<unknown> {
+    return apiFetchPublic("/v1/project-invitations/inspect", { method: "POST", body: JSON.stringify({ token }) });
+  },
   async sharedProjectRequest(path: string, method = "GET", body?: unknown): Promise<unknown> {
     return apiFetch(`/v1/shared-projects${path}`, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   },

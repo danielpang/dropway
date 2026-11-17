@@ -20,6 +20,7 @@ type SchemaQuerier interface {
 // against the additive schema while a new release is rejected.
 func CheckSchema(ctx context.Context, db SchemaQuerier) error {
 	checks := []struct{ name, sql string }{
+		{"0029 invitation lookup", `SELECT email,project_name,has_account FROM app.inspect_project_invitation('schema-check-not-a-token') LIMIT 0`},
 		{"0028 AI preferences", `SELECT p.mode,p.credential_ref,p.provider,p.model,r.provider,r.model FROM app.personal_ai_preferences p LEFT JOIN app.project_ai_preferences r ON r.org_id=p.org_id LIMIT 0`},
 		{"0027 image resources", `SELECT resource_kind FROM app.sites LIMIT 0`},
 		{"0019 room flag", `SELECT project_rooms_enabled FROM app.org_meta LIMIT 0`},
@@ -36,21 +37,21 @@ func CheckSchema(ctx context.Context, db SchemaQuerier) error {
 	for _, check := range checks {
 		rows, err := db.Query(ctx, check.sql)
 		if err != nil {
-			return fmt.Errorf("database schema preflight failed (%s): apply app migrations through 0028 with the migration role before deploying this API; runtime role must retain its grants", check.name)
+			return fmt.Errorf("database schema preflight failed (%s): apply app migrations through 0029 with the migration role before deploying this API; runtime role must retain its grants", check.name)
 		}
 		rows.Close()
 		if rows.Err() != nil {
-			return fmt.Errorf("database schema preflight could not complete (%s); verify database availability and migrations through 0028", check.name)
+			return fmt.Errorf("database schema preflight could not complete (%s); verify database availability and migrations through 0029", check.name)
 		}
 	}
-	rows, err := db.Query(ctx, `SELECT has_function_privilege(current_user,'app.resolve_api_key(text)','EXECUTE') AND has_function_privilege(current_user,'app.candidate_projection_org_ids()','EXECUTE') AND has_function_privilege(current_user,'app.discover_guest_projects(uuid,text,uuid)','EXECUTE')`)
+	rows, err := db.Query(ctx, `SELECT has_function_privilege(current_user,'app.resolve_api_key(text)','EXECUTE') AND has_function_privilege(current_user,'app.candidate_projection_org_ids()','EXECUTE') AND has_function_privilege(current_user,'app.discover_guest_projects(uuid,text,uuid)','EXECUTE') AND has_function_privilege(current_user,'app.inspect_project_invitation(text)','EXECUTE')`)
 	if err != nil {
 		return fmt.Errorf("database schema preflight could not verify runtime function grants")
 	}
 	defer rows.Close()
 	var allowed bool
 	if !rows.Next() || rows.Scan(&allowed) != nil || !allowed || rows.Err() != nil {
-		return fmt.Errorf("database schema preflight failed: runtime role needs EXECUTE on API key resolver, projection scheduler and guest discovery; restore migration grants before deployment")
+		return fmt.Errorf("database schema preflight failed: runtime role needs EXECUTE on API key resolver, projection scheduler, guest discovery and invitation lookup; restore migration grants before deployment")
 	}
 	return nil
 }

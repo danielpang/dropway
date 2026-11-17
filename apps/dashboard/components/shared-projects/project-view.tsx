@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@/components/ui/select";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,7 +94,7 @@ export function GuestProjectView({ project }: { project: GuestProject }) {
       <section className="space-y-3" aria-label="Shared sites">
         <label className="block text-sm">
           Site
-          <select
+          <Select
             aria-label="Shared site"
             className="ml-2 rounded border bg-background p-2"
             value={siteId}
@@ -104,7 +105,7 @@ export function GuestProjectView({ project }: { project: GuestProject }) {
                 {item.title || item.slug}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         {!site ? (
           <p>No sites are currently shared in this project.</p>
