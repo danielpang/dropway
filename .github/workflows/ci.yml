@@ -16,6 +16,9 @@
 #   serve              : the content server serves an org-only site from real object storage
 #                        only with a valid edge token; denies (302) otherwise.
 #   typecheck          : the whole TS workspace type-checks (contracts + apps + edge).
+#   lint               : every workspace package's lint script passes.
+#   edge-worker        : the serving Worker's vitest suite.
+#   codegen            : the committed OpenAPI types and sqlc output match their sources.
 
 name: ci
 
@@ -70,6 +73,7 @@ jobs:
       db: ${{ steps.filter.outputs.db }}
       ts: ${{ steps.filter.outputs.ts }}
       deploy: ${{ steps.filter.outputs.deploy }}
+      codegen: ${{ steps.filter.outputs.codegen }}
       ci: ${{ steps.filter.outputs.ci }}
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +97,12 @@ jobs:
               - '**/package.json'
               - '**/tsconfig*.json'
               - 'pnpm-lock.yaml'
+            codegen:
+              - 'services/api/openapi/**'
+              - 'db/sqlc/**'
+              - 'services/api/internal/store/db/**'
+              - 'apps/dashboard/lib/api-generated/**'
+              - 'packages/sdk/src/generated/**'
             deploy:
               - 'deploy/**'
             ci:
@@ -530,6 +540,110 @@ jobs:
 
       - name: typecheck all packages
         run: pnpm -r typecheck
+
+  # ---------------------------------------------------------------------------
+  # (d2) Lint: `pnpm -r lint` runs the lint script in every workspace package
+  #      that defines one. Warnings are reported; only errors fail the job.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: TypeScript · lint
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: lint all packages
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: pnpm -r lint
+
+  # ---------------------------------------------------------------------------
+  # (d3) Edge worker: the serving Worker's vitest suite (routing, access gates,
+  #      caching, rate limits). The Worker serves every hosted site, and nothing
+  #      else in CI runs these tests.
+  # ---------------------------------------------------------------------------
+  edge-worker:
+    name: Edge worker · unit tests
+    needs: changes
+    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: vitest
+        run: pnpm --filter @dropway/serving-worker test
+
+  # ---------------------------------------------------------------------------
+  # (d4) Codegen drift: regenerate the OpenAPI types (dashboard + SDK) and the
+  #      sqlc Go code, then fail if the committed copies differ. Catches a spec
+  #      or query change that was merged without regenerating, and hand edits to
+  #      generated files. The sqlc version must match the header of the generated
+  #      Go files; change it here, in CLAUDE.md and in the verify-api-contract
+  #      skill together.
+  # ---------------------------------------------------------------------------
+  codegen:
+    name: Codegen · no drift
+    needs: changes
+    if: needs.changes.outputs.codegen == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: enable corepack (pnpm)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: regenerate OpenAPI types
+        run: |
+          pnpm --filter @dropway/dashboard gen:api
+          pnpm --filter @dropway/sdk gen:api
+
+      - name: regenerate sqlc
+        run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate -f db/sqlc/sqlc.yaml
+
+      - name: fail on drift
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Generated code is out of date. Run the generators (see CLAUDE.md) and commit the result."
+            git status --short
+            git diff
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # (e) Dashboard unit tests: the dashboard's vitest suite — pure lib logic,
