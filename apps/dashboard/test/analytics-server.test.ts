@@ -235,6 +235,10 @@ describe("organization group naming", () => {
       event: "organization_created",
       groups: { organization: "org_1" },
     });
-    expect(created.properties).toEqual({ environment: "production", org_id: "org_1" });
+    expect(created.properties).toEqual({
+      environment: "production",
+      org_id: "org_1",
+      organization_name: "Acme",
+    });
   });
 });

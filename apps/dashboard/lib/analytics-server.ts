@@ -172,6 +172,8 @@ export async function captureOrganizationCreated(input: {
     event: "organization_created",
     distinctId: input.userId,
     organization: input.organization,
+    // Also kept on the event itself, so the name is readable in the event list.
+    properties: { organization_name: input.organizationName ?? undefined },
   });
 }
 
