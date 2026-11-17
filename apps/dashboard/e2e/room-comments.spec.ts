@@ -4,7 +4,7 @@ import { test, expect } from "@playwright/test";
 // Run with ROOMS_PREVIEW_E2E=1 against `next dev`; unavailable in production.
 test.skip(process.env.ROOMS_PREVIEW_E2E !== "1", "Requires the development rooms preview");
 test("clears posted room comments and replies", async ({ page }) => {
-  await page.goto("/dev/rooms-preview");
+  await page.goto("/dev/rooms-preview?room=project-launch&site=site-launch");
   await page.getByRole("button", { name: "Canvas", exact: true }).click();
   const composer = page.getByRole("textbox", { name: "Comment on this page", exact: true });
   await expect(composer).toBeVisible();

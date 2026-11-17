@@ -6,6 +6,8 @@
 "use client";
 
 import * as React from "react";
+import { useRoomNavigation } from "@/lib/project-room/use-room-navigation";
+import { loadRoomDetail, loadRoomDiscussion } from "@/lib/project-room/room-client";
 import { listHostedJobsAction } from "@/app/(app)/rooms/hosted-actions";
 import type { HostedJob } from "@/lib/project-room/hosted";
 
@@ -32,12 +34,9 @@ import {
   loadCandidateDiffAction,
   loadMoreCandidatesAction,
   loadMoreThreadsAction,
-  loadRoomAction,
-  loadSiteCommentsAction,
   reanchorAction,
   replyAction,
   resolveAction,
-  signoffAction,
   submitCandidateAction,
 } from "@/app/(app)/rooms/actions";
 import { appendThreadRevisions } from "@/lib/project-room/contract";
@@ -49,7 +48,6 @@ import type {
   ReviewThread,
   RoomMemberRow,
   RoomSiteRef,
-  SiteCommentItem,
 } from "@/lib/project-room/contract";
 
 export function RoomSession({
@@ -67,6 +65,9 @@ export function RoomSession({
   parentOrigin: string;
   loadError?: string;
 }) {
+  const { location, navigate } = useRoomNavigation();
+  const [discussionLoading, setDiscussionLoading] = React.useState(false);
+  const [discussionError, setDiscussionError] = React.useState<string | null>(null);
   const [jobs, setJobs] = React.useState<HostedJob[]>([]);
   const [jobStatusUnavailable, setJobStatusUnavailable] = React.useState(false);
   const commentRetries = React.useRef(new Map<string, string>());
@@ -81,8 +82,6 @@ export function RoomSession({
   const candidateRequests = React.useRef(new Set<string>());
   const [busyCandidates, setBusyCandidates] = React.useState<string[]>([]);
   const roomRequest = React.useRef(0);
-  const commentRequest = React.useRef(0);
-  const selectedSite = React.useRef("");
   const startCandidateRequest = (candidate: ReviewCandidate) => {
     if (
       candidate.RoomID !== loadedRoom.current ||
@@ -105,8 +104,6 @@ export function RoomSession({
   const requestedDiffs = React.useRef(new Set<string>());
   const [members, setMembers] = React.useState<RoomMemberRow[]>([]);
   const [attachedSites, setAttachedSites] = React.useState<RoomSiteRef[]>([]);
-  const [siteComments, setSiteComments] = React.useState<SiteCommentItem[]>([]);
-  const [commentCursor, setCommentCursor] = React.useState<string | null>(null);
   const [threadCursor, setThreadCursor] = React.useState<string | null>(null);
   const [candidateCursor, setCandidateCursor] = React.useState<string | null>(
     null,
@@ -145,7 +142,7 @@ export function RoomSession({
   }, [detailsRoomId, executionConfigured]);
 
   const applyRoom = React.useCallback((roomId: string) => {
-    if (!roomId || loadedRoom.current === roomId) return;
+    if (loadedRoom.current === roomId) return;
     loadedRoom.current = roomId;
     const request = ++roomRequest.current;
     setDetailsRoomId(null);
@@ -158,7 +155,10 @@ export function RoomSession({
     setCandidates([]);
     setThreadCursor(null);
     setCandidateCursor(null);
-    void loadRoomAction(roomId)
+    setDiscussionLoading(false);
+    setDiscussionError(null);
+    if (!roomId) return;
+    void loadRoomDetail(roomId)
       .then((result) => {
         if (request !== roomRequest.current || roomId !== loadedRoom.current)
           return;
@@ -173,35 +173,53 @@ export function RoomSession({
         setDetailsRoomId(roomId);
         setMembers(result.detail.members);
         setAttachedSites(result.detail.sites);
-        setThreads(result.threads);
-        setThreadCursor(result.threadCursor);
-        setCandidates(result.candidates);
-        setCandidateCursor(result.candidateCursor);
-        const linkedId = window.location.hash.startsWith("#thread-")
-          ? window.location.hash.slice(8)
-          : "";
-        if (linkedId) {
-          void loadThreadLinkAction(roomId, linkedId).then((linked) => {
-            if (
-              request !== roomRequest.current ||
-              loadedRoom.current !== roomId
-            )
-              return;
-            if (!linked.ok) {
-              setNotice(linked.message);
-              return;
-            }
-            setThreads((prev) => [
-              linked.thread,
-              ...prev.filter((item) => item.ID !== linked.thread.ID),
-            ]);
-            requestAnimationFrame(() =>
-              document
-                .getElementById(`thread-${linked.thread.ID}`)
-                ?.scrollIntoView(),
-            );
-          });
-        }
+        setDiscussionLoading(true);
+        void loadRoomDiscussion(roomId).then((discussion) => {
+          if (request !== roomRequest.current || roomId !== loadedRoom.current) return;
+          setDiscussionLoading(false);
+          if (!discussion.ok) {
+            setDiscussionError(discussion.message);
+            return;
+          }
+          setMembers(discussion.members);
+          // Preserve comments posted while the initial discussion was loading.
+          setThreads((previous) => [
+            ...previous,
+            ...discussion.threads.filter((thread) => !previous.some((item) => item.ID === thread.ID)),
+          ]);
+          setThreadCursor(discussion.threadCursor);
+          setCandidates(discussion.candidates);
+          setCandidateCursor(discussion.candidateCursor);
+          const linkedId = window.location.hash.startsWith("#thread-")
+            ? window.location.hash.slice(8)
+            : "";
+          if (linkedId) {
+            void loadThreadLinkAction(roomId, linkedId).then((linked) => {
+              if (
+                request !== roomRequest.current ||
+                loadedRoom.current !== roomId
+              )
+                return;
+              if (!linked.ok) {
+                setNotice(linked.message);
+                return;
+              }
+              setThreads((prev) => [
+                linked.thread,
+                ...prev.filter((item) => item.ID !== linked.thread.ID),
+              ]);
+              requestAnimationFrame(() =>
+                document
+                  .getElementById(`thread-${linked.thread.ID}`)
+                  ?.scrollIntoView(),
+              );
+            });
+          }
+        }).catch(() => {
+          if (request !== roomRequest.current || roomId !== loadedRoom.current) return;
+          setDiscussionLoading(false);
+          setDiscussionError("Comments and proposals could not be loaded.");
+        });
         void loadRoomActivityAction(roomId).then((activityResult) => {
           if (request !== roomRequest.current || loadedRoom.current !== roomId)
             return;
@@ -229,34 +247,6 @@ export function RoomSession({
       });
   }, []);
 
-  const loadComments = React.useCallback((siteId: string, cursor?: string) => {
-    if (!siteId) return;
-    if (cursor && siteId !== selectedSite.current) return;
-    selectedSite.current = siteId;
-    const request = ++commentRequest.current;
-    if (!cursor) {
-      setSiteComments([]);
-      setCommentCursor(null);
-    }
-    void loadSiteCommentsAction(siteId, cursor).then((result) => {
-      if (request !== commentRequest.current || selectedSite.current !== siteId)
-        return;
-      if (!result.ok) {
-        setNotice(result.message);
-        return;
-      }
-      setSiteComments((prev) => {
-        const incoming = cursor ? [...prev, ...result.items] : result.items;
-        const seen = new Set<string>();
-        return incoming.filter((item) => {
-          if (seen.has(item.id)) return false;
-          seen.add(item.id);
-          return true;
-        });
-      });
-      setCommentCursor(result.nextCursor);
-    });
-  }, []);
   const [orgEnabled, setOrgEnabled] = React.useState(initialOrgEnabled);
   const [notice, setNotice] = React.useState<string | null>(loadError ?? null);
 
@@ -332,6 +322,10 @@ export function RoomSession({
   };
   return (
     <RoomWorkspace
+      navigation={location}
+      onNavigate={navigate}
+      discussionLoading={discussionLoading}
+      discussionError={discussionError}
       publishedRevision={publishedRevision}
       jobs={jobs}
       jobStatusUnavailable={jobStatusUnavailable}
@@ -379,8 +373,6 @@ export function RoomSession({
       diffs={diffs}
       members={members}
       attachedSites={attachedSites}
-      siteComments={siteComments}
-      commentCursor={commentCursor}
       threadCursor={threadCursor}
       candidateCursor={candidateCursor}
       parentOrigin={parentOrigin}
@@ -414,8 +406,6 @@ export function RoomSession({
           applyRoom(roomId);
         });
       }}
-      onSelectSite={loadComments}
-      onLoadMoreComments={loadComments}
       onLoadMoreThreads={(roomId, cursor) => {
         void loadMoreThreadsAction(roomId, cursor).then((result) => {
           if (loadedRoom.current !== roomId) return;
@@ -524,8 +514,6 @@ export function RoomSession({
                   ? "Page comment stored on the original version."
                   : "Image pin stored on the original version.",
             );
-            if (selectedSite.current === input.siteId)
-              loadComments(input.siteId);
             return true;
           })
           .catch(() => {
@@ -619,15 +607,6 @@ export function RoomSession({
           return false;
         });
       }}
-      onSignoff={(roomId, siteId, versionId) => {
-        void signoffAction(roomId, siteId, versionId).then((result) => {
-          setNotice(
-            result.ok
-              ? "Version sign-off recorded. The site was not published."
-              : result.message,
-          );
-        });
-      }}
       onAddMember={(roomId, userId, role) => {
         void addMemberAction(roomId, userId, role).then((result) => {
           if (loadedRoom.current !== roomId) return;
@@ -708,7 +687,10 @@ export function RoomSession({
                 : item,
             ),
           );
-          setNotice("Thread resolved. The anchor history was not rewritten.");
+          setNotice("Comment moved to resolved comments.");
+        }).catch(() => {
+          if (loadedRoom.current === roomId)
+            setNotice("The comment could not be resolved. Try again.");
         });
       }}
       onReanchor={(roomId, threadId, reason, selection) => {

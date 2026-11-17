@@ -5,7 +5,7 @@ test.use({ hasTouch: true });
 test.skip(process.env.ROOMS_PREVIEW_E2E !== "1", "Requires the development rooms preview");
 
 test("custom workspace selectors support pointer and keyboard selection", async ({ page }) => {
-  await page.goto("/dev/rooms-preview");
+  await page.goto("/dev/rooms-preview?room=project-launch&site=site-launch");
   await page.getByRole("button", { name: "Canvas", exact: true }).click();
   const site = page.getByRole("combobox", { name: "Site or image", exact: true });
   await site.click();
@@ -37,7 +37,7 @@ test("custom workspace selectors support pointer and keyboard selection", async 
 
 test("dropdowns remain inside a mobile viewport and support touch selection", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/dev/rooms-preview");
+  await page.goto("/dev/rooms-preview?room=project-launch&site=site-launch");
   const site = page.getByRole("combobox", { name: "Site or image", exact: true });
   await site.tap();
   const menu = page.getByRole("listbox");

@@ -315,39 +315,14 @@ describe("project room markup", () => {
         notice: null,
         members: [{ userId: "user-2", role: "reviewer" }],
         attachedSites: [{ siteId: "site-1", createdBy: "user-1" }],
-        siteComments: [{
-          source: "room",
-          id: "c-1",
-          createdAt: "2026-11-09T00:00:00Z",
-          body: "<script>alert(1)</script>",
-          page: "/index.html",
-          anchorKind: "page",
-          status: "open",
-          versionId: "ver-1",
-          contentHash: "hash-1",
-        }, {
-          source: "room",
-          id: "c-2",
-          createdAt: "2026-11-09T00:00:01Z",
-          body: "",
-          page: "/index.html",
-          anchorKind: "page",
-          status: "open",
-          versionId: "ver-1",
-          contentHash: "hash-1",
-        }],
-        commentCursor: null,
         threadCursor: "thread-cursor",
         candidateCursor: null,
         onCreateRoom: () => undefined,
         onSelectRoom: () => undefined,
-        onSelectSite: () => undefined,
-        onLoadMoreComments: () => undefined,
         onLoadMoreThreads: () => undefined,
         onLoadMoreCandidates: () => undefined,
         onCreateThread: () => undefined,
         onReply: () => undefined,
-        onSignoff: () => undefined,
         onDecide: () => undefined,
         onSubmitCandidate: () => undefined,
         onAddMember: () => undefined,
@@ -363,8 +338,10 @@ describe("project room markup", () => {
     expect(room).toContain("Expand reply");
     expect(room).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(room).not.toContain("<script>alert");
-    expect(room).toContain("Site-wide comment history");
-    expect(room).toContain("Open this thread in the comments panel");
+    expect(room).not.toContain("Site-wide comment history");
+    expect(room).not.toContain("Version sign-off");
+    expect(room).toContain("Open comments");
+    expect(room).toContain("Resolved comments");
     expect(room).toContain("Home page");
     expect(room).not.toContain(" · hash ");
     expect(room).toContain("Load older threads");
@@ -384,8 +361,7 @@ describe("project room markup", () => {
     expect(room).not.toContain("credential_store_unavailable");
     expect(room).not.toContain("type=\"password\"");
     expect(room).toContain("Safe preview of this version");
-    expect(room).toContain("Record version sign-off");
-    expect(room).toContain("does not approve a change");
+    expect(room).not.toContain("Record version sign-off");
   });
 });
 

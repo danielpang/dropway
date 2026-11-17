@@ -8,6 +8,7 @@
 import * as React from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
+  FolderOpen,
   Users,
   UserRound,
   Unlink,
@@ -27,6 +28,8 @@ import {
   Check,
   X,
 } from "lucide-react";
+import { RoomDirectory } from "./room-directory";
+import type { RoomLocation } from "@/lib/project-room/use-room-navigation";
 import { UploadProjectImage } from "./upload-project-image";
 import { NewProjectSite } from "./new-project-site";
 import { ProjectSharing } from "./project-sharing";
@@ -57,7 +60,6 @@ import { Input } from "@/components/ui/input";
 import {
   canComment,
   canDecideChange,
-  canSignOffVersion,
   pageCommentAnchor,
   parseRole,
   untrustedText,
@@ -65,7 +67,6 @@ import {
   type ProjectRoom,
   type ReviewCandidate,
   type ReviewThread,
-  type SiteCommentItem,
   type SiteRights,
   type RoomActivity,
 } from "@/lib/project-room/contract";
@@ -82,6 +83,10 @@ export interface RoomSiteOption {
 }
 
 export function RoomWorkspace({
+  navigation,
+  onNavigate,
+  discussionLoading = false,
+  discussionError,
   activity = [],
   activityCursor = null,
   onLoadMoreActivity,
@@ -95,8 +100,6 @@ export function RoomWorkspace({
   diffs,
   members,
   attachedSites,
-  siteComments,
-  commentCursor,
   threadCursor,
   candidateCursor,
   parentOrigin,
@@ -114,15 +117,12 @@ export function RoomWorkspace({
   renderImageUpload,
   onSelectRoom,
   onRefreshRoom,
-  onSelectSite,
-  onLoadMoreComments,
   onLoadMoreThreads,
   onLoadMoreCandidates,
   onCreateThread,
   onReply,
   onLoadMoreReplies,
   onLoadMoreRevisions,
-  onSignoff,
   onDecide,
   onApply,
   publishedRevision,
@@ -135,6 +135,10 @@ export function RoomWorkspace({
   onDetachSite,
   onResolve,
 }: {
+  navigation?: RoomLocation;
+  onNavigate?: (location: RoomLocation) => void;
+  discussionLoading?: boolean;
+  discussionError?: string | null;
   activity?: RoomActivity[];
   activityCursor?: string | null;
   onLoadMoreActivity?: (roomId: string, cursor: string) => void;
@@ -148,8 +152,6 @@ export function RoomWorkspace({
   diffs: Record<string, CandidateDiffView>;
   members: { userId: string; role: string; name?: string }[];
   attachedSites: { siteId: string; createdBy: string }[];
-  siteComments: SiteCommentItem[];
-  commentCursor: string | null;
   threadCursor: string | null;
   candidateCursor: string | null;
   parentOrigin: string;
@@ -172,8 +174,6 @@ export function RoomWorkspace({
   ) => React.ReactNode;
   onSelectRoom: (roomId: string) => void;
   onRefreshRoom?: (roomId: string) => void;
-  onSelectSite: (siteId: string) => void;
-  onLoadMoreComments: (siteId: string, cursor: string) => void;
   onLoadMoreThreads: (roomId: string, cursor: string) => void;
   onLoadMoreCandidates: (roomId: string, cursor: string) => void;
   onCreateThread: (input: {
@@ -202,7 +202,6 @@ export function RoomWorkspace({
     body: string,
     execution?: MentionExecution,
   ) => Promise<boolean> | void;
-  onSignoff: (roomId: string, siteId: string, versionId: string) => void;
   onDecide: (
     roomId: string,
     candidate: ReviewCandidate,
@@ -240,19 +239,12 @@ export function RoomWorkspace({
     selection?: StaticSelection,
   ) => void;
 }) {
-  const [roomId, setRoomId] = React.useState(rooms[0]?.ID ?? "");
-  const restoredRoomLink = React.useRef(false);
-  React.useEffect(() => {
-    if (restoredRoomLink.current || rooms.length === 0) return;
-    restoredRoomLink.current = true;
-    const requested = new URLSearchParams(window.location.search).get("room");
-    if (requested && rooms.some((item) => item.ID === requested))
-      setRoomId(requested);
-  }, [rooms]);
+  const [roomId, setRoomId] = React.useState(navigation?.roomId ?? rooms[0]?.ID ?? "");
+  const [workspace, setWorkspace] = React.useState(navigation?.workspace ?? true);
   const [name, setName] = React.useState("");
   const [creating, setCreating] = React.useState(false);
   const [selectedSiteIds, setSelectedSiteIds] = React.useState<string[]>([]);
-  const [showCreate, setShowCreate] = React.useState(rooms.length === 0);
+  const [showCreate, setShowCreate] = React.useState(navigation ? Boolean(navigation.create) : rooms.length === 0);
   const [onboarding, setOnboarding] = React.useState(false);
   const [settingsSection, setSettingsSection] = React.useState<
     "general" | "people" | "ai"
@@ -277,14 +269,15 @@ export function RoomWorkspace({
         .getElementById(`thread-${activeThreadId}`)
         ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeThreadId, commentsVisible]);
+  const [commentStatus, setCommentStatus] = React.useState<"open" | "resolved">("open");
   const [commentFilter, setCommentFilter] = React.useState("all");
   const [attachId, setAttachId] = React.useState("");
   const requestedSite = React.useRef<{ roomId: string; siteId: string } | null>(
     null,
   );
-  const [siteId, setSiteId] = React.useState(attachedSites[0]?.siteId ?? "");
+  const [siteId, setSiteId] = React.useState(navigation?.siteId ?? attachedSites[0]?.siteId ?? "");
   const [versionId, setVersionId] = React.useState(
-    sites.find((s) => s.id === attachedSites[0]?.siteId)?.currentVersionId ??
+    sites.find((s) => s.id === (navigation?.siteId || attachedSites[0]?.siteId))?.currentVersionId ??
       "",
   );
   const [revisionNumbers, setRevisionNumbers] = React.useState<
@@ -301,7 +294,7 @@ export function RoomWorkspace({
       setRevisionNumbers({ "version-1": 1, "version-2": 2, "version-3": 3 });
       return;
     }
-    if (siteId)
+    if (workspace && siteId)
       void loadRoomRevisions(siteId, controller.signal)
         .then((result) => {
           if (active && result.ok) {
@@ -316,7 +309,7 @@ export function RoomWorkspace({
       active = false;
       controller.abort();
     };
-  }, [siteId, currentSiteVersion, demo, publishedRevision]);
+  }, [siteId, currentSiteVersion, demo, publishedRevision, workspace]);
   const revisionLabel = (id: string) =>
     revisionNumbers[id]
       ? `Revision ${revisionNumbers[id]}`
@@ -366,6 +359,25 @@ export function RoomWorkspace({
       (item) => item.ID === linkedThreadId && item.RoomID === roomId,
     ) ?? null;
   const linkedSiteId = linkedThread?.SiteID;
+  // A permalink reveals a resolved discussion, but resolving an already open
+  // thread must not switch tabs and keep its card on screen.
+  const revealedThread = React.useRef("");
+  React.useEffect(() => {
+    if (!linkedThread) {
+      revealedThread.current = "";
+      return;
+    }
+    if (revealedThread.current === linkedThread.ID) return;
+    revealedThread.current = linkedThread.ID;
+    setCommentStatus(linkedThread.Status === "resolved" ? "resolved" : "open");
+  }, [linkedThread]);
+  React.useEffect(() => {
+    if (activeThreadId && !threads.some((thread) =>
+      thread.ID === activeThreadId && (thread.Status === "resolved") === (commentStatus === "resolved"),
+    )) {
+      setActiveThreadId("");
+    }
+  }, [threads, activeThreadId, commentStatus]);
   const linkedVersionId = linkedThread?.VersionID;
   const linkedPage = linkedThread?.Page;
   const linkedContentHash = linkedThread?.ContentHash;
@@ -386,6 +398,7 @@ export function RoomWorkspace({
     setStaticSelection(null);
     setSnapshotNotice("");
     if (
+      !workspace ||
       detailsRoomId !== roomId ||
       !roomId ||
       !siteId ||
@@ -439,18 +452,14 @@ export function RoomWorkspace({
     siteAttached,
     previewCache,
     detailsRoomId,
+    workspace,
   ]);
   const room = rooms.find((item) => item.ID === roomId) ?? null;
   React.useEffect(() => {
-    if (!roomId && rooms[0]?.ID) setRoomId(rooms[0].ID);
-  }, [roomId, rooms]);
-  React.useEffect(() => {
-    if (roomId) onSelectRoom(roomId);
+    onSelectRoom(roomId);
   }, [onSelectRoom, roomId]);
   React.useEffect(() => {
-    if (siteId) onSelectSite(siteId);
-  }, [onSelectSite, siteId]);
-  React.useEffect(() => {
+    if (!workspace) return;
     if (
       detailsRoomId === roomId &&
       requestedSite.current?.roomId === roomId &&
@@ -483,7 +492,7 @@ export function RoomWorkspace({
     setVersionId(next?.currentVersionId ?? "");
     setLinkedThreadId("");
     setPage("/");
-  }, [attachedSites, siteId, sites, detailsRoomId, roomId, linkedThreadId]);
+  }, [attachedSites, siteId, sites, detailsRoomId, roomId, linkedThreadId, workspace]);
   const role = room ? parseRole(room.Role) : null;
   const site = sites.find((item) => item.id === siteId) ?? null;
   const rights: SiteRights = {
@@ -497,7 +506,6 @@ export function RoomWorkspace({
   >({});
   const commentOk = role ? canComment(role, rights) : false;
   const decideOk = role ? canDecideChange(role, rights) : false;
-  const signoffOk = role ? canSignOffVersion(role, rights) : false;
   const sourceContentHash =
     versionId === site?.currentVersionId
       ? site.currentContentHash
@@ -508,6 +516,7 @@ export function RoomWorkspace({
     (t) =>
       t.RoomID === roomId &&
       t.SiteID === siteId &&
+      (t.Status === "resolved") === (commentStatus === "resolved") &&
       (commentFilter === "all" ||
         t.VersionID ===
           (commentFilter === "current" ? versionId : commentFilter)),
@@ -535,7 +544,40 @@ export function RoomWorkspace({
     ) : (
       <UploadProjectImage onReady={onReady} />
     );
+  const navigate = (next: RoomLocation) => {
+    setRoomId(next.roomId);
+    setSiteId(next.siteId);
+    setVersionId(sites.find((item) => item.id === next.siteId)?.currentVersionId ?? "");
+    setWorkspace(next.workspace);
+    setLinkedThreadId("");
+    setActiveThreadId("");
+    setCommentStatus("open");
+    setShowCreate(Boolean(next.create));
+    setPage("/");
+    onNavigate?.(next);
+  };
+  React.useEffect(() => {
+    if (!navigation) return;
+    setRoomId(navigation.roomId);
+    setWorkspace(navigation.workspace);
+    setShowCreate(Boolean(navigation.create));
+    // Thread links choose their own site, version and page once hydrated.
+    // The hash becomes available after hydration, separately from query params.
+    if (navigation.roomId && window.location.hash.startsWith("#thread-")) {
+      setPanel("review");
+      return;
+    }
+    setSiteId(navigation.siteId);
+    setVersionId(sites.find((item) => item.id === navigation.siteId)?.currentVersionId ?? "");
+    if (navigation.siteId) setPanel("review");
+    setActiveThreadId("");
+    setPage("/");
+    // Only navigation resets a chosen historical revision, not resource refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigation?.roomId, navigation?.siteId, navigation?.workspace, navigation?.create]);
+  const openCreate = () => navigate({ roomId, siteId, workspace, create: true });
   const chooseSite = (id: string) => {
+    navigate({ roomId, siteId: id, workspace: true });
     requestedSite.current = null;
     setLinkedThreadId("");
     setCommentFilter("all");
@@ -907,6 +949,7 @@ export function RoomWorkspace({
                   latestDraft.current[key as keyof typeof submitted] === value,
               )
             ) {
+              setCommentStatus("open");
               if (hasDropwayMention(body)) setCommentsVisible(true);
               setBody("");
               setStaticSelection(null);
@@ -978,48 +1021,6 @@ export function RoomWorkspace({
       </form>
     </>
   );
-  const siteFeed = (
-    <>
-      <section className="space-y-3" aria-label="Site comment page">
-        <p className="text-sm text-muted-foreground">
-          Comments from across this site, including earlier versions.
-        </p>
-        <ul className="space-y-2">
-          {siteComments.map((item) => (
-            <li
-              key={item.id}
-              className="min-w-0 space-y-1 rounded-md border border-border p-3 text-sm [overflow-wrap:anywhere]"
-            >
-              <p className="text-xs text-muted-foreground">
-                {item.source}
-                {item.anchorKind ? ` · ${item.anchorKind}` : ""}
-                {item.page ? ` · ${item.page}` : ""}
-                {item.status ? ` · ${item.status}` : ""}
-                {item.versionId ? ` · ${revisionLabel(item.versionId)}` : ""}
-                {` · ${new Date(item.createdAt).toLocaleDateString()}`}
-              </p>
-              {item.body ? (
-                <ReplyText body={untrustedText(item.body)} />
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Open this thread in the comments panel to read the discussion.
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
-        {commentCursor ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onLoadMoreComments(siteId, commentCursor)}
-          >
-            Load older site comments
-          </Button>
-        ) : null}
-      </section>
-    </>
-  );
   const renderThread = (thread: ReviewThread, inline = false) => (
     <li
       id={inline ? undefined : `thread-${thread.ID}`}
@@ -1046,7 +1047,8 @@ export function RoomWorkspace({
             on {thread.Page}
           </button>
         ) : null}
-        <Tooltip label="Resolve comment" align="end">
+        {thread.Status !== "resolved" ? (
+          <Tooltip label="Resolve comment" align="end">
           <Button
             type="button"
             size="icon"
@@ -1058,7 +1060,8 @@ export function RoomWorkspace({
           >
             <Check className="h-4 w-4" aria-hidden="true" />
           </Button>
-        </Tooltip>
+          </Tooltip>
+        ) : <span className="text-xs text-muted-foreground">Resolved</span>}
       </div>
       <p className="text-xs text-muted-foreground">
         {revisionLabel(thread.VersionID)} · {thread.Status}{" "}
@@ -1291,10 +1294,30 @@ export function RoomWorkspace({
             ))}
           </Select>
         </div>
-        {visibleThreads.length === 0 ? (
+        <div className="flex gap-1 rounded-lg bg-muted/50 p-1" role="group" aria-label="Comment status">
+          {(["open", "resolved"] as const).map((status) => (
+            <button
+              key={status}
+              type="button"
+              aria-pressed={commentStatus === status}
+              onClick={() => { setCommentStatus(status); setActiveThreadId(""); }}
+              className={`flex-1 rounded-md px-2 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${commentStatus === status ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+              {status === "open" ? "Open comments" : "Resolved comments"}
+            </button>
+          ))}
+        </div>
+        {discussionError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {discussionError}{" "}
+            <button type="button" className="underline" onClick={() => onRefreshRoom?.(roomId)}>Retry</button>
+          </p>
+        ) : null}
+        {discussionLoading ? (
+          <p role="status" className="p-4 text-sm text-muted-foreground">Loading comments…</p>
+        ) : null}
+        {!discussionLoading && !discussionError && visibleThreads.length === 0 ? (
           <p className="rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground">
-            No comments here yet. Select a point in the preview or leave a page
-            comment.
+            {commentStatus === "resolved" ? "No resolved comments yet." : "No open comments. Select a point in the preview or leave a page comment."}
           </p>
         ) : null}
         <ul className="space-y-1.5">
@@ -1312,26 +1335,6 @@ export function RoomWorkspace({
       </section>
     </>
   );
-  const signoffPanel = (
-    <>
-      <section className="space-y-3" aria-label="Version sign-off">
-        <p className="text-sm text-muted-foreground">
-          Sign-off records that you looked at a version. It does not approve a
-          change and it does not publish.
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!signoffOk || !room || versionId.trim().length === 0}
-          onClick={() => {
-            if (room) onSignoff(room.ID, siteId.trim(), versionId.trim());
-          }}
-        >
-          Record version sign-off
-        </Button>
-      </section>
-    </>
-  );
   const changesPanel = (
     <>
       <section className="space-y-3" aria-label="Proposed changes">
@@ -1346,7 +1349,9 @@ export function RoomWorkspace({
         <p className="text-sm text-muted-foreground">
           Compare the current version with the proposal. Accept change publishes it; reject keeps your current version.
         </p>
-        {candidates.filter((item) => item.RoomID === roomId).length === 0 ? (
+        {discussionLoading ? <p role="status" className="text-sm text-muted-foreground">Loading proposed changes…</p> : null}
+        {discussionError ? <p role="alert" className="text-sm text-destructive">{discussionError}</p> : null}
+        {!discussionLoading && !discussionError && candidates.filter((item) => item.RoomID === roomId).length === 0 ? (
           <p className="rounded-lg bg-muted/40 p-5 text-sm text-muted-foreground">
             No proposed changes yet. AI revisions will appear here for your
             approval.
@@ -1452,12 +1457,12 @@ export function RoomWorkspace({
   return (
     <div
       className={
-        room && !showCreate
+        !showCreate && (room || !workspace)
           ? "min-h-0"
           : "mx-auto max-w-6xl space-y-6 p-6 sm:p-10"
       }
     >
-      {!room || showCreate ? (
+      {showCreate || (!room && workspace) ? (
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="mb-1 text-xs font-medium text-muted-foreground">
@@ -1470,7 +1475,7 @@ export function RoomWorkspace({
             </p>
           </div>
           <Button
-            onClick={() => setShowCreate((value) => !value)}
+            onClick={() => showCreate ? navigate({ roomId, siteId, workspace }) : openCreate()}
             disabled={!orgEnabled}
           >
             New project
@@ -1546,7 +1551,7 @@ export function RoomWorkspace({
                 try {
                   const id = await onCreateRoom(name.trim(), selectedSiteIds);
                   if (id) {
-                    setRoomId(id);
+                    navigate({ roomId: id, siteId: "", workspace: true });
                     setName("");
                     setSelectedSiteIds([]);
                     setShowCreate(false);
@@ -1639,11 +1644,11 @@ export function RoomWorkspace({
                 <Button type="submit" disabled={creating || !name.trim()}>
                   {creating ? "Creating project…" : "Create project"}
                 </Button>
-                {rooms.length > 0 ? (
+                {rooms.length > 0 || navigation ? (
                   <Button
                     variant="ghost"
                     type="button"
-                    onClick={() => setShowCreate(false)}
+                    onClick={() => navigate({ roomId, siteId, workspace })}
                   >
                     Cancel
                   </Button>
@@ -1684,17 +1689,41 @@ export function RoomWorkspace({
           ))}
         </div>
       ) : null}
-      {orgEnabled && room && !showCreate ? (
+      {orgEnabled && !workspace && !showCreate ? (
+        <RoomDirectory
+          rooms={rooms}
+          room={room}
+          sites={detailsRoomId === roomId ? projectSites : []}
+          loading={Boolean(room && detailsRoomId !== roomId && roomLoadError?.roomId !== roomId)}
+          error={roomLoadError?.roomId === roomId ? roomLoadError.message : undefined}
+          onChooseRoom={(id) => navigate({ roomId: id, siteId: "", workspace: false })}
+          onOpenSite={(id) => { chooseSite(id); setPanel("review"); }}
+          onCreate={openCreate}
+          onSettings={() => { navigate({ roomId, siteId: "", workspace: true }); setPanel("settings"); }}
+          onRetry={() => onRefreshRoom?.(roomId)}
+          addSite={role === "owner" || role === "editor" ? addSitePanel : null}
+        />
+      ) : null}
+      {orgEnabled && room && workspace && !showCreate ? (
         <div className="flex h-[calc(100dvh-3.5rem)] min-h-[32rem] flex-col bg-background">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => navigate({ roomId, siteId: "", workspace: false })}
+                aria-label="Browse room contents"
+              >
+                <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                <span className="ml-2 hidden sm:inline">Files</span>
+              </Button>
               <Select
                 aria-label="Project"
                 value={roomId}
                 variant="ghost"
                 className="h-9 w-auto font-semibold"
                 onChange={(event) => {
-                  setRoomId(event.target.value);
+                  navigate({ roomId: event.target.value, siteId: "", workspace: false });
                   setPanel("review");
                   setLinkedThreadId("");
                   setCommentFilter("all");
@@ -1717,7 +1746,7 @@ export function RoomWorkspace({
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setShowCreate(true)}
+                  onClick={openCreate}
                   aria-label="New project"
                 >
                   <Plus className="h-4 w-4" aria-hidden="true" />
@@ -1916,6 +1945,7 @@ export function RoomWorkspace({
                           .filter(
                             (t) =>
                               t.RoomID === roomId &&
+                              (t.Status === "resolved") === (commentStatus === "resolved") &&
                               t.SiteID === snapshot.siteId &&
                               t.VersionID === snapshot.versionId &&
                               t.ContentHash === snapshot.contentHash &&
@@ -1937,7 +1967,8 @@ export function RoomWorkspace({
                             (item) =>
                               item.ID === id &&
                               item.RoomID === roomId &&
-                              item.SiteID === siteId,
+                              item.SiteID === siteId &&
+                              (item.Status === "resolved") === (commentStatus === "resolved"),
                           );
                           return thread ? (
                             <ul>{renderThread(thread, true)}</ul>
@@ -2004,26 +2035,6 @@ export function RoomWorkspace({
                       </div>
                       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                         {commentsPanel}
-                        <details className="group/section border-t border-border pt-2">
-                          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
-                            Version sign-off
-                            <ChevronDown
-                              className="h-3.5 w-3.5 transition-transform group-open/section:rotate-180"
-                              aria-hidden="true"
-                            />
-                          </summary>
-                          <div className="mt-3">{signoffPanel}</div>
-                        </details>
-                        <details className="group/section border-t border-border pt-2">
-                          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground [&::-webkit-details-marker]:hidden">
-                            Site-wide comment history
-                            <ChevronDown
-                              className="h-3.5 w-3.5 transition-transform group-open/section:rotate-180"
-                              aria-hidden="true"
-                            />
-                          </summary>
-                          <div className="mt-3">{siteFeed}</div>
-                        </details>
                       </div>
                       <div className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border bg-muted/10 p-4">
                         {staticSelection ? (

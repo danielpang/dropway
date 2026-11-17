@@ -120,7 +120,19 @@ export async function signoffAction(roomId: string, siteId: string, versionId: s
   }
 }
 
+// Room resources can render before reply and proposal hydration finishes.
 export async function loadRoomAction(roomId: string) {
+  if (!(await collaborationEnabled())) return closed();
+  try {
+    const detail = parseRoomDetail(await api.getProjectRoom(roomId));
+    if (!detail || detail.room.ID !== roomId) return { ok: false as const, message: "The room read was not usable." };
+    return { ok: true as const, detail };
+  } catch (error) {
+    return { ok: false as const, message: messageOf(error) };
+  }
+}
+
+export async function loadRoomDiscussionAction(roomId: string) {
   if (!(await collaborationEnabled())) return closed();
   try {
     const [detailBody, threadBody, candidateBody, org] = await Promise.all([
@@ -132,11 +144,9 @@ export async function loadRoomAction(roomId: string) {
     const detail = parseRoomDetail(detailBody);
     const threads = parseThreadPage(threadBody);
     const candidates = parseCandidatePage(candidateBody);
-    if (!detail || !threads || !candidates) {
-      return { ok: false as const, message: "The room read was not usable." };
+    if (!detail || detail.room.ID !== roomId || !threads || !candidates) {
+      return { ok: false as const, message: "The room discussion could not be read." };
     }
-    // Resolve names only for the authorized room's members, never expand the
-    // picker to everyone in the organization. Identity lookup is best-effort.
     if (org?.organizationId === detail.room.OrgID) {
       const names = new Map(org.members.map((member) => [member.userId, member.name?.trim() || member.email || member.userId]));
       detail.members = detail.members.map((member) => ({ ...member, name: names.get(member.userId) }));
@@ -147,7 +157,7 @@ export async function loadRoomAction(roomId: string) {
     ]);
     return {
       ok: true as const,
-      detail,
+      members: detail.members,
       threads: withReplies,
       threadCursor: threads.nextCursor,
       candidates: identified,
@@ -446,15 +456,22 @@ function verifiedSnapshotFile(value: unknown, siteId: string, versionId: string,
 }
 
 export async function loadStaticSnapshotAction(roomId: string, siteId: string, versionId: string, page: string) {
+  const started = performance.now();
   if (!(await collaborationEnabled())) return closed();
+  const accessMs = performance.now() - started;
   const path = snapshotPagePath(page);
   if (!path) return { ok: false as const, message: "Choose a file path inside this version." };
   try {
+    const documentStarted = performance.now();
     const file = verifiedSnapshotFile(await api.getRoomVersionFile(roomId, siteId, versionId, path), siteId, versionId, path);
+    const documentMs = performance.now() - documentStarted;
+    const prepareStarted = performance.now();
     const mime = file.contentType.split(";")[0]!.trim().toLowerCase();
     if (mime !== "text/html" && mime !== "application/xhtml+xml") return { ok: false as const, message: "Static review currently supports HTML pages. Other files keep page comments." };
     const html = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
     const prepared = prepareStaticSnapshot(html, `/${path}`);
+    const prepareMs = performance.now() - prepareStarted;
+    const assetsStarted = performance.now();
     const images = new Map<string, string>();
     await Promise.all(prepared.imagePaths.slice(0, 8).map(async (assetPath) => {
       try {
@@ -464,7 +481,13 @@ export async function loadStaticSnapshotAction(roomId: string, siteId: string, v
         if (url) images.set(assetPath, url);
       } catch { /* Missing, oversized or unsupported assets stay visibly omitted. */ }
     }));
-    return { ok: true as const, snapshot: prepared.render(images, { siteId, versionId, contentHash: file.contentHash, page }) };
+    const assetsMs = performance.now() - assetsStarted;
+    const renderStarted = performance.now();
+    const snapshot = prepared.render(images, { siteId, versionId, contentHash: file.contentHash, page });
+    return { ok: true as const, snapshot, timings: {
+      access: accessMs, document: documentMs, assets: assetsMs,
+      render: prepareMs + performance.now() - renderStarted,
+    } };
   } catch {
     // Never return source bytes, object-store details, or raw parser errors.
     return { ok: false as const, message: "This immutable page could not be verified or is too large for static review. Page comments remain available." };
