@@ -330,6 +330,20 @@ func (a *API) DeleteSite(w http.ResponseWriter, r *http.Request) {
 	a.recordAudit(r, t, audit.ActionSiteDelete, "site:"+id, map[string]any{
 		"slug": site.Slug,
 	})
+	// Best-effort analytics: pairs with site_created so the dashboard can count
+	// each org's live sites (created minus deleted).
+	if a.Analytics != nil {
+		a.Analytics.Capture(r.Context(), analytics.Event{
+			DistinctID: t.UserID,
+			Event:      "site_deleted",
+			Properties: map[string]any{
+				"org_id":  t.OrgID,
+				"site_id": id,
+				"slug":    site.Slug,
+			},
+			Groups: map[string]string{"organization": t.OrgID},
+		})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

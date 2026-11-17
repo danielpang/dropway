@@ -15,9 +15,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/danielpang/dropway/internal/analytics"
 	"github.com/danielpang/dropway/internal/audit"
 	"github.com/danielpang/dropway/internal/httpx"
 	"github.com/danielpang/dropway/internal/manifest"
+	"github.com/danielpang/dropway/internal/middleware"
 	"github.com/danielpang/dropway/internal/projection"
 	"github.com/danielpang/dropway/internal/storage"
 	"github.com/danielpang/dropway/services/api/internal/store"
@@ -424,10 +426,69 @@ func (a *API) Publish(w http.ResponseWriter, r *http.Request) {
 		"host":       res.Host,
 	})
 	a.indexSiteVersionAsync(r, t, siteID, req.VersionID)
+	a.emitSitePublished(r, t, site, req.VersionID, res.Host)
 	httpx.WriteJSON(w, http.StatusOK, publishResponse{
 		LiveURL:   a.ContentURL(res.Host),
 		VersionID: req.VersionID,
 	})
+}
+
+// emitSitePublished records a successful publish (or rollback) as a
+// `site_published` product-analytics event, so the dashboard can rank sites and
+// orgs by how often they are updated alongside `site_visit`. It runs only after
+// the edge route was written, so it counts publishes that actually went live.
+// `site` is the row read BEFORE the publish: a nil CurrentVersionID means this
+// was the site's first publish. Best-effort: a nil emitter is a no-op and the
+// version lookup failing only drops version_no.
+func (a *API) emitSitePublished(r *http.Request, t store.Tenant, site store.Site, versionID, host string) {
+	if a.Analytics == nil {
+		return
+	}
+	kind := "update"
+	switch {
+	case site.CurrentVersionID == nil:
+		kind = "first_publish"
+	case *site.CurrentVersionID == versionID:
+		kind = "republish"
+	}
+	props := map[string]any{
+		"org_id":     t.OrgID,
+		"site_id":    site.ID,
+		"slug":       site.Slug,
+		"$host":      host,
+		"version_id": versionID,
+		"kind":       kind,
+		"source":     publishSource(r),
+	}
+	if ver, err := a.Store.GetSiteVersion(r.Context(), t, versionID); err == nil {
+		props["version_no"] = ver.VersionNo
+	}
+	a.Analytics.Capture(r.Context(), analytics.Event{
+		DistinctID: t.UserID,
+		Event:      "site_published",
+		Properties: props,
+		Groups:     map[string]string{"organization": t.OrgID},
+	})
+}
+
+// publishSource names where a publish came from, from the caller's verified
+// credential class: the dashboard (human session), the CLI/SDK (org API key) or
+// an MCP client. Anything else is "other".
+func publishSource(r *http.Request) string {
+	class, ok := middleware.CredentialClassFromContext(r.Context())
+	if !ok {
+		return "other"
+	}
+	switch class {
+	case middleware.CredentialHumanSession:
+		return "dashboard"
+	case middleware.CredentialOrgAPIKey:
+		return "api_key"
+	case middleware.CredentialMCPOAuth:
+		return "mcp"
+	default:
+		return "other"
+	}
 }
 
 // ---------------------------------------------------------------------------
