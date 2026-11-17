@@ -254,6 +254,9 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 	must(t, st.GuestSignoff(ctx, guest, room.ID, site.ID, ver.ID, hash))
 	// Pending token expiry does not terminate an already accepted invitation.
 	mustExec(t, `UPDATE app.project_guest_shares SET expires_at=now()-interval '1 day',last_invited_at=now()-interval '2 minutes' WHERE id=$1`, share.ID)
+	if _, err := st.InspectProjectInvitation(ctx, token); !errors.Is(err, store.ErrRoomForbidden) {
+		t.Fatal("expired token still disclosed invitation")
+	}
 	_, err = st.GuestProject(ctx, guest, room.ID, "")
 	must(t, err)
 	_, rotated, err := st.InviteProjectGuest(ctx, tn, room.ID, share.Email, "reviewer", 7)
@@ -324,6 +327,9 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 		}
 	}
 	must(t, st.RevokeProjectGuest(ctx, tn, room.ID, share.ID))
+	if _, err := st.InspectProjectInvitation(ctx, rotated); !errors.Is(err, store.ErrRoomForbidden) {
+		t.Fatal("revoked token still disclosed invitation")
+	}
 	if _, err := st.GuestProject(ctx, guest, room.ID, ""); !errors.Is(err, store.ErrRoomForbidden) {
 		t.Fatal("revoked grant retained access")
 	}

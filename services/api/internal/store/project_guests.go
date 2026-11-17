@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/mail"
 	"strings"
 	"time"
@@ -31,8 +32,11 @@ func (s *Store) InspectProjectInvitation(ctx context.Context, token string) (Inv
 		return out, ErrRoomForbidden
 	}
 	err := s.pool.QueryRow(ctx, `SELECT org_id::text,owner_user_id::text,email,project_name,has_account FROM app.inspect_project_invitation($1)`, shareHash(token)).Scan(&org, &owner, &out.Email, &out.ProjectName, &out.HasAccount)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return InvitationDetails{}, ErrRoomForbidden
+	}
+	if err != nil {
+		return InvitationDetails{}, err
 	}
 	if s.collaborationAllowed == nil || !s.collaborationAllowed(ctx, owner, org) {
 		return InvitationDetails{}, ErrRoomForbidden

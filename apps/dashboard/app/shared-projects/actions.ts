@@ -131,7 +131,7 @@ export async function rememberProjectInvitationAction(token: string) {
     path: "/shared-projects",
     maxAge: 1800,
   });
-  return { ok: true as const, invitation: await loadProjectInvitation(token) };
+  return { ok: true as const, lookup: await loadProjectInvitation(token) };
 }
 export async function acceptSharedProjectAction() {
   try {

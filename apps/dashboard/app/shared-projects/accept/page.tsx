@@ -5,14 +5,14 @@ import { AcceptProjectInvitation } from "@/components/shared-projects/accept-inv
 export const dynamic = "force-dynamic";
 export default async function AcceptInvitationPage() {
   const token = (await cookies()).get("dropway-project-invitation")?.value;
-  const [session, invitation] = await Promise.all([
+  const [session, lookup] = await Promise.all([
     getCurrentSession(),
     token ? loadProjectInvitation(token) : Promise.resolve(null),
   ]);
   return (
     <AcceptProjectInvitation
       pendingInvitation={Boolean(token)}
-      invitation={invitation}
+      lookup={lookup}
       email={session?.user.email ?? null}
       verified={session?.user.emailVerified === true}
     />
