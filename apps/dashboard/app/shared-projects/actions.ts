@@ -18,6 +18,7 @@ import {
   prepareStaticSnapshot,
   verifiedRasterDataURL,
 } from "@/lib/collab/static-renderer";
+import { loadProjectInvitation } from "@/lib/project-room/invitation";
 import { snapshotPagePath } from "@/lib/collab/static-snapshot";
 const enc = encodeURIComponent;
 function failure(error: unknown) {
@@ -98,8 +99,7 @@ export async function inviteProjectGuestAction(
       ok: true as const,
       share,
       delivered: true,
-      message:
-        "Invitation email accepted by the mail server. The recipient must sign in with the invited email and accept.",
+      message: "Invitation email sent",
     };
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {
@@ -131,7 +131,7 @@ export async function rememberProjectInvitationAction(token: string) {
     path: "/shared-projects",
     maxAge: 1800,
   });
-  return { ok: true as const };
+  return { ok: true as const, invitation: await loadProjectInvitation(token) };
 }
 export async function acceptSharedProjectAction() {
   try {

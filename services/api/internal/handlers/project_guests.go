@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"strings"
@@ -20,6 +21,45 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// Inspection is possession-based and read-only. Never log or echo the token.
+func (a *API) InspectProjectInvitation(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeHosted(w, r, &body, 1024) {
+		return
+	}
+	st, ok := a.Rooms.(*store.Store)
+	if !ok || st == nil {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, httpx.ErrorBody{Error: "unavailable", Message: "project sharing unavailable"})
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	details, err := st.InspectProjectInvitation(r.Context(), body.Token)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, details)
+}
+
+func InvitationLookupLimiter() func(http.Handler) http.Handler {
+	limit := newRateLimiter(30, 10, 10*time.Minute)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				host = r.RemoteAddr
+			}
+			if allowed, retry := limit.allow(host); !allowed {
+				httpx.WriteRateLimited(w, retry, "rate_limited", "too many invitation requests")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 func (a *API) guestStore(w http.ResponseWriter, r *http.Request) (*store.Store, string, bool) {
 	c, ok := middleware.ClaimsFromContext(r.Context())

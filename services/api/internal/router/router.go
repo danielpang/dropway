@@ -58,6 +58,7 @@ func New(verifier middleware.Verifier, api *handlers.API, baseLogger *slog.Logge
 	// Better Auth token. It mints an ANON edge token (no identity). It still lives
 	// under /v1/authz/password to match the API contract.
 	r.Post("/v1/authz/password", api.AuthzPassword)
+	r.With(handlers.InvitationLookupLimiter()).Post("/v1/project-invitations/inspect", api.InspectProjectInvitation)
 
 	// Dedicated worker/capability credentials never enter the user/API-key router.
 	r.Post("/internal/room-worker/claims", api.ClaimHostedWork)

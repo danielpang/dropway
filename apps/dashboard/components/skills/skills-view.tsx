@@ -1,5 +1,6 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -523,7 +524,7 @@ function FolderAdminDialog(props: {
 
                 {nonMembers.length > 0 ? (
                   addTo === folder.id ? (
-                    <select
+                    <Select
                       className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                       aria-label={`Add a skill to ${folder.title}`}
                       defaultValue=""
@@ -544,7 +545,7 @@ function FolderAdminDialog(props: {
                           {s.title || s.slug}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   ) : (
                     <Button variant="ghost" size="sm" onClick={() => setAddTo(folder.id ?? "")}>
                       + Add a skill

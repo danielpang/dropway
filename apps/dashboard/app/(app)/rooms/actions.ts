@@ -138,11 +138,13 @@ export async function loadRoomAction(roomId: string) {
     // Resolve names only for the authorized room's members, never expand the
     // picker to everyone in the organization. Identity lookup is best-effort.
     if (org?.organizationId === detail.room.OrgID) {
-      const names = new Map(org.members.map((member) => [member.userId, member.name ?? member.email ?? member.userId]));
+      const names = new Map(org.members.map((member) => [member.userId, member.name?.trim() || member.email || member.userId]));
       detail.members = detail.members.map((member) => ({ ...member, name: names.get(member.userId) }));
     }
-    const withReplies = await hydrateThreads(threads.threads);
-    const identified = await hydrateCandidates(roomId, candidates.candidates);
+    const [withReplies, identified] = await Promise.all([
+      hydrateThreads(threads.threads),
+      hydrateCandidates(roomId, candidates.candidates),
+    ]);
     return {
       ok: true as const,
       detail,

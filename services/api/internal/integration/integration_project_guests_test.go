@@ -63,7 +63,7 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 	tn := store.Tenant{OrgID: org, UserID: owner}
 	var enabled atomic.Bool
 	enabled.Store(true)
-	gate := func(_ context.Context, _ string, id string) bool { return enabled.Load() && id == org }
+	gate := func(_ context.Context, user, id string) bool { return enabled.Load() && id == org && user == owner }
 	st.SetCollaborationGate(gate)
 	for _, id := range []string{org, otherOrg} {
 		mustExec(t, `INSERT INTO app.org_meta(id,allow_external_sharing) VALUES($1,true)`, id)
@@ -115,6 +115,21 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 	if strings.Contains(share.ID, token) || share.Email != "guest@example.com" {
 		t.Fatal("bad invitation")
 	}
+	details, err := st.InspectProjectInvitation(ctx, token)
+	must(t, err)
+	if details.Email != "guest@example.com" || !details.HasAccount || details.ProjectName != "Shared project" {
+		t.Fatalf("wrong invitation details %+v", details)
+	}
+	_, newToken, err := st.InviteProjectGuest(ctx, tn, room.ID, "new@example.com", "viewer", 7)
+	must(t, err)
+	newDetails, err := st.InspectProjectInvitation(ctx, newToken)
+	must(t, err)
+	if newDetails.HasAccount {
+		t.Fatal("new recipient marked as existing account")
+	}
+	if _, err := st.InspectProjectInvitation(ctx, strings.Repeat("X", 43)); !errors.Is(err, store.ErrRoomForbidden) {
+		t.Fatal("unknown token disclosed details")
+	}
 	if _, _, err := st.InviteProjectGuest(ctx, tn, room.ID, share.Email, "reviewer", 7); !errors.Is(err, store.ErrRoomConflict) {
 		t.Fatalf("resend cooldown: %v", err)
 	}
@@ -140,6 +155,18 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		return rec
+	}
+	// Possession of the invitation reveals only its own sign-in details. It
+	// works before authentication and does not accept or create a membership.
+	public := router.New(guestVerifier{}, api, nil)
+	lookup := httptest.NewRequest("POST", "/v1/project-invitations/inspect", strings.NewReader(`{"token":"`+token+`"}`))
+	lookupRec := httptest.NewRecorder()
+	public.ServeHTTP(lookupRec, lookup)
+	if lookupRec.Code != 200 || !strings.Contains(lookupRec.Body.String(), `"email":"guest@example.com"`) || lookupRec.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("invitation lookup %d %s", lookupRec.Code, lookupRec.Body.String())
+	}
+	if _, err := st.GuestProject(ctx, guest, room.ID, ""); !errors.Is(err, store.ErrRoomForbidden) {
+		t.Fatal("lookup accepted pending invitation")
 	}
 	rec := request(guest, "", auth.ClassHumanSession, "POST", "/v1/shared-projects/accept", map[string]string{"token": token})
 	if rec.Code != 200 {
@@ -200,6 +227,10 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 		_, err = st.GuestAddReply(ctx, guest, room.ID, th.ID, "Additional feedback")
 		must(t, err)
 	}
+	// Cursor watermarks use the host clock; Docker's clock can be a few
+	// milliseconds ahead. Keep fixtures safely in the past for stable paging.
+	mustExec(t, `UPDATE app.review_threads SET created_at=created_at-interval '1 minute' WHERE id=$1`, th.ID)
+	mustExec(t, `UPDATE app.review_replies SET created_at=created_at-interval '1 minute' WHERE thread_id=$1`, th.ID)
 	page, err := st.GuestThreads(ctx, guest, room.ID, "", "", "")
 	must(t, err)
 	if len(page.Threads) != 1 || page.Threads[0].RepliesNextCursor == "" {
@@ -229,6 +260,9 @@ func TestIntegration_ProjectGuestSharing(t *testing.T) {
 	must(t, err)
 	_, err = st.GuestProject(ctx, guest, room.ID, "")
 	must(t, err)
+	if _, err := st.InspectProjectInvitation(ctx, token); !errors.Is(err, store.ErrRoomForbidden) {
+		t.Fatal("rotated token still disclosed invitation")
+	}
 	if _, err := st.GuestProject(ctx, guest, "", token); !errors.Is(err, store.ErrRoomForbidden) {
 		t.Fatalf("old invitation token survived rotation %v", err)
 	}

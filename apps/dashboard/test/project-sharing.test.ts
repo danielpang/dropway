@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { invitationToken, parseGuestProject } from "@/lib/project-room/sharing";
 const mocks = vi.hoisted(() => ({
   request: vi.fn(),
+  inspect: vi.fn(),
   invite: vi.fn(),
   room: vi.fn(),
   send: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", () => ({
   },
   api: {
     sharedProjectRequest: mocks.request,
+    inspectProjectInvitation: mocks.inspect,
     inviteProjectGuest: mocks.invite,
     getProjectRoom: mocks.room,
   },
@@ -58,6 +60,11 @@ const project = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.inspect.mockResolvedValue({
+    email: "invited@example.com",
+    project_name: "Project",
+    has_account: false,
+  });
   mocks.room.mockResolvedValue({
     room: {
       id: "project",
@@ -80,7 +87,15 @@ describe("project-only sharing", () => {
   });
   it("stores a short-lived secure HttpOnly cookie and accepts only via its POST action", async () => {
     const token = "a".repeat(43);
-    expect(await rememberProjectInvitationAction(token)).toEqual({ ok: true });
+    expect(await rememberProjectInvitationAction(token)).toEqual({
+      ok: true,
+      invitation: {
+        email: "invited@example.com",
+        projectName: "Project",
+        hasAccount: false,
+      },
+    });
+    expect(mocks.inspect).toHaveBeenCalledWith(token);
     expect(mocks.set).toHaveBeenCalledWith(
       "dropway-project-invitation",
       token,
@@ -131,7 +146,10 @@ describe("project-only sharing", () => {
       "invited@example.com",
       "reviewer",
     );
-    expect(delivered).toMatchObject({ delivered: true });
+    expect(delivered).toMatchObject({
+      delivered: true,
+      message: "Invitation email sent",
+    });
     const email = mocks.send.mock.calls.at(-1)![0];
     expect(email.text).toContain(`/shared-projects/accept#invite=${token}`);
     expect(email.html).not.toContain("<script>Project</script>");

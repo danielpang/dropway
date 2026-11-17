@@ -1,14 +1,18 @@
 import { cookies } from "next/headers";
 import { getCurrentSession } from "@/lib/session";
+import { loadProjectInvitation } from "@/lib/project-room/invitation";
 import { AcceptProjectInvitation } from "@/components/shared-projects/accept-invitation";
 export const dynamic = "force-dynamic";
 export default async function AcceptInvitationPage() {
-  const session = await getCurrentSession();
+  const token = (await cookies()).get("dropway-project-invitation")?.value;
+  const [session, invitation] = await Promise.all([
+    getCurrentSession(),
+    token ? loadProjectInvitation(token) : Promise.resolve(null),
+  ]);
   return (
     <AcceptProjectInvitation
-      pendingInvitation={Boolean(
-        (await cookies()).get("dropway-project-invitation")?.value,
-      )}
+      pendingInvitation={Boolean(token)}
+      invitation={invitation}
       email={session?.user.email ?? null}
       verified={session?.user.emailVerified === true}
     />

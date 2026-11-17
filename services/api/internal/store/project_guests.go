@@ -17,6 +17,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// InvitationDetails reveals only the invitation addressed by an unguessable token.
+type InvitationDetails struct {
+	Email       string `json:"email"`
+	ProjectName string `json:"project_name"`
+	HasAccount  bool   `json:"has_account"`
+}
+
+func (s *Store) InspectProjectInvitation(ctx context.Context, token string) (InvitationDetails, error) {
+	var out InvitationDetails
+	var org, owner string
+	if len(token) != 43 {
+		return out, ErrRoomForbidden
+	}
+	err := s.pool.QueryRow(ctx, `SELECT org_id::text,owner_user_id::text,email,project_name,has_account FROM app.inspect_project_invitation($1)`, shareHash(token)).Scan(&org, &owner, &out.Email, &out.ProjectName, &out.HasAccount)
+	if err != nil {
+		return InvitationDetails{}, ErrRoomForbidden
+	}
+	if s.collaborationAllowed == nil || !s.collaborationAllowed(ctx, owner, org) {
+		return InvitationDetails{}, ErrRoomForbidden
+	}
+	return out, nil
+}
+
 type ProjectShare struct {
 	ID         string     `json:"id"`
 	Email      string     `json:"email"`
@@ -233,14 +256,20 @@ func (s *Store) withGuest(ctx context.Context, user, room, token string, write b
 	}
 	t := Tenant{OrgID: scopes[0][0], UserID: user}
 	room = scopes[0][1]
-	if s.collaborationAllowed == nil || !s.collaborationAllowed(ctx, user, t.OrgID) {
-		return ErrRoomForbidden
-	}
 	return s.withTxRaw(ctx, t, func(tx pgx.Tx, q *db.Queries) error {
 		// Order matches owner policy mutations. SHARE locks prevent revocation or
 		// policy/email changes from committing between authorization and writes.
 		var allowed bool
 		if err := tx.QueryRow(ctx, `SELECT project_rooms_enabled AND allow_external_sharing FROM app.org_meta WHERE id=$1 FOR SHARE`, t.OrgID).Scan(&allowed); err != nil || !allowed {
+			return ErrRoomForbidden
+		}
+		// Guests inherit the host project's rollout. They are not creating a
+		// workspace and must not need their own entry in the rollout audience.
+		var owner string
+		if err := tx.QueryRow(ctx, `SELECT owner_user_id::text FROM app.project_rooms WHERE org_id=$1 AND id=$2 FOR SHARE`, t.OrgID, room).Scan(&owner); err != nil {
+			return ErrRoomForbidden
+		}
+		if s.collaborationAllowed == nil || !s.collaborationAllowed(ctx, owner, t.OrgID) {
 			return ErrRoomForbidden
 		}
 		var email string

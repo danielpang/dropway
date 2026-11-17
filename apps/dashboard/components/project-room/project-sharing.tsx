@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@/components/ui/select";
 import * as React from "react";
 import Link from "next/link";
 import { Mail, Send, RotateCw, UserMinus } from "lucide-react";
@@ -90,7 +91,7 @@ export function ProjectSharing({ roomId }: { roomId: string }) {
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
-        <select
+        <Select
           aria-label="Guest access"
           className="min-w-0 rounded-md border border-border bg-background px-3 py-2 text-xs"
           value={role}
@@ -98,7 +99,7 @@ export function ProjectSharing({ roomId }: { roomId: string }) {
         >
           <option value="reviewer">Reviewer · can comment</option>
           <option value="viewer">Viewer · read only</option>
-        </select>
+        </Select>
         <Tooltip label="Send invitation" align="end">
           <Button
             size="icon"

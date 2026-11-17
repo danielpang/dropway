@@ -1,4 +1,5 @@
 "use client";
+import { Select } from "@/components/ui/select";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { TaskList, TaskSummary, TaskEvents } from "./task-activity";
@@ -365,11 +366,11 @@ export function HostedExecution({
                   <h3 className="text-sm font-semibold">Request a change</h3>
                   <label className="block text-sm">
                     Connection
-                    <select
+                    <Select
                       aria-label="Run credential"
                       value={credentialId}
                       onChange={(event) => setCredentialId(event.target.value)}
-                      className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"
+                      className="mt-1 w-full rounded-md border border-border bg-background px-2 py-2 text-xs"
                     >
                       <option value="">Choose a connection</option>
                       {credentials
@@ -380,15 +381,15 @@ export function HostedExecution({
                             {item.lastFour})
                           </option>
                         ))}
-                    </select>
+                    </Select>
                   </label>
                   <label className="block text-sm">
                     Model
-                    <select
+                    <Select
                       aria-label="Run model"
                       value={model}
                       onChange={(event) => setModel(event.target.value)}
-                      className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"
+                      className="mt-1 w-full rounded-md border border-border bg-background px-2 py-2 text-xs"
                     >
                       {hostedModels(credential?.provider ?? "anthropic").map(
                         (item) => (
@@ -397,15 +398,15 @@ export function HostedExecution({
                           </option>
                         ),
                       )}
-                    </select>
+                    </Select>
                   </label>
                   <label className="block text-sm">
                     Related thread
-                    <select
+                    <Select
                       aria-label="Run thread"
                       value={threadId}
                       onChange={(event) => setThreadId(event.target.value)}
-                      className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-2 text-xs"
+                      className="mt-1 w-full rounded-md border border-border bg-background px-2 py-2 text-xs"
                     >
                       <option value="">No thread</option>
                       {threads.map((item) => (
@@ -413,7 +414,7 @@ export function HostedExecution({
                           {item.page} · {item.id}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   {historicalThreadCount > 0 ? (
                     <p className="text-xs text-muted-foreground">
