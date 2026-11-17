@@ -3,9 +3,10 @@
 # Replicates exactly what the dashboard does: sign up -> create+activate org ->
 # mint JWT -> create site -> prepare -> verify presign host -> upload blobs ->
 # finalize -> publish, plus a CORS preflight against the object store.
-# NOT committed as a test; a one-shot operational verifier.
+# Not part of CI; run it by hand against a running compose stack (see deploy/README.md).
+# The `verify` skill in .claude/skills/ uses it to check the backend deploy path.
 set -euo pipefail
-cd /Users/d_pang/projects/dropway
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DASH=http://localhost:3000
 API=http://localhost:8080

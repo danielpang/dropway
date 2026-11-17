@@ -83,7 +83,9 @@ A DCO check runs in CI; PRs with unsigned commits will be asked to add the sign-
    - Go: `go build ./... && go vet ./... && go test ./...` and `go build -tags cloud ./...`
    - SQL: apply `db/migrations/app/` with goose against a local Postgres (see
      [`deploy/README.md`](deploy/README.md)); migrations must have working `Up` **and** `Down`.
-   - TS: `pnpm -r typecheck`.
+   - TS: `pnpm -r typecheck && pnpm -r lint`, plus the unit tests of each package you changed.
+   - Generated code: if you edit `openapi.yaml` or `db/sqlc/`, regenerate and commit the
+     output (commands in [`CLAUDE.md`](CLAUDE.md)); CI fails on drift.
    - **Open-core boundary:** the core (`services/ cli/ internal/ apps/ edge/`) must never
      import anything under `cloud/` or `ee/` except through a build-tagged DI seam. CI
      enforces this, so don't break it.
