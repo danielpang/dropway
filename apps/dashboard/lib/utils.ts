@@ -10,6 +10,22 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 /**
+ * True when `s` has the canonical UUID shape — the form of every Dropway
+ * resource id (`gen_random_uuid()`). Dynamic `[id]` routes use it to reject junk
+ * path segments before touching the API: browsers and crawlers probe for a
+ * favicon relative to the current URL (e.g. `/sites/favicon.ico`,
+ * `/sites/favicon.png`), which Next matches against `sites/[id]`. Without a
+ * usable session those reads come back 401, and a page that only special-cases
+ * 404 rethrows them into `onRequestError` → noisy error tracking. A shape check
+ * turns every such probe into a clean 404 with no API round-trip.
+ */
+export function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    s,
+  );
+}
+
+/**
  * Format a byte count as a short human string (e.g. "0 B", "4.0 KB", "12.3 MB").
  * Uses decimal units (1 KB = 1000 B) to match how cloud storage is usually quoted.
  * Returns "0 B" for 0, negatives, or non-finite input.
