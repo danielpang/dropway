@@ -231,10 +231,10 @@ function document(all: Files, path: string): string | null {
   // empty sandbox: no scripts, same-origin access, forms, popups or navigation.
   return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${esc(CSP)}"><meta name="referrer" content="no-referrer">${body}`;
 }
-export function buildVisualComparison(
+function prepareComparison(
   value: unknown,
   candidate: ReviewCandidate,
-): VisualComparison {
+) {
   const row = value as Record<string, unknown>;
   if (
     !row ||
@@ -265,7 +265,7 @@ export function buildVisualComparison(
     .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   // Render only the chosen page in the action, not every asset embedded into
   // every document. This also keeps image-heavy sites within response limits.
-  return {
+  const comparison: VisualComparison = {
     candidateId: candidate.ID,
     baseContentHash: candidate.BaseContentHash,
     contentHash: candidate.ContentHash,
@@ -281,21 +281,30 @@ export function buildVisualComparison(
       after: null,
     })),
   };
+  return { comparison, before, after };
 }
+
+export function buildVisualComparison(value: unknown, candidate: ReviewCandidate) {
+  return prepareComparison(value, candidate).comparison;
+}
+
+type RenderedPage = VisualComparison & { before: string | null; after: string | null; path: string };
+export function renderComparisonPage(value: unknown, candidate: ReviewCandidate, path: string): RenderedPage;
+export function renderComparisonPage(value: unknown, candidate: ReviewCandidate, path?: string): RenderedPage | null;
 export function renderComparisonPage(
   value: unknown,
   candidate: ReviewCandidate,
-  path: string,
+  selectedPath?: string,
 ) {
-  const comparison = buildVisualComparison(value, candidate);
+  const { comparison, before, after } = prepareComparison(value, candidate);
+  const path = selectedPath ?? comparison.pages[0]?.path;
+  if (path === undefined) return null;
   if (!comparison.pages.some((p) => p.path === path))
     throw new Error("Unknown page");
-  const row = value as Record<string, unknown>;
   return {
     ...comparison,
-    pages: comparison.pages,
-    before: document(files(row.before), path),
-    after: document(files(row.after), path),
+    before: document(before, path),
+    after: document(after, path),
     path,
   };
 }

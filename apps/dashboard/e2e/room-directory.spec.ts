@@ -177,23 +177,29 @@ test("the real session shows a preview while discussion requests are still pendi
       json: { ok: true, versions: [{ id: "version-3", number: 3 }] },
     }),
   );
-  await page.route("**/api/rooms/preview?*", (route) =>
-    route.fulfill({
+  const requestedPages: string[] = [];
+  await page.route("**/api/rooms/preview?*", (route) => {
+    const path = new URL(route.request().url()).searchParams.get("page")!;
+    requestedPages.push(path);
+    if (path === "/about.html" && requestedPages.filter((item) => item === path).length === 1) {
+      return route.fulfill({ status: 503 });
+    }
+    return route.fulfill({
       json: {
         ok: true,
         snapshot: {
           snapshotId: "ready",
           siteId: "site-launch",
           versionId: "version-3",
-          page: "/",
+          page: path,
           contentHash: "hash-3",
           renderer: "static-v1",
           omittedAssets: 0,
           html: '<html data-review-snapshot="ready"><body><main id="review-content"><h1>Preview is ready</h1></main></body></html>',
         },
       },
-    }),
-  );
+    });
+  });
   try {
     await page.goto(
       "/dev/rooms-preview?session=1&room=project-launch&site=site-launch",
@@ -207,6 +213,13 @@ test("the real session shows a preview while discussion requests are still pendi
     await expect(
       page.getByText("Loading comments…", { exact: true }),
     ).toBeVisible();
+    const pagePath = page.getByRole("textbox", { name: "Page path" });
+    await pagePath.fill("/about.html");
+    expect(requestedPages).toEqual(["/"]);
+    await pagePath.press("Enter");
+    await page.getByRole("button", { name: "Retry preview" }).click();
+    await expect(page.frameLocator('iframe[title="Immutable static review"]').getByRole("heading", { name: "Preview is ready" })).toBeVisible();
+    expect(requestedPages).toEqual(["/", "/about.html", "/about.html"]);
   } finally {
     finishDiscussion();
   }

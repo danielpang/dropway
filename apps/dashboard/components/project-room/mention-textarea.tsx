@@ -74,7 +74,15 @@ export function MentionTextarea({ value, onValueChange, options, onKeyDown, onSe
       onBlur={(event) => { setRange(null); onBlur?.(event); }}
       onInput={onInput}
       onKeyDown={(event) => {
-        if (open && !event.nativeEvent.isComposing) {
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          const form = event.currentTarget.form;
+          const submit = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+          if (submit && !submit.disabled) form?.requestSubmit(submit);
+          return;
+        }
+        if (open) {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             setSelected((index + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length);

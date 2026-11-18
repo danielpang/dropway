@@ -239,8 +239,8 @@ export function RoomDirectory({
     </section>
   );
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8 lg:p-10">
-      <header className="flex flex-wrap items-center justify-between gap-4">
+    <div className="flex min-h-[calc(100dvh-3.5rem-1px)] w-full flex-col gap-5 p-3 sm:p-5 md:h-[calc(100dvh-3.5rem-1px)] md:min-h-[24rem] lg:p-6">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-medium tracking-tight">Rooms</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
@@ -252,8 +252,8 @@ export function RoomDirectory({
           New room
         </Button>
       </header>
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
           <nav
             aria-label="Room directory"
             className="flex min-w-0 items-center gap-2 text-sm"
@@ -325,8 +325,8 @@ export function RoomDirectory({
         <div
           className={
             view === "columns"
-              ? "grid min-h-[26rem] md:grid-cols-[17rem_minmax(0,1fr)]"
-              : "min-h-[26rem]"
+              ? "grid min-h-0 flex-1 md:grid-cols-[clamp(15rem,21%,22rem)_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)]"
+              : "min-h-0 flex-1 md:overflow-y-auto"
           }
         >
           {view === "columns" || !room ? (
@@ -334,7 +334,7 @@ export function RoomDirectory({
               aria-label="Room list"
               className={cn(
                 view === "columns"
-                  ? "border-border p-2 md:border-r"
+                  ? "border-border p-2 md:overflow-y-auto md:border-r"
                   : "grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3",
                 room && "hidden md:block",
               )}
@@ -350,7 +350,7 @@ export function RoomDirectory({
             </section>
           ) : null}
           {view === "columns" || room ? (
-            <div className={cn("min-w-0", !room && "hidden md:block")}>
+            <div className={cn("min-w-0", view === "columns" && "md:overflow-y-auto", !room && "hidden md:block")}>
               {resources}
             </div>
           ) : null}

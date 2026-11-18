@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { VisualComparison } from "./visual-comparison";
 import { Check, X, GitPullRequest } from "lucide-react";
@@ -33,6 +33,8 @@ export function CandidateReview({
   onApply,
   busy = false,
   previewLoader,
+  initiallyOpen = true,
+  onRequestDiff,
 }: {
   candidate: ReviewCandidate;
   live: LiveBaseline | null;
@@ -41,10 +43,16 @@ export function CandidateReview({
   onDecide: (decision: "approve" | "reject") => void;
   onApply?: () => void;
   busy?: boolean;
+  initiallyOpen?: boolean;
+  onRequestDiff?: (candidate: ReviewCandidate) => void;
   previewLoader?: Parameters<typeof VisualComparison>[0]["loader"];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(initiallyOpen);
+  useEffect(() => {
+    if (comparisonOpen && diff.status === "loading") onRequestDiff?.(candidate);
+  }, [comparisonOpen, candidate, diff.status, onRequestDiff]);
   const binding = bindApproval(candidate);
   const liveCheck = compareLive(candidate, live);
   const verified =
@@ -63,6 +71,7 @@ export function CandidateReview({
     busy ||
     !["pending", "approved"].includes(candidate.State) ||
     liveCheck.status !== "matches" ||
+    !comparisonOpen ||
     !previewReady ||
     (candidate.State === "approved" && !onApply) ||
     verified === null;
@@ -135,7 +144,9 @@ export function CandidateReview({
           {liveCheck.reason}
         </p>
       ) : null}
-      {unverified ? (
+      {!comparisonOpen ? (
+        <Button variant="outline" onClick={() => setComparisonOpen(true)}>View comparison</Button>
+      ) : unverified ? (
         <p className="text-sm font-medium text-foreground" role="status">
           {CANNOT_VERIFY}
         </p>
@@ -143,7 +154,7 @@ export function CandidateReview({
         <p className="text-sm text-muted-foreground">Checking this change…</p>
       ) : diff.status === "unavailable" ? (
         <p className="text-sm text-muted-foreground">
-          This change could not be loaded. Please refresh and try again.
+          This change could not be loaded. {onRequestDiff && <button className="underline" onClick={() => onRequestDiff(candidate)}>Retry comparison</button>}
         </p>
       ) : verified ? (
         <VisualComparison
@@ -179,7 +190,7 @@ export function CandidateReview({
       </div>
       {!applied && candidate.State !== "rejected" ? (
         <p className="text-xs text-muted-foreground">
-          Accept change publishes the version shown on the right. Reject keeps
+          Accept change publishes the proposed version. Reject keeps
           the current version.
         </p>
       ) : null}

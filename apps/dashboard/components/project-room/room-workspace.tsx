@@ -8,6 +8,7 @@
 import * as React from "react";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
+  LoaderCircle,
   FolderOpen,
   Users,
   UserRound,
@@ -98,6 +99,7 @@ export function RoomWorkspace({
   threads,
   candidates,
   diffs,
+  onRequestDiff,
   members,
   attachedSites,
   threadCursor,
@@ -149,6 +151,7 @@ export function RoomWorkspace({
   sites: RoomSiteOption[];
   threads: ReviewThread[];
   candidates: ReviewCandidate[];
+  onRequestDiff?: (candidate: ReviewCandidate) => void;
   diffs: Record<string, CandidateDiffView>;
   members: { userId: string; role: string; name?: string }[];
   attachedSites: { siteId: string; createdBy: string }[];
@@ -259,7 +262,11 @@ export function RoomWorkspace({
     const timer = window.setTimeout(() => setToast(null), 4000);
     return () => window.clearTimeout(timer);
   }, [notice]);
+  const sidebarComposer = React.useRef<HTMLDivElement>(null);
   const [commentsVisible, setCommentsVisible] = React.useState(true);
+  React.useEffect(() => {
+    if (window.matchMedia("(max-width: 1023px)").matches && !window.location.hash.startsWith("#thread-")) setCommentsVisible(false);
+  }, []);
   const [activeThreadId, setActiveThreadId] = React.useState("");
   const [commentBusy, setCommentBusy] = React.useState(false);
   const [selectionResetKey, setSelectionResetKey] = React.useState(0);
@@ -294,7 +301,7 @@ export function RoomWorkspace({
       setRevisionNumbers({ "version-1": 1, "version-2": 2, "version-3": 3 });
       return;
     }
-    if (workspace && siteId)
+    if (workspace && siteId && !revisionCache.current.has(key))
       void loadRoomRevisions(siteId, controller.signal)
         .then((result) => {
           if (active && result.ok) {
@@ -324,10 +331,19 @@ export function RoomWorkspace({
     setPanel("review");
   }, [publishedRevision]);
   const [page, setPage] = React.useState("/");
-  const [body, setBody] = React.useState("");
-  const latestDraft = React.useRef({ roomId, siteId, versionId, page, body });
-  latestDraft.current = { roomId, siteId, versionId, page, body };
+  const draftKey = JSON.stringify([roomId, siteId, versionId, page]);
+  const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const body = drafts[draftKey] ?? "";
+  const setBody = (value: string) => setDrafts((previous) => {
+    const next = { ...previous };
+    if (value) next[draftKey] = value;
+    else delete next[draftKey];
+    return next;
+  });
+  const latestDraft = React.useRef({ draftKey, body });
+  latestDraft.current = { draftKey, body };
   const [snapshot, setSnapshot] = React.useState<StaticSnapshot | null>(null);
+  const [previewAttempt, setPreviewAttempt] = React.useState(0);
   const [snapshotNotice, setSnapshotNotice] = React.useState("");
   const [snapshotLoading, setSnapshotLoading] = React.useState(false);
   const [staticSelection, setStaticSelection] =
@@ -369,6 +385,8 @@ export function RoomWorkspace({
     }
     if (revealedThread.current === linkedThread.ID) return;
     revealedThread.current = linkedThread.ID;
+    setCommentsVisible(true);
+    setActiveThreadId(linkedThread.ID);
     setCommentStatus(linkedThread.Status === "resolved" ? "resolved" : "open");
   }, [linkedThread]);
   React.useEffect(() => {
@@ -390,6 +408,23 @@ export function RoomWorkspace({
     setCommentFilter("all");
   }, [linkedSiteId, linkedVersionId, linkedPage]);
   const previewCache = React.useMemo(() => createPreviewCache(snapshotLoader), [snapshotLoader, roomId]);
+  const annotations = React.useMemo(() => {
+    if (!snapshot) return [];
+    return threads
+      .filter((thread) =>
+        thread.RoomID === roomId &&
+        (thread.Status === "resolved") === (commentStatus === "resolved") &&
+        thread.SiteID === snapshot.siteId &&
+        thread.VersionID === snapshot.versionId &&
+        thread.ContentHash === snapshot.contentHash &&
+        thread.Page === snapshot.page)
+      .map((thread) => ({
+        id: thread.ID,
+        kind: thread.AnchorKind,
+        anchor: thread.Anchor,
+        label: thread.Replies[0]?.Body ?? "Comment",
+      }));
+  }, [threads, roomId, commentStatus, snapshot]);
   const siteAttached = attachedSites.some((item) => item.siteId === siteId);
   React.useEffect(() => {
     const request = ++snapshotRequest.current;
@@ -436,7 +471,7 @@ export function RoomWorkspace({
         if (active && request === snapshotRequest.current) {
           setSnapshotLoading(false);
           setSnapshotNotice(
-            "Preview could not be loaded. Try refreshing the project.",
+            "The preview request was interrupted. Try loading this revision again.",
           );
         }
       });
@@ -451,6 +486,7 @@ export function RoomWorkspace({
     linkedContentHash,
     siteAttached,
     previewCache,
+    previewAttempt,
     detailsRoomId,
     workspace,
   ]);
@@ -908,6 +944,7 @@ export function RoomWorkspace({
       </section>
     </>
   );
+  const mentions = React.useMemo(() => mentionOptions(members), [members]);
   const commentComposer = (
     <>
       <form
@@ -918,6 +955,7 @@ export function RoomWorkspace({
             commentBusy ||
             !room ||
             !commentOk ||
+            !body.trim() ||
             !versionId ||
             (hasDropwayMention(body) && !commentExecution)
           )
@@ -942,16 +980,22 @@ export function RoomWorkspace({
               body: body.trim(),
               execution: hasDropwayMention(body) ? commentExecution : undefined,
             });
+            if (saved) {
+              setDrafts((previous) => {
+                if (previous[draftKey] !== submitted.body) return previous;
+                const next = { ...previous };
+                delete next[draftKey];
+                return next;
+              });
+            }
             if (
               saved &&
-              Object.entries(submitted).every(
-                ([key, value]) =>
-                  latestDraft.current[key as keyof typeof submitted] === value,
-              )
+              latestDraft.current.draftKey === submitted.draftKey &&
+              latestDraft.current.body === submitted.body
             ) {
               setCommentStatus("open");
+              if (commentFilter !== "current" && commentFilter !== versionId) setCommentFilter("all");
               if (hasDropwayMention(body)) setCommentsVisible(true);
-              setBody("");
               setStaticSelection(null);
               setSelectionResetKey((key) => key + 1);
               setCommentExecution(undefined);
@@ -962,17 +1006,12 @@ export function RoomWorkspace({
         }}
       >
         <MentionTextarea
-          options={mentionOptions(members)}
+          options={mentions}
           rows={1}
-          onInput={(event) => {
-            const input = event.currentTarget;
-            input.style.height = "auto";
-            input.style.height = `${Math.min(160, input.scrollHeight)}px`;
-          }}
-          placeholder="Leave feedback on this page…"
+          placeholder={staticSelection ? "Comment on this selection…" : "Leave feedback on this page…"}
           aria-label="Comment on this page"
           value={body}
-          disabled={commentBusy}
+          disabled={commentBusy || !commentOk || !versionId}
           onValueChange={setBody}
           className="block min-h-10 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
@@ -992,7 +1031,7 @@ export function RoomWorkspace({
           </div>
         ) : null}
         <Tooltip
-          label="Send comment"
+          label="Send comment (⌘/Ctrl + Enter)"
           align="end"
           side="top"
           className="flex w-fit self-end"
@@ -1010,7 +1049,7 @@ export function RoomWorkspace({
               (hasDropwayMention(body) && !commentExecution)
             }
           >
-            <Send className="h-4 w-4" aria-hidden="true" />
+            {commentBusy ? <LoaderCircle className="size-4 motion-safe:animate-spin" /> : <Send className="size-4" />}
           </Button>
         </Tooltip>
         {commentOk ? null : (
@@ -1021,6 +1060,7 @@ export function RoomWorkspace({
       </form>
     </>
   );
+  const memberNames = React.useMemo(() => new Map(members.map((member) => [member.userId, member.name])), [members]);
   const renderThread = (thread: ReviewThread, inline = false) => (
     <li
       id={inline ? undefined : `thread-${thread.ID}`}
@@ -1043,8 +1083,8 @@ export function RoomWorkspace({
               ? "Page comment"
               : thread.AnchorKind === "point"
                 ? "Image pin"
-                : thread.AnchorKind}{" "}
-            on {thread.Page}
+                : thread.AnchorKind === "text" ? "Text selection" : "Component"}{" "}
+            <span className="font-normal text-muted-foreground">on {thread.Page === "/" ? "Home page" : thread.Page}</span>
           </button>
         ) : null}
         {thread.Status !== "resolved" ? (
@@ -1082,7 +1122,13 @@ export function RoomWorkspace({
             className={entry.kind === "reply" && index > 0 ? "border-l border-border pl-2 text-xs" : undefined}
           >
             {entry.kind === "reply" ? (
-              <ReplyText body={untrustedText(entry.reply.Body)} compact />
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs">
+                  <span className="font-medium">{memberNames.get(entry.reply.AuthorID) || "Project member"}</span>
+                  <time dateTime={entry.reply.CreatedAt} className="text-[11px] text-muted-foreground">{formatActivityTime(entry.reply.CreatedAt)}</time>
+                </div>
+                <ReplyText body={untrustedText(entry.reply.Body)} compact={inline} />
+              </div>
             ) : (
               <AICommentStatus
                 job={entry.job}
@@ -1147,14 +1193,9 @@ export function RoomWorkspace({
           }}
         >
           <MentionTextarea
-            options={mentionOptions(members)}
+            options={mentions}
             rows={1}
-            onInput={(event) => {
-              const input = event.currentTarget;
-              input.style.height = "auto";
-              input.style.height = `${Math.min(160, input.scrollHeight)}px`;
-            }}
-            disabled={pendingReplies.has(thread.ID)}
+            disabled={pendingReplies.has(thread.ID) || !commentOk}
             aria-label={`Reply to ${thread.ID}`}
             placeholder="Write a reply…"
             className="min-h-10 min-w-0 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1188,7 +1229,7 @@ export function RoomWorkspace({
             </div>
           ) : null}
           <Tooltip
-            label="Send reply"
+            label="Send reply (⌘/Ctrl + Enter)"
             align="end"
             side="top"
             className="ml-auto flex w-fit self-end"
@@ -1271,7 +1312,7 @@ export function RoomWorkspace({
     <>
       <section className="space-y-3" aria-label="Comments">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold">Comments</h2>
+          <span className="text-xs font-medium text-muted-foreground">Show comments from</span>
           <Select
             aria-label="Comment version filter"
             align="end"
@@ -1320,7 +1361,7 @@ export function RoomWorkspace({
             {commentStatus === "resolved" ? "No resolved comments yet." : "No open comments. Select a point in the preview or leave a page comment."}
           </p>
         ) : null}
-        <ul className="space-y-1.5">
+        <ul className="space-y-3">
           {visibleThreads.map((thread) => renderThread(thread))}
         </ul>
         {threadCursor && room ? (
@@ -1359,9 +1400,11 @@ export function RoomWorkspace({
         ) : null}
         {candidates
           .filter((candidate) => candidate.RoomID === roomId)
-          .map((candidate) => (
+          .map((candidate, index) => (
             <CandidateReview
-              key={candidate.ID}
+              initiallyOpen={index === 0}
+              onRequestDiff={onRequestDiff}
+              key={JSON.stringify([candidate.ID, candidate.BaseContentHash, candidate.ContentHash, candidate.DiffHash])}
               candidate={candidate}
               live={{
                 versionId:
@@ -1795,6 +1838,9 @@ export function RoomWorkspace({
                         }[value],
                         { className: "h-4 w-4", "aria-hidden": true },
                       )}
+                      <span className="hidden lg:inline">
+                        {{ review: "Canvas", changes: "Changes", activity: "Activity", settings: "Settings" }[value]}
+                      </span>
                       {value === "changes" && pendingCount > 0 ? (
                         <span className="text-[10px] font-semibold">
                           {pendingCount}
@@ -1860,16 +1906,10 @@ export function RoomWorkspace({
                         </option>
                       ))}
                     </Select>
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      Page
-                      <Input
-                        aria-label="Page path"
-                        className="h-9 w-48 text-sm"
-                        value={page === "/" ? "Home page" : page}
-                        onFocus={(e)=>{if(page === "/") e.target.select();}}
-                        onChange={(e) => setPage(e.target.value === "Home page" || !e.target.value ? "/" : e.target.value)}
-                      />
-                    </label>
+                    <PagePathForm key={draftKey} page={page} onGo={(next) => {
+                      setLinkedThreadId("");
+                      setPage(next);
+                    }} />
 
                   </div>
                   <div className="flex items-center gap-2">
@@ -1929,39 +1969,26 @@ export function RoomWorkspace({
                     className="flex min-h-0 min-w-0 flex-col bg-muted/20"
                     aria-label="Site preview"
                   >
-                    {snapshotLoading ? (
+                    {snapshotLoading || (siteAttached && versionId && !snapshot && !snapshotNotice) ? (
                       <div
                         role="status"
                         className="flex flex-1 items-center justify-center text-sm text-muted-foreground"
                       >
+                        <LoaderCircle aria-hidden="true" className="mr-2 size-4 motion-safe:animate-spin" />
                         Loading site preview…
                       </div>
                     ) : snapshot ? (
                       <StaticReview
                         snapshot={snapshot}
+                        readOnly={!commentOk}
                         activeThreadId={activeThreadId}
                         selectionResetKey={selectionResetKey}
-                        annotations={threads
-                          .filter(
-                            (t) =>
-                              t.RoomID === roomId &&
-                              (t.Status === "resolved") === (commentStatus === "resolved") &&
-                              t.SiteID === snapshot.siteId &&
-                              t.VersionID === snapshot.versionId &&
-                              t.ContentHash === snapshot.contentHash &&
-                              t.Page === snapshot.page,
-                          )
-                          .map((t) => ({
-                            id: t.ID,
-                            kind: t.AnchorKind,
-                            anchor: t.Anchor,
-                            label: t.Replies[0]?.Body ?? "Comment",
-                          }))}
+                        annotations={annotations}
                         onThreadSelect={(id) => {
                           setActiveThreadId(id);
                           setCommentFilter("all");
                         }}
-                        renderDraft={() => commentComposer}
+                        renderDraft={commentsVisible || !commentOk ? undefined : () => commentComposer}
                         renderThread={(id) => {
                           const thread = threads.find(
                             (item) =>
@@ -1977,6 +2004,7 @@ export function RoomWorkspace({
                         onSelect={(selection) => {
                           setStaticSelection(selection);
                           if (selection) {
+                            if (commentsVisible) sidebarComposer.current?.querySelector("textarea")?.focus();
                             setActiveThreadId("");
                           }
                         }}
@@ -2001,13 +2029,7 @@ export function RoomWorkspace({
                         >
                           Open site settings
                         </a>
-                        <Button
-                          variant="ghost"
-                          className="mt-2"
-                          onClick={() => onRefreshRoom?.(room.ID)}
-                        >
-                          Refresh project
-                        </Button>
+                        {versionId && <Button variant="outline" className="mt-2" onClick={() => setPreviewAttempt((n) => n + 1)}>Retry preview</Button>}
                       </div>
                     )}
                     <p className="shrink-0 border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
@@ -2036,7 +2058,7 @@ export function RoomWorkspace({
                       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                         {commentsPanel}
                       </div>
-                      <div className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border bg-muted/10 p-4">
+                      <div ref={sidebarComposer} className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border bg-muted/10 p-4">
                         {staticSelection ? (
                           <div className="mb-3 border-l-2 border-amber-400 pl-3 text-xs text-muted-foreground">
                             <span className="line-clamp-3">
@@ -2192,6 +2214,26 @@ export function RoomWorkspace({
   );
 }
 
+function PagePathForm({ page, onGo }: { page: string; onGo: (path: string) => void }) {
+  const [draft, setDraft] = React.useState(page === "/" ? "" : page);
+  const path = draft.trim() || "/";
+  const next = path.startsWith("/") ? path : "/" + path;
+  return (
+    <form className="flex items-center gap-2" onSubmit={(event) => {
+      event.preventDefault();
+      setDraft(next === "/" ? "" : next);
+      onGo(next);
+    }}>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        Page
+        <Input aria-label="Page path" placeholder="Home page" value={draft} className="h-9 w-36 text-sm"
+          onFocus={(event) => event.target.select()} onChange={(event) => setDraft(event.target.value)} />
+      </label>
+      <Button type="submit" variant="outline" size="sm" disabled={next === page}>Go</Button>
+    </form>
+  );
+}
+
 function ReplyText({
   body,
   compact = false,
@@ -2200,7 +2242,7 @@ function ReplyText({
   compact?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
-  const limit = compact ? 160 : 280;
+  const limit = 160;
   const long = body.length > limit;
   const shown = long && !open ? `${body.slice(0, limit)}…` : body;
   return (
@@ -2223,15 +2265,16 @@ function ReplyText({
   );
 }
 
-function formatActivityTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en", {
+const activityTime = new Intl.DateTimeFormat("en", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
     timeZone: "UTC",
     timeZoneName: "short",
-  }).format(date);
+});
+
+function formatActivityTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : activityTime.format(date);
 }

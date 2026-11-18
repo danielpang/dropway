@@ -2,7 +2,6 @@
 import { api } from "@/lib/api";
 import { collaborationEnabled } from "@/lib/project-room/capabilities";
 import {
-  buildVisualComparison,
   renderComparisonPage,
 } from "@/lib/project-room/visual-preview";
 import type { ReviewCandidate } from "@/lib/project-room/contract";
@@ -15,16 +14,15 @@ export async function loadCandidatePreviewAction(
     return { ok: false as const, message: "Project access is unavailable." };
   try {
     const data = await api.getCandidatePreview(candidate.RoomID, candidate.ID);
-    const comparison = buildVisualComparison(data, candidate);
-    const path = selectedPath ?? comparison.pages[0]?.path;
-    if (!path)
+    const preview = renderComparisonPage(data, candidate, selectedPath);
+    if (!preview)
       return {
         ok: false as const,
         message: "This change has no page or image to preview.",
       };
     return {
       ok: true as const,
-      preview: renderComparisonPage(data, candidate, path),
+      preview,
     };
   } catch {
     return {
