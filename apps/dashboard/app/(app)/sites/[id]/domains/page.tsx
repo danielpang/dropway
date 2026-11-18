@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { ArrowLeft, ShieldAlert } from "lucide-react";
 
 import { DomainsManager } from "@/components/sites/domains-manager";
@@ -11,7 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api, ApiError, type Domain, type PlanTier, type Site } from "@/lib/api";
+import { api, type Domain, type PlanTier, type Site } from "@/lib/api";
+import { settleApiRead } from "@/lib/api-read";
 import { customDomainsEntitled } from "@/lib/billing";
 import { canManage, loadActiveOrg } from "@/lib/org";
 
@@ -45,8 +46,7 @@ export default async function SiteDomainsPage({
   try {
     site = await api.getSite(id);
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404) notFound();
-    throw err;
+    settleApiRead(err, `/sites/${id}/domains`);
   }
 
   const [org, domains, me, plan] = await Promise.all([
