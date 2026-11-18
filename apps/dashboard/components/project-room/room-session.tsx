@@ -492,7 +492,7 @@ export function RoomSession({
               commentRetries.current.set(request, result.retryThreadId);
             if (result.ok)
               commentRetries.current.delete(request);
-            if (loadedRoom.current !== input.roomId) return false;
+            if (loadedRoom.current !== input.roomId) return result.ok;
             if (!result.ok) {
               setNotice(result.message);
               return false;

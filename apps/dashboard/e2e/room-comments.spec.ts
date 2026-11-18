@@ -52,3 +52,81 @@ test("shows both proposal versions on a phone before acceptance", async ({ page 
   expect(second.x + second.width).toBeLessThanOrEqual(390);
   await expect(page.getByRole("button", { name: "Accept change" })).toBeEnabled();
 });
+
+test("clears A's saved draft when the comment response arrives in room B", async ({ page }) => {
+  const roomA = "project-launch";
+  const roomB = "project-brand";
+  const feedback = "Publish the revised introduction";
+  const otherDraft = "Keep this brand review draft";
+  const thread = {
+    ID: "saved-thread", RoomID: roomA, SiteID: "site-launch", VersionID: "version-3",
+    ContentHash: "hash-3", Page: "/", AnchorKind: "page", Anchor: {}, Status: "open",
+    Replies: [{ ID: "saved-reply", AuthorID: "demo-owner", Body: feedback, CreatedAt: "" }],
+  };
+  let saves = 0;
+  let persisted = false;
+  let finishSave!: () => void;
+  const pendingSave = new Promise<void>((resolve) => { finishSave = resolve; });
+
+  await page.route("**/api/rooms/detail?*", (route) => {
+    const id = new URL(route.request().url()).searchParams.get("roomId");
+    const isA = id === roomA;
+    return route.fulfill({ json: { ok: true, detail: {
+      room: { ID: id, Name: isA ? "Studio launch" : "Brand refresh", Role: "owner", Unread: 0 },
+      members: [], sites: [{ siteId: isA ? "site-launch" : "site-guide", createdBy: "demo-owner" }],
+    } } });
+  });
+  await page.route("**/api/rooms/discussion?*", (route) => {
+    const id = new URL(route.request().url()).searchParams.get("roomId");
+    return route.fulfill({ json: { ok: true, members: [], candidates: [],
+      threads: persisted && id === roomA ? [thread] : [], threadCursor: null, candidateCursor: null,
+    } });
+  });
+  await page.route("**/api/rooms/revisions?*", (route) => route.fulfill({ json: { ok: true, versions: [] } }));
+  await page.route("**/api/rooms/preview?*", (route) => route.fulfill({ json: { ok: false, message: "Page comments available." } }));
+  await page.route("**/dev/rooms-preview?*", async (route) => {
+    if (!route.request().headers()["next-action"]) return route.continue();
+    const [input] = route.request().postDataJSON();
+    let result;
+    if (input?.body === feedback && input.roomId === roomA) {
+      saves++;
+      await pendingSave;
+      persisted = true;
+      result = { ok: true, thread };
+    } else {
+      result = { ok: true, items: [], nextCursor: null, unread: 0 };
+    }
+    // A Next server action response with a return value and no route updates.
+    await route.fulfill({ contentType: "text/x-component", body: "0:" + JSON.stringify({ a: result, f: [] }) + "\n" });
+  });
+
+  const openRoom = async (room: string, site: string) => {
+    await page.getByRole("button", { name: "Browse room contents" }).click();
+    await page.getByRole("button", { name: "Open room " + room }).click();
+    await page.getByRole("button", { name: "Open site " + site }).click();
+  };
+  const composer = page.getByRole("textbox", { name: "Comment on this page" });
+  const send = page.getByRole("button", { name: "Send comment", exact: true });
+  await page.goto("/dev/rooms-preview?session=1&room=" + roomB + "&site=site-guide");
+  await composer.fill(otherDraft);
+  await openRoom("Studio launch", "studio-launch");
+  await composer.fill(feedback);
+  await send.click();
+  try {
+    await expect.poll(() => saves).toBe(1);
+    await openRoom("Brand refresh", "brand-guidelines");
+    await expect(composer).toHaveValue(otherDraft);
+  } finally {
+    finishSave();
+  }
+  await expect(send).toBeEnabled();
+  await expect(composer).toHaveValue(otherDraft);
+  await expect(page.getByText("Page comment stored on the original version.")).toHaveCount(0);
+  await expect(page.getByText(feedback, { exact: true })).toHaveCount(0);
+
+  await openRoom("Studio launch", "studio-launch");
+  await expect(page.getByRole("region", { name: "Comments", exact: true }).getByText(feedback, { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue("");
+  await expect(send).toBeDisabled();
+  expect(saves).toBe(1);
+});
