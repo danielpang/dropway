@@ -145,6 +145,8 @@ export function RoomSession({
     if (loadedRoom.current === roomId) return;
     loadedRoom.current = roomId;
     const request = ++roomRequest.current;
+    requestedDiffs.current.clear();
+    setDiffs({});
     setDetailsRoomId(null);
     setRoomLoadError(null);
     setActivity([]);
@@ -250,23 +252,21 @@ export function RoomSession({
   const [orgEnabled, setOrgEnabled] = React.useState(initialOrgEnabled);
   const [notice, setNotice] = React.useState<string | null>(loadError ?? null);
 
-  React.useEffect(() => {
-    for (const candidate of candidates) {
-      if (requestedDiffs.current.has(candidate.ID)) continue;
-      requestedDiffs.current.add(candidate.ID);
-      setDiffs((prev) => ({ ...prev, [candidate.ID]: { status: "loading" } }));
-      void loadCandidateDiffAction(candidate.RoomID, candidate.ID).then(
-        (result) => {
-          const next: CandidateDiffView = result.ok
-            ? { status: "verified", diff: result.diff }
-            : "unverified" in result && result.unverified
-              ? { status: "unverified" }
-              : { status: "unavailable" };
-          setDiffs((prev) => ({ ...prev, [candidate.ID]: next }));
-        },
-      );
-    }
-  }, [candidates]);
+  const requestDiff = React.useCallback((candidate: ReviewCandidate) => {
+    if (candidate.RoomID !== loadedRoom.current || requestedDiffs.current.has(candidate.ID)) return;
+    const request = roomRequest.current;
+    requestedDiffs.current.add(candidate.ID);
+    setDiffs((prev) => ({ ...prev, [candidate.ID]: { status: "loading" } }));
+    const finish = (view: CandidateDiffView) => {
+      if (request !== roomRequest.current) return;
+      setDiffs((prev) => ({ ...prev, [candidate.ID]: view }));
+      if (view.status === "unavailable") requestedDiffs.current.delete(candidate.ID);
+    };
+    void loadCandidateDiffAction(candidate.RoomID, candidate.ID).then((result) => {
+      if (result.ok) finish({ status: "verified", diff: result.diff });
+      else finish({ status: "unverified" in result && result.unverified ? "unverified" : "unavailable" });
+    }).catch(() => finish({ status: "unavailable" }));
+  }, []);
 
   const publishCandidate = (roomId: string, candidate: ReviewCandidate) => {
     if (!startCandidateRequest(candidate)) return;
@@ -371,6 +371,7 @@ export function RoomSession({
       threads={threads}
       candidates={candidates}
       diffs={diffs}
+      onRequestDiff={requestDiff}
       members={members}
       attachedSites={attachedSites}
       threadCursor={threadCursor}
@@ -400,8 +401,6 @@ export function RoomSession({
             return;
           }
           setSiteList(result.sites);
-          requestedDiffs.current.clear();
-          setDiffs({});
           loadedRoom.current = "";
           applyRoom(roomId);
         });
@@ -492,7 +491,7 @@ export function RoomSession({
             if (!result.ok && "retryThreadId" in result && result.retryThreadId)
               commentRetries.current.set(request, result.retryThreadId);
             if (result.ok)
-              commentRetries.current.set(request, result.thread.ID);
+              commentRetries.current.delete(request);
             if (loadedRoom.current !== input.roomId) return false;
             if (!result.ok) {
               setNotice(result.message);
@@ -512,7 +511,7 @@ export function RoomSession({
                 ? "Comment stored and revision queued. Review the proposed change before accepting or rejecting it."
                 : result.thread.AnchorKind === "page"
                   ? "Page comment stored on the original version."
-                  : "Image pin stored on the original version.",
+                  : "Comment pinned to this revision.",
             );
             return true;
           })

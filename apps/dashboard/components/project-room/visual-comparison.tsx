@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { LoaderCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { loadCandidatePreviewAction } from "@/app/(app)/rooms/preview-actions";
@@ -20,6 +20,7 @@ export function VisualComparison({
   loader?: typeof loadCandidatePreviewAction;
 }) {
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [pages, setPages] = useState<Preview["pages"]>([]);
   const [path, setPath] = useState<string>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -33,7 +34,7 @@ export function VisualComparison({
         if (!active) return;
         if (result.ok) {
           setPreview(result.preview);
-          onReady(true);
+          setPages(result.preview.pages);
         } else setError(result.message);
       })
       .catch(() => {
@@ -58,16 +59,21 @@ export function VisualComparison({
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-3">
         <p className="text-sm font-medium">Compare changes</p>
-        {preview && preview.pages.length > 1 ? (
+        {pages.length > 1 ? (
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Page or image
             <Select
               aria-label="Preview page"
               className="max-w-72"
-              value={preview.path}
-              onChange={(e) => setPath(e.target.value)}
+              value={path ?? preview?.path ?? pages[0]?.path}
+              onChange={(e) => {
+                if (e.target.value === (path ?? preview?.path)) return;
+                onReady(false);
+                setPreview(null);
+                setPath(e.target.value);
+              }}
             >
-              {preview.pages.map((p) => (
+              {pages.map((p) => (
                 <option key={p.path} value={p.path}>
                   {p.label}
                 </option>
@@ -89,12 +95,13 @@ export function VisualComparison({
       ) : !preview ? (
         <p
           role="status"
-          className="p-12 text-center text-sm text-muted-foreground"
+          className="flex min-h-80 items-center justify-center gap-2 bg-muted/20 p-8 text-sm text-muted-foreground"
         >
+          <LoaderCircle className="size-4 motion-safe:animate-spin" aria-hidden="true" />
           Loading previews…
         </p>
       ) : (
-        <ComparisonPanes before={preview.before} after={preview.after} />
+        <ComparisonPanes key={preview.path} before={preview.before} after={preview.after} onReady={onReady} />
       )}
       <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
         Previews show saved content and styling. Interactive features and
@@ -103,43 +110,44 @@ export function VisualComparison({
     </section>
   );
 }
-export function ComparisonPanes({
+function ComparisonPanes({
   before,
   after,
+  onReady,
 }: {
   before: string | null;
   after: string | null;
+  onReady: (ready: boolean) => void;
 }) {
+  const [loaded, setLoaded] = useState({ Before: false, After: false });
+  useEffect(() => {
+    onReady((before === null || loaded.Before) && (after === null || loaded.After));
+  }, [before, after, loaded, onReady]);
   return (
-    <div className="overflow-x-auto">
-      <div className="grid min-w-[640px] grid-cols-2 divide-x divide-border">
-        {[
-          { label: "Before", hint: "Original version", html: before },
-          { label: "After", hint: "Proposed change", html: after },
-        ].map((side) => (
-          <div key={side.label} className="min-w-0">
-            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-              <span className="text-sm font-medium">{side.label}</span>
-              <span className="text-xs text-muted-foreground">{side.hint}</span>
-            </div>
-            {side.html ? (
-              <iframe
-                title={`${side.label} preview`}
-                srcDoc={side.html}
-                sandbox=""
-                referrerPolicy="no-referrer"
-                className="h-[min(68vh,720px)] min-h-96 w-full border-0 bg-white"
-              />
-            ) : (
-              <div className="grid min-h-96 place-items-center p-8 text-sm text-muted-foreground">
-                {side.label === "Before"
-                  ? "New in this change"
-                  : "Removed in this change"}
-              </div>
-            )}
+    <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+      {([
+        { label: "Before", hint: "Original version", html: before },
+        { label: "After", hint: "Proposed change", html: after },
+      ] as const).map(({ label, hint, html }) => (
+        <section key={label} aria-label={hint} className="min-w-0">
+          <div className="flex items-baseline justify-between gap-2 border-b border-border bg-muted/30 px-4 py-2">
+            <h3 className="text-sm font-semibold">{label}</h3>
+            <span className="text-xs text-muted-foreground">{hint}</span>
           </div>
-        ))}
-      </div>
+          {html !== null ? (
+            <div className="relative">
+              <iframe title={label + " preview"} srcDoc={html} sandbox="" referrerPolicy="no-referrer"
+                onLoad={() => setLoaded((previous) => ({ ...previous, [label]: true }))}
+                className="block h-[44vh] min-h-56 w-full border-0 bg-white md:h-[min(68vh,720px)]" />
+              {!loaded[label] && <p role="status" className="absolute inset-0 grid place-items-center bg-muted text-sm text-muted-foreground">Opening {hint.toLowerCase()}…</p>}
+            </div>
+          ) : (
+            <p className="grid min-h-56 place-items-center bg-muted/20 p-8 text-sm text-muted-foreground">
+              {label === "Before" ? "New in this change" : "Removed in this change"}
+            </p>
+          )}
+        </section>
+      ))}
     </div>
   );
 }

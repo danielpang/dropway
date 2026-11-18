@@ -155,7 +155,6 @@ export function StaticReview({
         scheduled = 0;
         overlay.replaceChildren();
         hitRegions = [];
-        if (readOnlyRef.current) return;
         const visible: (StaticAnnotation & { pending?: boolean })[] = [
           ...annotationsRef.current,
         ];
@@ -218,7 +217,6 @@ export function StaticReview({
       };
       redraw.current = schedulePaint;
       revealActive.current = () => {
-        if (readOnlyRef.current) return;
         const annotation = annotationsRef.current.find(
           (item) => item.id === activeRef.current,
         );
@@ -263,7 +261,6 @@ export function StaticReview({
       const onClick = (event: MouseEvent) => {
         if (overlay.contains(event.target as Node)) return;
         event.preventDefault();
-        if (readOnlyRef.current) return;
         if (!doc.getSelection()?.isCollapsed) return;
         if (doc.getSelection()?.isCollapsed) {
           const hit = hitRegions.find(({ rects }) =>
@@ -281,10 +278,10 @@ export function StaticReview({
           }
         }
         closePopover();
-        adopt(captureStaticClick(doc, event));
+        if (!readOnlyRef.current) adopt(captureStaticClick(doc, event));
       };
       const text = () => {
-        adopt(captureStaticText(doc));
+        if (!readOnlyRef.current) adopt(captureStaticText(doc));
       };
       const key = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
@@ -358,7 +355,7 @@ export function StaticReview({
         <div ref={host} className="h-full min-h-0" />
         {popover &&
         (popover.id === "pending-selection" ? renderDraft : renderThread) &&
-        !readOnly &&
+        (popover.id !== "pending-selection" || !readOnly) &&
         !blocked ? (
           <div
             role="dialog"
