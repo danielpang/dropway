@@ -5,12 +5,15 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/danielpang/dropway/internal/errtrack"
+	"github.com/danielpang/dropway/services/mcp/internal/apiclient"
 	"github.com/danielpang/dropway/services/mcp/internal/auth"
 	"github.com/danielpang/dropway/services/mcp/internal/store"
 )
@@ -113,5 +116,48 @@ func TestCapturingHandler_SuccessPath(t *testing.T) {
 	}
 	if len(rep.calls) != 0 {
 		t.Errorf("a successful call must not be captured, got %d", len(rep.calls))
+	}
+}
+
+// TestCapturingHandler_OrgMemoryUnconfiguredNotCaptured is the path behind
+// PostHog issue 01a12945-bdd8-7510-a56f-73e2bc5f8a49: add_memory (and the other
+// memory tools) used to return the API's 503, and capturingHandler reported
+// it as an unhandled *apiclient.Error.
+func TestCapturingHandler_OrgMemoryUnconfiguredNotCaptured(t *testing.T) {
+	rep := &fakeReporter{}
+	svc := &Service{Reporter: rep}
+	apiErr := &apiclient.Error{Status: http.StatusServiceUnavailable, Message: "org memory is not configured"}
+	toolErr := fmt.Errorf("%s Nothing was stored: %w", orgMemoryUnconfiguredNote, apiErr)
+
+	wrapped := capturingHandler[addMemoryIn, addMemoryOut](svc, "add_memory",
+		func(context.Context, *mcpsdk.CallToolRequest, addMemoryIn) (*mcpsdk.CallToolResult, addMemoryOut, error) {
+			return nil, addMemoryOut{}, toolErr
+		})
+
+	_, _, err := wrapped(tenantCtx(), nil, addMemoryIn{})
+	if !errors.Is(err, apiErr) {
+		t.Fatalf("the tool error must still reach the client, got %v", err)
+	}
+	if len(rep.calls) != 0 {
+		t.Fatalf("unconfigured org memory must not be captured, got %+v", rep.calls)
+	}
+}
+
+func TestCapturingHandler_Other503StillCaptured(t *testing.T) {
+	rep := &fakeReporter{}
+	svc := &Service{Reporter: rep}
+	apiErr := &apiclient.Error{Status: http.StatusServiceUnavailable, Message: "upstream timeout"}
+
+	wrapped := capturingHandler[addMemoryIn, addMemoryOut](svc, "add_memory",
+		func(context.Context, *mcpsdk.CallToolRequest, addMemoryIn) (*mcpsdk.CallToolResult, addMemoryOut, error) {
+			return nil, addMemoryOut{}, apiErr
+		})
+
+	_, _, err := wrapped(tenantCtx(), nil, addMemoryIn{})
+	if !errors.Is(err, apiErr) {
+		t.Fatalf("wrapper must return the handler error unchanged, got %v", err)
+	}
+	if len(rep.calls) != 1 || rep.calls[0].props["tool"] != "add_memory" {
+		t.Fatalf("unrelated 503 must still be captured: %+v", rep.calls)
 	}
 }
