@@ -88,6 +88,7 @@ export default async function AppLayout({
           userId={sessionUser.id}
           email={sessionUser.email}
           organization={activeOrgId}
+          organizationName={activeOrgName}
         />
       ) : null}
       {/* z-40 keeps the sticky header (and its account menu) above page

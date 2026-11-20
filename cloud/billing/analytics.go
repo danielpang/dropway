@@ -153,21 +153,23 @@ func NewPlanAnalytics(em analytics.Emitter) PlanAnalytics {
 }
 
 // CapturePlanChange shapes and emits the plan-change event. The event is tied to
-// the org via PostHog GROUP analytics ($groups via Event.Groups) AND
-// distinct_id=org so per-org billing rolls up cleanly. Person-profile processing is
-// disabled ($process_person_profile:false): these are system events with no acting
-// user, so they should not mint a "person" per org.
+// the org via PostHog GROUP analytics ($groups via Event.Groups), an org_id
+// property (the same name every other Dropway event uses) and distinct_id=org.
+//
+// Person-profile processing stays ON. PostHog does not attach groups to
+// personless events ($process_person_profile:false), so turning it off left these
+// events out of every per-organization chart and funnel. The cost is one PostHog
+// "person" per paying org, since distinct_id is the org id.
 func (a emitterPlanAnalytics) CapturePlanChange(ctx context.Context, ev PlanChange) {
 	if ev.OrgID == "" || ev.Direction == directionNone {
 		return
 	}
 	props := map[string]any{
-		"from_tier":               string(ev.FromTier),
-		"to_tier":                 string(ev.ToTier),
-		"direction":               ev.Direction,
-		"reason":                  ev.Reason,
-		"organization":            ev.OrgID,
-		"$process_person_profile": false,
+		"from_tier": string(ev.FromTier),
+		"to_tier":   string(ev.ToTier),
+		"direction": ev.Direction,
+		"reason":    ev.Reason,
+		"org_id":    ev.OrgID,
 	}
 	// Revenue tracking: stamp the monthly value of both tiers and the movement,
 	// so PostHog can sum `mrr_delta_usd` into an MRR-movement trend and read new
@@ -202,13 +204,12 @@ func (a emitterPlanAnalytics) CaptureRenewal(ctx context.Context, r Renewal) {
 		return
 	}
 	props := map[string]any{
-		"plan_tier":               string(r.PlanTier),
-		"subscription_id":         r.SubscriptionID,
-		"invoice_id":              r.InvoiceID,
-		"amount_paid":             majorUnits(r.AmountPaid, r.Currency),
-		"currency":                strings.ToUpper(r.Currency),
-		"organization":            r.OrgID,
-		"$process_person_profile": false,
+		"plan_tier":       string(r.PlanTier),
+		"subscription_id": r.SubscriptionID,
+		"invoice_id":      r.InvoiceID,
+		"amount_paid":     majorUnits(r.AmountPaid, r.Currency),
+		"currency":        strings.ToUpper(r.Currency),
+		"org_id":          r.OrgID,
 	}
 	if usd, ok := tierMRRUSD(r.PlanTier); ok {
 		props["mrr_usd"] = usd

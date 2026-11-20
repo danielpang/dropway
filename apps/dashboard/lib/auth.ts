@@ -134,6 +134,20 @@ const ORG_CACHE_TTL_MS = 60_000;
 const ORG_CACHE_MAX = 10_000;
 const orgCache = new Map<string, { orgId: string; expiresAt: number }>();
 
+/** The org's display name from identity.organization, for naming its PostHog
+ * group. undefined on a miss or a lookup error (analytics is best-effort). */
+async function orgName(orgId: string): Promise<string | undefined> {
+  try {
+    const res = await authPool.query<{ name: string }>(
+      `SELECT name FROM identity.organization WHERE id = $1`,
+      [orgId],
+    );
+    return res.rows[0]?.name || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The user's first organization id, the default "active org" for a new session AND
  * the org stamped into MCP OAuth access tokens (customAccessTokenClaims below), so the
@@ -276,11 +290,20 @@ export const auth = betterAuth({
         after: async (session) => {
           try {
             const s = session as { userId: string; activeOrganizationId?: string | null };
-            const { captureSignInSucceeded } = await import("@/lib/analytics-server");
-            await captureSignInSucceeded({
-              userId: s.userId,
-              organization: s.activeOrganizationId ?? null,
-            });
+            const { captureSignInSucceeded, identifyOrganization } = await import(
+              "@/lib/analytics-server"
+            );
+            const orgId = s.activeOrganizationId ?? null;
+            // Sent concurrently so sign-in waits for one round trip, not three.
+            // The group naming ((re)naming the org's PostHog group, so orgs
+            // created before group naming existed pick up their name without a
+            // backfill) is skipped when there is no active org.
+            await Promise.all([
+              captureSignInSucceeded({ userId: s.userId, organization: orgId }),
+              orgId
+                ? orgName(orgId).then((name) => identifyOrganization({ orgId, name }))
+                : undefined,
+            ]);
           } catch {
             // Analytics must never block authentication.
           }
@@ -720,6 +743,16 @@ export const auth = betterAuth({
             });
           } catch {
             // Analytics must never block org creation.
+          }
+        },
+        // Keep the org's PostHog group name in step with a rename.
+        afterUpdateOrganization: async ({ organization }) => {
+          if (!organization) return;
+          try {
+            const { identifyOrganization } = await import("@/lib/analytics-server");
+            await identifyOrganization({ orgId: organization.id, name: organization.name });
+          } catch {
+            // Analytics must never block an org update.
           }
         },
       },

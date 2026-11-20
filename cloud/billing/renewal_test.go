@@ -144,6 +144,14 @@ func TestCaptureRenewal_Event(t *testing.T) {
 	if _, ok := p["direction"]; ok {
 		t.Error("a renewal has no upgrade/downgrade direction")
 	}
+	if p["org_id"] != "org_1" {
+		t.Errorf("org_id = %v, want org_1", p["org_id"])
+	}
+	for _, k := range []string{"organization", "$process_person_profile"} {
+		if _, set := p[k]; set {
+			t.Errorf("%s must not be sent", k)
+		}
+	}
 	if got := em.events[1].Properties["amount_paid"]; got != 3800.0 {
 		t.Errorf("zero-decimal currency amount = %v, want 3800", got)
 	}

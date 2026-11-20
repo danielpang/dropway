@@ -71,10 +71,12 @@ describe("analytics-server captures (serverless-safe)", () => {
     });
     expect(sent.properties).toMatchObject({
       environment: "production",
-      organization: "org_1",
+      org_id: "org_1",
       site_id: "site_1",
       hostname: "docs.example.com",
     });
+    // The org id is sent as org_id only (its name lives on the group).
+    expect("organization" in sent.properties).toBe(false);
   });
 
   it("captureSignup defaults the org group off and stamps environment", async () => {
@@ -84,9 +86,11 @@ describe("analytics-server captures (serverless-safe)", () => {
     expect(captureImmediate).toHaveBeenCalledTimes(1);
     const sent = captureImmediate.mock.calls[0]![0];
     expect(sent.event).toBe("user_signed_up");
-    // No organization → no group attached.
+    // No organization → no group attached, and no org_id or placeholder.
     expect(sent.groups).toBeUndefined();
     expect(sent.properties).toMatchObject({ environment: "production", method: "google" });
+    expect("org_id" in sent.properties).toBe(false);
+    expect("organization" in sent.properties).toBe(false);
   });
 
   it("captureSignInSucceeded sends sign_in_succeeded, attaching the org group when known", async () => {
@@ -191,5 +195,50 @@ describe("analytics-server captures (serverless-safe)", () => {
     expect(sentError).toBeInstanceOf(Error);
     expect((sentError as Error).message).toBe("53300: too many clients already");
     expect(distinctId).toBe("user_9");
+  });
+});
+
+describe("organization group naming", () => {
+  it("identifyOrganization names the org's group via $groupidentify, sent immediately", async () => {
+    const { identifyOrganization } = await import("@/lib/analytics-server");
+    await identifyOrganization({ orgId: "org_1", name: "Acme" });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(1);
+    expect(capture).not.toHaveBeenCalled();
+    expect(captureImmediate.mock.calls[0]![0]).toEqual({
+      distinctId: "$organization_org_1",
+      event: "$groupidentify",
+      properties: {
+        $group_type: "organization",
+        $group_key: "org_1",
+        $group_set: { name: "Acme" },
+      },
+    });
+  });
+
+  it("identifyOrganization sends nothing without an org id or a name", async () => {
+    const { identifyOrganization } = await import("@/lib/analytics-server");
+    await identifyOrganization({ orgId: "org_1", name: null });
+    await identifyOrganization({ orgId: null, name: "Acme" });
+    expect(captureImmediate).not.toHaveBeenCalled();
+  });
+
+  it("captureOrganizationCreated names the group and sends organization_created with org_id only", async () => {
+    const { captureOrganizationCreated } = await import("@/lib/analytics-server");
+    await captureOrganizationCreated({ userId: "user_1", organization: "org_1", organizationName: "Acme" });
+
+    expect(captureImmediate).toHaveBeenCalledTimes(2);
+    const [identify, created] = captureImmediate.mock.calls.map((c) => c[0]);
+    expect(identify).toMatchObject({ event: "$groupidentify", properties: { $group_set: { name: "Acme" } } });
+    expect(created).toMatchObject({
+      distinctId: "user_1",
+      event: "organization_created",
+      groups: { organization: "org_1" },
+    });
+    expect(created.properties).toEqual({
+      environment: "production",
+      org_id: "org_1",
+      organization_name: "Acme",
+    });
   });
 });

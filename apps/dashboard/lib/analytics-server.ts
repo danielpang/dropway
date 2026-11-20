@@ -9,8 +9,10 @@ import { appEnvironment, posthogHost, posthogServerKey } from "@/lib/env";
  * Server-side PostHog capture for backend events that must be recorded reliably
  * regardless of the browser: new user signups, sites created, and domains added.
  * These originate in server actions / Better Auth hooks, so a client SDK can't
- * see them. Every event is stamped with `organization` + `environment` (via
- * buildEventProperties) and associated to the org's PostHog group.
+ * see them. Every event is stamped with `environment` and, when the org is known,
+ * `org_id` (via buildEventProperties), and associated to the org's PostHog group.
+ * The org's name lives on that group (identifyOrganization); the only event that
+ * also carries it is organization_created (as organization_name).
  *
  * Disabled cleanly when no key is configured (self-host without PostHog) — the
  * capture helpers become no-ops. Analytics NEVER throws into a user action: all
@@ -47,8 +49,8 @@ interface ServerEventInput {
   event: string;
   /** The acting user's id — the event's distinct_id. */
   distinctId: string;
+  /** The org id, when the event belongs to an org. */
   organization?: string | null;
-  organizationName?: string | null;
   properties?: Record<string, unknown>;
 }
 
@@ -63,8 +65,7 @@ async function captureServerEvent(input: ServerEventInput): Promise<void> {
       event: input.event,
       properties: buildEventProperties({
         environment: appEnvironment(),
-        organization: input.organization,
-        organizationName: input.organizationName,
+        orgId: input.organization,
         properties: input.properties,
       }),
       // Group analytics: tie the event to the org so PostHog can aggregate
@@ -160,18 +161,56 @@ export function captureSignUpFailed(input: {
 
 /** A new organization was created (onboarding, or an additional org later).
  * The top of the org-level activation funnel: organization_created →
- * site_created → site_visit, all carrying the same `organization` group. */
-export function captureOrganizationCreated(input: {
+ * site_created → site_visit, all carrying the same `organization` group. Also
+ * names the org's group, so it shows by name in PostHog from the start. */
+export async function captureOrganizationCreated(input: {
   userId: string;
   organization: string;
   organizationName?: string | null;
 }): Promise<void> {
-  return captureServerEvent({
-    event: "organization_created",
-    distinctId: input.userId,
-    organization: input.organization,
-    organizationName: input.organizationName ?? null,
-  });
+  await Promise.all([
+    identifyOrganization({ orgId: input.organization, name: input.organizationName }),
+    captureServerEvent({
+      event: "organization_created",
+      distinctId: input.userId,
+      organization: input.organization,
+      // Also kept on this one event, so the name is readable in the event list.
+      properties: { organization_name: input.organizationName ?? undefined },
+    }),
+  ]);
+}
+
+/**
+ * Set the org's display name on its PostHog `organization` group. PostHog then
+ * shows the name wherever events are broken down by organization, for past
+ * events too, and a later call (e.g. after a rename) updates it everywhere.
+ * Called when an org is created or renamed, and on sign-in so existing orgs pick
+ * up their name without a backfill.
+ *
+ * Sent as the `$groupidentify` event that posthog-node's groupIdentify() builds,
+ * but through captureImmediate: groupIdentify() only enqueues, and a serverless
+ * function can freeze before the queue flushes (see captureServerEvent).
+ * Best-effort; never throws.
+ */
+export async function identifyOrganization(input: {
+  orgId: string | null | undefined;
+  name: string | null | undefined;
+}): Promise<void> {
+  const ph = getClient();
+  if (!ph || !input.orgId || !input.name) return;
+  try {
+    await ph.captureImmediate({
+      distinctId: `$organization_${input.orgId}`,
+      event: "$groupidentify",
+      properties: {
+        $group_type: "organization",
+        $group_key: input.orgId,
+        $group_set: { name: input.name },
+      },
+    });
+  } catch {
+    // Analytics must never break the user action that triggered it.
+  }
 }
 
 /** A custom domain was added to a site in the active org. */

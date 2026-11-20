@@ -31,6 +31,10 @@ type AuthRejection struct {
 	TokenIss string // unverified iss hint, when a token was presented
 	Method   string // HTTP method, or the MCP tool name for step=forwarded_write
 	Path     string // request path
+	// OrgID is the org the request was scoped to, when it was resolved before the
+	// rejection (an authz failure after authentication). Empty when no org is
+	// known, e.g. a credential that failed verification.
+	OrgID string
 }
 
 // CaptureAuthRejected emits the best-effort `auth_rejected` event. Requests
@@ -43,20 +47,22 @@ func CaptureAuthRejected(ctx context.Context, e Emitter, r AuthRejection) {
 	if e == nil {
 		return
 	}
-	e.Capture(ctx, Event{
-		DistinctID: "system",
-		Event:      "auth_rejected",
-		Properties: map[string]any{
-			"surface":   r.Surface,
-			"kind":      r.Kind,
-			"step":      r.Step,
-			"reason":    r.Reason,
-			"token_aud": r.TokenAud,
-			"token_iss": r.TokenIss,
-			"method":    r.Method,
-			"path":      r.Path,
-			// Infra event with no person behind it — don't create person profiles.
-			"$process_person_profile": false,
-		},
-	})
+	props := map[string]any{
+		"surface":   r.Surface,
+		"kind":      r.Kind,
+		"step":      r.Step,
+		"reason":    r.Reason,
+		"token_aud": r.TokenAud,
+		"token_iss": r.TokenIss,
+		"method":    r.Method,
+		"path":      r.Path,
+		// Infra event with no person behind it — don't create person profiles.
+		// (Personless events can't attach a PostHog group, so the org rides on
+		// the org_id property only.)
+		"$process_person_profile": false,
+	}
+	if r.OrgID != "" {
+		props["org_id"] = r.OrgID
+	}
+	e.Capture(ctx, Event{DistinctID: "system", Event: "auth_rejected", Properties: props})
 }

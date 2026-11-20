@@ -29,6 +29,7 @@ import {
 } from "@/components/main-nav";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
+import { resetAnalytics } from "@/components/analytics/posthog-provider";
 
 const ICONS: Record<string, LucideIcon> = {
   "/members": Users,
@@ -178,6 +179,7 @@ export function AccountMenu({
     try {
       await authClient.signOut();
     } finally {
+      resetAnalytics();
       window.location.assign("/sign-in");
     }
   }
