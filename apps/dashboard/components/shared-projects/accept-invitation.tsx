@@ -8,17 +8,18 @@ import {
   acceptSharedProjectAction,
   rememberProjectInvitationAction,
 } from "@/app/shared-projects/actions";
-import { invitationToken, type ProjectInvitation } from "@/lib/project-room/sharing";
+import { invitationToken, type ProjectInvitationLookup } from "@/lib/project-room/sharing";
 import { InvitationSignIn } from "./invitation-sign-in";
 import { resetAnalytics } from "@/components/analytics/posthog-provider";
 
-export function AcceptProjectInvitation({ email, verified, pendingInvitation, invitation: initialInvitation = null }: {
+export function AcceptProjectInvitation({ email, verified, pendingInvitation, lookup: initialLookup = null }: {
   email: string | null;
   verified: boolean;
   pendingInvitation: boolean;
-  invitation?: ProjectInvitation | null;
+  lookup?: ProjectInvitationLookup | null;
 }) {
-  const [invitation, setInvitation] = React.useState(initialInvitation);
+  const [lookup, setLookup] = React.useState(initialLookup);
+  const invitation = lookup?.status === "available" ? lookup.invitation : null;
   const [ready, setReady] = React.useState(pendingInvitation);
   const [checking, setChecking] = React.useState(false);
   const [notice, setNotice] = React.useState("");
@@ -35,10 +36,9 @@ export function AcceptProjectInvitation({ email, verified, pendingInvitation, in
     void rememberProjectInvitationAction(fresh)
       .then((result) => {
         setReady(result.ok);
-        setInvitation(result.ok ? result.invitation : null);
-        if (!result.ok || !result.invitation) setNotice("This invitation is unavailable or has expired. Ask the project owner to resend it.");
+        setLookup(result.ok ? result.lookup : { status: "unavailable" });
       })
-      .catch(() => { setNotice("The invitation could not be loaded. Reopen the original email."); })
+      .catch(() => { setLookup({ status: "temporary-error" }); })
       .finally(() => { setChecking(false); });
   }, []);
 
@@ -78,7 +78,14 @@ export function AcceptProjectInvitation({ email, verified, pendingInvitation, in
       </header>
       {notice && <p role="status" className="rounded-lg border border-border bg-muted/40 p-3 text-sm leading-6">{notice}</p>}
       {checking ? <p role="status" className="text-sm text-muted-foreground">Checking invitation…</p> : !invitation ? (
-        <p className="text-sm leading-6 text-muted-foreground">{ready ? "Ask the project owner for a fresh invitation, then open the link from your email." : "Open the original invitation email in this browser to continue."}</p>
+        lookup?.status === "temporary-error" ? (
+          <div className="space-y-4">
+            <p role="status" className="text-sm leading-6 text-muted-foreground">The invitation could not be checked right now. Try again in a moment.</p>
+            <form action="/shared-projects/accept" method="get">
+              <Button type="submit">Retry</Button>
+            </form>
+          </div>
+        ) : <p className="text-sm leading-6 text-muted-foreground">{lookup?.status === "unavailable" || ready ? "This invitation is unavailable or has expired. Ask the project owner for a fresh invitation, then open the link from your email." : "Open the original invitation email in this browser to continue."}</p>
       ) : !email ? <InvitationSignIn invitation={invitation} /> : (
         <>
           <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/20 p-4">

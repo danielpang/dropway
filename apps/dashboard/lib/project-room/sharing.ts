@@ -1,3 +1,6 @@
+export type ProjectInvitationLookup =
+  | { status: "available"; invitation: ProjectInvitation }
+  | { status: "unavailable" | "temporary-error" };
 export interface ProjectInvitation {
   email: string;
   projectName: string;

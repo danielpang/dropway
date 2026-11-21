@@ -89,10 +89,13 @@ describe("project-only sharing", () => {
     const token = "a".repeat(43);
     expect(await rememberProjectInvitationAction(token)).toEqual({
       ok: true,
-      invitation: {
-        email: "invited@example.com",
-        projectName: "Project",
-        hasAccount: false,
+      lookup: {
+        status: "available",
+        invitation: {
+          email: "invited@example.com",
+          projectName: "Project",
+          hasAccount: false,
+        },
       },
     });
     expect(mocks.inspect).toHaveBeenCalledWith(token);
